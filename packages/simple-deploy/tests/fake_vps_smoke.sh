@@ -63,32 +63,38 @@ if [[ "$ssh_ready" != 1 ]]; then
   exit 1
 fi
 
-app="$tmp/app"
-mkdir -p "$app"
-cat > "$app/package.json" <<'EOF'
+write_node_package() {
+  local app_dir="$1"
+  local name="$2"
+  cat > "$app_dir/package.json" <<EOF
 {
-  "name": "api",
+  "name": "$name",
   "version": "1.0.0",
   "scripts": {
     "start": "node server.js"
   }
 }
 EOF
-cat > "$app/package-lock.json" <<'EOF'
+  cat > "$app_dir/package-lock.json" <<EOF
 {
-  "name": "api",
+  "name": "$name",
   "version": "1.0.0",
   "lockfileVersion": 3,
   "requires": true,
   "packages": {
     "": {
-      "name": "api",
+      "name": "$name",
       "version": "1.0.0"
     }
   }
 }
 EOF
-cat > "$app/server.js" <<'EOF'
+}
+
+write_server() {
+  local app_dir="$1"
+  local body="$2"
+  cat > "$app_dir/server.js" <<EOF
 const http = require("http");
 const port = Number(process.env.PORT || 3000);
 http.createServer((req, res) => {
@@ -98,10 +104,25 @@ http.createServer((req, res) => {
     return;
   }
   res.writeHead(200, { "content-type": "text/plain" });
-  res.end("hello");
+  res.end("$body");
 }).listen(port, "127.0.0.1");
 EOF
-cat > "$app/simple-deploy.toml" <<'EOF'
+}
+
+commit_fixture() {
+  local app_dir="$1"
+  git -C "$app_dir" init -q
+  git -C "$app_dir" config user.email smoke@example.com
+  git -C "$app_dir" config user.name Smoke
+  git -C "$app_dir" add .
+  git -C "$app_dir" commit -q -m "fixture"
+}
+
+mode_a="$tmp/mode-a"
+mkdir -p "$mode_a"
+write_node_package "$mode_a" "api"
+write_server "$mode_a" "mode-a"
+cat > "$mode_a/simple-deploy.toml" <<'EOF'
 name = "api"
 
 [env.production]
@@ -119,18 +140,86 @@ host = "api.example.com"
 type = "proxy"
 service = "web"
 EOF
+commit_fixture "$mode_a"
 
-git -C "$app" init -q
-git -C "$app" config user.email smoke@example.com
-git -C "$app" config user.name Smoke
-git -C "$app" add .
-git -C "$app" commit -q -m "fixture"
-
-(cd "$app" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" setup production)
-(cd "$app" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" deploy production)
+(cd "$mode_a" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" setup production)
+(cd "$mode_a" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" deploy production)
 ssh fake-vps test -L /var/apps/api/current
 ssh fake-vps test -L /var/apps/api/current/db
 ssh fake-vps curl -fsS http://127.0.0.1:3000/health >/dev/null
 ssh fake-vps sudo simple-vps route list --json | grep -q '"host": "api.example.com"'
+
+mode_b="$tmp/mode-b"
+mkdir -p "$mode_b/public"
+write_node_package "$mode_b" "web"
+write_server "$mode_b" "mode-b"
+printf 'asset\n' > "$mode_b/public/asset.txt"
+cat > "$mode_b/simple-deploy.toml" <<'EOF'
+name = "web"
+
+[build]
+command = "mkdir -p dist && cp server.js dist/server.js"
+output = "dist"
+include = ["public"]
+
+[env.production]
+server = "fake-vps"
+path = "/var/apps/web"
+runtime = "node"
+
+[services.web]
+command = "node server.js"
+port = 3001
+healthcheck = "/health"
+
+[routes.app]
+host = "web.example.com"
+type = "proxy"
+service = "web"
+EOF
+commit_fixture "$mode_b"
+
+(cd "$mode_b" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" setup production)
+(cd "$mode_b" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" deploy production)
+ssh fake-vps curl -fsS http://127.0.0.1:3001/health >/dev/null
+ssh fake-vps grep -q '^asset$' /var/apps/web/current/public/asset.txt
+ssh fake-vps test -f /var/apps/web/current/package-lock.json
+ssh fake-vps test ! -e /var/apps/web/current/simple-deploy.toml
+ssh fake-vps sudo simple-vps route list --json | grep -q '"host": "web.example.com"'
+
+mode_c="$tmp/mode-c"
+mkdir -p "$mode_c"
+write_server "$mode_c" "mode-c"
+cat > "$mode_c/simple-deploy.toml" <<'EOF'
+name = "bundle"
+
+[build]
+command = "mkdir -p dist && cp server.js dist/server.js"
+output = "dist"
+install = false
+
+[env.production]
+server = "fake-vps"
+path = "/var/apps/bundle"
+runtime = "node"
+
+[services.web]
+command = "node server.js"
+port = 3002
+healthcheck = "/health"
+
+[routes.app]
+host = "bundle.example.com"
+type = "proxy"
+service = "web"
+EOF
+commit_fixture "$mode_c"
+
+(cd "$mode_c" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" setup production)
+(cd "$mode_c" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" deploy production)
+ssh fake-vps curl -fsS http://127.0.0.1:3002/health >/dev/null
+ssh fake-vps test ! -e /var/apps/bundle/current/package.json
+ssh fake-vps test ! -e /var/apps/bundle/current/simple-deploy.toml
+ssh fake-vps sudo simple-vps route list --json | grep -q '"host": "bundle.example.com"'
 
 echo "fake VPS smoke passed"

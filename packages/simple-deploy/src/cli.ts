@@ -1,6 +1,16 @@
 #!/usr/bin/env bun
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
 
 type Dict = Record<string, unknown>;
@@ -35,6 +45,7 @@ const ROUTE_TYPES = new Set(["proxy", "static", "redirect"]);
 const RESERVED_SERVICES = new Set(["current", "releases", "shared"]);
 const LOCKFILES = ["bun.lock", "bun.lockb", "pnpm-lock.yaml", "package-lock.json", "yarn.lock"];
 const ALLOWED_DOTENV_FILES = new Set([".env.example", ".env.sample", ".env.defaults"]);
+const COPY_OPTIONS = { recursive: true, verbatimSymlinks: true };
 
 const defaultRunner: CommandRunner = {
   async run(command) {
@@ -298,13 +309,56 @@ function dirtyStamp(now: () => Date): string {
   return now().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "").replace("T", "");
 }
 
+function pathIsInside(root: string, child: string): boolean {
+  const relativePath = relative(root, child);
+  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+}
+
+function validateSymlink(root: string, fullPath: string, relativePath: string): string | undefined {
+  const linkTarget = readlinkSync(fullPath);
+  if (isAbsolute(linkTarget)) return `${relativePath} -> ${linkTarget}`;
+  const resolvedTarget = resolvePath(dirname(fullPath), linkTarget);
+  if (!pathIsInside(root, resolvedTarget)) return `${relativePath} -> ${linkTarget}`;
+  return undefined;
+}
+
+function scanArtifact(root: string, relativeDir = ""): { dotenvFiles: string[]; unsafeSymlinks: string[] } {
+  const dotenvFiles: string[] = [];
+  const unsafeSymlinks: string[] = [];
+  const currentDir = join(root, relativeDir);
+  for (const entry of readdirSync(currentDir)) {
+    const relativePath = relativeDir ? `${relativeDir}/${entry}` : entry;
+    const fullPath = join(currentDir, entry);
+    if (blockedDotenvFiles([relativePath]).length > 0) dotenvFiles.push(relativePath);
+
+    const stat = lstatSync(fullPath);
+    if (stat.isSymbolicLink()) {
+      const unsafe = validateSymlink(root, fullPath, relativePath);
+      if (unsafe) unsafeSymlinks.push(unsafe);
+    } else if (stat.isDirectory()) {
+      const nested = scanArtifact(root, relativePath);
+      dotenvFiles.push(...nested.dotenvFiles);
+      unsafeSymlinks.push(...nested.unsafeSymlinks);
+    }
+  }
+  return { dotenvFiles, unsafeSymlinks };
+}
+
+function validateArtifact(root: string, includeDotenv: boolean) {
+  const { dotenvFiles, unsafeSymlinks } = scanArtifact(root);
+  if (unsafeSymlinks.length > 0) throw new Error(`refusing to deploy unsafe symlink: ${unsafeSymlinks.join(", ")}`);
+  if (dotenvFiles.length === 0) return;
+  if (!includeDotenv) throw new Error(`refusing to deploy dotenv file: ${dotenvFiles.join(", ")}`);
+  console.error(`Warning: deploying dotenv file: ${dotenvFiles.join(", ")}`);
+}
+
 function copyDirectoryContents(source: string, target: string) {
-  if (!existsSync(source) || !statSync(source).isDirectory()) {
+  if (!existsSync(source) || !lstatSync(source).isDirectory()) {
     throw new Error(`[build].output does not exist after build: ${source}`);
   }
   mkdirSync(target, { recursive: true });
   for (const entry of readdirSync(source)) {
-    cpSync(join(source, entry), join(target, entry), { recursive: true });
+    cpSync(join(source, entry), join(target, entry), COPY_OPTIONS);
   }
 }
 
@@ -313,7 +367,7 @@ function copyRelativePath(sourceRoot: string, relativePath: string, targetRoot: 
   const target = join(targetRoot, relativePath);
   if (!existsSync(source)) throw new Error(`include path does not exist after build: ${relativePath}`);
   mkdirSync(dirname(target), { recursive: true });
-  cpSync(source, target, { recursive: true });
+  cpSync(source, target, COPY_OPTIONS);
 }
 
 function copyRootFile(sourceRoot: string, file: string, targetRoot: string) {
@@ -546,7 +600,12 @@ async function prepareArtifact(
   return { artifactDir, lockfiles };
 }
 
-async function runDeploy(root: string, envName: string, runner: CommandRunner, options: { dirty: boolean; now: () => Date }) {
+async function runDeploy(
+  root: string,
+  envName: string,
+  runner: CommandRunner,
+  options: { dirty: boolean; includeDotenv: boolean; now: () => Date },
+) {
   const result = checkManifest(root, envName);
   if (result.errors.length > 0) throw new Error(result.errors.join("\n"));
 
@@ -562,13 +621,9 @@ async function runDeploy(root: string, envName: string, runner: CommandRunner, o
   const dirty = await gitOutput(root, runner, ["status", "--porcelain"]);
   if (dirty && !options.dirty) throw new Error("working tree is dirty; commit changes or pass --dirty");
   const release = dirty ? `${sha}-dirty-${dirtyStamp(options.now)}` : sha;
-  const treeFiles = (await gitOutput(root, runner, ["ls-tree", "-r", "--name-only", "HEAD"]))
-    .split("\n")
-    .filter(Boolean);
-  const dotenvFiles = blockedDotenvFiles(treeFiles);
-  if (dotenvFiles.length > 0) throw new Error(`refusing to deploy dotenv file: ${dotenvFiles.join(", ")}`);
 
   const { artifactDir, lockfiles } = await prepareArtifact(root, runner, build, runtime, Boolean(dirty));
+  validateArtifact(artifactDir, options.includeDotenv);
 
   const releaseDir = `${appRoot}/releases/${release}`;
   await runCommand(runner, ["ssh", server, `test -d ${shellEscape(appRoot)}/shared`], `setup has not run for ${envName}`);
@@ -699,7 +754,7 @@ function usage() {
   console.error("  simple-deploy init");
   console.error("  simple-deploy check [--env <name>]");
   console.error("  simple-deploy setup <env>");
-  console.error("  simple-deploy deploy <env>");
+  console.error("  simple-deploy deploy <env> [--dirty] [--include-dotenv]");
 }
 
 export async function main(argv = process.argv.slice(2), root = process.cwd(), options: MainOptions = {}) {
@@ -740,9 +795,10 @@ export async function main(argv = process.argv.slice(2), root = process.cwd(), o
       const env = args[0];
       const flags = args.slice(1);
       const dirty = flags.includes("--dirty");
-      const unknown = flags.find((flag) => flag !== "--dirty");
-      if (!env || unknown) throw new Error("deploy requires one env and optional --dirty");
-      await runDeploy(root, env, runner, { dirty, now });
+      const includeDotenv = flags.includes("--include-dotenv");
+      const unknown = flags.find((flag) => flag !== "--dirty" && flag !== "--include-dotenv");
+      if (!env || unknown) throw new Error("deploy requires one env and optional --dirty/--include-dotenv");
+      await runDeploy(root, env, runner, { dirty, includeDotenv, now });
       return;
     }
     usage();

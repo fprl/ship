@@ -70,6 +70,7 @@ simple-deploy init
 simple-deploy setup <env>
 simple-deploy deploy <env>
 simple-deploy deploy <env> --dirty
+simple-deploy deploy <env> --include-dotenv
 simple-deploy rollback <env>
 simple-deploy rollback <env> <sha>
 simple-deploy status <env>
@@ -687,7 +688,8 @@ The following are **always** excluded from the artifact:
 
 ### Dotenv Blocklist
 
-The following filenames are refused by default, even if tracked in git:
+The following filenames are refused by default when present in the assembled
+artifact:
 
 ```text
 .env
@@ -706,6 +708,12 @@ Allowed: `.env.example`, `.env.sample`, `.env.defaults`.
 
 Override: `--include-dotenv`. The CLI prints a loud warning and lists each
 blocked file it is about to ship.
+
+### Symlinks
+
+Symlinks are preserved as symlinks while assembling the artifact. Absolute
+symlinks and relative symlinks that resolve outside the artifact root are
+refused before upload.
 
 ## Package Manager Detection
 
