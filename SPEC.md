@@ -188,7 +188,8 @@ Standard SemVer.
          no server layout / sudoers / systemd changes
          no fallback to the old shape
 
-0.3.0+   product features driven by real use
+0.3.0+   slice chosen from real friction surfaced by 0.2.0 usage
+         not from a predetermined architecture goal
          contract changes acceptable between minors
 
 1.0.0    much later
@@ -240,6 +241,41 @@ for a meaningful window without needing contract changes.
 - Change the manifest schema beyond filename.
 - Rename internal package folders beyond `simple-deploy → cli`.
   `packages/simple-vps/` stays.
+
+## Future Architecture Candidates
+
+Options worth considering after 0.2.0 surfaces concrete friction. Not
+scheduled. Not promised. Listed so they aren't forgotten and don't get
+re-litigated from scratch every time someone asks.
+
+- **Thin `simple-vps host install` wrapper.** A CLI verb that shells out
+  to the existing `install.sh` flow so every user-typed command starts
+  with `simple-vps`. Pure cohesion polish. Worth doing only if "two
+  entry points" turns out to be real friction. Cheap (~50 lines of
+  Bun).
+
+- **Bun privileged server helper.** Replace the Python helper with a Bun
+  equivalent. Worth doing only if a spike proves the Bun version stays
+  small, stdlib-only (no npm dependencies at the sudo boundary),
+  equally auditable, and unlocks meaningful code-sharing with the
+  laptop CLI. Cohesion alone is not sufficient justification — the
+  helper is invisible to users.
+
+- **Thinner bootstrap.** Shrink `install.sh` to install Bun and the CLI
+  only, then exec `simple-vps host install` for the rest. Requires the
+  privileged helper port first. Revisit only if `install.sh` becomes
+  a real maintenance burden.
+
+What stays out of consideration:
+
+- **Replacing Ansible.** Ansible is the right tool for host convergence
+  (apt, systemd, UFW, sudoers, idempotent state). Rewriting it in Bun
+  is months of work for marginal user-facing improvement. Ansible
+  stays unless a concrete product reason appears.
+
+The 0.3.0 slice is picked from real friction after 0.2.0 lands —
+deploy ergonomics, log readability, secret flows, install surprises,
+maintenance pain. Not from this list.
 
 ## Implementation Order
 
