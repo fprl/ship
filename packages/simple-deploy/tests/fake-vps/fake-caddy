@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-}" in
+  validate)
+    exit 0
+    ;;
+  *)
+    echo "fake caddy: unsupported command $*" >&2
+    exit 0
+    ;;
+esac

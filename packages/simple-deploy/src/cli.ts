@@ -513,8 +513,9 @@ async function runDeploy(root: string, envName: string, runner: CommandRunner, o
 
   const releaseDir = `${appRoot}/releases/${release}`;
   await runCommand(runner, ["ssh", server, `test -d ${shellEscape(appRoot)}/shared`], `setup has not run for ${envName}`);
-  await runCommand(runner, ["ssh", server, `mkdir -p ${shellEscape(releaseDir)}`], "failed to create release directory");
+  await runCommand(runner, ["ssh", server, `install -d -m 2775 ${shellEscape(releaseDir)}`], "failed to create release directory");
   await runCommand(runner, ["rsync", "-az", "--delete", `${artifactDir}/`, `${server}:${releaseDir}/`], "rsync failed");
+  await runCommand(runner, ["ssh", server, `chmod 2775 ${shellEscape(releaseDir)}`], "failed to restore release permissions");
   for (const entry of [".env", "db", "storage", "logs"]) {
     await runCommand(
       runner,

@@ -59,11 +59,12 @@ describe("deploy", () => {
     expect(joined).toContain("git -C " + root + " rev-parse HEAD");
     expect(joined).toContain("git -C " + root + " status --porcelain");
     expect(joined).toContain("ssh admin@100.x.y.z test -d /var/apps/api/shared");
-    expect(joined).toContain("ssh admin@100.x.y.z mkdir -p /var/apps/api/releases/a1b2c3d4e5f6");
+    expect(joined).toContain("ssh admin@100.x.y.z install -d -m 2775 /var/apps/api/releases/a1b2c3d4e5f6");
     expect(joined.some((command) => command.startsWith("sh -c git -C " + root + " archive HEAD | tar -x -C "))).toBe(
       true,
     );
     expect(joined.some((command) => command.startsWith("rsync -az --delete "))).toBe(true);
+    expect(joined).toContain("ssh admin@100.x.y.z chmod 2775 /var/apps/api/releases/a1b2c3d4e5f6");
     expect(joined).toContain("ssh admin@100.x.y.z ln -sfn /var/apps/api/shared/.env /var/apps/api/releases/a1b2c3d4e5f6/.env");
     expect(joined).toContain("ssh admin@100.x.y.z ln -sfn /var/apps/api/shared/db /var/apps/api/releases/a1b2c3d4e5f6/db");
     expect(joined).toContain(
@@ -158,7 +159,7 @@ describe("deploy", () => {
 
     const joined = commands.map((command) => command.join(" "));
     expect(process.exitCode).toBe(0);
-    expect(joined).toContain("ssh admin@100.x.y.z mkdir -p /var/apps/api/releases/a1b2c3d4e5f6-dirty-20260518123456");
+    expect(joined).toContain("ssh admin@100.x.y.z install -d -m 2775 /var/apps/api/releases/a1b2c3d4e5f6-dirty-20260518123456");
     expect(
       joined.some((command) =>
         command.startsWith("sh -c tar -C " + root + " --exclude .git --exclude node_modules -cf - . | tar -x -C "),

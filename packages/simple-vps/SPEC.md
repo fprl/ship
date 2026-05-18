@@ -247,6 +247,13 @@ Enforced by `simple-vps` before any privileged action:
 - `app run-as --cwd <path>` refuses any working directory outside
   `/var/apps/<name>/`.
 
+`app create` adds the invoking sudo user to the app's group and makes
+`/var/apps/<name>` plus `/var/apps/<name>/releases` setgid group-writable
+(`2775`). That is the upload contract: `simple-deploy` can rsync release
+artifacts as the deploy user, while services still run as `app-<name>`.
+It also ensures `/tmp/simple-deploy` exists with mode `1777`; unit uploads
+land there before `app install-unit` validates ownership and content.
+
 ### Failure Mode
 
 If the sudoers entry or the `app` subcommands are missing on the server,

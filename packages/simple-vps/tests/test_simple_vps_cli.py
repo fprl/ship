@@ -342,11 +342,31 @@ class SimpleVpsCliTest(unittest.TestCase):
             self.assertTrue((root / "shared" / "storage").is_dir())
             self.assertTrue((root / "shared" / "logs").is_dir())
             self.assertEqual((root / "shared" / ".env").read_text(encoding="utf-8"), "")
+            self.assertEqual(root.stat().st_mode & 0o7777, 0o2775)
+            self.assertEqual((root / "releases").stat().st_mode & 0o7777, 0o2775)
+            self.assertEqual(cli.DEPLOY_TMP_DIR.stat().st_mode & 0o7777, 0o1777)
             self.assertIn(
                 ["useradd", "--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "--user-group", "app-my-app"],
                 commands,
             )
             self.assertIn(["chown", "-R", "app-my-app:app-my-app", str(root)], commands)
+
+    def test_app_create_adds_sudo_user_to_app_group(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = load_cli(Path(tmp))
+            commands = []
+
+            def fake_run(command, text=False, capture_output=False, check=False):
+                commands.append(command)
+                if command[:2] == ["id", "-u"] and command[-1] == "app-my-app":
+                    return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with mock.patch.dict(cli.os.environ, {"SUDO_USER": "admin"}):
+                with mock.patch.object(cli.subprocess, "run", fake_run):
+                    call_quiet(cli.cmd_app_create, argparse.Namespace(name="my-app"))
+
+            self.assertIn(["usermod", "-aG", "app-my-app", "admin"], commands)
 
     def test_app_install_unit_validates_and_copies_unit(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -422,6 +442,28 @@ class SimpleVpsCliTest(unittest.TestCase):
                     cli.cmd_app_run_as,
                     argparse.Namespace(name="my-app", cwd=str(outside), run_command=["--", "bun", "install"]),
                 )
+
+    def test_app_run_as_accepts_cwd_after_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = load_cli(Path(tmp))
+            commands = []
+            app_dir = cli.APP_ROOT / "my-app" / "releases" / "a1b2c3d"
+            app_dir.mkdir(parents=True)
+            args = cli.build_parser().parse_args(
+                ["app", "run-as", "my-app", "--cwd", str(app_dir), "--", "npm", "ci", "--omit=dev"]
+            )
+
+            def fake_run(command, text=False, capture_output=False, check=False, cwd=None):
+                commands.append((command, cwd))
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with mock.patch.object(cli.subprocess, "run", fake_run):
+                call_quiet(args.func, args)
+
+            self.assertEqual(
+                commands,
+                [(["runuser", "-u", "app-my-app", "--", "npm", "ci", "--omit=dev"], str(app_dir.resolve()))],
+            )
 
 
 if __name__ == "__main__":

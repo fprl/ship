@@ -319,9 +319,12 @@ Steps:
 2.  verify required server tools: simple-vps, rsync, the runtime binary
 3.  via sudo on the server:
       create system user app-<name> (no login shell, no home)
+      add the invoking sudo user to the app-<name> group
       create /var/apps/<name>
       create /var/apps/<name>/{releases,shared,shared/db,shared/storage,shared/logs}
       chown -R app-<name>:app-<name> /var/apps/<name>
+      chmod /var/apps/<name> and /var/apps/<name>/releases to 2775
+      create /tmp/simple-deploy with mode 1777 for unit uploads
       create /var/apps/<name>/shared/.env (0600, owned by app-<name>) if absent
 4.  register the app with simple-vps state so it appears in `simple-vps status`
 5.  print success summary
@@ -344,7 +347,8 @@ Pipeline:
 5.  if [build] present: run [build] command in temp dir
 6.  assemble artifact per build mode
 7.  block .env files unless --include-dotenv (see Artifact Rules)
-8.  rsync artifact to server:/var/apps/<name>/releases/<sha>/
+8.  create release dir with mode 2775, rsync artifact to server:/var/apps/<name>/releases/<sha>/,
+    then restore release dir mode to 2775 because rsync can copy the local temp dir mode
 9.  server: link shared/.env, shared/db, shared/storage, shared/logs into release dir
 10. server: if install enabled, run production install
 11. server: render systemd unit files, install to /etc/systemd/system/

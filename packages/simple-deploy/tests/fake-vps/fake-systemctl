@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir=/run/fake-systemctl
+mkdir -p "$state_dir"
+chmod 1777 "$state_dir"
+
+action="${1:-}"
+unit="${2:-}"
+
+unit_file() {
+  printf '/etc/systemd/system/%s\n' "$1"
+}
+
+unit_value() {
+  local key="$1"
+  local file="$2"
+  sed -n "s/^${key}=//p" "$file" | tail -n 1
+}
+
+unit_env() {
+  local key="$1"
+  local file="$2"
+  sed -n "s/^Environment=\"${key}=\\(.*\\)\"$/\\1/p" "$file" | tail -n 1
+}
+
+pid_file() {
+  printf '%s/%s.pid\n' "$state_dir" "$1"
+}
+
+case "$action" in
+  daemon-reload|enable|disable|reload)
+    exit 0
+    ;;
+  is-active)
+    pid_path="$(pid_file "$unit")"
+    if [[ -f "$pid_path" ]] && kill -0 "$(cat "$pid_path")" 2>/dev/null; then
+      echo active
+      exit 0
+    fi
+    echo inactive
+    exit 3
+    ;;
+  status)
+    "$0" is-active "$unit"
+    ;;
+  stop)
+    pid_path="$(pid_file "$unit")"
+    if [[ -f "$pid_path" ]]; then
+      kill "$(cat "$pid_path")" 2>/dev/null || true
+      rm -f "$pid_path"
+    fi
+    exit 0
+    ;;
+  start|restart)
+    if [[ "$action" == "restart" ]]; then
+      "$0" stop "$unit"
+    fi
+    file="$(unit_file "$unit")"
+    if [[ ! -f "$file" ]]; then
+      echo "unit not found: $file" >&2
+      exit 1
+    fi
+    user="$(unit_value User "$file")"
+    workdir="$(unit_value WorkingDirectory "$file")"
+    port="$(unit_env PORT "$file")"
+    exec_start="$(unit_value ExecStart "$file")"
+    command="${exec_start#/usr/bin/env bash -c 'exec }"
+    command="${command%\'}"
+    (
+      cd "$workdir"
+      PORT="${port:-}" nohup runuser -u "$user" -- bash -c "$command" > "$state_dir/$unit.log" 2>&1 &
+      echo $! > "$(pid_file "$unit")"
+    )
+    sleep 0.2
+    exit 0
+    ;;
+  *)
+    echo "fake systemctl: unsupported command $*" >&2
+    exit 1
+    ;;
+esac

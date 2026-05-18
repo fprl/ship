@@ -38,6 +38,7 @@ APP_RE = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
 SERVICE_RE = re.compile(r"^[a-z][a-z0-9-]{0,30}$")
 HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 SERVICE_ACTIONS = {"start", "stop", "restart", "status", "is-active", "enable", "disable"}
+SYSTEM_USER_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}\$?$")
 
 
 def die(message, code=1):
@@ -690,9 +691,29 @@ def ensure_app_user_absent(name):
         run_checked(["userdel", user])
 
 
+def deploy_user_from_sudo():
+    user = os.environ.get("SUDO_USER")
+    if not user or user == "root":
+        return None
+    if not SYSTEM_USER_RE.match(user):
+        die("invalid SUDO_USER")
+    if not command_succeeds(["id", "-u", user]):
+        die(f"sudo user does not exist: {user}")
+    return user
+
+
+def grant_deploy_user_access(name):
+    user = deploy_user_from_sudo()
+    if user is None:
+        return
+    run_checked(["usermod", "-aG", app_user(name), user])
+
+
 def ensure_app_directories(name):
     root = app_path(name)
     shared = root / "shared"
+    DEPLOY_TMP_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(DEPLOY_TMP_DIR, 0o1777)
     paths = [
         root,
         root / "releases",
@@ -711,12 +732,20 @@ def ensure_app_directories(name):
         os.chmod(env_file, 0o600)
 
     run_checked(["chown", "-R", f"{app_user(name)}:{app_user(name)}", str(root)])
+    os.chmod(root, 0o2775)
+    os.chmod(root / "releases", 0o2775)
+    os.chmod(root / "systemd", 0o750)
+    os.chmod(shared, 0o750)
+    os.chmod(shared / "db", 0o750)
+    os.chmod(shared / "storage", 0o750)
+    os.chmod(shared / "logs", 0o750)
 
 
 def cmd_app_create(args):
     require_root()
     name = normalize_app(args.name)
     ensure_app_user_exists(name)
+    grant_deploy_user_access(name)
     ensure_app_directories(name)
     print(f"App {name} is ready at {app_path(name)}")
 
@@ -845,8 +874,15 @@ def validate_run_command(command):
 def cmd_app_run_as(args):
     require_root()
     name = normalize_app(args.name)
-    cwd = normalize_cwd(name, args.cwd)
-    command = validate_run_command(args.run_command)
+    run_command = list(args.run_command)
+    cwd_value = args.cwd
+    if cwd_value is None and len(run_command) >= 2 and run_command[0] == "--cwd":
+        cwd_value = run_command[1]
+        run_command = run_command[2:]
+    if cwd_value is None:
+        die("missing --cwd")
+    cwd = normalize_cwd(name, cwd_value)
+    command = validate_run_command(run_command)
     run_checked(["runuser", "-u", app_user(name), "--", *command], cwd=cwd)
 
 
