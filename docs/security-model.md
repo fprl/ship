@@ -4,6 +4,16 @@ Simple VPS is not a general compliance hardening framework. It has one
 security model: expose apps through Cloudflare Tunnel, keep direct host access
 on Tailscale, and make the expected host state inspectable.
 
+## Opinionated Choices
+
+Simple VPS picks Tailscale for admin access and Cloudflare Tunnel for public
+ingress. Alternatives such as Headscale, ZeroTier, NetBird, public Caddy,
+Fastly Tunnels, or ngrok are out of scope for v1.
+
+The host bootstrap should not install or configure other mesh VPN or tunnel
+providers. The point is a small, inspectable production path, not a provider
+matrix.
+
 ## Ingress
 
 Public app traffic should enter through Cloudflare Tunnel and reach Caddy on
@@ -56,20 +66,51 @@ operator is not locked out.
 The expected security services are:
 
 - `unattended-upgrades` installed and enabled.
-- `fail2ban` installed and enabled for SSH.
+- `fail2ban` installed and enabled for SSH while public SSH can exist during
+  bootstrap or recovery.
 - `tailscaled` installed and enabled when Tailscale is enabled.
 - `cloudflared` installed, isolated as its own user, and enabled only when a
   tunnel token or config path is provided.
 - Caddy installed and serving generated Simple VPS route config.
 
+Once Tailscale-only SSH is the normal post-bootstrap state, fail2ban should be
+reassessed. It is not a generic protection layer for arbitrary ports users open
+by hand; service-specific exposure needs service-specific policy.
+
 ## Privileged API
 
-The laptop CLI does not get broad passwordless root. The admin user gets one
-sudoers grant for the server-side helper:
+The intended privilege model has three identities:
+
+```text
+bootstrap user   root or provider-created initial user
+                 used by install.sh phase 1 only
+                 not a steady-state Simple VPS identity
+
+operator user    human/admin identity for host convergence and recovery
+                 allowed to run Ansible with root privileges
+
+deploy user      identity used by the app CLI and CI
+                 allowed to invoke only the server-side Simple VPS helper
+```
+
+Today the operator and deploy users are conflated as `admin`. That is why the
+current Ansible role grants broad passwordless sudo to `admin`: phase 2 of the
+remote installer connects as `admin` and uses Ansible `become: true` for host
+convergence.
+
+The same `admin` user also gets the narrow deploy API grant:
 
 ```text
 admin ALL=(root) NOPASSWD: /usr/local/bin/simple-vps
 ```
+
+The narrow grant is still the contract used by app deploys and CI. It is not
+yet the only privilege the `admin` account has.
+
+The target 0.3 model is to split operator and deploy users. The operator user
+keeps whatever root path host convergence needs; the deploy user gets only the
+`/usr/local/bin/simple-vps` grant. Until that split lands, documentation and
+`host doctor` must be honest about the current conflation.
 
 The server-side helper owns privileged app operations such as systemd unit
 installation, env writes, Caddy route generation, and app cleanup. Keep that
@@ -89,7 +130,8 @@ Initial doctor checks should cover:
 - Public SSH closed when Tailscale is ready.
 - Public `80` and `443` closed.
 - Tailscale, cloudflared, Caddy, fail2ban, and unattended upgrades state.
-- The sudoers grant points only at `/usr/local/bin/simple-vps`.
+- The deploy sudoers grant points at `/usr/local/bin/simple-vps`.
+- The current operator/deploy user conflation is visible until 0.3 splits it.
 - Generated Caddy config validates.
 
 Later, if Simple VPS grows an app registry, app and route drift should be

@@ -45,6 +45,9 @@ Laptop
 
 The VPS should not expose public `22`, `80`, `443`, or random app ports.
 
+Simple VPS intentionally chooses Tailscale and Cloudflare Tunnel. Other mesh
+VPNs, tunnel providers, and public-Caddy ingress are out of scope for v1.
+
 Default local ingress is Caddy on `127.0.0.1:8080`. Container-based deploy
 tools are outside the v1 product direction, but Simple VPS should still prepare
 the box and keep public ports closed.
@@ -184,9 +187,31 @@ packages/cli/SPEC.md     -> "these are the simple-vps subcommands we invoke"
 packages/simple-vps/SPEC.md -> "this is the API we expose, with validation"
 ```
 
-### Sudoers
+### Sudoers and Host Identities
 
-One sudoers line, granting passwordless `sudo` for `simple-vps`:
+The intended model has three identities:
+
+```text
+bootstrap user   root or provider-created initial user
+operator user    human/admin identity for host convergence and recovery
+deploy user      CLI/CI identity for app deploys
+```
+
+Today `admin` is both the operator user and the deploy user. This is an
+implementation compromise, not the target security model. It exists because
+remote install phase 2 connects as `admin` and runs Ansible with `become: true`.
+Without a passwordless root path for that operator identity, unattended
+converge breaks.
+
+The current Ansible role therefore grants:
+
+```text
+/etc/sudoers.d/admin
+  admin ALL=(ALL) NOPASSWD:ALL
+```
+
+The deploy API also has one narrow sudoers line, granting passwordless `sudo`
+only for `simple-vps`:
 
 ```text
 /etc/sudoers.d/simple-vps
@@ -207,6 +232,10 @@ validate inputs and be designed as a safe root API. New subcommands must not
 assume interactive trust just because the caller is `admin`. Adding a
 subcommand that shells out to user-supplied arguments without validation
 silently broadens the deploy sudoers surface.
+
+0.3.0 should split operator and deploy users so the app CLI and CI authenticate
+as a deploy identity with only the `/usr/local/bin/simple-vps` grant. Host
+convergence can then use a separate operator identity.
 
 ### App Subcommands
 
@@ -381,6 +410,14 @@ Current default apply path installs:
 - Bun
 - pnpm
 - Litestream
+
+Current sudo behavior:
+
+- `admin` is both operator and deploy user.
+- `admin ALL=(ALL) NOPASSWD:ALL` is used by Ansible phase 2 convergence.
+- `admin ALL=(root) NOPASSWD: /usr/local/bin/simple-vps` is the narrow deploy
+  API used by app operations.
+- The operator/deploy split is deferred to 0.3.0.
 
 Current optional variables:
 
