@@ -143,6 +143,75 @@ commit_fixture() {
   git -C "$app_dir" commit -q -m "fixture"
 }
 
+assert_route_body() {
+  local host="$1"
+  local path="$2"
+  local expected="$3"
+  local body=""
+  for _ in {1..20}; do
+    if body="$(ssh fake-vps "curl -fsS -H 'Host: $host' 'http://127.0.0.1:8080$path'" 2>/dev/null)" && [[ "$body" == "$expected" ]]; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "route $host$path did not return expected body" >&2
+  echo "last body: $body" >&2
+  exit 1
+}
+
+assert_route_contains() {
+  local host="$1"
+  local path="$2"
+  local expected="$3"
+  local body=""
+  for _ in {1..20}; do
+    if body="$(ssh fake-vps "curl -fsS -H 'Host: $host' 'http://127.0.0.1:8080$path'" 2>/dev/null)" && [[ "$body" == *"$expected"* ]]; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  echo "route $host$path did not contain expected text" >&2
+  echo "last body: $body" >&2
+  exit 1
+}
+
+write_hono_bun_app() {
+  local app_dir="$1"
+  mkdir -p "$app_dir/src"
+  cat > "$app_dir/package.json" <<'EOF'
+{
+  "name": "hono-api",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/server.ts"
+  },
+  "dependencies": {
+    "hono": "4.12.19"
+  }
+}
+EOF
+  cat > "$app_dir/src/server.ts" <<'EOF'
+import { Hono } from "hono";
+
+const app = new Hono();
+
+app.get("/", (c) => c.text("hono-api"));
+app.get("/health", (c) => c.text("ok"));
+app.get("/env", (c) => c.text(Bun.env.GREETING ?? ""));
+
+Bun.serve({
+  hostname: "127.0.0.1",
+  port: Number(Bun.env.PORT || 3003),
+  fetch: app.fetch,
+});
+
+console.log("server:hono-api");
+EOF
+  (cd "$app_dir" && bun install --lockfile-only)
+  rm -rf "$app_dir/node_modules"
+}
+
 mode_a="$tmp/mode-a"
 mkdir -p "$mode_a"
 write_node_package "$mode_a" "api"
@@ -179,6 +248,7 @@ ssh fake-vps sudo simple-vps route list --json | grep -q '"host": "api.example.c
 (cd "$mode_a" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" logs production web) | grep -q 'server:mode-a'
 printf 'API_KEY=from-env\n' > "$mode_a/production.env"
 (cd "$mode_a" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" env push production production.env)
+test "$(ssh fake-vps curl -fsS http://127.0.0.1:3000/secret)" = ""
 (cd "$mode_a" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" restart production web)
 test "$(ssh fake-vps curl -fsS http://127.0.0.1:3000/secret)" = "from-env"
 (cd "$mode_a" && printf 'from-secret\n' | bun run "$repo_root/packages/simple-deploy/src/cli.ts" secret put production API_KEY)
@@ -187,11 +257,13 @@ if (cd "$mode_a" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" secre
   echo "secret list leaked a secret value" >&2
   exit 1
 fi
+test "$(ssh fake-vps curl -fsS http://127.0.0.1:3000/secret)" = "from-env"
 (cd "$mode_a" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" restart production web)
 test "$(ssh fake-vps curl -fsS http://127.0.0.1:3000/secret)" = "from-secret"
 (cd "$mode_a" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" secret rm production API_KEY)
 (cd "$mode_a" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" restart production web)
 test "$(ssh fake-vps curl -fsS http://127.0.0.1:3000/secret)" = ""
+rm "$mode_a/production.env"
 
 write_server "$mode_a" "mode-a-v2"
 git -C "$mode_a" add server.js
@@ -211,6 +283,69 @@ if (cd "$mode_a" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" deplo
 fi
 test "$(ssh fake-vps readlink -f /var/apps/api/current)" = "$first_api_current"
 ssh fake-vps curl -fsS http://127.0.0.1:3000/ | grep -q '^mode-a$'
+
+hono_api="$tmp/hono-api"
+mkdir -p "$hono_api"
+write_hono_bun_app "$hono_api"
+cat > "$hono_api/simple-deploy.toml" <<'EOF'
+name = "hono-api"
+
+[env.production]
+server = "fake-vps"
+path = "/var/apps/hono-api"
+runtime = "bun"
+
+[services.web]
+command = "bun run src/server.ts"
+port = 3003
+healthcheck = "/health"
+
+[routes.app]
+host = "hono.example.com"
+type = "proxy"
+service = "web"
+EOF
+commit_fixture "$hono_api"
+
+(cd "$hono_api" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" setup production)
+(cd "$hono_api" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" deploy production)
+ssh fake-vps curl -fsS http://127.0.0.1:3003/health >/dev/null
+ssh fake-vps curl -fsS http://127.0.0.1:3003/ | grep -q '^hono-api$'
+ssh fake-vps test -d /var/apps/hono-api/current/node_modules/hono
+assert_route_body "hono.example.com" "/" "hono-api"
+
+static_site="$tmp/static-site"
+mkdir -p "$static_site"
+cat > "$static_site/index.html" <<'EOF'
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Static Smoke</title>
+  </head>
+  <body>
+    <h1>static-site</h1>
+  </body>
+</html>
+EOF
+cat > "$static_site/simple-deploy.toml" <<'EOF'
+name = "static-site"
+
+[env.production]
+server = "fake-vps"
+path = "/var/apps/static-site"
+runtime = "static"
+
+[routes.site]
+host = "static.example.com"
+type = "static"
+EOF
+commit_fixture "$static_site"
+
+(cd "$static_site" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" setup production)
+(cd "$static_site" && bun run "$repo_root/packages/simple-deploy/src/cli.ts" deploy production)
+ssh fake-vps "grep -q '<h1>static-site</h1>' /var/apps/static-site/current/index.html"
+assert_route_contains "static.example.com" "/" "<h1>static-site</h1>"
 
 mode_b="$tmp/mode-b"
 mkdir -p "$mode_b/public"

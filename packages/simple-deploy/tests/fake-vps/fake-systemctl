@@ -5,6 +5,9 @@ state_dir=/run/fake-systemctl
 mkdir -p "$state_dir"
 chmod 1777 "$state_dir"
 
+# Test stand-in for real systemd + Caddy. Keep this limited to the route state
+# schema Simple VPS owns; do not port production Caddy behavior here.
+
 action="${1:-}"
 unit="${2:-}"
 
@@ -29,7 +32,106 @@ pid_file() {
 }
 
 case "$action" in
-  daemon-reload|enable|disable|reload)
+  daemon-reload|enable|disable)
+    exit 0
+    ;;
+  reload)
+    if [[ "$unit" == "caddy" ]]; then
+      caddy_pid="$state_dir/caddy.pid"
+      if [[ -f "$caddy_pid" ]] && kill -0 "$(cat "$caddy_pid")" 2>/dev/null; then
+        exit 0
+      fi
+      rm -f "$caddy_pid"
+      python3 -u - <<'PY' > "$state_dir/caddy.log" 2>&1 &
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+import http.client
+import json
+import os
+
+STATE_PATH = Path("/etc/simple-vps/state.json")
+
+def load_routes():
+    try:
+        payload = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    routes = payload.get("routes", [])
+    return routes if isinstance(routes, list) else []
+
+def route_for(host):
+    normalized = host.split(":", 1)[0].lower().rstrip(".")
+    for route in load_routes():
+        if route.get("host") == normalized:
+            return route
+    return None
+
+def safe_static_path(root, request_path):
+    base = Path(root).resolve()
+    parsed = urlparse(request_path)
+    relative = unquote(parsed.path).lstrip("/") or "index.html"
+    candidate = (base / relative).resolve()
+    if candidate != base and base not in candidate.parents:
+        return None
+    if candidate.is_dir():
+        candidate = candidate / "index.html"
+    return candidate
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        return
+
+    def write_response(self, status, headers, body):
+        self.send_response(status)
+        for name, value in headers:
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def not_found(self):
+        self.write_response(404, [("Content-Type", "text/plain")], b"not found")
+
+    def do_HEAD(self):
+        self.do_GET()
+
+    def do_GET(self):
+        route = route_for(self.headers.get("Host", ""))
+        if not route:
+            self.not_found()
+            return
+        route_type = route.get("type")
+        if route_type == "static":
+            path = safe_static_path(route.get("root", ""), self.path)
+            if not path or not path.is_file():
+                self.not_found()
+                return
+            content_type = "text/html" if path.suffix == ".html" else "text/plain"
+            self.write_response(200, [("Content-Type", content_type)], path.read_bytes())
+            return
+        if route_type == "proxy":
+            connection = http.client.HTTPConnection("127.0.0.1", int(route["port"]), timeout=5)
+            try:
+                connection.request(self.command, self.path, headers={"Host": self.headers.get("Host", "")})
+                response = connection.getresponse()
+                body = response.read()
+            finally:
+                connection.close()
+            blocked = {"connection", "content-length", "date", "server", "transfer-encoding"}
+            headers = [(name, value) for name, value in response.getheaders() if name.lower() not in blocked]
+            self.write_response(response.status, headers, body)
+            return
+        self.not_found()
+
+class Server(ThreadingHTTPServer):
+    allow_reuse_address = True
+
+Server(("127.0.0.1", 8080), Handler).serve_forever()
+PY
+      echo $! > "$caddy_pid"
+    fi
     exit 0
     ;;
   is-active)

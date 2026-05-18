@@ -16,6 +16,8 @@ RUN apt-get update \
     sudo \
   && rm -rf /var/lib/apt/lists/*
 
+RUN npm install -g bun@1.3.14
+
 RUN useradd -m -s /bin/bash admin \
   && printf 'admin:admin\n' | chpasswd \
   && mkdir -p /home/admin/.ssh /run/sshd /etc/simple-vps /etc/caddy/simple-vps /etc/caddy/conf.d /var/apps /tmp/simple-deploy \
