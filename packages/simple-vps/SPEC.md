@@ -117,6 +117,13 @@ simple-vps route static data.example.com --root /var/apps/data/current/public
 simple-vps route redirect old.example.com --to https://new.example.com
 simple-vps route remove example.com
 simple-vps route remove --app my-app
+simple-vps app create my-app
+simple-vps app destroy my-app
+simple-vps app install-unit my-app web /tmp/simple-deploy/simple-my-app-web.service
+simple-vps app uninstall-unit my-app web
+simple-vps app daemon-reload
+simple-vps app service start my-app web
+simple-vps app run-as my-app -- bun install --production --frozen-lockfile
 simple-vps devtools install
 ```
 
@@ -160,6 +167,92 @@ Rules:
 - Preserve user-owned Caddy snippets under `/etc/caddy/conf.d`
 - Detect manual edits in Simple VPS generated Caddy files and fail unless
   `--force`
+
+## Simple Deploy Server API
+
+Simple Deploy is the sibling package that drives app deploys from a developer
+laptop or CI runner over SSH. It needs narrow root privileges on the server
+to create per-app system users, install systemd units, manage
+`simple-*.service` units, and publish routes. Simple VPS exposes that
+capability as subcommands of the existing `simple-vps` binary — there is no
+separate helper.
+
+```text
+simple-deploy/SPEC.md -> "these are the simple-vps subcommands we invoke"
+simple-vps/SPEC.md    -> "this is the API we expose, with validation"
+```
+
+### Sudoers
+
+One sudoers line, granting passwordless `sudo` for `simple-vps`:
+
+```text
+/etc/sudoers.d/simple-deploy
+  admin ALL=(root) NOPASSWD: /usr/local/bin/simple-vps
+```
+
+`simple-vps` is the gatekeeper. Every privileged subcommand validates its
+arguments (app/service name shape, unit file path and ownership, host, port,
+etc.) before performing the action. There are no glob-matched commands in
+sudoers; validation lives in code where it can be meaningful.
+
+This is a load-bearing maintenance rule: because sudoers grants
+`/usr/local/bin/simple-vps`, every mutating `simple-vps` subcommand must
+validate inputs and be designed as a safe root API. New subcommands must not
+assume interactive trust just because the caller is `admin`. Adding a
+subcommand that shells out to user-supplied arguments without validation
+silently broadens the deploy sudoers surface.
+
+### App Subcommands
+
+The `simple-vps app ...` namespace covers per-app lifecycle operations:
+
+```bash
+sudo simple-vps app create <name>
+sudo simple-vps app destroy <name>
+sudo simple-vps app install-unit <name> <service> <path-to-unit-file>
+sudo simple-vps app uninstall-unit <name> <service>
+sudo simple-vps app daemon-reload
+sudo simple-vps app service <action> <name> <service>
+  # action: start | stop | restart | status | is-active | enable | disable
+sudo simple-vps app run-as <name> -- <command> [args...]
+  # used for: bun install --production, npm ci --omit=dev, etc.
+```
+
+### Route Subcommands
+
+Routes use the existing `simple-vps route` namespace:
+
+```bash
+sudo simple-vps route proxy <host> --port <port> --app <name>
+sudo simple-vps route static <host> --root <path> --app <name>
+sudo simple-vps route redirect <host> --to <url> --app <name>
+sudo simple-vps route remove --app <name>
+```
+
+### Validation Rules
+
+Enforced by `simple-vps` before any privileged action:
+
+- `<name>` matches `^[a-z][a-z0-9-]{1,40}$`.
+- `<service>` matches `^[a-z][a-z0-9-]{0,30}$`.
+- `<host>` matches a DNS-1123 hostname (no schemes, no paths, no ports).
+- `<port>` is an integer in `[1, 65535]`.
+- `<path>` for static routes must resolve under `/var/apps/<name>/`.
+- `<url>` for redirects must be `http://...` or `https://...`.
+- Unit file paths must live under `/tmp/simple-deploy/` and be owned by the
+  invoking admin user.
+- Unit file contents must start with `[Unit]` and reference `User=app-<name>`.
+  Units that try to escalate are refused.
+- `app run-as` refuses any working directory or argument that resolves
+  outside `/var/apps/<name>/`.
+
+### Failure Mode
+
+If the sudoers entry or the `app` subcommands are missing on the server,
+Simple Deploy fails at `setup` time with a clear pointer to re-run the
+Simple VPS install. Simple Deploy never installs server-side capability
+itself.
 
 ## Cloudflare Model
 
