@@ -102,6 +102,7 @@ describe("deploy", () => {
       "ssh admin@100.x.y.z for i in $(seq 1 10); do status=$(curl -o /dev/null -s -w '%{http_code}' --max-time 2 http://127.0.0.1:3000/health || true); [ \"$status\" = \"200\" ] && exit 0; sleep 1; done; exit 1",
     );
     expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps route proxy api.example.com --port 3000 --app api");
+    expect(joined.some((command) => command.includes("rm -rf --") && command.includes("/var/apps/api/releases"))).toBe(true);
   });
 
   test("rolls current back and does not publish routes when health check fails", async () => {

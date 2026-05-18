@@ -156,4 +156,73 @@ describe("lifecycle commands", () => {
     expect(joined).toContain("ssh admin@100.x.y.z ln -sfn /var/apps/api/releases/a1b2c3d4 /var/apps/api/current");
     expect(joined).toContain("ssh admin@100.x.y.z touch /var/apps/api/releases/a1b2c3d4/.simple-deploy-success");
   });
+
+  test("destroy removes routes and units but preserves app data by default", async () => {
+    const root = fixture();
+    const output: string[] = [];
+    const commands: string[][] = [];
+    const originalLog = console.log;
+    const runner: CommandRunner = {
+      async run(command) {
+        commands.push(command);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    };
+
+    console.log = (message?: unknown) => output.push(String(message));
+    try {
+      await main(["destroy", "production", "--yes"], root, { runner });
+    } finally {
+      console.log = originalLog;
+    }
+
+    const joined = commands.map((command) => command.join(" "));
+    expect(process.exitCode).toBe(0);
+    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app service stop api web || true");
+    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app service disable api web || true");
+    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app uninstall-unit api web");
+    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app daemon-reload");
+    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps route remove --app api");
+    expect(joined).toContain("ssh admin@100.x.y.z rm -f /var/apps/api/current");
+    expect(joined).not.toContain("ssh admin@100.x.y.z sudo simple-vps app destroy api");
+    expect(output).toEqual(["Destroyed api (production), preserved /var/apps/api/shared and /var/apps/api/releases"]);
+  });
+
+  test("destroy purge requires yes and a typed app confirmation", async () => {
+    const root = fixture();
+    const errors: string[] = [];
+    const originalError = console.error;
+    const runner: CommandRunner = {
+      async run() {
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    };
+
+    console.error = (message?: unknown) => errors.push(String(message));
+    try {
+      await main(["destroy", "production", "--purge", "--yes"], root, { runner });
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(errors.join("\n")).toContain("destroy --purge requires --yes --confirm api");
+  });
+
+  test("destroy purge removes app data after confirmation", async () => {
+    const root = fixture();
+    const commands: string[][] = [];
+    const runner: CommandRunner = {
+      async run(command) {
+        commands.push(command);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    };
+
+    await main(["destroy", "production", "--purge", "--yes", "--confirm", "api"], root, { runner });
+
+    const joined = commands.map((command) => command.join(" "));
+    expect(process.exitCode).toBe(0);
+    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app destroy api");
+  });
 });

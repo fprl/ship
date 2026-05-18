@@ -219,6 +219,10 @@ sudo simple-vps app run-as <name> --cwd <path> -- <command> [args...]
   # used for: bun install --production, npm ci --omit=dev, etc.
 ```
 
+`app destroy` is the destructive purge primitive: it removes
+`/var/apps/<name>` and the `app-<name>` system user. The data-preserving
+`simple-deploy destroy` path does not call it.
+
 ### Route Subcommands
 
 Routes use the existing `simple-vps route` namespace:

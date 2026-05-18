@@ -368,6 +368,25 @@ class SimpleVpsCliTest(unittest.TestCase):
 
             self.assertIn(["usermod", "-aG", "app-my-app", "admin"], commands)
 
+    def test_app_destroy_removes_layout_and_user(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = load_cli(Path(tmp))
+            commands = []
+            root = cli.APP_ROOT / "my-app"
+            (root / "shared").mkdir(parents=True)
+
+            def fake_run(command, text=False, capture_output=False, check=False):
+                commands.append(command)
+                if command[:2] == ["id", "-u"]:
+                    return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+                return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+            with mock.patch.object(cli.subprocess, "run", fake_run):
+                call_quiet(cli.cmd_app_destroy, argparse.Namespace(name="my-app"))
+
+            self.assertFalse(root.exists())
+            self.assertIn(["userdel", "app-my-app"], commands)
+
     def test_app_install_unit_validates_and_copies_unit(self):
         with tempfile.TemporaryDirectory() as tmp:
             cli = load_cli(Path(tmp))

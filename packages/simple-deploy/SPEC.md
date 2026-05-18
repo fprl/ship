@@ -85,6 +85,8 @@ simple-deploy env push <env> <file>
 simple-deploy ssh <env>
 simple-deploy destroy <env>
 simple-deploy destroy <env> --purge
+simple-deploy destroy <env> --confirm <app>
+simple-deploy destroy <env> --purge --yes --confirm <app>
 ```
 
 Rules:
@@ -94,8 +96,8 @@ Rules:
 - `secret put` reads the value from stdin or prompts. Never accepts the value
   as an argument.
 - `secret list` prints names only, never values.
-- `destroy` requires a typed confirmation unless `--yes` is passed.
-- `--purge` requires `--yes` and a second typed confirmation.
+- data-preserving `destroy` requires `--yes` or `--confirm <app>`.
+- `destroy --purge` requires both `--yes` and `--confirm <app>`.
 
 ## Manifest
 
@@ -371,6 +373,10 @@ Health check semantics:
 - Attempts: `healthcheck_timeout` attempts (default 10), one per second.
   Each attempt has a 2s HTTP timeout and must return `healthcheck_status`.
 
+Release pruning keeps the newest `keep_releases` release directories by mtime
+and always preserves the currently linked release plus the newest successful
+rollback target, even if either falls outside the count.
+
 Failure mode is **stop-and-replace**. Blue-green is a future
 `[env.<name>] strategy = "blue-green"` and is not in v1.
 
@@ -464,7 +470,9 @@ With `--purge`:
 4.  unregister from simple-vps state
 ```
 
-`--purge` requires `--yes` and a typed confirmation matching the app name.
+The data-preserving form requires either `--yes` or `--confirm <app>`.
+`--purge` requires both `--yes` and `--confirm <app>`, where `<app>` matches
+the manifest `name`.
 
 ## Systemd Model
 
@@ -831,10 +839,9 @@ simple-deploy check --env production   # also check SSH, server tooling, setup
 3. Implement `setup` end-to-end against a Simple VPS host.
 4. Implement Mode A deploy end-to-end (smallest viable path).
 5. Add Mode B and Mode C.
-6. Add `destroy` and release pruning.
-7. Add `secret put`, `env push`.
-8. CI examples (GitHub Actions) using `SIMPLE_DEPLOY_SSH_KEY` and
+6. Add `secret put`, `env push`.
+7. CI examples (GitHub Actions) using `SIMPLE_DEPLOY_SSH_KEY` and
    `SIMPLE_DEPLOY_KNOWN_HOSTS`.
-9. End-to-end smoke test deploying a Hono/Bun example app to a fresh
+8. End-to-end smoke test deploying a Hono/Bun example app to a fresh
    Simple VPS host.
-10. Only then tag v1.
+9. Only then tag v1.

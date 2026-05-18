@@ -28,6 +28,12 @@ type AppContext = {
   routes: Record<string, Dict>;
 };
 
+type DestroyOptions = {
+  purge: boolean;
+  yes: boolean;
+  confirm?: string;
+};
+
 export type CheckResult = {
   errors: string[];
   warnings: string[];
@@ -322,6 +328,10 @@ function unitName(appName: string, serviceName: string): string {
 
 function releaseNameFromPath(path: string): string {
   return path.split("/").filter(Boolean).pop() ?? "none";
+}
+
+function keepReleasesFor(env: Dict): number {
+  return asNumber(env.keep_releases) ?? 5;
 }
 
 function blockedDotenvFiles(paths: string[]): string[] {
@@ -688,7 +698,32 @@ async function activateRelease(runner: CommandRunner, context: AppContext, relea
 }
 
 async function markReleaseSuccessful(runner: CommandRunner, server: string, releaseDir: string) {
-  await runCommand(runner, ["ssh", server, `touch ${releaseDir}/.simple-deploy-success`], "failed to mark release successful");
+  await runCommand(
+    runner,
+    ["ssh", server, `touch ${shellEscape(releaseDir)}/.simple-deploy-success`],
+    "failed to mark release successful",
+  );
+}
+
+function pruneReleasesCommand(appRoot: string, keep: number): string {
+  const releases = `${appRoot}/releases`;
+  const current = `${appRoot}/current`;
+  return [
+    "set -eu",
+    `releases=${shellEscape(releases)}`,
+    `current=$(readlink -f ${shellEscape(current)} 2>/dev/null || true)`,
+    `previous=$(find "$releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\\n' 2>/dev/null | sort -rn | while read -r _ dir; do [ -f "$dir/.simple-deploy-success" ] || continue; resolved=$(readlink -f "$dir"); [ "$resolved" = "$current" ] && continue; echo "$resolved"; break; done)`,
+    "count=0",
+    `find "$releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\\n' 2>/dev/null | sort -rn | while read -r _ dir; do count=$((count + 1)); resolved=$(readlink -f "$dir"); if [ "$resolved" = "$current" ] || [ "$resolved" = "$previous" ] || [ "$count" -le ${keep} ]; then continue; fi; rm -rf -- "$dir"; done`,
+  ].join("; ");
+}
+
+async function pruneReleases(runner: CommandRunner, context: AppContext) {
+  await runCommand(
+    runner,
+    ["ssh", context.server, pruneReleasesCommand(context.appRoot, keepReleasesFor(context.env))],
+    "failed to prune releases",
+  );
 }
 
 function serviceStatusText(result: CommandResult): string {
@@ -783,6 +818,60 @@ async function runRollback(root: string, envName: string, release: string | unde
   console.log(`Rolled back ${context.appName} to ${releaseNameFromPath(target)} (${envName})`);
 }
 
+function validateDestroyOptions(context: AppContext, options: DestroyOptions) {
+  if (options.purge) {
+    if (!options.yes || options.confirm !== context.appName) {
+      throw new Error(`destroy --purge requires --yes --confirm ${context.appName}`);
+    }
+    return;
+  }
+  if (!options.yes && options.confirm !== context.appName) {
+    throw new Error(`destroy requires --yes or --confirm ${context.appName}`);
+  }
+}
+
+async function runDestroy(root: string, envName: string, runner: CommandRunner, options: DestroyOptions) {
+  const context = loadAppContext(root, envName);
+  validateDestroyOptions(context, options);
+
+  for (const serviceName of Object.keys(context.services)) {
+    await runCommand(
+      runner,
+      ["ssh", context.server, `sudo simple-vps app service stop ${context.appName} ${serviceName} || true`],
+      `failed to stop ${serviceName}`,
+    );
+    await runCommand(
+      runner,
+      ["ssh", context.server, `sudo simple-vps app service disable ${context.appName} ${serviceName} || true`],
+      `failed to disable ${serviceName}`,
+    );
+    await runCommand(
+      runner,
+      ["ssh", context.server, `sudo simple-vps app uninstall-unit ${context.appName} ${serviceName}`],
+      `failed to uninstall ${serviceName}`,
+    );
+  }
+  await runCommand(runner, ["ssh", context.server, "sudo simple-vps app daemon-reload"], "systemd daemon-reload failed");
+  await runCommand(
+    runner,
+    ["ssh", context.server, `sudo simple-vps route remove --app ${context.appName}`],
+    "failed to remove app routes",
+  );
+  await runCommand(runner, ["ssh", context.server, `rm -f ${context.appRoot}/current`], "failed to remove current symlink");
+
+  if (options.purge) {
+    await runCommand(
+      runner,
+      ["ssh", context.server, `sudo simple-vps app destroy ${context.appName}`],
+      "failed to purge app data",
+    );
+    console.log(`Destroyed ${context.appName} (${envName}) and purged ${context.appRoot}`);
+    return;
+  }
+
+  console.log(`Destroyed ${context.appName} (${envName}), preserved ${context.appRoot}/shared and ${context.appRoot}/releases`);
+}
+
 async function runDeploy(
   root: string,
   envName: string,
@@ -869,8 +958,29 @@ async function runDeploy(
     }
   }
   await markReleaseSuccessful(runner, server, releaseDir);
+  await pruneReleases(runner, context);
 
   console.log(`Deployed ${appName} ${release.slice(0, 7)} to ${envName}`);
+}
+
+function parseDestroyOptions(args: string[], appNameHint?: string): DestroyOptions {
+  const options: DestroyOptions = { purge: false, yes: false };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--purge") {
+      options.purge = true;
+    } else if (arg === "--yes") {
+      options.yes = true;
+    } else if (arg === "--confirm") {
+      const value = args[index + 1];
+      if (!value) throw new Error(`--confirm requires ${appNameHint ?? "an app name"}`);
+      options.confirm = value;
+      index += 1;
+    } else {
+      throw new Error(`unknown argument: ${arg}`);
+    }
+  }
+  return options;
 }
 
 function usage() {
@@ -882,6 +992,7 @@ function usage() {
   console.error("  simple-deploy status <env>");
   console.error("  simple-deploy logs <env> [service] [--tail]");
   console.error("  simple-deploy rollback <env> [release]");
+  console.error("  simple-deploy destroy <env> [--yes|--confirm <app>] [--purge]");
 }
 
 export async function main(argv = process.argv.slice(2), root = process.cwd(), options: MainOptions = {}) {
@@ -938,6 +1049,12 @@ export async function main(argv = process.argv.slice(2), root = process.cwd(), o
       const release = args[1];
       if (!env || args.length > 2) throw new Error("rollback requires env and optional release");
       await runRollback(root, env, release, runner);
+      return;
+    }
+    if (command === "destroy") {
+      const env = args[0];
+      if (!env) throw new Error("destroy requires env");
+      await runDestroy(root, env, runner, parseDestroyOptions(args.slice(1)));
       return;
     }
     if (command === "deploy") {
