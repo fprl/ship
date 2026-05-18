@@ -33,6 +33,7 @@ const RUNTIMES = new Set(["bun", "node", "static"]);
 const ROUTE_TYPES = new Set(["proxy", "static", "redirect"]);
 const RESERVED_SERVICES = new Set(["current", "releases", "shared"]);
 const LOCKFILES = ["bun.lock", "bun.lockb", "pnpm-lock.yaml", "package-lock.json", "yarn.lock"];
+const ALLOWED_DOTENV_FILES = new Set([".env.example", ".env.sample", ".env.defaults"]);
 
 const defaultRunner: CommandRunner = {
   async run(command) {
@@ -148,11 +149,12 @@ function validateBuild(build: Dict | undefined, root: string, errors: string[]) 
   }
 }
 
-function validateEnvBlock(name: string, env: Dict, errors: string[]) {
+function validateEnvBlock(name: string, appName: string | undefined, env: Dict, errors: string[]) {
   if (!SERVICE_RE.test(name)) errors.push(`invalid env name: ${name}`);
   if (!asString(env.server)) errors.push(`[env.${name}].server is required`);
   const path = asString(env.path);
   if (!path) errors.push(`[env.${name}].path is required`);
+  else if (appName && path !== `/var/apps/${appName}`) errors.push(`[env.${name}].path must be /var/apps/${appName}`);
   else if (!path.startsWith("/")) errors.push(`[env.${name}].path must be absolute`);
 
   const runtime = asString(env.runtime);
@@ -280,6 +282,17 @@ function servicePort(service: Dict): number | undefined {
   return asNumber(service.port);
 }
 
+function healthCheckCommand(port: number, path: string, expectedStatus: number, timeout: number): string {
+  return `for i in $(seq 1 ${timeout}); do status=$(curl -o /dev/null -s -w '%{http_code}' --max-time 2 http://127.0.0.1:${port}${path} || true); [ "$status" = "${expectedStatus}" ] && exit 0; sleep 1; done; exit 1`;
+}
+
+function blockedDotenvFiles(paths: string[]): string[] {
+  return paths.filter((path) => {
+    const name = path.split("/").pop() ?? path;
+    return name.startsWith(".env") && !ALLOWED_DOTENV_FILES.has(name);
+  });
+}
+
 function resolveEnv(manifest: Dict, envName: string): Dict {
   const envs = isRecord(manifest.env) ? manifest.env : {};
   const env = envs[envName];
@@ -308,7 +321,7 @@ export function checkManifest(root = process.cwd(), envName?: string): CheckResu
   for (const selected of selectedEnvNames) {
     const env = envs[selected];
     if (!isRecord(env)) continue;
-    validateEnvBlock(selected, env, errors);
+    validateEnvBlock(selected, name, env, errors);
 
     const build = effectiveBuild(manifest, env);
     const services = effectiveServices(manifest, env);
@@ -480,6 +493,11 @@ async function runDeploy(root: string, envName: string, runner: CommandRunner) {
   const release = await gitOutput(root, runner, ["rev-parse", "HEAD"]);
   const dirty = await gitOutput(root, runner, ["status", "--porcelain"]);
   if (dirty) throw new Error("working tree is dirty; commit changes or pass --dirty");
+  const treeFiles = (await gitOutput(root, runner, ["ls-tree", "-r", "--name-only", "HEAD"]))
+    .split("\n")
+    .filter(Boolean);
+  const dotenvFiles = blockedDotenvFiles(treeFiles);
+  if (dotenvFiles.length > 0) throw new Error(`refusing to deploy dotenv file: ${dotenvFiles.join(", ")}`);
 
   const artifactDir = mkdtempSync(join(tmpdir(), "simple-deploy-artifact-"));
   await runCommand(
@@ -492,6 +510,13 @@ async function runDeploy(root: string, envName: string, runner: CommandRunner) {
   await runCommand(runner, ["ssh", server, `test -d ${shellEscape(appRoot)}/shared`], `setup has not run for ${envName}`);
   await runCommand(runner, ["ssh", server, `mkdir -p ${shellEscape(releaseDir)}`], "failed to create release directory");
   await runCommand(runner, ["rsync", "-az", "--delete", `${artifactDir}/`, `${server}:${releaseDir}/`], "rsync failed");
+  for (const entry of [".env", "db", "storage", "logs"]) {
+    await runCommand(
+      runner,
+      ["ssh", server, `ln -sfn ${appRoot}/shared/${entry} ${releaseDir}/${entry}`],
+      `failed to link shared ${entry}`,
+    );
+  }
 
   const locks = lockfilesIn(root);
   if (installNeeded(runtime, build)) {
@@ -503,14 +528,22 @@ async function runDeploy(root: string, envName: string, runner: CommandRunner) {
   }
 
   const services = effectiveServices(manifest, env);
-  mkdirSync("/tmp/simple-deploy", { recursive: true });
+  const localUnitDir = mkdtempSync(join(tmpdir(), "simple-deploy-units-"));
+  const remoteUnitDir = `/tmp/simple-deploy/${release}`;
   for (const [serviceName, service] of Object.entries(services)) {
     const unitName = `simple-${appName}-${serviceName}.service`;
-    const unitPath = join("/tmp/simple-deploy", unitName);
+    const unitPath = join(localUnitDir, unitName);
     writeFileSync(unitPath, renderUnit(appName, envName, release, serviceName, service), { encoding: "utf8", mode: 0o644 });
+  }
+  await runCommand(runner, ["ssh", server, `mkdir -p ${remoteUnitDir}`], "failed to create remote unit directory");
+  await runCommand(runner, ["rsync", "-az", `${localUnitDir}/`, `${server}:${remoteUnitDir}/`], "failed to upload unit files");
+
+  for (const serviceName of Object.keys(services)) {
+    const unitName = `simple-${appName}-${serviceName}.service`;
+    const remoteUnitPath = `${remoteUnitDir}/${unitName}`;
     await runCommand(
       runner,
-      ["ssh", server, `sudo simple-vps app install-unit ${appName} ${serviceName} ${unitPath}`],
+      ["ssh", server, `sudo simple-vps app install-unit ${appName} ${serviceName} ${remoteUnitPath}`],
       `failed to install ${serviceName} unit`,
     );
   }
@@ -534,9 +567,11 @@ async function runDeploy(root: string, envName: string, runner: CommandRunner) {
       const port = servicePort(service);
       const healthcheck = asString(service.healthcheck);
       if (port !== undefined && healthcheck) {
+        const expectedStatus = asNumber(service.healthcheck_status) ?? 200;
+        const timeout = asNumber(service.healthcheck_timeout) ?? 10;
         await runCommand(
           runner,
-          ["ssh", server, `curl -fsS http://127.0.0.1:${port}${healthcheck}`],
+          ["ssh", server, healthCheckCommand(port, healthcheck, expectedStatus, timeout)],
           `health check failed for ${serviceName}`,
         );
       }

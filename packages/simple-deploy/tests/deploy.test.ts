@@ -64,12 +64,23 @@ describe("deploy", () => {
       true,
     );
     expect(joined.some((command) => command.startsWith("rsync -az --delete "))).toBe(true);
+    expect(joined).toContain("ssh admin@100.x.y.z ln -sfn /var/apps/api/shared/.env /var/apps/api/releases/a1b2c3d4e5f6/.env");
+    expect(joined).toContain("ssh admin@100.x.y.z ln -sfn /var/apps/api/shared/db /var/apps/api/releases/a1b2c3d4e5f6/db");
+    expect(joined).toContain(
+      "ssh admin@100.x.y.z ln -sfn /var/apps/api/shared/storage /var/apps/api/releases/a1b2c3d4e5f6/storage",
+    );
+    expect(joined).toContain("ssh admin@100.x.y.z ln -sfn /var/apps/api/shared/logs /var/apps/api/releases/a1b2c3d4e5f6/logs");
     expect(joined).toContain(
       "ssh admin@100.x.y.z sudo simple-vps app run-as api --cwd /var/apps/api/releases/a1b2c3d4e5f6 -- bun install --production --frozen-lockfile",
     );
+    expect(joined.some((command) => command.startsWith("rsync -az ") && command.includes("admin@100.x.y.z:/tmp/simple-deploy/"))).toBe(
+      true,
+    );
     expect(joined.some((command) => command.includes("sudo simple-vps app install-unit api web "))).toBe(true);
     expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app service start api web");
-    expect(joined).toContain("ssh admin@100.x.y.z curl -fsS http://127.0.0.1:3000/health");
+    expect(joined).toContain(
+      "ssh admin@100.x.y.z for i in $(seq 1 10); do status=$(curl -o /dev/null -s -w '%{http_code}' --max-time 2 http://127.0.0.1:3000/health || true); [ \"$status\" = \"200\" ] && exit 0; sleep 1; done; exit 1",
+    );
     expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps route proxy api.example.com --port 3000 --app api");
   });
 
@@ -85,7 +96,7 @@ describe("deploy", () => {
         if (joined === "ssh admin@100.x.y.z readlink -f /var/apps/api/current") {
           return { code: 0, stdout: "/var/apps/api/releases/oldsha\n", stderr: "" };
         }
-        if (joined === "ssh admin@100.x.y.z curl -fsS http://127.0.0.1:3000/health") {
+        if (joined.includes("curl -o /dev/null -s -w '%{http_code}'")) {
           return { code: 22, stdout: "", stderr: "HTTP 500" };
         }
         return { code: 0, stdout: "", stderr: "" };
@@ -100,5 +111,32 @@ describe("deploy", () => {
     expect(joined).toContain("ssh admin@100.x.y.z ln -sfn /var/apps/api/releases/oldsha /var/apps/api/current");
     expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app service start api web");
     expect(joined).not.toContain("ssh admin@100.x.y.z sudo simple-vps route proxy api.example.com --port 3000 --app api");
+  });
+
+  test("refuses to deploy tracked dotenv files", async () => {
+    const root = fixture();
+    const errors: string[] = [];
+    const originalError = console.error;
+    const runner: CommandRunner = {
+      async run(command) {
+        const joined = command.join(" ");
+        if (joined === "git -C " + root + " rev-parse HEAD") return { code: 0, stdout: "a1b2c3d4e5f6\n", stderr: "" };
+        if (joined === "git -C " + root + " status --porcelain") return { code: 0, stdout: "", stderr: "" };
+        if (joined === "git -C " + root + " ls-tree -r --name-only HEAD") return { code: 0, stdout: ".env\nsrc/server.ts\n", stderr: "" };
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    };
+
+    console.error = (message?: unknown) => {
+      errors.push(String(message));
+    };
+    try {
+      await main(["deploy", "production"], root, { runner });
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(errors.join("\n")).toContain("refusing to deploy dotenv file: .env");
   });
 });

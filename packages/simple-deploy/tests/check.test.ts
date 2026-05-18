@@ -138,4 +138,23 @@ type = "static"
 
     expect(checkManifest(root, "production").errors).toEqual([]);
   });
+
+  test("rejects unsafe env paths", () => {
+    const root = fixture();
+    writeManifest(
+      root,
+      `
+name = "api"
+
+[env.production]
+server = "admin@100.x.y.z"
+path = "/var/apps/api; touch /tmp/pwned"
+runtime = "bun"
+`,
+    );
+
+    expect(checkManifest(root, "production").errors).toContain(
+      "[env.production].path must be /var/apps/api",
+    );
+  });
 });
