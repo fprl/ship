@@ -20,7 +20,7 @@ converge engine.
 
 Default install path:
 
-- Admin user with key-based access
+- Operator user with broad sudo and deploy user with narrow helper sudo
 - SSH hardening, UFW, fail2ban, unattended upgrades
 - Tailscale installed and started for private admin access
 - cloudflared installed for Cloudflare Tunnel ingress
@@ -40,9 +40,10 @@ Tailscale is on by default. Provide `SIMPLE_VPS_TAILSCALE_AUTH_KEY` or
 Tailscale is authenticated, so bootstrap runs do not lock themselves out.
 
 Cloudflare Tunnel is installed by default. Provide
-`SIMPLE_VPS_CLOUDFLARE_TUNNEL_TOKEN` or `--cloudflare-tunnel-token` to enable
-the `cloudflared` service. The tunnel public hostname should route to
-`http://127.0.0.1:8080`.
+`SIMPLE_VPS_CLOUDFLARE_API_TOKEN` or `--cloudflare-api-token` to create/reuse
+the server tunnel, enable `cloudflared`, and let deploys publish public
+hostnames and CNAMEs through the server-side helper. Existing tunnel token and
+config-path modes remain available for manual setups.
 
 Server-local route management:
 
@@ -68,14 +69,22 @@ Remote mode from this checkout:
   --mode remote \
   --host 203.0.113.10 \
   --ssh-key ~/.ssh/id_ed25519 \
-  --admin-user admin
+  --operator-ssh-public-key-file ~/.ssh/id_ed25519.pub \
+  --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
 ```
 
 Local mode from this checkout on the VPS:
 
 ```bash
-./install.sh --mode local --admin-user admin
+./install.sh \
+  --mode local \
+  --operator-ssh-public-key-file ~/.ssh/id_ed25519.pub \
+  --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
 ```
+
+Use separate SSH keys for the operator and deploy users. `--shared-key` is
+available for small single-person hosts, but it gives that one key access to both
+identities.
 
 The hosted installer bootstrap path exists, but the final v1 one-liner is still
 part of the work tracked in [SPEC.md](SPEC.md).

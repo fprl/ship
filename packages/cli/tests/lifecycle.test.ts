@@ -13,8 +13,7 @@ function fixture(): string {
 name = "api"
 
 [env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/api"
+server = "deploy@100.x.y.z"
 runtime = "bun"
 
 [services.web]
@@ -43,17 +42,17 @@ describe("lifecycle commands", () => {
     const runner: CommandRunner = {
       async run(command) {
         const joined = command.join(" ");
-        if (joined === "ssh admin@100.x.y.z readlink -f /var/apps/api/current 2>/dev/null || true") {
+        if (joined === "ssh deploy@100.x.y.z readlink -f /var/apps/api/current 2>/dev/null || true") {
           return { code: 0, stdout: "/var/apps/api/releases/a1b2c3d4\n", stderr: "" };
         }
-        if (joined === "ssh admin@100.x.y.z sudo simple-vps route list --json") {
+        if (joined === "ssh deploy@100.x.y.z sudo simple-vps route list --json") {
           return {
             code: 0,
             stdout: JSON.stringify({ routes: [{ host: "api.example.com", type: "proxy", port: 3000, app: "api" }] }),
             stderr: "",
           };
         }
-        if (joined === "ssh admin@100.x.y.z sudo simple-vps app service is-active api web") {
+        if (joined === "ssh deploy@100.x.y.z sudo simple-vps app service is-active api web") {
           return { code: 0, stdout: "active\n", stderr: "" };
         }
         return { code: 0, stdout: "", stderr: "" };
@@ -93,11 +92,11 @@ describe("lifecycle commands", () => {
 
     expect(output).toEqual(["line one\nline two"]);
     expect(commands[0]).toEqual({
-      command: ["ssh", "admin@100.x.y.z", "journalctl -u simple-api-web.service -n 200 --no-pager"],
+      command: ["ssh", "deploy@100.x.y.z", "journalctl -u simple-api-web.service -n 200 --no-pager"],
       passthrough: false,
     });
     expect(commands[1]).toEqual({
-      command: ["ssh", "admin@100.x.y.z", "journalctl -u simple-api-web.service -f"],
+      command: ["ssh", "deploy@100.x.y.z", "journalctl -u simple-api-web.service -f"],
       passthrough: true,
     });
   });
@@ -114,7 +113,7 @@ describe("lifecycle commands", () => {
         if (joined.includes("for dir in $(ls -1dt /var/apps/api/releases/*")) {
           return { code: 0, stdout: "/var/apps/api/releases/oldsha\n", stderr: "" };
         }
-        if (joined === "ssh admin@100.x.y.z readlink -f /var/apps/api/current") {
+        if (joined === "ssh deploy@100.x.y.z readlink -f /var/apps/api/current") {
           return { code: 0, stdout: "/var/apps/api/releases/newsha\n", stderr: "" };
         }
         return { code: 0, stdout: "", stderr: "" };
@@ -130,11 +129,11 @@ describe("lifecycle commands", () => {
 
     const joined = commands.map((command) => command.join(" "));
     expect(process.exitCode).toBe(0);
-    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app service stop api web");
-    expect(joined).toContain("ssh admin@100.x.y.z ln -sfn /var/apps/api/releases/oldsha /var/apps/api/current");
-    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app service start api web");
-    expect(joined).toContain("ssh admin@100.x.y.z touch /var/apps/api/releases/oldsha/.simple-deploy-success");
-    expect(joined).not.toContain("ssh admin@100.x.y.z sudo simple-vps route proxy api.example.com --port 3000 --app api");
+    expect(joined).toContain("ssh deploy@100.x.y.z sudo simple-vps app service stop api web");
+    expect(joined).toContain("ssh deploy@100.x.y.z ln -sfn /var/apps/api/releases/oldsha /var/apps/api/current");
+    expect(joined).toContain("ssh deploy@100.x.y.z sudo simple-vps app service start api web");
+    expect(joined).toContain("ssh deploy@100.x.y.z touch /var/apps/api/releases/oldsha/.simple-deploy-success");
+    expect(joined).not.toContain("ssh deploy@100.x.y.z sudo simple-vps route proxy api.example.com --port 3000 --app api");
     expect(output).toEqual(["Rolled back api to oldsha (production)"]);
   });
 
@@ -152,9 +151,9 @@ describe("lifecycle commands", () => {
 
     const joined = commands.map((command) => command.join(" "));
     expect(process.exitCode).toBe(0);
-    expect(joined).toContain("ssh admin@100.x.y.z test -d /var/apps/api/releases/a1b2c3d4");
-    expect(joined).toContain("ssh admin@100.x.y.z ln -sfn /var/apps/api/releases/a1b2c3d4 /var/apps/api/current");
-    expect(joined).toContain("ssh admin@100.x.y.z touch /var/apps/api/releases/a1b2c3d4/.simple-deploy-success");
+    expect(joined).toContain("ssh deploy@100.x.y.z test -d /var/apps/api/releases/a1b2c3d4");
+    expect(joined).toContain("ssh deploy@100.x.y.z ln -sfn /var/apps/api/releases/a1b2c3d4 /var/apps/api/current");
+    expect(joined).toContain("ssh deploy@100.x.y.z touch /var/apps/api/releases/a1b2c3d4/.simple-deploy-success");
   });
 
   test("destroy removes routes and units but preserves app data by default", async () => {
@@ -178,13 +177,13 @@ describe("lifecycle commands", () => {
 
     const joined = commands.map((command) => command.join(" "));
     expect(process.exitCode).toBe(0);
-    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app service stop api web || true");
-    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app service disable api web || true");
-    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app uninstall-unit api web");
-    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app daemon-reload");
-    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps route remove --app api");
-    expect(joined).toContain("ssh admin@100.x.y.z rm -f /var/apps/api/current");
-    expect(joined).not.toContain("ssh admin@100.x.y.z sudo simple-vps app destroy api");
+    expect(joined).toContain("ssh deploy@100.x.y.z sudo simple-vps app service stop api web || true");
+    expect(joined).toContain("ssh deploy@100.x.y.z sudo simple-vps app service disable api web || true");
+    expect(joined).toContain("ssh deploy@100.x.y.z sudo simple-vps app uninstall-unit api web");
+    expect(joined).toContain("ssh deploy@100.x.y.z sudo simple-vps app daemon-reload");
+    expect(joined).toContain("ssh deploy@100.x.y.z sudo simple-vps route remove --app api");
+    expect(joined).toContain("ssh deploy@100.x.y.z rm -f /var/apps/api/current");
+    expect(joined).not.toContain("ssh deploy@100.x.y.z sudo simple-vps app destroy api");
     expect(output).toEqual(["Destroyed api (production), preserved /var/apps/api/shared and /var/apps/api/releases"]);
   });
 
@@ -223,7 +222,7 @@ describe("lifecycle commands", () => {
 
     const joined = commands.map((command) => command.join(" "));
     expect(process.exitCode).toBe(0);
-    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app destroy api");
+    expect(joined).toContain("ssh deploy@100.x.y.z sudo simple-vps app destroy api");
   });
 
   test("restart restarts one service and health-checks it", async () => {
@@ -240,9 +239,9 @@ describe("lifecycle commands", () => {
 
     const joined = commands.map((command) => command.join(" "));
     expect(process.exitCode).toBe(0);
-    expect(joined).toContain("ssh admin@100.x.y.z sudo simple-vps app service restart api web");
+    expect(joined).toContain("ssh deploy@100.x.y.z sudo simple-vps app service restart api web");
     expect(joined).toContain(
-      "ssh admin@100.x.y.z for i in $(seq 1 10); do status=$(curl -o /dev/null -s -w '%{http_code}' --max-time 2 http://127.0.0.1:3000/health || true); [ \"$status\" = \"200\" ] && exit 0; sleep 1; done; exit 1",
+      "ssh deploy@100.x.y.z for i in $(seq 1 10); do status=$(curl -o /dev/null -s -w '%{http_code}' --max-time 2 http://127.0.0.1:3000/health || true); [ \"$status\" = \"200\" ] && exit 0; sleep 1; done; exit 1",
     );
   });
 });

@@ -60,7 +60,8 @@ backup configuration.
 
 The default install should create:
 
-- Admin user with key-based access
+- Operator user with key-based access
+- Deploy user with key-based access and narrow helper sudo
 - SSH hardened and reachable only through Tailscale after bootstrap
 - UFW deny-all inbound by default
 - Optional Hetzner firewall automation, also deny-all inbound
@@ -197,20 +198,20 @@ operator user    human/admin identity for host convergence and recovery
 deploy user      CLI/CI identity for app deploys
 ```
 
-Today `admin` is both the operator user and the deploy user. This is an
+In 0.2 `admin` is both the operator user and the deploy user. This is an
 implementation compromise, not the target security model. It exists because
 remote install phase 2 connects as `admin` and runs Ansible with `become: true`.
 Without a passwordless root path for that operator identity, unattended
 converge breaks.
 
-The current Ansible role therefore grants:
+The 0.2 Ansible role therefore grants:
 
 ```text
 /etc/sudoers.d/admin
   admin ALL=(ALL) NOPASSWD:ALL
 ```
 
-The deploy API also has one narrow sudoers line, granting passwordless `sudo`
+The 0.2 deploy API also has one narrow sudoers line, granting passwordless `sudo`
 only for `simple-vps`:
 
 ```text
@@ -233,9 +234,10 @@ assume interactive trust just because the caller is `admin`. Adding a
 subcommand that shells out to user-supplied arguments without validation
 silently broadens the deploy sudoers surface.
 
-0.3.0 should split operator and deploy users so the app CLI and CI authenticate
-as a deploy identity with only the `/usr/local/bin/simple-vps` grant. Host
-convergence can then use a separate operator identity.
+0.3.0 splits operator and deploy users so the app CLI and CI authenticate as a
+deploy identity with only the `/usr/local/bin/simple-vps` grant. Host
+convergence uses a separate operator identity. The detailed sub-spec lives in
+[`docs/0.3-operator-deploy-split.md`](../../docs/0.3-operator-deploy-split.md).
 
 ### App Subcommands
 
@@ -289,7 +291,7 @@ Enforced by `simple-vps` before any privileged action:
 - `<path>` for static routes must resolve under `/var/apps/<name>/`.
 - `<url>` for redirects must be `http://...` or `https://...`.
 - Unit file paths must live under `/tmp/simple-deploy/` and be owned by the
-  invoking admin user.
+  invoking deploy user.
 - Unit file contents must start with `[Unit]` and reference `User=app-<name>`.
   Units that try to escalate are refused.
 - `app run-as --cwd <path>` refuses any working directory outside
@@ -383,23 +385,29 @@ the engine.
 
 ## Language Choice
 
-Simple VPS is Python, stdlib only.
+The privileged helper remains Python, stdlib only.
 
 The `/usr/local/bin/simple-vps` CLI is granted passwordless sudo by
 `/etc/sudoers.d/simple-vps`, so it lives at the privilege boundary. Python
 stdlib covers the root API this tool needs (`argparse`, `json`, `pathlib`, `re`,
 `shutil`, `subprocess`) without npm, PyPI, or transitive dependencies to audit.
 
-Adding a non-stdlib dependency is the trigger to revisit this decision. Until
-then, contributor preference is not enough reason to move the root-owned server
-API to TS/Bun.
+Revisit a Bun helper only when both conditions are true:
+
+- It ships as a compiled binary via `bun build --compile`, so root is not
+  running JIT-loaded project code.
+- CI enforces a no-dependency boundary for the helper: only stdlib, `node:*`,
+  and `bun:*` imports are allowed.
+
+Until then, contributor preference is not enough reason to move the root-owned
+server API to TS/Bun.
 
 ## Current Implementation
 
 Current default apply path installs:
 
 - System essentials
-- Admin user
+- Operator and deploy users
 - Security baseline
 - Tailscale package and `tailscaled`
 - `cloudflared` package for Cloudflare Tunnel ingress
@@ -413,11 +421,14 @@ Current default apply path installs:
 
 Current sudo behavior:
 
-- `admin` is both operator and deploy user.
-- `admin ALL=(ALL) NOPASSWD:ALL` is used by Ansible phase 2 convergence.
-- `admin ALL=(root) NOPASSWD: /usr/local/bin/simple-vps` is the narrow deploy
-  API used by app operations.
-- The operator/deploy split is deferred to 0.3.0.
+- `operator` is the default operator user.
+- `deploy` is the default deploy user.
+- `operator ALL=(ALL) NOPASSWD:ALL` is used by Ansible phase 2 convergence via
+  `/etc/sudoers.d/operator`.
+- `deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps` is the narrow deploy
+  API used by app operations via `/etc/sudoers.d/simple-vps`.
+- Existing 0.2 hosts with `admin` as both identities are supported as legacy
+  hosts but reported degraded by `simple-vps doctor`.
 
 Current optional variables:
 
@@ -441,14 +452,25 @@ Current Tailscale behavior:
 Current Cloudflare Tunnel behavior:
 
 - `cloudflared` is installed by default from Cloudflare's apt repository.
+- `SIMPLE_VPS_CLOUDFLARE_API_TOKEN` or `--cloudflare-api-token` creates or
+  reuses a remotely-managed tunnel, stores the API token on the server at
+  `/etc/simple-vps/cloudflare-api-token`, stores tunnel state at
+  `/etc/simple-vps/cloudflare.json`, writes `/etc/cloudflared/tunnel-token`,
+  and enables the `cloudflared` service.
+- If the token can access multiple Cloudflare accounts,
+  `SIMPLE_VPS_CLOUDFLARE_ACCOUNT_ID` or `--cloudflare-account-id` selects the
+  account.
 - `SIMPLE_VPS_CLOUDFLARE_TUNNEL_TOKEN` or `--cloudflare-tunnel-token` enables
   a remotely-managed tunnel service using `/etc/cloudflared/tunnel-token`.
 - `SIMPLE_VPS_CLOUDFLARE_TUNNEL_CONFIG` or `--cloudflare-tunnel-config`
   enables a service using an existing local `cloudflared` config path.
-- If neither token nor config path is provided, `cloudflared` is installed but
-  the service is not enabled.
-- Until Cloudflare API automation lands, configure the tunnel public hostname in
-  Cloudflare Zero Trust to route to `http://127.0.0.1:8080`.
+- If no API token, tunnel token, or config path is provided, `cloudflared` is
+  installed but the service is not enabled.
+- `simple-vps cloudflare publish HOST --app APP` ensures the tunnel public
+  hostname routes to `http://127.0.0.1:8080` and a CNAME points to
+  `<tunnel-id>.cfargotunnel.com`.
+- `simple-vps cloudflare remove --app APP` removes Cloudflare hostnames and
+  CNAME records tracked for that app.
 
 Current CLI behavior:
 
@@ -474,8 +496,6 @@ Current CLI behavior:
 
 Known gaps:
 
-- Cloudflare Tunnel API automation is not implemented yet.
-- Cloudflare config generation is not implemented yet.
 - Hosted installer needs fresh-VPS validation.
 - Public SSH is still needed during bootstrap unless Tailscale auth succeeds.
 - Static inventory/direct Ansible path is legacy and should not drive the product.
@@ -487,7 +507,7 @@ Known gaps:
 3. Make Tailscale part of the secure baseline.
 4. Add Cloudflare Tunnel install and service setup.
 5. Add `/usr/local/bin/simple-vps`.
-6. Add Cloudflare API/config automation for tunnel public hostnames.
+6. Expand Cloudflare API coverage as real hosts expose edge cases.
 7. Add fresh Ubuntu 24.04 smoke testing and idempotency testing.
 8. Only then tag v1.
 

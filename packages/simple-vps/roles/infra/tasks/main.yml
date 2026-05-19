@@ -37,9 +37,9 @@
         state: present
         update_cache: yes
 
-    - name: Add admin user to docker group
+    - name: Add operator user to docker group
       user:
-        name: "{{ admin_user }}"
+        name: "{{ operator_user }}"
         groups: docker
         append: yes
 
@@ -144,7 +144,7 @@
     owner: root
     group: root
     mode: '0440'
-    content: "{{ admin_user }} ALL=(root) NOPASSWD: /usr/local/bin/simple-vps\n"
+    content: "{{ deploy_user }} ALL=(root) NOPASSWD: /usr/local/bin/simple-vps\n"
     validate: 'visudo -cf %s'
 
 - name: Remove legacy Simple Deploy sudoers file
@@ -208,12 +208,16 @@
   set_fact:
     infra_cloudflare_tunnel_service_mode: >-
       {{
-        'token'
-        if (simple_vps_cloudflare_tunnel_token | default('') | length) > 0
+        'api'
+        if (simple_vps_cloudflare_api_token | default('') | length) > 0
         else (
-          'config'
-          if (simple_vps_cloudflare_tunnel_config_path | default('') | length) > 0
-          else 'none'
+          'token'
+          if (simple_vps_cloudflare_tunnel_token | default('') | length) > 0
+          else (
+            'config'
+            if (simple_vps_cloudflare_tunnel_config_path | default('') | length) > 0
+            else 'none'
+          )
         )
       }}
   when: simple_vps_enable_cloudflare_tunnel | default(true) | bool
@@ -282,6 +286,31 @@
     - simple_vps_enable_cloudflare_tunnel | default(true) | bool
     - infra_cloudflare_tunnel_service_mode | default('none') == 'token'
 
+- name: Write Cloudflare API token file
+  copy:
+    dest: /etc/simple-vps/cloudflare-api-token
+    owner: root
+    group: root
+    mode: '0600'
+    content: "{{ simple_vps_cloudflare_api_token | trim }}\n"
+  no_log: true
+  when:
+    - simple_vps_enable_cloudflare_tunnel | default(true) | bool
+    - infra_cloudflare_tunnel_service_mode | default('none') == 'api'
+
+- name: Create Cloudflare Tunnel through API
+  command: >-
+    simple-vps cloudflare setup-tunnel
+    --token-file /etc/simple-vps/cloudflare-api-token
+    --name "{{ simple_vps_cloudflare_tunnel_name }}"
+    {% if simple_vps_cloudflare_account_id | default('') | length > 0 -%}
+    --account-id "{{ simple_vps_cloudflare_account_id }}"
+    {%- endif %}
+  notify: Restart cloudflared
+  when:
+    - simple_vps_enable_cloudflare_tunnel | default(true) | bool
+    - infra_cloudflare_tunnel_service_mode | default('none') == 'api'
+
 - name: Install cloudflared systemd service
   copy:
     dest: /etc/systemd/system/cloudflared.service
@@ -310,7 +339,7 @@
       WantedBy=multi-user.target
   vars:
     infra_cloudflare_tunnel_exec_start: >-
-      {% if infra_cloudflare_tunnel_service_mode == 'token' -%}
+      {% if infra_cloudflare_tunnel_service_mode in ['token', 'api'] -%}
       /usr/bin/cloudflared tunnel --no-autoupdate run --token-file /etc/cloudflared/tunnel-token
       {%- else -%}
       /usr/bin/cloudflared --config {{ simple_vps_cloudflare_tunnel_config_path }} tunnel run

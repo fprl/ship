@@ -23,7 +23,8 @@ simple-vps secret list production
 simple-vps secret rm production API_KEY
 simple-vps ssh production
 simple-vps route list --json
-simple-vps host status
+simple-vps route list --server deploy@100.x.y.z
+simple-vps host status --server deploy@100.x.y.z
 ```
 
 ## Manifest
@@ -34,8 +35,7 @@ The CLI reads `simple-vps.toml` from the app repo root.
 name = "my-app"
 
 [env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/my-app"
+server = "deploy@100.x.y.z"
 runtime = "bun"
 
 [services.web]

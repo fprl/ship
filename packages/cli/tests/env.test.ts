@@ -13,8 +13,7 @@ function fixture(): string {
 name = "api"
 
 [env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/api"
+server = "deploy@100.x.y.z"
 runtime = "bun"
 
 [services.web]
@@ -57,7 +56,7 @@ describe("env and secret commands", () => {
     const joined = commands.map((command) => command.join(" "));
     expect(process.exitCode).toBe(0);
     expect(uploaded).toBe("# prod\nFEATURE_FLAG=on\nEMPTY=\n");
-    expect(joined.some((command) => command.startsWith("rsync -az ") && command.includes("admin@100.x.y.z:/tmp/simple-deploy/"))).toBe(
+    expect(joined.some((command) => command.startsWith("rsync -az ") && command.includes("deploy@100.x.y.z:/tmp/simple-deploy/"))).toBe(
       true,
     );
     expect(joined.some((command) => command.includes("sudo simple-vps app install-env api /tmp/simple-deploy/"))).toBe(true);
@@ -133,7 +132,7 @@ describe("env and secret commands", () => {
       async run(command) {
         commands.push(command);
         const joined = command.join(" ");
-        if (joined === "ssh admin@100.x.y.z sudo simple-vps app read-env api") {
+        if (joined === "ssh deploy@100.x.y.z sudo simple-vps app read-env api") {
           return { code: 0, stdout: "# keep\nAPI_KEY=old\nOTHER=value\n", stderr: "" };
         }
         if (command[0] === "rsync") uploaded = readFileSync(command[2], "utf8");
@@ -161,7 +160,7 @@ describe("env and secret commands", () => {
     const originalLog = console.log;
     const runner: CommandRunner = {
       async run(command) {
-        if (command.join(" ") === "ssh admin@100.x.y.z sudo simple-vps app read-env api") {
+        if (command.join(" ") === "ssh deploy@100.x.y.z sudo simple-vps app read-env api") {
           return { code: 0, stdout: "API_KEY=secret\nOTHER=value\n", stderr: "" };
         }
         return { code: 0, stdout: "", stderr: "" };
@@ -186,7 +185,7 @@ describe("env and secret commands", () => {
     const runner: CommandRunner = {
       async run(command) {
         commands.push(command);
-        if (command.join(" ") === "ssh admin@100.x.y.z sudo simple-vps app read-env api") {
+        if (command.join(" ") === "ssh deploy@100.x.y.z sudo simple-vps app read-env api") {
           return { code: 0, stdout: "API_KEY=secret\nOTHER=value\n", stderr: "" };
         }
         if (command[0] === "rsync") uploaded = readFileSync(command[2], "utf8");
@@ -211,7 +210,7 @@ describe("env and secret commands", () => {
     const runner: CommandRunner = {
       async run(command) {
         commands.push(command);
-        if (command.join(" ") === "ssh admin@100.x.y.z sudo simple-vps app read-env api") {
+        if (command.join(" ") === "ssh deploy@100.x.y.z sudo simple-vps app read-env api") {
           return { code: 0, stdout: "OTHER=value\n", stderr: "" };
         }
         return { code: 0, stdout: "", stderr: "" };

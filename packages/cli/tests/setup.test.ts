@@ -13,8 +13,7 @@ function fixture(): string {
 name = "api"
 
 [env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/api"
+server = "deploy@100.x.y.z"
 runtime = "bun"
 
 [services.web]
@@ -50,11 +49,11 @@ describe("setup", () => {
 
     expect(process.exitCode).toBe(0);
     expect(commands).toEqual([
-      ["ssh", "admin@100.x.y.z", "true"],
-      ["ssh", "admin@100.x.y.z", "command -v simple-vps"],
-      ["ssh", "admin@100.x.y.z", "command -v rsync"],
-      ["ssh", "admin@100.x.y.z", "command -v bun"],
-      ["ssh", "admin@100.x.y.z", "sudo simple-vps app create api"],
+      ["ssh", "deploy@100.x.y.z", "true"],
+      ["ssh", "deploy@100.x.y.z", "command -v simple-vps"],
+      ["ssh", "deploy@100.x.y.z", "command -v rsync"],
+      ["ssh", "deploy@100.x.y.z", "command -v bun"],
+      ["ssh", "deploy@100.x.y.z", "sudo simple-vps app create api"],
     ]);
   });
 

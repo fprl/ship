@@ -82,9 +82,9 @@ simple-vps secret list <env>
 simple-vps secret rm <env> KEY
 simple-vps env push <env> <file>
 simple-vps ssh <env>
-simple-vps route list [--json]
-simple-vps host status
-simple-vps host doctor
+simple-vps route list [--json] [--server <ssh-target>]
+simple-vps host status [--server <ssh-target>]
+simple-vps host doctor [--server <ssh-target>]
 simple-vps destroy <env>
 simple-vps destroy <env> --purge
 simple-vps destroy <env> --confirm <app>
@@ -122,8 +122,7 @@ install = true                      # optional, default true (Mode B vs C)
 
 # One [env.<name>] block per deploy target.
 [env.production]
-server = "admin@100.x.y.z"          # required, SSH target
-path = "/var/apps/my-app"           # required, server-side app root
+server = "deploy@100.x.y.z"         # required, SSH target
 runtime = "bun"                     # required: bun | node | static
 keep_releases = 5                   # optional, default 5
 
@@ -166,13 +165,11 @@ command = "bun run start"
 port = 3000
 
 [env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/my-app"
+server = "deploy@100.x.y.z"
 runtime = "bun"
 
 [env.staging]
-server = "admin@100.x.y.z"
-path = "/var/apps/my-app-staging"
+server = "deploy@100.x.y.z"
 runtime = "bun"
 
 [env.staging.services.web]
@@ -182,7 +179,9 @@ command = "bun run start --debug"
 ### Validation Rules
 
 - `name` matches `^[a-z][a-z0-9-]{1,40}$`.
-- `[env.<name>].path` must be exactly `/var/apps/<name>` in v1.
+- `[env.<name>].path` is optional. If absent, it is computed as
+  `/var/apps/<name>`. If present for 0.2 manifest compatibility, it must equal
+  `/var/apps/<name>`.
 - Service names match `^[a-z][a-z0-9-]{0,30}$`.
 - Route names match the same shape as service names.
 - A route with `type = "proxy"` must reference a service with a `port`.
@@ -370,7 +369,8 @@ Pipeline:
 15. server: start simple-<name>-* services
 16. server: health-check each service with a port
 17. on health failure: stop new, flip current back, restart previous, mark failed
-18. for each route, invoke `sudo simple-vps route ...` on the server
+18. for each route, invoke `sudo simple-vps cloudflare publish ...` on the
+    server, then `sudo simple-vps route ...`
 19. touch `<release>/.simple-deploy-success`
 20. prune releases beyond keep_releases (newest wins, preserves currently-linked)
 ```
@@ -681,6 +681,9 @@ Rules:
 
 - Routes are published at the end of a successful deploy, not before. A failed
   health check leaves the previous routes untouched.
+- Cloudflare API publication runs through the privileged server helper before
+  local Caddy route publication, so API errors fail the deploy before local
+  route state changes.
 - Route deletion happens only on `destroy`. Rollback never touches routes.
 - Static route `root` is always `/var/apps/<name>/current`. The release
   directory is the artifact root: build output contents are copied directly

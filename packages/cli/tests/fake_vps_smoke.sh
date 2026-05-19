@@ -23,7 +23,7 @@ docker build -f "$repo_root/packages/cli/tests/fake-vps/Dockerfile" -t "$image" 
 container="$(docker run -d -p 127.0.0.1::22 "$image")"
 
 ssh-keygen -q -t ed25519 -N "" -f "$tmp/id_ed25519"
-docker exec -i "$container" bash -lc "cat > /home/admin/.ssh/authorized_keys && chown admin:admin /home/admin/.ssh/authorized_keys && chmod 600 /home/admin/.ssh/authorized_keys" < "$tmp/id_ed25519.pub"
+docker exec -i "$container" bash -lc "cat > /home/deploy/.ssh/authorized_keys && chown deploy:deploy /home/deploy/.ssh/authorized_keys && chmod 600 /home/deploy/.ssh/authorized_keys" < "$tmp/id_ed25519.pub"
 
 port="$(docker port "$container" 22/tcp | sed 's/.*://')"
 mkdir -p "$tmp/home/.ssh"
@@ -31,7 +31,7 @@ cat > "$tmp/home/.ssh/config" <<EOF
 Host fake-vps
   HostName 127.0.0.1
   Port $port
-  User admin
+  User deploy
   IdentityFile $tmp/id_ed25519
   IdentitiesOnly yes
   BatchMode yes
@@ -221,7 +221,6 @@ name = "api"
 
 [env.production]
 server = "fake-vps"
-path = "/var/apps/api"
 runtime = "node"
 
 [services.web]
@@ -292,7 +291,6 @@ name = "hono-api"
 
 [env.production]
 server = "fake-vps"
-path = "/var/apps/hono-api"
 runtime = "bun"
 
 [services.web]
@@ -333,7 +331,6 @@ name = "static-site"
 
 [env.production]
 server = "fake-vps"
-path = "/var/apps/static-site"
 runtime = "static"
 
 [routes.site]
@@ -362,7 +359,6 @@ include = ["public"]
 
 [env.production]
 server = "fake-vps"
-path = "/var/apps/web"
 runtime = "node"
 
 [services.web]
@@ -406,7 +402,6 @@ install = false
 
 [env.production]
 server = "fake-vps"
-path = "/var/apps/bundle"
 runtime = "node"
 
 [services.web]

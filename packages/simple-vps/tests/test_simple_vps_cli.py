@@ -321,6 +321,114 @@ class SimpleVpsCliTest(unittest.TestCase):
             self.assertIn("  bun: bun-installed", output)
             self.assertNotIn("  pm2:", output)
 
+    def test_doctor_reports_healthy_operator_deploy_split(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = load_cli(Path(tmp))
+            cli.SUDOERS_DIR = Path(tmp) / "sudoers.d"
+            cli.SUDOERS_DIR.mkdir()
+            (cli.SUDOERS_DIR / "operator").write_text("operator ALL=(ALL) NOPASSWD:ALL\n", encoding="utf-8")
+            (cli.SUDOERS_DIR / "simple-vps").write_text(
+                "deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps\n",
+                encoding="utf-8",
+            )
+
+            output = capture_quiet(cli.cmd_doctor, argparse.Namespace())
+
+            self.assertIn("identity: healthy", output)
+
+    def test_doctor_reports_legacy_admin_conflation_degraded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = load_cli(Path(tmp))
+            cli.SUDOERS_DIR = Path(tmp) / "sudoers.d"
+            cli.SUDOERS_DIR.mkdir()
+            (cli.SUDOERS_DIR / "admin").write_text("admin ALL=(ALL) NOPASSWD:ALL\n", encoding="utf-8")
+            (cli.SUDOERS_DIR / "simple-vps").write_text(
+                "admin ALL=(root) NOPASSWD: /usr/local/bin/simple-vps\n",
+                encoding="utf-8",
+            )
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    cli.cmd_doctor(argparse.Namespace())
+
+            self.assertEqual(raised.exception.code, 1)
+            self.assertIn("identity: degraded", output.getvalue())
+            self.assertIn("legacy admin conflation is present", output.getvalue())
+
+    def test_cloudflare_publish_skips_when_not_configured(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = load_cli(Path(tmp))
+            cli.CLOUDFLARE_STATE_PATH = Path(tmp) / "cloudflare.json"
+            cli.CLOUDFLARE_API_TOKEN_PATH = Path(tmp) / "cloudflare-api-token"
+
+            output = capture_quiet(
+                cli.cmd_cloudflare_publish,
+                argparse.Namespace(host="api.example.com", app="my-app"),
+            )
+
+            self.assertIn("Cloudflare API not configured; skipping", output)
+
+    def test_cloudflare_publish_updates_tunnel_dns_and_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = load_cli(Path(tmp))
+            cli.CLOUDFLARE_STATE_PATH = Path(tmp) / "cloudflare.json"
+            cli.CLOUDFLARE_API_TOKEN_PATH = Path(tmp) / "cloudflare-api-token"
+            cli.CLOUDFLARE_API_TOKEN_PATH.write_text("token\n", encoding="utf-8")
+            cli.CLOUDFLARE_STATE_PATH.write_text(
+                json.dumps({"account_id": "acct", "tunnel_id": "tun", "routes": {}}),
+                encoding="utf-8",
+            )
+            configs = []
+            cli.cloudflare_tunnel_config = lambda token, account, tunnel: {"ingress": [{"service": "http_status:404"}]}
+            cli.put_cloudflare_tunnel_config = lambda token, account, tunnel, config: configs.append(config)
+            cli.cloudflare_zone_for_host = lambda token, host: "zone"
+            cli.ensure_cloudflare_cname = lambda token, zone, host, target: "record"
+
+            output = capture_quiet(
+                cli.cmd_cloudflare_publish,
+                argparse.Namespace(host="api.example.com", app="my-app"),
+            )
+
+            self.assertIn("Cloudflare route ready: api.example.com", output)
+            self.assertEqual(configs[0]["ingress"][0], {"hostname": "api.example.com", "service": "http://127.0.0.1:8080"})
+            state = json.loads(cli.CLOUDFLARE_STATE_PATH.read_text(encoding="utf-8"))
+            self.assertEqual(
+                state["routes"]["api.example.com"],
+                {"app": "my-app", "dns_record_id": "record", "zone_id": "zone"},
+            )
+
+    def test_cloudflare_remove_by_app_updates_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = load_cli(Path(tmp))
+            cli.CLOUDFLARE_STATE_PATH = Path(tmp) / "cloudflare.json"
+            cli.CLOUDFLARE_API_TOKEN_PATH = Path(tmp) / "cloudflare-api-token"
+            cli.CLOUDFLARE_API_TOKEN_PATH.write_text("token\n", encoding="utf-8")
+            cli.CLOUDFLARE_STATE_PATH.write_text(
+                json.dumps(
+                    {
+                        "account_id": "acct",
+                        "tunnel_id": "tun",
+                        "routes": {
+                            "api.example.com": {"app": "my-app", "zone_id": "zone", "dns_record_id": "record"}
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            removed = []
+            cli.remove_cloudflare_host = lambda token, state, account, tunnel, host, route: removed.append(host)
+
+            output = capture_quiet(
+                cli.cmd_cloudflare_remove,
+                argparse.Namespace(host=None, app="my-app"),
+            )
+
+            self.assertIn("Removed Cloudflare route: api.example.com", output)
+            self.assertEqual(removed, ["api.example.com"])
+            state = json.loads(cli.CLOUDFLARE_STATE_PATH.read_text(encoding="utf-8"))
+            self.assertEqual(state["routes"], {})
+
     def test_app_create_creates_layout_and_user_commands(self):
         with tempfile.TemporaryDirectory() as tmp:
             cli = load_cli(Path(tmp))
@@ -362,11 +470,11 @@ class SimpleVpsCliTest(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 1, stdout="", stderr="")
                 return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-            with mock.patch.dict(cli.os.environ, {"SUDO_USER": "admin"}):
+            with mock.patch.dict(cli.os.environ, {"SUDO_USER": "deploy"}):
                 with mock.patch.object(cli.subprocess, "run", fake_run):
                     call_quiet(cli.cmd_app_create, argparse.Namespace(name="my-app"))
 
-            self.assertIn(["usermod", "-aG", "app-my-app", "admin"], commands)
+            self.assertIn(["usermod", "-aG", "app-my-app", "deploy"], commands)
 
     def test_app_destroy_removes_layout_and_user(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -36,11 +36,11 @@ The target steady state is:
 - SSH reachable through Tailscale once Tailscale is authenticated.
 - Public SSH allowed only as a bootstrap/recovery fallback.
 
-The current installer uses a bootstrap compromise: it creates the admin user
-and copies SSH keys first, then applies hardening after admin access is
-expected to work. Today the role sets `PermitRootLogin prohibit-password`,
-which blocks root password login but still allows root key login. That is safer
-than root passwords, but it is still not the desired steady state.
+The installer uses a bootstrap compromise: it creates the operator and deploy
+users and copies SSH keys first, then applies hardening after operator access is
+expected to work. Today the role sets `PermitRootLogin prohibit-password`, which
+blocks root password login but still allows root key login. That is safer than
+root passwords, but it is still not the desired steady state.
 
 `simple-vps host doctor` should make this visible. A host with public SSH open,
 password SSH enabled, or root key login still enabled should be reported as
@@ -70,7 +70,7 @@ The expected security services are:
   bootstrap or recovery.
 - `tailscaled` installed and enabled when Tailscale is enabled.
 - `cloudflared` installed, isolated as its own user, and enabled only when a
-  tunnel token or config path is provided.
+  Cloudflare API token, tunnel token, or config path is provided.
 - Caddy installed and serving generated Simple VPS route config.
 
 Once Tailscale-only SSH is the normal post-bootstrap state, fail2ban should be
@@ -93,24 +93,21 @@ deploy user      identity used by the app CLI and CI
                  allowed to invoke only the server-side Simple VPS helper
 ```
 
-Today the operator and deploy users are conflated as `admin`. That is why the
-current Ansible role grants broad passwordless sudo to `admin`: phase 2 of the
-remote installer connects as `admin` and uses Ansible `become: true` for host
+In 0.2 the operator and deploy users are conflated as `admin`. That is why the
+Ansible role grants broad passwordless sudo to `admin`: phase 2 of the remote
+installer connects as `admin` and uses Ansible `become: true` for host
 convergence.
 
-The same `admin` user also gets the narrow deploy API grant:
+The same `admin` user also gets the narrow deploy API grant in 0.2:
 
 ```text
 admin ALL=(root) NOPASSWD: /usr/local/bin/simple-vps
 ```
 
-The narrow grant is still the contract used by app deploys and CI. It is not
-yet the only privilege the `admin` account has.
-
-The target 0.3 model is to split operator and deploy users. The operator user
-keeps whatever root path host convergence needs; the deploy user gets only the
-`/usr/local/bin/simple-vps` grant. Until that split lands, documentation and
-`host doctor` must be honest about the current conflation.
+The 0.3 model splits those duties. The operator user keeps the root path host
+convergence needs; the deploy user gets only the `/usr/local/bin/simple-vps`
+grant. The detailed 0.3 contract is documented in
+[0.3 Operator / Deploy Split](0.3-operator-deploy-split.md).
 
 The server-side helper owns privileged app operations such as systemd unit
 installation, env writes, Caddy route generation, and app cleanup. Keep that
@@ -131,7 +128,8 @@ Initial doctor checks should cover:
 - Public `80` and `443` closed.
 - Tailscale, cloudflared, Caddy, fail2ban, and unattended upgrades state.
 - The deploy sudoers grant points at `/usr/local/bin/simple-vps`.
-- The current operator/deploy user conflation is visible until 0.3 splits it.
+- The operator/deploy split is healthy, or the legacy 0.2 `admin` conflation is
+  reported as degraded.
 - Generated Caddy config validates.
 
 Later, if Simple VPS grows an app registry, app and route drift should be

@@ -25,6 +25,7 @@ OUTPUT="$(
         --mode remote \
         --host 127.0.0.1 \
         --yes \
+        --shared-key \
         --no-tailscale \
         --no-cloudflare-tunnel 2>&1
 )"

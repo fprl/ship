@@ -61,6 +61,9 @@ const APP_RE = /^[a-z][a-z0-9-]{1,40}$/;
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,30}$/;
 const HOST_RE =
   /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(?:\.(?!-)[a-z0-9-]{1,63}(?<!-))*$/;
+const SSH_TARGET_RE = new RegExp(
+  `^(?:[a-z_][a-z0-9_-]{0,31}\\$?@)?${HOST_RE.source.slice(1, -1)}$`,
+);
 const RUNTIMES = new Set(["bun", "node", "static"]);
 const ROUTE_TYPES = new Set(["proxy", "static", "redirect"]);
 const RESERVED_SERVICES = new Set(["current", "releases", "shared"]);
@@ -193,11 +196,18 @@ function validateBuild(build: Dict | undefined, root: string, errors: string[]) 
 
 function validateEnvBlock(name: string, appName: string | undefined, env: Dict, errors: string[]) {
   if (!SERVICE_RE.test(name)) errors.push(`invalid env name: ${name}`);
-  if (!asString(env.server)) errors.push(`[env.${name}].server is required`);
-  const path = asString(env.path);
-  if (!path) errors.push(`[env.${name}].path is required`);
-  else if (appName && path !== `/var/apps/${appName}`) errors.push(`[env.${name}].path must be /var/apps/${appName}`);
-  else if (!path.startsWith("/")) errors.push(`[env.${name}].path must be absolute`);
+  const server = asString(env.server);
+  if (!server) errors.push(`[env.${name}].server is required`);
+  else if (server.startsWith("-") || !SSH_TARGET_RE.test(server)) {
+    errors.push(`[env.${name}].server must be an SSH target like deploy@example.com`);
+  }
+  if (env.path !== undefined) {
+    const path = asString(env.path);
+    if (!path) errors.push(`[env.${name}].path must be a non-empty string when present`);
+    else if (!path.startsWith("/")) errors.push(`[env.${name}].path must be absolute`);
+    else if (!appName) errors.push(`[env.${name}].path requires a valid top-level name`);
+    else if (path !== `/var/apps/${appName}`) errors.push(`[env.${name}].path must be /var/apps/${appName}`);
+  }
 
   const runtime = asString(env.runtime);
   if (!runtime) errors.push(`[env.${name}].runtime is required`);
@@ -289,6 +299,19 @@ function validateRoutes(routes: Record<string, Dict>, services: Record<string, D
 
 function lockfilesIn(root: string): string[] {
   return LOCKFILES.filter((file) => existsSync(join(root, file)));
+}
+
+function packageManagerForLockfile(lockfile: string | undefined): string {
+  if (lockfile === "bun.lock" || lockfile === "bun.lockb") return "bun";
+  if (lockfile === "pnpm-lock.yaml") return "pnpm";
+  if (lockfile === "yarn.lock") return "yarn";
+  if (lockfile === "package-lock.json") return "npm";
+  return "bun";
+}
+
+function runtimeForLockfile(lockfile: string | undefined): string {
+  if (!lockfile) return "bun";
+  return lockfile === "bun.lock" || lockfile === "bun.lockb" ? "bun" : "node";
 }
 
 function installCommandFor(lockfile: string): string {
@@ -544,7 +567,8 @@ function loadAppContext(root: string, envName: string): AppContext {
   const appName = requireString(manifest.name, "name");
   const env = resolveEnv(manifest, envName);
   const server = requireString(env.server, `[env.${envName}].server`);
-  const appRoot = requireString(env.path, `[env.${envName}].path`);
+  validateSshTarget(server, `[env.${envName}].server`);
+  const appRoot = asString(env.path) ?? `/var/apps/${appName}`;
   const runtime = requireString(env.runtime, `[env.${envName}].runtime`);
   const build = effectiveBuild(manifest, env);
   const services = effectiveServices(manifest, env);
@@ -559,7 +583,41 @@ function loadSingleEnvContext(root: string): AppContext {
   return loadAppContext(root, result.envs[0]);
 }
 
-async function runRemoteReadCommand(runner: CommandRunner, context: AppContext, command: string, failureMessage: string) {
+function parseServerFlag(args: string[]): { server?: string; rest: string[] } {
+  const rest: string[] = [];
+  let server: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg !== "--server") {
+      rest.push(arg);
+      continue;
+    }
+    const value = args[index + 1];
+    if (!value) throw new Error("--server requires a value");
+    validateSshTarget(value, "--server");
+    server = value;
+    index += 1;
+  }
+  return { server, rest };
+}
+
+function validateSshTarget(value: string, label: string) {
+  if (value.startsWith("-") || !SSH_TARGET_RE.test(value)) {
+    throw new Error(`${label} must be an SSH target like deploy@example.com`);
+  }
+}
+
+function loadReadTarget(root: string, server: string | undefined): { server: string } {
+  if (server) return { server };
+  return loadSingleEnvContext(root);
+}
+
+async function runRemoteReadCommand(
+  runner: CommandRunner,
+  context: { server: string },
+  command: string,
+  failureMessage: string,
+) {
   const result = await runCommand(runner, ["ssh", context.server, command], failureMessage);
   if (result.stdout.trim()) console.log(result.stdout.trimEnd());
 }
@@ -616,31 +674,56 @@ function printCheckResult(result: CheckResult) {
 }
 
 function inferPackageName(root: string): string {
+  const packageJson = readPackageJson(root);
+  const rawName = asString(packageJson?.name) ?? "my-app";
+  const unscoped = rawName.split("/").pop() ?? rawName;
+  return unscoped.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "") || "my-app";
+}
+
+function readPackageJson(root: string): Dict | undefined {
   const packagePath = join(root, "package.json");
-  if (!existsSync(packagePath)) return "my-app";
+  if (!existsSync(packagePath)) return undefined;
   try {
-    const packageJson = JSON.parse(readFileSync(packagePath, "utf8")) as { name?: unknown };
-    const rawName = asString(packageJson.name) ?? "my-app";
-    const unscoped = rawName.split("/").pop() ?? rawName;
-    return unscoped.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "") || "my-app";
+    const packageJson = JSON.parse(readFileSync(packagePath, "utf8")) as unknown;
+    return isRecord(packageJson) ? packageJson : undefined;
   } catch {
-    return "my-app";
+    return undefined;
   }
+}
+
+function packageScripts(packageJson: Dict | undefined): Dict {
+  return isRecord(packageJson?.scripts) ? packageJson.scripts : {};
 }
 
 function runInit(root: string) {
   const manifestPath = join(root, MANIFEST_FILE);
   if (existsSync(manifestPath)) throw new Error(`${MANIFEST_FILE} already exists`);
+  const packageJson = readPackageJson(root);
   const name = inferPackageName(root);
+  const scripts = packageScripts(packageJson);
+  const lockfile = lockfilesIn(root)[0];
+  const packageManager = packageManagerForLockfile(lockfile);
+  const runtime = runtimeForLockfile(lockfile);
+  const startCommand = asString(scripts.start)
+    ? `${packageManager} run start`
+    : runtime === "bun"
+      ? "bun run src/server.ts"
+      : "npm run start";
+  const buildBlock = asString(scripts.build)
+    ? `[build]
+command = "${packageManager} run build"
+output = "dist"
+
+`
+    : "";
   const content = `name = "${name}"
 
-[env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/${name}"
-runtime = "bun"
+${buildBlock}[env.production]
+server = "deploy@100.x.y.z"
+runtime = "${runtime}"
 
 [services.web]
-command = "bun run src/server.ts"
+command = "${startCommand}"
 port = 3000
 healthcheck = "/health"
 
@@ -1010,11 +1093,11 @@ async function runSsh(root: string, envName: string, runner: CommandRunner) {
 async function runRoute(root: string, args: string[], runner: CommandRunner) {
   const subcommand = args[0];
   if (subcommand !== "list") throw new Error("route requires subcommand: list");
-  const flags = args.slice(1);
+  const { server, rest: flags } = parseServerFlag(args.slice(1));
   const json = flags.includes("--json");
   const unknown = flags.find((flag) => flag !== "--json");
   if (unknown) throw new Error(`unknown argument: ${unknown}`);
-  const context = loadSingleEnvContext(root);
+  const context = loadReadTarget(root, server);
   await runRemoteReadCommand(
     runner,
     context,
@@ -1025,11 +1108,22 @@ async function runRoute(root: string, args: string[], runner: CommandRunner) {
 
 async function runHost(root: string, args: string[], runner: CommandRunner) {
   const subcommand = args[0];
-  if ((subcommand !== "status" && subcommand !== "doctor") || args.length !== 1) {
+  const { server, rest } = parseServerFlag(args.slice(1));
+  if ((subcommand !== "status" && subcommand !== "doctor") || rest.length > 0) {
     throw new Error("host requires subcommand: status, doctor");
   }
-  const context = loadSingleEnvContext(root);
-  await runRemoteReadCommand(runner, context, "sudo simple-vps status", "failed to read host status");
+  const context = loadReadTarget(root, server);
+  if (subcommand === "status") {
+    await runRemoteReadCommand(runner, context, "sudo simple-vps status", "failed to read host status");
+    return;
+  }
+
+  const result = await runner.run(["ssh", context.server, "sudo simple-vps doctor"]);
+  if (result.stdout.trim()) console.log(result.stdout.trimEnd());
+  if (result.code !== 0) {
+    const detail = result.stderr.trim();
+    throw new Error(detail ? `host doctor reported degraded: ${detail}` : "host doctor reported degraded");
+  }
 }
 
 function validateReleaseArg(release: string) {
@@ -1091,6 +1185,11 @@ async function runDestroy(root: string, envName: string, runner: CommandRunner, 
     );
   }
   await runCommand(runner, ["ssh", context.server, "sudo simple-vps app daemon-reload"], "systemd daemon-reload failed");
+  await runCommand(
+    runner,
+    ["ssh", context.server, `sudo simple-vps cloudflare remove --app ${context.appName}`],
+    "failed to remove Cloudflare routes",
+  );
   await runCommand(
     runner,
     ["ssh", context.server, `sudo simple-vps route remove --app ${context.appName}`],
@@ -1188,6 +1287,11 @@ async function runDeploy(
   for (const route of Object.values(routes)) {
     const host = requireString(route.host, "route host");
     const type = requireString(route.type, "route type");
+    await runCommand(
+      runner,
+      ["ssh", server, `sudo simple-vps cloudflare publish ${host} --app ${appName}`],
+      `failed to publish Cloudflare route ${host}`,
+    );
     if (type === "proxy") {
       const service = services[requireString(route.service, "route service")];
       await runCommand(
@@ -1256,9 +1360,9 @@ function usage() {
   console.error("  simple-vps secret list <env>");
   console.error("  simple-vps secret rm <env> <key>");
   console.error("  simple-vps env push <env> <file>");
-  console.error("  simple-vps host status");
-  console.error("  simple-vps host doctor");
-  console.error("  simple-vps route list [--json]");
+  console.error("  simple-vps host status [--server <ssh-target>]");
+  console.error("  simple-vps host doctor [--server <ssh-target>]");
+  console.error("  simple-vps route list [--json] [--server <ssh-target>]");
 }
 
 export async function main(argv = process.argv.slice(2), root = process.cwd(), options: MainOptions = {}) {

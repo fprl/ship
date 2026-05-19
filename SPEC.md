@@ -72,8 +72,8 @@ Writes are atomic via the privileged server API. No auto-restart.
 ### Host operations
 
 ```bash
-simple-vps host status
-simple-vps host doctor
+simple-vps host status [--server <ssh-target>]
+simple-vps host doctor [--server <ssh-target>]
 ```
 
 These run *on the box* and report on host readiness. Bootstrapping a fresh
@@ -82,7 +82,7 @@ VPS is the job of `install.sh` (see Installation), not the CLI.
 ### Diagnostics
 
 ```bash
-simple-vps route list [--json]
+simple-vps route list [--json] [--server <ssh-target>]
 ```
 
 Read-only view of the route table.
@@ -117,13 +117,14 @@ sudo simple-vps route redirect <host> --to <url> --app <name>
 sudo simple-vps route remove --app <name>
 ```
 
-These have not changed shape from 0.1.x. The sudoers contract remains one
-line for the whole server binary, installed at `/etc/sudoers.d/simple-vps`
-(the file was named `simple-deploy` in 0.1.x; renamed in 0.2.0):
+These have not changed shape from 0.1.x. The sudoers contract remains one line
+for the whole server binary, installed at `/etc/sudoers.d/simple-vps` (the file
+was named `simple-deploy` in 0.1.x; renamed in 0.2.0). In 0.3 fresh installs
+the grant belongs to the deploy user:
 
 ```text
 /etc/sudoers.d/simple-vps
-  admin ALL=(root) NOPASSWD: /usr/local/bin/simple-vps
+  deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps
 ```
 
 ## Manifest
@@ -145,21 +146,23 @@ unified CLI does not replace it.
 # on a fresh box, ssh'd as root:
 curl -fsSL https://simple-vps.dev/install.sh | bash \
     --tailscale-auth-key=... \
-    --cloudflare-tunnel-token=...
+    --cloudflare-tunnel-token=... \
+    --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
 
 # or from a laptop, against a fresh box:
 ./install.sh --mode remote --host <ip> --bootstrap-user root \
-    --ssh-key ~/.ssh/id_ed25519 --admin-user admin
+    --ssh-key ~/.ssh/id_ed25519 \
+    --operator-ssh-public-key-file ~/.ssh/id_ed25519.pub \
+    --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
 ```
 
-`install.sh` supports both remote-from-laptop and local-on-box modes today;
-that does not change in 0.2.0.
+`install.sh` supports both remote-from-laptop and local-on-box modes.
 
 After install, the primary checks are:
 
 ```bash
-simple-vps host status
-simple-vps host doctor    # if chasing a problem
+simple-vps host status --server deploy@100.x.y.z
+simple-vps host doctor --server deploy@100.x.y.z    # if chasing a problem
 ```
 
 The expected host security posture is documented in
@@ -260,11 +263,10 @@ re-litigated from scratch every time someone asks.
   Bun).
 
 - **Bun privileged server helper.** Replace the Python helper with a Bun
-  equivalent. Worth doing only if a spike proves the Bun version stays
-  small, stdlib-only (no npm dependencies at the sudo boundary),
-  equally auditable, and unlocks meaningful code-sharing with the
-  laptop CLI. Cohesion alone is not sufficient justification — the
-  helper is invisible to users.
+  equivalent only when the helper ships as a compiled binary via
+  `bun build --compile` and CI enforces a no-dependency boundary: only
+  stdlib, `node:*`, and `bun:*` imports. Cohesion alone is not sufficient
+  justification; the helper lives at the sudo boundary.
 
 - **Thinner bootstrap.** Shrink `install.sh` to install Bun and the CLI
   only, then exec `simple-vps host install` for the rest. Requires the
@@ -278,9 +280,9 @@ What stays out of consideration:
   is months of work for marginal user-facing improvement. Ansible
   stays unless a concrete product reason appears.
 
-The 0.3.0 slice is picked from real friction after 0.2.0 lands —
-deploy ergonomics, log readability, secret flows, install surprises,
-maintenance pain. Not from this list.
+The 0.3.0 slice was picked from real friction after 0.2.0 landed:
+operator/deploy separation, Cloudflare setup, install prompts, manifest
+simplification, and day-0 diagnostics.
 
 ## Implementation Order
 
@@ -304,3 +306,39 @@ Suggested sequence for the 0.2.0 slice:
 
 Each step is small enough to land as its own commit. Steps 1, 3, 4, 5 are
 the load-bearing ones; the rest are docs and metadata.
+
+## 0.3.0 Scope
+
+0.3 closes day-0 gaps without hiding the box. Users still own the VPS; when the
+host is unhealthy, the product response is clearer diagnosis and sharper errors,
+not a dashboard abstraction.
+
+What lands:
+
+- Fresh installs split host identities into `operator` and `deploy`.
+- Ansible host convergence runs as `operator`; app setup, deploy, route, and
+  host read commands authenticate as `deploy`.
+- `/etc/sudoers.d/operator` grants broad sudo to the operator user, while
+  `/etc/sudoers.d/simple-vps` grants deploy only the server helper.
+- `simple-vps host doctor` reports the legacy 0.2 `admin` conflation as
+  degraded and the split model as healthy.
+- Cloudflare API token support creates and manages tunnel public hostnames and
+  CNAME records from the server-side helper.
+- `install.sh` prompts for missing values on a TTY while preserving non-TTY
+  flag/env behavior.
+- Manifest `path` becomes optional and defaults to `/var/apps/<name>`.
+- Host status/doctor and route listing can target `--server <ssh-target>` from
+  outside an app repo.
+- `simple-vps init` inspects the repo before writing the manifest template.
+
+Existing 0.2 hosts are not auto-migrated. They keep working, but doctor reports
+the old `admin` shape as degraded until the manual migration in
+[docs/0.3-operator-deploy-split.md](docs/0.3-operator-deploy-split.md) is done.
+
+What stays out:
+
+- Dashboard UI.
+- Managed-resource abstractions.
+- OAuth for Cloudflare or Tailscale.
+- Multi-host orchestration.
+- A Bun privileged helper.

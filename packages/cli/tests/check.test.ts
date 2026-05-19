@@ -23,8 +23,7 @@ describe("checkManifest", () => {
 name = "api"
 
 [env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/api"
+server = "deploy@100.x.y.z"
 runtime = "bun"
 
 [services.web]
@@ -50,8 +49,7 @@ service = "web"
 name = "api"
 
 [env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/api"
+server = "deploy@100.x.y.z"
 runtime = "bun"
 
 [services.web]
@@ -80,8 +78,7 @@ name = "web"
 command = "bun run build"
 
 [env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/web"
+server = "deploy@100.x.y.z"
 runtime = "bun"
 `,
     );
@@ -103,8 +100,7 @@ output = "dist"
 include = ["public", "missing", "src/*.ts"]
 
 [env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/web"
+server = "deploy@100.x.y.z"
 runtime = "bun"
 `,
     );
@@ -126,8 +122,7 @@ command = "cp -r public dist"
 output = "dist"
 
 [env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/site"
+server = "deploy@100.x.y.z"
 runtime = "static"
 
 [routes.app]
@@ -147,8 +142,7 @@ type = "static"
 name = "api"
 
 [env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/api"
+server = "deploy@100.x.y.z"
 runtime = "bun"
 `,
     );
@@ -156,7 +150,7 @@ runtime = "bun"
     expect(() => checkManifest(root, "production")).toThrow("simple-vps.toml not found");
   });
 
-  test("rejects unsafe env paths", () => {
+  test("rejects custom env paths", () => {
     const root = fixture();
     writeManifest(
       root,
@@ -164,8 +158,8 @@ runtime = "bun"
 name = "api"
 
 [env.production]
-server = "admin@100.x.y.z"
-path = "/var/apps/api; touch /tmp/pwned"
+server = "deploy@100.x.y.z"
+path = "/srv/api"
 runtime = "bun"
 `,
     );
@@ -173,5 +167,57 @@ runtime = "bun"
     expect(checkManifest(root, "production").errors).toContain(
       "[env.production].path must be /var/apps/api",
     );
+  });
+
+  test("rejects env server values that look like ssh options", () => {
+    const root = fixture();
+    writeManifest(
+      root,
+      `
+name = "api"
+
+[env.production]
+server = "-oProxyCommand=sh"
+runtime = "bun"
+`,
+    );
+
+    expect(checkManifest(root, "production").errors).toContain(
+      "[env.production].server must be an SSH target like deploy@example.com",
+    );
+  });
+
+  test("rejects custom env paths even when app name is missing", () => {
+    const root = fixture();
+    writeManifest(
+      root,
+      `
+[env.production]
+server = "deploy@100.x.y.z"
+path = "/root/evil"
+runtime = "bun"
+`,
+    );
+
+    const errors = checkManifest(root, "production").errors;
+    expect(errors).toContain("name is required");
+    expect(errors).toContain("[env.production].path requires a valid top-level name");
+  });
+
+  test("allows legacy matching env path", () => {
+    const root = fixture();
+    writeManifest(
+      root,
+      `
+name = "api"
+
+[env.production]
+server = "deploy@100.x.y.z"
+path = "/var/apps/api"
+runtime = "bun"
+`,
+    );
+
+    expect(checkManifest(root, "production").errors).toEqual([]);
   });
 });

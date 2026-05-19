@@ -1,5 +1,5 @@
 ---
-# Bootstrap a fresh VPS as root.
+# Bootstrap a fresh VPS as root or provider-created bootstrap user.
 # Safe to run on a brand-new machine.
 
 - name: VPS bootstrap
@@ -7,10 +7,14 @@
   become: true
 
   vars:
-    admin_user: "{{ simple_vps_admin_user | default('admin') }}"
+    operator_user: "{{ simple_vps_operator_user | default(simple_vps_admin_user | default('operator')) }}"
+    deploy_user: "{{ simple_vps_deploy_user | default('deploy') }}"
+    admin_user: "{{ operator_user }}"
     simple_vps_timezone: "{{ simple_vps_timezone | default('UTC') }}"
     simple_vps_locale: "{{ simple_vps_locale | default('en_US.UTF-8') }}"
     simple_vps_ssh_public_keys: "{{ simple_vps_ssh_public_keys | default([]) }}"
+    simple_vps_operator_ssh_public_keys: "{{ simple_vps_operator_ssh_public_keys | default(simple_vps_ssh_public_keys | default([])) }}"
+    simple_vps_deploy_ssh_public_keys: "{{ simple_vps_deploy_ssh_public_keys | default([]) }}"
     security_bootstrap_only: true
 
   roles:

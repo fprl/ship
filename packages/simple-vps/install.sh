@@ -12,29 +12,38 @@ TARGET_HOST=""
 BOOTSTRAP_USER="root"
 SSH_KEY=""
 SSH_PUBLIC_KEY_FILE=""
-ADMIN_USER="admin"
+OPERATOR_SSH_PUBLIC_KEY_FILE="${SIMPLE_VPS_OPERATOR_SSH_PUBLIC_KEY_FILE:-}"
+DEPLOY_SSH_PUBLIC_KEY_FILE="${SIMPLE_VPS_DEPLOY_SSH_PUBLIC_KEY_FILE:-}"
+OPERATOR_USER="${SIMPLE_VPS_OPERATOR_USER:-operator}"
+DEPLOY_USER="${SIMPLE_VPS_DEPLOY_USER:-deploy}"
 TIMEZONE="UTC"
 LOCALE="en_US.UTF-8"
 TAILSCALE="true"
 TAILSCALE_AUTH_KEY="${SIMPLE_VPS_TAILSCALE_AUTH_KEY:-}"
 TAILSCALE_HOSTNAME="${SIMPLE_VPS_TAILSCALE_HOSTNAME:-}"
 CLOUDFLARE_TUNNEL="true"
+CLOUDFLARE_API_TOKEN="${SIMPLE_VPS_CLOUDFLARE_API_TOKEN:-}"
+CLOUDFLARE_ACCOUNT_ID="${SIMPLE_VPS_CLOUDFLARE_ACCOUNT_ID:-}"
 CLOUDFLARE_TUNNEL_TOKEN="${SIMPLE_VPS_CLOUDFLARE_TUNNEL_TOKEN:-}"
 CLOUDFLARE_TUNNEL_CONFIG="${SIMPLE_VPS_CLOUDFLARE_TUNNEL_CONFIG:-}"
 INSTALL_DOCKER="${SIMPLE_VPS_INSTALL_DOCKER:-false}"
 INSTALL_LITESTREAM="${SIMPLE_VPS_INSTALL_LITESTREAM:-true}"
 CHECK_MODE="false"
 ASSUME_YES="false"
+SHARED_KEY="false"
+SHARED_KEY_WARNED="false"
 INTERACTIVE_MODE="auto"
 PASSTHROUGH_ARGS=()
 ORIGINAL_ARGC=0
 BOOTSTRAP_USER_SET="false"
-ADMIN_USER_SET="false"
+OPERATOR_USER_SET="false"
+DEPLOY_USER_SET="false"
 TAILSCALE_SET="false"
 CLOUDFLARE_TUNNEL_SET="false"
 INSTALL_DOCKER_SET="false"
 INSTALL_LITESTREAM_SET="false"
 CHECK_MODE_SET="false"
+SHARED_KEY_SET="false"
 TMP_FILES=()
 
 RED='\033[0;31m'
@@ -59,14 +68,23 @@ Options:
   --ip <ip-or-hostname>          Alias for --host
   --bootstrap-user <user>        SSH user for bootstrap phase in remote mode (default: root)
   --ssh-key <path>               SSH private key for remote mode
-  --ssh-public-key-file <path>   Explicit public key to add for admin user
-  --admin-user <name>            Admin user to create/configure (default: admin)
+  --ssh-public-key-file <path>   Compatibility alias for --operator-ssh-public-key-file
+  --operator-ssh-public-key-file <path>
+                                  Explicit public key to add for operator user
+  --deploy-ssh-public-key-file <path>
+                                  Explicit public key to add for deploy user
+  --shared-key                   Also install the operator SSH key for deploy
+  --operator-user <name>         Operator user for host convergence (default: operator)
+  --deploy-user <name>           Deploy user for app CLI/CI (default: deploy)
+  --admin-user <name>            Compatibility alias for --operator-user
   --tailscale                    Enable Tailscale setup (default)
   --no-tailscale                 Disable Tailscale setup
   --tailscale-auth-key <key>     Tailscale auth key for non-interactive login
   --tailscale-hostname <name>    Optional Tailscale device hostname
   --cloudflare-tunnel            Enable Cloudflare Tunnel setup (default)
   --no-cloudflare-tunnel         Disable Cloudflare Tunnel setup
+  --cloudflare-api-token <t>     Cloudflare API token for tunnel/DNS automation
+  --cloudflare-account-id <id>   Cloudflare account id when the token has multiple accounts
   --cloudflare-tunnel-token <t>  Cloudflare Tunnel token for managed tunnels
   --cloudflare-tunnel-config <p> Existing cloudflared config path
   --docker                       Install optional Docker runtime
@@ -80,9 +98,9 @@ Options:
   -h, --help                     Show help
 
 Examples:
-  ./install.sh --mode remote --host 203.0.113.10 --ssh-key ~/.ssh/id_ed25519 --admin-user dev
-  SIMPLE_VPS_TAILSCALE_AUTH_KEY=tskey-auth-... ./install.sh --mode local --admin-user dev
-  SIMPLE_VPS_CLOUDFLARE_TUNNEL_TOKEN=... ./install.sh --mode local --admin-user dev
+  ./install.sh --mode remote --host 203.0.113.10 --ssh-key ~/.ssh/id_ed25519 --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
+  SIMPLE_VPS_TAILSCALE_AUTH_KEY=tskey-auth-... ./install.sh --mode local --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
+  SIMPLE_VPS_CLOUDFLARE_API_TOKEN=... ./install.sh --mode local --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
   ./install.sh --interactive
 USAGE
 }
@@ -319,6 +337,35 @@ prompt_yes_no() {
   done
 }
 
+warn_shared_key() {
+  if [[ "$SHARED_KEY_WARNED" == "true" ]]; then
+    return
+  fi
+  SHARED_KEY_WARNED="true"
+  warn "Using the same SSH public key for operator and deploy."
+  warn "This is convenient, but a compromised deploy key can also access the operator account."
+}
+
+prompt_optional_secret() {
+  local var_name="$1"
+  local prompt="$2"
+  local current_value="${!var_name:-}"
+
+  if [[ -n "$current_value" ]]; then
+    return
+  fi
+  if ! can_prompt; then
+    return
+  fi
+
+  printf "%b?%b %s (leave blank to skip): " "$CYAN" "$NC" "$prompt"
+  stty -echo
+  IFS= read -r current_value
+  stty echo
+  printf "\n"
+  printf -v "$var_name" '%s' "$current_value"
+}
+
 prompt_mode() {
   local default_mode="$1"
   local choice=""
@@ -368,6 +415,7 @@ interactive_wizard() {
   local force_docker_prompt="false"
   local force_litestream_prompt="false"
   local force_check_prompt="false"
+  local force_shared_key_prompt="false"
 
   if ! can_prompt; then
     err "Interactive wizard requested, but terminal is not interactive."
@@ -398,8 +446,11 @@ interactive_wizard() {
   fi
 
   ui_section "Server settings"
-  if [[ "$ADMIN_USER_SET" != "true" ]]; then
-    ADMIN_USER=""
+  if [[ "$OPERATOR_USER_SET" != "true" ]]; then
+    OPERATOR_USER=""
+  fi
+  if [[ "$DEPLOY_USER_SET" != "true" ]]; then
+    DEPLOY_USER=""
   fi
 
   if [[ "$TAILSCALE_SET" != "true" ]]; then
@@ -417,16 +468,31 @@ interactive_wizard() {
   if [[ "$CHECK_MODE_SET" != "true" ]]; then
     force_check_prompt="true"
   fi
+  if [[ "$SHARED_KEY_SET" != "true" ]]; then
+    force_shared_key_prompt="true"
+  fi
 
-  confirm_or_prompt ADMIN_USER "Admin username" "admin"
+  confirm_or_prompt OPERATOR_USER "Operator username" "operator"
+  confirm_or_prompt DEPLOY_USER "Deploy username" "deploy"
   ui_kv "timezone" "$TIMEZONE (fixed)"
   ui_kv "locale" "$LOCALE (fixed)"
 
   prompt_yes_no TAILSCALE "Enable Tailscale?" "$TAILSCALE" "$force_tailscale_prompt"
+  if [[ "$TAILSCALE" == "true" ]]; then
+    prompt_optional_secret TAILSCALE_AUTH_KEY "Tailscale auth key"
+  fi
   prompt_yes_no CLOUDFLARE_TUNNEL "Enable Cloudflare Tunnel?" "$CLOUDFLARE_TUNNEL" "$force_cloudflare_tunnel_prompt"
+  if [[ "$CLOUDFLARE_TUNNEL" == "true" ]]; then
+    echo "  Cloudflare token: https://dash.cloudflare.com/profile/api-tokens"
+    prompt_optional_secret CLOUDFLARE_API_TOKEN "Cloudflare API token"
+  fi
   prompt_yes_no INSTALL_DOCKER "Install Docker?" "$INSTALL_DOCKER" "$force_docker_prompt"
   prompt_yes_no INSTALL_LITESTREAM "Install Litestream?" "$INSTALL_LITESTREAM" "$force_litestream_prompt"
   prompt_yes_no CHECK_MODE "Run in check (dry-run) mode?" "$CHECK_MODE" "$force_check_prompt"
+  prompt_yes_no SHARED_KEY "Install operator SSH key for deploy too?" "$SHARED_KEY" "$force_shared_key_prompt"
+  if [[ "$SHARED_KEY" == "true" ]]; then
+    warn_shared_key
+  fi
 
   ui_title "Provisioning Summary"
   ui_kv "mode" "$MODE"
@@ -439,7 +505,9 @@ interactive_wizard() {
       ui_kv "ssh_key" "<default SSH config>"
     fi
   fi
-  ui_kv "admin_user" "$ADMIN_USER"
+  ui_kv "operator_user" "$OPERATOR_USER"
+  ui_kv "deploy_user" "$DEPLOY_USER"
+  ui_kv "shared_key" "$SHARED_KEY"
   ui_kv "timezone" "$TIMEZONE"
   ui_kv "locale" "$LOCALE"
   ui_kv "tailscale" "$TAILSCALE"
@@ -451,6 +519,7 @@ interactive_wizard() {
   fi
   ui_kv "cf_tunnel" "$CLOUDFLARE_TUNNEL"
   if [[ "$CLOUDFLARE_TUNNEL" == "true" ]]; then
+    ui_kv "cf_api" "$(present_or_missing "$CLOUDFLARE_API_TOKEN" "api token provided" "manual setup")"
     ui_kv "cf_tunnel_auth" "$(present_or_missing "$CLOUDFLARE_TUNNEL_TOKEN" "token provided" "service not enabled")"
     if [[ -n "$CLOUDFLARE_TUNNEL_CONFIG" ]]; then
       ui_kv "cf_tunnel_cfg" "$CLOUDFLARE_TUNNEL_CONFIG"
@@ -515,9 +584,32 @@ parse_args() {
         SSH_PUBLIC_KEY_FILE="${2:-}"
         shift 2
         ;;
+      --operator-ssh-public-key-file)
+        OPERATOR_SSH_PUBLIC_KEY_FILE="${2:-}"
+        shift 2
+        ;;
+      --deploy-ssh-public-key-file)
+        DEPLOY_SSH_PUBLIC_KEY_FILE="${2:-}"
+        shift 2
+        ;;
+      --shared-key)
+        SHARED_KEY="true"
+        SHARED_KEY_SET="true"
+        shift
+        ;;
+      --operator-user)
+        OPERATOR_USER="${2:-}"
+        OPERATOR_USER_SET="true"
+        shift 2
+        ;;
+      --deploy-user)
+        DEPLOY_USER="${2:-}"
+        DEPLOY_USER_SET="true"
+        shift 2
+        ;;
       --admin-user)
-        ADMIN_USER="${2:-}"
-        ADMIN_USER_SET="true"
+        OPERATOR_USER="${2:-}"
+        OPERATOR_USER_SET="true"
         shift 2
         ;;
       --tailscale)
@@ -547,6 +639,14 @@ parse_args() {
         CLOUDFLARE_TUNNEL="false"
         CLOUDFLARE_TUNNEL_SET="true"
         shift
+        ;;
+      --cloudflare-api-token)
+        CLOUDFLARE_API_TOKEN="${2:-}"
+        shift 2
+        ;;
+      --cloudflare-account-id)
+        CLOUDFLARE_ACCOUNT_ID="${2:-}"
+        shift 2
         ;;
       --cloudflare-tunnel-token)
         CLOUDFLARE_TUNNEL_TOKEN="${2:-}"
@@ -675,8 +775,28 @@ validate_cloudflare_tunnel_options() {
     exit 1
   fi
 
+  if [[ "$CLOUDFLARE_TUNNEL" != "true" && -n "$CLOUDFLARE_API_TOKEN" ]]; then
+    err "--cloudflare-api-token requires Cloudflare Tunnel to be enabled."
+    exit 1
+  fi
+
+  if [[ "$CLOUDFLARE_TUNNEL" != "true" && -n "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+    err "--cloudflare-account-id requires Cloudflare Tunnel to be enabled."
+    exit 1
+  fi
+
   if [[ "$CLOUDFLARE_TUNNEL" != "true" && -n "$CLOUDFLARE_TUNNEL_CONFIG" ]]; then
     err "--cloudflare-tunnel-config requires Cloudflare Tunnel to be enabled."
+    exit 1
+  fi
+
+  if [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_TUNNEL_TOKEN" ]]; then
+    err "Use either --cloudflare-api-token or --cloudflare-tunnel-token, not both."
+    exit 1
+  fi
+
+  if [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_TUNNEL_CONFIG" ]]; then
+    err "Use either --cloudflare-api-token or --cloudflare-tunnel-config, not both."
     exit 1
   fi
 
@@ -687,6 +807,20 @@ validate_cloudflare_tunnel_options() {
 }
 
 validate_install_options() {
+  if [[ "$OPERATOR_USER" == "$DEPLOY_USER" ]]; then
+    err "Operator and deploy users must be different."
+    exit 1
+  fi
+
+  case "$SHARED_KEY" in
+    true|false)
+      ;;
+    *)
+      err "Invalid shared-key value: $SHARED_KEY (expected true or false)"
+      exit 1
+      ;;
+  esac
+
   case "$INSTALL_DOCKER" in
     true|false)
       ;;
@@ -724,64 +858,112 @@ ensure_ansible_inplace() {
 
 pick_default_public_key_from_private_key() {
   if [[ -n "$SSH_PUBLIC_KEY_FILE" ]]; then
+    if [[ -z "$OPERATOR_SSH_PUBLIC_KEY_FILE" ]]; then
+      OPERATOR_SSH_PUBLIC_KEY_FILE="$SSH_PUBLIC_KEY_FILE"
+    fi
+    if [[ "$SHARED_KEY" == "true" && -z "$DEPLOY_SSH_PUBLIC_KEY_FILE" ]]; then
+      DEPLOY_SSH_PUBLIC_KEY_FILE="$SSH_PUBLIC_KEY_FILE"
+    fi
+    return
+  fi
+
+  if [[ -n "$OPERATOR_SSH_PUBLIC_KEY_FILE" ]]; then
     return
   fi
 
   if [[ -n "$SSH_KEY" ]] && [[ -f "${SSH_KEY}.pub" ]]; then
-    SSH_PUBLIC_KEY_FILE="${SSH_KEY}.pub"
+    OPERATOR_SSH_PUBLIC_KEY_FILE="${SSH_KEY}.pub"
   fi
 }
 
 read_public_key_file() {
   local out_var="$1"
+  local file_path="$2"
   local key_contents=""
 
-  if [[ -z "$SSH_PUBLIC_KEY_FILE" ]]; then
+  if [[ -z "$file_path" ]]; then
     printf -v "$out_var" '%s' ""
     return
   fi
 
-  if [[ ! -f "$SSH_PUBLIC_KEY_FILE" ]]; then
-    err "SSH public key file not found: $SSH_PUBLIC_KEY_FILE"
+  if [[ ! -f "$file_path" ]]; then
+    err "SSH public key file not found: $file_path"
     exit 1
   fi
 
-  key_contents="$(tr -d '\r' < "$SSH_PUBLIC_KEY_FILE" | sed '/^\s*$/d' | head -n 1)"
+  key_contents="$(tr -d '\r' < "$file_path" | sed '/^\s*$/d' | head -n 1)"
   if [[ -z "$key_contents" ]]; then
-    err "SSH public key file is empty: $SSH_PUBLIC_KEY_FILE"
+    err "SSH public key file is empty: $file_path"
     exit 1
   fi
 
   printf -v "$out_var" '%s' "$key_contents"
 }
 
+resolve_deploy_public_key() {
+  local out_var="$1"
+  local operator_ssh_public_key_value="$2"
+  local deploy_ssh_public_key_value="$3"
+
+  if [[ -n "$deploy_ssh_public_key_value" ]]; then
+    printf -v "$out_var" '%s' "$deploy_ssh_public_key_value"
+    return
+  fi
+
+  if [[ "$SHARED_KEY" == "true" ]]; then
+    warn_shared_key
+    printf -v "$out_var" '%s' "$operator_ssh_public_key_value"
+    return
+  fi
+
+  err "No SSH public key source found for deploy user."
+  err "Provide --deploy-ssh-public-key-file, or pass --shared-key to reuse the operator key."
+  exit 1
+}
+
 write_extra_vars_file() {
   local file_path="$1"
-  local ssh_public_key_value="$2"
+  local operator_ssh_public_key_value="$2"
+  local deploy_ssh_public_key_value="$3"
   local escaped_tailscale_auth_key="${TAILSCALE_AUTH_KEY//\'/\'\"\'\"\'}"
   local escaped_tailscale_hostname="${TAILSCALE_HOSTNAME//\'/\'\"\'\"\'}"
+  local escaped_cloudflare_api_token="${CLOUDFLARE_API_TOKEN//\'/\'\"\'\"\'}"
+  local escaped_cloudflare_account_id="${CLOUDFLARE_ACCOUNT_ID//\'/\'\"\'\"\'}"
   local escaped_cloudflare_tunnel_token="${CLOUDFLARE_TUNNEL_TOKEN//\'/\'\"\'\"\'}"
   local escaped_cloudflare_tunnel_config="${CLOUDFLARE_TUNNEL_CONFIG//\'/\'\"\'\"\'}"
 
   {
-    printf 'simple_vps_admin_user: "%s"\n' "$ADMIN_USER"
+    printf 'simple_vps_operator_user: "%s"\n' "$OPERATOR_USER"
+    printf 'simple_vps_deploy_user: "%s"\n' "$DEPLOY_USER"
+    printf 'simple_vps_admin_user: "%s"\n' "$OPERATOR_USER"
+    printf 'simple_vps_allow_shared_ssh_key: %s\n' "$SHARED_KEY"
     printf 'simple_vps_timezone: "%s"\n' "$TIMEZONE"
     printf 'simple_vps_locale: "%s"\n' "$LOCALE"
     printf 'security_enable_tailscale: %s\n' "$TAILSCALE"
     printf "simple_vps_tailscale_auth_key: '%s'\n" "$escaped_tailscale_auth_key"
     printf "simple_vps_tailscale_hostname: '%s'\n" "$escaped_tailscale_hostname"
     printf 'simple_vps_enable_cloudflare_tunnel: %s\n' "$CLOUDFLARE_TUNNEL"
+    printf "simple_vps_cloudflare_api_token: '%s'\n" "$escaped_cloudflare_api_token"
+    printf "simple_vps_cloudflare_account_id: '%s'\n" "$escaped_cloudflare_account_id"
     printf "simple_vps_cloudflare_tunnel_token: '%s'\n" "$escaped_cloudflare_tunnel_token"
     printf "simple_vps_cloudflare_tunnel_config_path: '%s'\n" "$escaped_cloudflare_tunnel_config"
     printf 'simple_vps_install_docker: %s\n' "$INSTALL_DOCKER"
     printf 'simple_vps_install_litestream: %s\n' "$INSTALL_LITESTREAM"
 
-    if [[ -n "$ssh_public_key_value" ]]; then
-      local escaped_key="${ssh_public_key_value//\'/\'\"\'\"\'}"
-      printf 'simple_vps_ssh_public_keys:\n'
+    if [[ -n "$operator_ssh_public_key_value" ]]; then
+      local escaped_key="${operator_ssh_public_key_value//\'/\'\"\'\"\'}"
+      printf 'simple_vps_operator_ssh_public_keys:\n'
       printf "  - '%s'\n" "$escaped_key"
     else
-      printf 'simple_vps_ssh_public_keys: []\n'
+      printf 'simple_vps_operator_ssh_public_keys: []\n'
+    fi
+
+    if [[ -n "$deploy_ssh_public_key_value" ]]; then
+      local escaped_deploy_key="${deploy_ssh_public_key_value//\'/\'\"\'\"\'}"
+      printf 'simple_vps_deploy_ssh_public_keys:\n'
+      printf "  - '%s'\n" "$escaped_deploy_key"
+    else
+      printf 'simple_vps_deploy_ssh_public_keys: []\n'
     fi
   } > "$file_path"
 }
@@ -836,8 +1018,11 @@ run_remote() {
 
   pick_default_public_key_from_private_key
 
-  local ssh_public_key_value=""
-  read_public_key_file ssh_public_key_value
+  local operator_ssh_public_key_value=""
+  local deploy_ssh_public_key_value=""
+  read_public_key_file operator_ssh_public_key_value "$OPERATOR_SSH_PUBLIC_KEY_FILE"
+  read_public_key_file deploy_ssh_public_key_value "$DEPLOY_SSH_PUBLIC_KEY_FILE"
+  resolve_deploy_public_key deploy_ssh_public_key_value "$operator_ssh_public_key_value" "$deploy_ssh_public_key_value"
 
   info "Running in remote mode against ${TARGET_HOST}"
   preflight_ssh "$BOOTSTRAP_USER" "$TARGET_HOST" "$SSH_KEY"
@@ -856,7 +1041,7 @@ run_remote() {
 simple_vps_host ansible_host=${TARGET_HOST} ansible_python_interpreter=/usr/bin/python3
 INVENTORY
 
-  write_extra_vars_file "$tmp_vars" "$ssh_public_key_value"
+  write_extra_vars_file "$tmp_vars" "$operator_ssh_public_key_value" "$deploy_ssh_public_key_value"
 
   local common_args=(
     -i "$tmp_inventory"
@@ -865,7 +1050,7 @@ INVENTORY
   )
 
   local bootstrap_ssh_args=( -u "$BOOTSTRAP_USER" )
-  local apply_ssh_args=( -u "$ADMIN_USER" )
+  local apply_ssh_args=( -u "$OPERATOR_USER" )
   if [[ -n "$SSH_KEY" ]]; then
     bootstrap_ssh_args+=( --private-key "$SSH_KEY" )
     apply_ssh_args+=( --private-key "$SSH_KEY" )
@@ -878,7 +1063,7 @@ INVENTORY
   step "Phase 2/2: apply"
   if ! run_ansible_playbook "$SCRIPT_DIR/playbooks/vps-apply.yml" \
       "${common_args[@]}" "${apply_ssh_args[@]}"; then
-    warn "Apply phase as '${ADMIN_USER}' failed; retrying as '${BOOTSTRAP_USER}'."
+    warn "Apply phase as '${OPERATOR_USER}' failed; retrying as '${BOOTSTRAP_USER}'."
     run_ansible_playbook "$SCRIPT_DIR/playbooks/vps-apply.yml" \
       "${common_args[@]}" "${bootstrap_ssh_args[@]}"
   fi
@@ -892,15 +1077,19 @@ run_local() {
 
   ensure_ansible_inplace
 
-  local ssh_public_key_value=""
+  local operator_ssh_public_key_value=""
+  local deploy_ssh_public_key_value=""
   local root_keys_path="/root/.ssh/authorized_keys"
-  read_public_key_file ssh_public_key_value
+  pick_default_public_key_from_private_key
+  read_public_key_file operator_ssh_public_key_value "$OPERATOR_SSH_PUBLIC_KEY_FILE"
+  read_public_key_file deploy_ssh_public_key_value "$DEPLOY_SSH_PUBLIC_KEY_FILE"
+  resolve_deploy_public_key deploy_ssh_public_key_value "$operator_ssh_public_key_value" "$deploy_ssh_public_key_value"
 
   # Prevent lockout: local mode with password-only first login needs an explicit
   # key file or existing root authorized_keys before SSH hardening is applied.
-  if [[ -z "$ssh_public_key_value" && ! -s "$root_keys_path" ]]; then
-    err "No SSH public key source found for admin user."
-    err "Provide --ssh-public-key-file, or create $root_keys_path first."
+  if [[ -z "$operator_ssh_public_key_value" && ! -s "$root_keys_path" ]]; then
+    err "No SSH public key source found for operator user."
+    err "Provide --operator-ssh-public-key-file or --ssh-public-key-file, or create $root_keys_path first."
     err "This protects against locking yourself out when password auth is disabled."
     exit 1
   fi
@@ -921,7 +1110,7 @@ run_local() {
 simple_vps_local ansible_connection=local ansible_python_interpreter=/usr/bin/python3
 INVENTORY
 
-  write_extra_vars_file "$tmp_vars" "$ssh_public_key_value"
+  write_extra_vars_file "$tmp_vars" "$operator_ssh_public_key_value" "$deploy_ssh_public_key_value"
 
   local common_args=(
     -i "$tmp_inventory"
@@ -953,7 +1142,8 @@ main() {
 
   info "Simple VPS installer starting"
   info "Mode: $MODE"
-  info "Admin user: $ADMIN_USER"
+  info "Operator user: $OPERATOR_USER"
+  info "Deploy user: $DEPLOY_USER"
   info "Timezone: $TIMEZONE"
   info "Tailscale: $TAILSCALE"
   if [[ "$TAILSCALE" == "true" ]]; then
@@ -961,7 +1151,9 @@ main() {
   fi
   info "Cloudflare Tunnel: $CLOUDFLARE_TUNNEL"
   if [[ "$CLOUDFLARE_TUNNEL" == "true" ]]; then
-    if [[ -n "$CLOUDFLARE_TUNNEL_CONFIG" ]]; then
+    if [[ -n "$CLOUDFLARE_API_TOKEN" ]]; then
+      info "Cloudflare API: token provided"
+    elif [[ -n "$CLOUDFLARE_TUNNEL_CONFIG" ]]; then
       info "Cloudflare Tunnel config: $CLOUDFLARE_TUNNEL_CONFIG"
     else
       info "Cloudflare Tunnel auth: $(present_or_missing "$CLOUDFLARE_TUNNEL_TOKEN" "token provided" "service not enabled")"

@@ -18,11 +18,13 @@ RUN apt-get update \
 
 RUN npm install -g bun@1.3.14
 
-RUN useradd -m -s /bin/bash admin \
-  && printf 'admin:admin\n' | chpasswd \
-  && mkdir -p /home/admin/.ssh /run/sshd /etc/simple-vps /etc/caddy/simple-vps /etc/caddy/conf.d /var/apps /tmp/simple-deploy \
-  && chown admin:admin /home/admin/.ssh \
-  && chmod 700 /home/admin/.ssh
+RUN useradd -m -s /bin/bash -g operator operator \
+  && useradd -m -s /bin/bash -U deploy \
+  && printf 'operator:operator\n' | chpasswd \
+  && printf 'deploy:deploy\n' | chpasswd \
+  && mkdir -p /home/deploy/.ssh /run/sshd /etc/simple-vps /etc/caddy/simple-vps /etc/caddy/conf.d /var/apps /tmp/simple-deploy \
+  && chown deploy:deploy /home/deploy/.ssh \
+  && chmod 700 /home/deploy/.ssh
 
 COPY packages/simple-vps/roles/infra/files/simple-vps /usr/local/bin/simple-vps
 COPY packages/cli/tests/fake-vps/fake-systemctl /usr/local/bin/systemctl
@@ -31,8 +33,9 @@ COPY packages/cli/tests/fake-vps/fake-caddy /usr/local/bin/caddy
 
 RUN chmod 0755 /usr/local/bin/simple-vps /usr/local/bin/systemctl /usr/local/bin/journalctl /usr/local/bin/caddy \
   && printf '%s\n' '{"routes":[],"version":2}' > /etc/simple-vps/state.json \
-  && printf '%s\n' 'admin ALL=(root) NOPASSWD: /usr/local/bin/simple-vps' > /etc/sudoers.d/simple-vps \
-  && chmod 0440 /etc/sudoers.d/simple-vps
+  && printf '%s\n' 'operator ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/operator \
+  && printf '%s\n' 'deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps' > /etc/sudoers.d/simple-vps \
+  && chmod 0440 /etc/sudoers.d/operator /etc/sudoers.d/simple-vps
 
 EXPOSE 22
 

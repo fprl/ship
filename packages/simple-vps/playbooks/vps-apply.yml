@@ -1,15 +1,22 @@
 ---
-# Full converge. Run as admin after verifying admin SSH works.
+# Full converge. Run as operator after verifying operator SSH works.
 
 - name: VPS apply
   hosts: "{{ target | default('vps') }}"
   become: true
 
   vars:
-    admin_user: "{{ simple_vps_admin_user | default('admin') }}"
+    operator_user: "{{ simple_vps_operator_user | default(simple_vps_admin_user | default('operator')) }}"
+    deploy_user: "{{ simple_vps_deploy_user | default('deploy') }}"
+    admin_user: "{{ operator_user }}"
     simple_vps_timezone: "{{ simple_vps_timezone | default('UTC') }}"
     simple_vps_locale: "{{ simple_vps_locale | default('en_US.UTF-8') }}"
     simple_vps_ssh_public_keys: "{{ simple_vps_ssh_public_keys | default([]) }}"
+    simple_vps_operator_ssh_public_keys: "{{ simple_vps_operator_ssh_public_keys | default(simple_vps_ssh_public_keys | default([])) }}"
+    simple_vps_deploy_ssh_public_keys: "{{ simple_vps_deploy_ssh_public_keys | default([]) }}"
+    simple_vps_cloudflare_api_token: "{{ simple_vps_cloudflare_api_token | default('') }}"
+    simple_vps_cloudflare_account_id: "{{ simple_vps_cloudflare_account_id | default('') }}"
+    simple_vps_cloudflare_tunnel_name: "{{ simple_vps_cloudflare_tunnel_name | default('simple-vps-' ~ inventory_hostname) }}"
 
   roles:
     - { role: system }
