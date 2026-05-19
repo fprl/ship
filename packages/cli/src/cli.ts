@@ -1044,68 +1044,6 @@ async function prepareArtifact(
   return { artifactDir, lockfiles };
 }
 
-async function healthCheckServices(runner: CommandRunner, server: string, services: Record<string, Dict>) {
-  for (const [serviceName, service] of Object.entries(services)) {
-    const port = servicePort(service);
-    const healthcheck = asString(service.healthcheck);
-    if (port !== undefined && healthcheck) {
-      const expectedStatus = asNumber(service.healthcheck_status) ?? 200;
-      const timeout = asNumber(service.healthcheck_timeout) ?? 10;
-      await runCommand(
-        runner,
-        ["ssh", server, healthCheckCommand(port, healthcheck, expectedStatus, timeout)],
-        `health check failed for ${serviceName}`,
-      );
-    }
-  }
-}
-
-async function stopServices(runner: CommandRunner, server: string, appName: string, services: Record<string, Dict>) {
-  for (const serviceName of Object.keys(services)) {
-    await runCommand(runner, ["ssh", server, `sudo simple-vps app service stop ${appName} ${serviceName}`], "service stop failed");
-  }
-}
-
-async function startServices(runner: CommandRunner, server: string, appName: string, services: Record<string, Dict>) {
-  for (const serviceName of Object.keys(services)) {
-    await runCommand(
-      runner,
-      ["ssh", server, `sudo simple-vps app service start ${appName} ${serviceName}`],
-      `failed to start ${serviceName}`,
-    );
-  }
-}
-
-async function activateRelease(runner: CommandRunner, context: AppContext, releaseDir: string) {
-  const previousCurrentResult = await runner.run(["ssh", context.server, `readlink -f ${context.appRoot}/current`]);
-  const previousCurrent = previousCurrentResult.code === 0 ? previousCurrentResult.stdout.trim() : "";
-  await stopServices(runner, context.server, context.appName, context.services);
-  await runCommand(runner, ["ssh", context.server, `ln -sfn ${releaseDir} ${context.appRoot}/current`], "failed to activate release");
-  await startServices(runner, context.server, context.appName, context.services);
-  try {
-    await healthCheckServices(runner, context.server, context.services);
-  } catch (error) {
-    await stopServices(runner, context.server, context.appName, context.services);
-    if (previousCurrent) {
-      await runCommand(
-        runner,
-        ["ssh", context.server, `ln -sfn ${previousCurrent} ${context.appRoot}/current`],
-        "failed to restore previous release",
-      );
-      await startServices(runner, context.server, context.appName, context.services);
-    }
-    throw error;
-  }
-}
-
-async function markReleaseSuccessful(runner: CommandRunner, server: string, releaseDir: string) {
-  await runCommand(
-    runner,
-    ["ssh", server, `touch ${shellEscape(releaseDir)}/${RELEASE_SUCCESS_MARKER}`],
-    "failed to mark release successful",
-  );
-}
-
 function pruneReleasesCommand(appRoot: string, keep: number): string {
   const releases = `${appRoot}/releases`;
   const current = `${appRoot}/current`;
@@ -1119,12 +1057,233 @@ function pruneReleasesCommand(appRoot: string, keep: number): string {
   ].join("; ");
 }
 
-async function pruneReleases(runner: CommandRunner, context: AppContext) {
-  await runCommand(
-    runner,
-    ["ssh", context.server, pruneReleasesCommand(context.appRoot, keepReleasesFor(context.env))],
-    "failed to prune releases",
-  );
+class ReleaseLifecycle {
+  private readonly host: RemoteHost;
+
+  constructor(
+    private readonly runner: CommandRunner,
+    private readonly context: AppContext,
+  ) {
+    this.host = remoteHost(runner, context);
+  }
+
+  releaseDir(release: string): string {
+    return `${this.context.appRoot}/releases/${release}`;
+  }
+
+  private async ssh(command: string, failureMessage: string): Promise<CommandResult> {
+    return this.host.ssh(command, failureMessage);
+  }
+
+  private async trySsh(command: string): Promise<CommandResult> {
+    return this.host.trySsh(command);
+  }
+
+  async assertSharedDirectory(): Promise<void> {
+    await this.ssh(`test -d ${shellEscape(this.context.appRoot)}/shared`, `setup has not run for ${this.context.envName}`);
+  }
+
+  async createReleaseDirectory(releaseDir: string): Promise<void> {
+    await this.ssh(`install -d -m 2775 ${shellEscape(releaseDir)}`, "failed to create release directory");
+  }
+
+  async uploadArtifact(artifactDir: string, releaseDir: string): Promise<void> {
+    await runCommand(
+      this.runner,
+      ["rsync", "-az", "--delete", `${artifactDir}/`, `${this.context.server}:${releaseDir}/`],
+      "rsync failed",
+    );
+    await this.ssh(`chmod 2775 ${shellEscape(releaseDir)}`, "failed to restore release permissions");
+  }
+
+  async linkSharedPaths(releaseDir: string): Promise<void> {
+    for (const entry of [".env", "db", "storage", "logs"]) {
+      await this.ssh(
+        `ln -sfn ${this.context.appRoot}/shared/${entry} ${releaseDir}/${entry}`,
+        `failed to link shared ${entry}`,
+      );
+    }
+  }
+
+  async installDependencies(releaseDir: string, lockfiles: string[]): Promise<void> {
+    if (!installNeeded(this.context.runtime, this.context.build)) return;
+    await this.ssh(
+      `sudo simple-vps app run-as ${this.context.appName} --cwd ${releaseDir} -- ${installCommandFor(lockfiles[0])}`,
+      "production install failed",
+    );
+  }
+
+  async installServiceUnits(release: string): Promise<void> {
+    const localUnitDir = mkdtempSync(join(tmpdir(), "simple-vps-units-"));
+    const remoteUnitDir = `${REMOTE_DEPLOY_TMP_DIR}/${release}`;
+    for (const [serviceName, service] of Object.entries(this.context.services)) {
+      const serviceUnitName = unitName(this.context.appName, serviceName);
+      const unitPath = join(localUnitDir, serviceUnitName);
+      writeFileSync(unitPath, renderUnit(this.context.appName, this.context.envName, release, serviceName, service), {
+        encoding: "utf8",
+        mode: 0o644,
+      });
+    }
+    await this.ssh(`mkdir -p ${remoteUnitDir}`, "failed to create remote unit directory");
+    await runCommand(
+      this.runner,
+      ["rsync", "-az", `${localUnitDir}/`, `${this.context.server}:${remoteUnitDir}/`],
+      "failed to upload unit files",
+    );
+
+    for (const serviceName of Object.keys(this.context.services)) {
+      const serviceUnitName = unitName(this.context.appName, serviceName);
+      const remoteUnitPath = `${remoteUnitDir}/${serviceUnitName}`;
+      await this.ssh(
+        `sudo simple-vps app install-unit ${this.context.appName} ${serviceName} ${remoteUnitPath}`,
+        `failed to install ${serviceName} unit`,
+      );
+    }
+    await this.daemonReload();
+  }
+
+  async daemonReload(): Promise<void> {
+    await this.ssh("sudo simple-vps app daemon-reload", "systemd daemon-reload failed");
+  }
+
+  async healthCheckServices(services: Record<string, Dict> = this.context.services): Promise<void> {
+    for (const [serviceName, service] of Object.entries(services)) {
+      const port = servicePort(service);
+      const healthcheck = asString(service.healthcheck);
+      if (port !== undefined && healthcheck) {
+        const expectedStatus = asNumber(service.healthcheck_status) ?? 200;
+        const timeout = asNumber(service.healthcheck_timeout) ?? 10;
+        await this.ssh(healthCheckCommand(port, healthcheck, expectedStatus, timeout), `health check failed for ${serviceName}`);
+      }
+    }
+  }
+
+  async stopServices(services: Record<string, Dict> = this.context.services, tolerateFailure = false): Promise<void> {
+    for (const serviceName of Object.keys(services)) {
+      await this.ssh(
+        `sudo simple-vps app service stop ${this.context.appName} ${serviceName}${tolerateFailure ? " || true" : ""}`,
+        tolerateFailure ? `failed to stop ${serviceName}` : "service stop failed",
+      );
+    }
+  }
+
+  async startServices(services: Record<string, Dict> = this.context.services): Promise<void> {
+    for (const serviceName of Object.keys(services)) {
+      await this.ssh(
+        `sudo simple-vps app service start ${this.context.appName} ${serviceName}`,
+        `failed to start ${serviceName}`,
+      );
+    }
+  }
+
+  private async currentReleaseStrict(): Promise<string> {
+    const previousCurrentResult = await this.trySsh(`readlink -f ${this.context.appRoot}/current`);
+    return previousCurrentResult.code === 0 ? previousCurrentResult.stdout.trim() : "";
+  }
+
+  async activateRelease(releaseDir: string): Promise<void> {
+    const previousCurrent = await this.currentReleaseStrict();
+    await this.stopServices();
+    await this.ssh(`ln -sfn ${releaseDir} ${this.context.appRoot}/current`, "failed to activate release");
+    await this.startServices();
+    try {
+      await this.healthCheckServices();
+    } catch (error) {
+      await this.stopServices();
+      if (previousCurrent) {
+        await this.ssh(`ln -sfn ${previousCurrent} ${this.context.appRoot}/current`, "failed to restore previous release");
+        await this.startServices();
+      }
+      throw error;
+    }
+  }
+
+  async markReleaseSuccessful(releaseDir: string): Promise<void> {
+    await this.ssh(`touch ${shellEscape(releaseDir)}/${RELEASE_SUCCESS_MARKER}`, "failed to mark release successful");
+  }
+
+  async pruneReleases(): Promise<void> {
+    await this.ssh(pruneReleasesCommand(this.context.appRoot, keepReleasesFor(this.context.env)), "failed to prune releases");
+  }
+
+  async resolveRollbackTarget(release: string | undefined): Promise<string> {
+    const releasesDir = `${this.context.appRoot}/releases`;
+    if (release) {
+      validateReleaseArg(release);
+      const target = `${releasesDir}/${release}`;
+      await this.ssh(`test -d ${target}`, `release not found: ${release}`);
+      return target;
+    }
+    const command = `current=$(readlink -f ${this.context.appRoot}/current 2>/dev/null || true); for dir in $(ls -1dt ${releasesDir}/* 2>/dev/null); do [ -f "$dir/${RELEASE_SUCCESS_MARKER}" ] || continue; [ "$(readlink -f "$dir")" = "$current" ] && continue; echo "$dir"; exit 0; done; exit 1`;
+    const result = await this.ssh(command, "no previous successful release found");
+    return result.stdout.trim();
+  }
+
+  async restartService(serviceName: string): Promise<void> {
+    const service = this.context.services[serviceName];
+    if (!service) throw new Error(`unknown service: ${serviceName}`);
+    await this.ssh(`sudo simple-vps app service restart ${this.context.appName} ${serviceName}`, `failed to restart ${serviceName}`);
+    await this.healthCheckServices({ [serviceName]: service });
+  }
+
+  async publishRoutes(): Promise<void> {
+    for (const route of Object.values(this.context.routes)) {
+      const host = requireString(route.host, "route host");
+      const type = requireString(route.type, "route type");
+      await this.ssh(`sudo simple-vps cloudflare publish ${host} --app ${this.context.appName}`, `failed to publish Cloudflare route ${host}`);
+      if (type === "proxy") {
+        const service = this.context.services[requireString(route.service, "route service")];
+        await this.ssh(
+          `sudo simple-vps route proxy ${host} --port ${servicePort(service)} --app ${this.context.appName}`,
+          `failed to publish route ${host}`,
+        );
+      } else if (type === "static") {
+        await this.ssh(
+          `sudo simple-vps route static ${host} --root ${this.context.appRoot}/current --app ${this.context.appName}`,
+          `failed to publish route ${host}`,
+        );
+      } else if (type === "redirect") {
+        await this.ssh(
+          `sudo simple-vps route redirect ${host} --to ${requireString(route.to, "redirect target")} --app ${this.context.appName}`,
+          `failed to publish route ${host}`,
+        );
+      }
+    }
+  }
+
+  async disableServices(services: Record<string, Dict> = this.context.services): Promise<void> {
+    for (const serviceName of Object.keys(services)) {
+      await this.ssh(`sudo simple-vps app service disable ${this.context.appName} ${serviceName} || true`, `failed to disable ${serviceName}`);
+    }
+  }
+
+  async uninstallServiceUnits(services: Record<string, Dict> = this.context.services): Promise<void> {
+    for (const serviceName of Object.keys(services)) {
+      await this.ssh(`sudo simple-vps app uninstall-unit ${this.context.appName} ${serviceName}`, `failed to uninstall ${serviceName}`);
+    }
+  }
+
+  async removeServiceUnits(): Promise<void> {
+    for (const [serviceName, service] of Object.entries(this.context.services)) {
+      const serviceSet = { [serviceName]: service };
+      await this.stopServices(serviceSet, true);
+      await this.disableServices(serviceSet);
+      await this.uninstallServiceUnits(serviceSet);
+    }
+  }
+
+  async removePublishedRoutes(): Promise<void> {
+    await this.ssh(`sudo simple-vps cloudflare remove --app ${this.context.appName}`, "failed to remove Cloudflare routes");
+    await this.ssh(`sudo simple-vps route remove --app ${this.context.appName}`, "failed to remove app routes");
+  }
+
+  async removeCurrentSymlink(): Promise<void> {
+    await this.ssh(`rm -f ${this.context.appRoot}/current`, "failed to remove current symlink");
+  }
+
+  async purgeAppData(): Promise<void> {
+    await this.ssh(`sudo simple-vps app destroy ${this.context.appName}`, "failed to purge app data");
+  }
 }
 
 function serviceStatusText(result: CommandResult): string {
@@ -1235,24 +1394,12 @@ function validateReleaseArg(release: string) {
   if (!/^[A-Za-z0-9._-]+$/.test(release)) throw new Error(`invalid release: ${release}`);
 }
 
-async function resolveRollbackTarget(context: AppContext, runner: CommandRunner, release: string | undefined): Promise<string> {
-  const releasesDir = `${context.appRoot}/releases`;
-  if (release) {
-    validateReleaseArg(release);
-    const target = `${releasesDir}/${release}`;
-    await runCommand(runner, ["ssh", context.server, `test -d ${target}`], `release not found: ${release}`);
-    return target;
-  }
-  const command = `current=$(readlink -f ${context.appRoot}/current 2>/dev/null || true); for dir in $(ls -1dt ${releasesDir}/* 2>/dev/null); do [ -f "$dir/${RELEASE_SUCCESS_MARKER}" ] || continue; [ "$(readlink -f "$dir")" = "$current" ] && continue; echo "$dir"; exit 0; done; exit 1`;
-  const result = await runCommand(runner, ["ssh", context.server, command], "no previous successful release found");
-  return result.stdout.trim();
-}
-
 async function runRollback(root: string, envName: string, release: string | undefined, runner: CommandRunner) {
   const context = loadAppContext(root, envName);
-  const target = await resolveRollbackTarget(context, runner, release);
-  await activateRelease(runner, context, target);
-  await markReleaseSuccessful(runner, context.server, target);
+  const lifecycle = new ReleaseLifecycle(runner, context);
+  const target = await lifecycle.resolveRollbackTarget(release);
+  await lifecycle.activateRelease(target);
+  await lifecycle.markReleaseSuccessful(target);
   console.log(`Rolled back ${context.appName} to ${releaseNameFromPath(target)} (${envName})`);
 }
 
@@ -1271,43 +1418,15 @@ function validateDestroyOptions(context: AppContext, options: DestroyOptions) {
 async function runDestroy(root: string, envName: string, runner: CommandRunner, options: DestroyOptions) {
   const context = loadAppContext(root, envName);
   validateDestroyOptions(context, options);
+  const lifecycle = new ReleaseLifecycle(runner, context);
 
-  for (const serviceName of Object.keys(context.services)) {
-    await runCommand(
-      runner,
-      ["ssh", context.server, `sudo simple-vps app service stop ${context.appName} ${serviceName} || true`],
-      `failed to stop ${serviceName}`,
-    );
-    await runCommand(
-      runner,
-      ["ssh", context.server, `sudo simple-vps app service disable ${context.appName} ${serviceName} || true`],
-      `failed to disable ${serviceName}`,
-    );
-    await runCommand(
-      runner,
-      ["ssh", context.server, `sudo simple-vps app uninstall-unit ${context.appName} ${serviceName}`],
-      `failed to uninstall ${serviceName}`,
-    );
-  }
-  await runCommand(runner, ["ssh", context.server, "sudo simple-vps app daemon-reload"], "systemd daemon-reload failed");
-  await runCommand(
-    runner,
-    ["ssh", context.server, `sudo simple-vps cloudflare remove --app ${context.appName}`],
-    "failed to remove Cloudflare routes",
-  );
-  await runCommand(
-    runner,
-    ["ssh", context.server, `sudo simple-vps route remove --app ${context.appName}`],
-    "failed to remove app routes",
-  );
-  await runCommand(runner, ["ssh", context.server, `rm -f ${context.appRoot}/current`], "failed to remove current symlink");
+  await lifecycle.removeServiceUnits();
+  await lifecycle.daemonReload();
+  await lifecycle.removePublishedRoutes();
+  await lifecycle.removeCurrentSymlink();
 
   if (options.purge) {
-    await runCommand(
-      runner,
-      ["ssh", context.server, `sudo simple-vps app destroy ${context.appName}`],
-      "failed to purge app data",
-    );
+    await lifecycle.purgeAppData();
     console.log(`Destroyed ${context.appName} (${envName}) and purged ${context.appRoot}`);
     return;
   }
@@ -1317,14 +1436,7 @@ async function runDestroy(root: string, envName: string, runner: CommandRunner, 
 
 async function runRestart(root: string, envName: string, serviceName: string, runner: CommandRunner) {
   const context = loadAppContext(root, envName);
-  const service = context.services[serviceName];
-  if (!service) throw new Error(`unknown service: ${serviceName}`);
-  await runCommand(
-    runner,
-    ["ssh", context.server, `sudo simple-vps app service restart ${context.appName} ${serviceName}`],
-    `failed to restart ${serviceName}`,
-  );
-  await healthCheckServices(runner, context.server, { [serviceName]: service });
+  await new ReleaseLifecycle(runner, context).restartService(serviceName);
   console.log(`Restarted ${context.appName}/${serviceName} (${envName})`);
 }
 
@@ -1335,7 +1447,8 @@ async function runDeploy(
   options: { dirty: boolean; includeDotenv: boolean; now: () => Date },
 ) {
   const context = loadAppContext(root, envName);
-  const { appName, appRoot, build, runtime, server, services, routes } = context;
+  const { appName, build, runtime } = context;
+  const lifecycle = new ReleaseLifecycle(runner, context);
 
   const sha = await gitOutput(root, runner, ["rev-parse", "HEAD"]);
   const dirty = await gitOutput(root, runner, ["status", "--porcelain"]);
@@ -1345,82 +1458,18 @@ async function runDeploy(
   const { artifactDir, lockfiles } = await prepareArtifact(root, runner, build, runtime, Boolean(dirty));
   validateArtifact(artifactDir, options.includeDotenv);
 
-  const releaseDir = `${appRoot}/releases/${release}`;
-  await runCommand(runner, ["ssh", server, `test -d ${shellEscape(appRoot)}/shared`], `setup has not run for ${envName}`);
-  await runCommand(runner, ["ssh", server, `install -d -m 2775 ${shellEscape(releaseDir)}`], "failed to create release directory");
-  await runCommand(runner, ["rsync", "-az", "--delete", `${artifactDir}/`, `${server}:${releaseDir}/`], "rsync failed");
-  await runCommand(runner, ["ssh", server, `chmod 2775 ${shellEscape(releaseDir)}`], "failed to restore release permissions");
-  for (const entry of [".env", "db", "storage", "logs"]) {
-    await runCommand(
-      runner,
-      ["ssh", server, `ln -sfn ${appRoot}/shared/${entry} ${releaseDir}/${entry}`],
-      `failed to link shared ${entry}`,
-    );
-  }
-
-  if (installNeeded(runtime, build)) {
-    await runCommand(
-      runner,
-      ["ssh", server, `sudo simple-vps app run-as ${appName} --cwd ${releaseDir} -- ${installCommandFor(lockfiles[0])}`],
-      "production install failed",
-    );
-  }
-
-  const localUnitDir = mkdtempSync(join(tmpdir(), "simple-vps-units-"));
-  const remoteUnitDir = `${REMOTE_DEPLOY_TMP_DIR}/${release}`;
-  for (const [serviceName, service] of Object.entries(services)) {
-    const serviceUnitName = unitName(appName, serviceName);
-    const unitPath = join(localUnitDir, serviceUnitName);
-    writeFileSync(unitPath, renderUnit(appName, envName, release, serviceName, service), { encoding: "utf8", mode: 0o644 });
-  }
-  await runCommand(runner, ["ssh", server, `mkdir -p ${remoteUnitDir}`], "failed to create remote unit directory");
-  await runCommand(runner, ["rsync", "-az", `${localUnitDir}/`, `${server}:${remoteUnitDir}/`], "failed to upload unit files");
-
-  for (const serviceName of Object.keys(services)) {
-    const serviceUnitName = unitName(appName, serviceName);
-    const remoteUnitPath = `${remoteUnitDir}/${serviceUnitName}`;
-    await runCommand(
-      runner,
-      ["ssh", server, `sudo simple-vps app install-unit ${appName} ${serviceName} ${remoteUnitPath}`],
-      `failed to install ${serviceName} unit`,
-    );
-  }
-
-  await runCommand(runner, ["ssh", server, `sudo simple-vps app daemon-reload`], "systemd daemon-reload failed");
-  await activateRelease(runner, context, releaseDir);
-
-  for (const route of Object.values(routes)) {
-    const host = requireString(route.host, "route host");
-    const type = requireString(route.type, "route type");
-    await runCommand(
-      runner,
-      ["ssh", server, `sudo simple-vps cloudflare publish ${host} --app ${appName}`],
-      `failed to publish Cloudflare route ${host}`,
-    );
-    if (type === "proxy") {
-      const service = services[requireString(route.service, "route service")];
-      await runCommand(
-        runner,
-        ["ssh", server, `sudo simple-vps route proxy ${host} --port ${servicePort(service)} --app ${appName}`],
-        `failed to publish route ${host}`,
-      );
-    } else if (type === "static") {
-      await runCommand(
-        runner,
-        ["ssh", server, `sudo simple-vps route static ${host} --root ${appRoot}/current --app ${appName}`],
-        `failed to publish route ${host}`,
-      );
-    } else if (type === "redirect") {
-      await runCommand(
-        runner,
-        ["ssh", server, `sudo simple-vps route redirect ${host} --to ${requireString(route.to, "redirect target")} --app ${appName}`],
-        `failed to publish route ${host}`,
-      );
-    }
-  }
-  await markReleaseSuccessful(runner, server, releaseDir);
+  const releaseDir = lifecycle.releaseDir(release);
+  await lifecycle.assertSharedDirectory();
+  await lifecycle.createReleaseDirectory(releaseDir);
+  await lifecycle.uploadArtifact(artifactDir, releaseDir);
+  await lifecycle.linkSharedPaths(releaseDir);
+  await lifecycle.installDependencies(releaseDir, lockfiles);
+  await lifecycle.installServiceUnits(release);
+  await lifecycle.activateRelease(releaseDir);
+  await lifecycle.publishRoutes();
+  await lifecycle.markReleaseSuccessful(releaseDir);
   try {
-    await pruneReleases(runner, context);
+    await lifecycle.pruneReleases();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`Warning: deploy succeeded; pruning failed: ${message}`);
