@@ -33,6 +33,7 @@ ASSUME_YES="false"
 SHARED_KEY="false"
 SHARED_KEY_WARNED="false"
 INTERACTIVE_MODE="auto"
+INSTALLER_DUMP_PLAN="${SIMPLE_VPS_INSTALLER_DUMP_PLAN:-false}"
 PASSTHROUGH_ARGS=()
 ORIGINAL_ARGC=0
 BOOTSTRAP_USER_SET="false"
@@ -45,6 +46,31 @@ INSTALL_LITESTREAM_SET="false"
 CHECK_MODE_SET="false"
 SHARED_KEY_SET="false"
 TMP_FILES=()
+
+PLAN_MODE=""
+PLAN_TARGET_HOST=""
+PLAN_BOOTSTRAP_USER=""
+PLAN_SSH_KEY=""
+PLAN_OPERATOR_SSH_PUBLIC_KEY_FILE=""
+PLAN_DEPLOY_SSH_PUBLIC_KEY_FILE=""
+PLAN_OPERATOR_USER=""
+PLAN_DEPLOY_USER=""
+PLAN_TIMEZONE=""
+PLAN_LOCALE=""
+PLAN_TAILSCALE=""
+PLAN_TAILSCALE_AUTH_KEY=""
+PLAN_TAILSCALE_HOSTNAME=""
+PLAN_TAILSCALE_AUTH_MODE=""
+PLAN_CLOUDFLARE_TUNNEL=""
+PLAN_CLOUDFLARE_API_TOKEN=""
+PLAN_CLOUDFLARE_ACCOUNT_ID=""
+PLAN_CLOUDFLARE_TUNNEL_TOKEN=""
+PLAN_CLOUDFLARE_TUNNEL_CONFIG=""
+PLAN_CLOUDFLARE_SERVICE_MODE=""
+PLAN_INSTALL_DOCKER=""
+PLAN_INSTALL_LITESTREAM=""
+PLAN_CHECK_MODE=""
+PLAN_SHARED_KEY=""
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -739,15 +765,22 @@ validate_mode() {
   esac
 }
 
-validate_tailscale_options() {
-  case "$TAILSCALE" in
+validate_boolean() {
+  local label="$1"
+  local value="$2"
+
+  case "$value" in
     true|false)
       ;;
     *)
-      err "Invalid Tailscale value: $TAILSCALE (expected true or false)"
+      err "Invalid ${label} value: $value (expected true or false)"
       exit 1
       ;;
   esac
+}
+
+validate_tailscale_options() {
+  validate_boolean "Tailscale" "$TAILSCALE"
 
   if [[ "$TAILSCALE" != "true" && -n "$TAILSCALE_AUTH_KEY" ]]; then
     err "--tailscale-auth-key requires Tailscale to be enabled."
@@ -761,14 +794,7 @@ validate_tailscale_options() {
 }
 
 validate_cloudflare_tunnel_options() {
-  case "$CLOUDFLARE_TUNNEL" in
-    true|false)
-      ;;
-    *)
-      err "Invalid Cloudflare Tunnel value: $CLOUDFLARE_TUNNEL (expected true or false)"
-      exit 1
-      ;;
-  esac
+  validate_boolean "Cloudflare Tunnel" "$CLOUDFLARE_TUNNEL"
 
   if [[ "$CLOUDFLARE_TUNNEL" != "true" && -n "$CLOUDFLARE_TUNNEL_TOKEN" ]]; then
     err "--cloudflare-tunnel-token requires Cloudflare Tunnel to be enabled."
@@ -812,32 +838,9 @@ validate_install_options() {
     exit 1
   fi
 
-  case "$SHARED_KEY" in
-    true|false)
-      ;;
-    *)
-      err "Invalid shared-key value: $SHARED_KEY (expected true or false)"
-      exit 1
-      ;;
-  esac
-
-  case "$INSTALL_DOCKER" in
-    true|false)
-      ;;
-    *)
-      err "Invalid Docker value: $INSTALL_DOCKER (expected true or false)"
-      exit 1
-      ;;
-  esac
-
-  case "$INSTALL_LITESTREAM" in
-    true|false)
-      ;;
-    *)
-      err "Invalid Litestream value: $INSTALL_LITESTREAM (expected true or false)"
-      exit 1
-      ;;
-  esac
+  validate_boolean "shared-key" "$SHARED_KEY"
+  validate_boolean "Docker" "$INSTALL_DOCKER"
+  validate_boolean "Litestream" "$INSTALL_LITESTREAM"
 }
 
 ensure_ansible_local() {
@@ -854,26 +857,6 @@ ensure_ansible_inplace() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
   apt-get install -y ansible
-}
-
-pick_default_public_key_from_private_key() {
-  if [[ -n "$SSH_PUBLIC_KEY_FILE" ]]; then
-    if [[ -z "$OPERATOR_SSH_PUBLIC_KEY_FILE" ]]; then
-      OPERATOR_SSH_PUBLIC_KEY_FILE="$SSH_PUBLIC_KEY_FILE"
-    fi
-    if [[ "$SHARED_KEY" == "true" && -z "$DEPLOY_SSH_PUBLIC_KEY_FILE" ]]; then
-      DEPLOY_SSH_PUBLIC_KEY_FILE="$SSH_PUBLIC_KEY_FILE"
-    fi
-    return
-  fi
-
-  if [[ -n "$OPERATOR_SSH_PUBLIC_KEY_FILE" ]]; then
-    return
-  fi
-
-  if [[ -n "$SSH_KEY" ]] && [[ -f "${SSH_KEY}.pub" ]]; then
-    OPERATOR_SSH_PUBLIC_KEY_FILE="${SSH_KEY}.pub"
-  fi
 }
 
 read_public_key_file() {
@@ -900,6 +883,29 @@ read_public_key_file() {
   printf -v "$out_var" '%s' "$key_contents"
 }
 
+resolve_public_key_paths() {
+  PLAN_OPERATOR_SSH_PUBLIC_KEY_FILE="$OPERATOR_SSH_PUBLIC_KEY_FILE"
+  PLAN_DEPLOY_SSH_PUBLIC_KEY_FILE="$DEPLOY_SSH_PUBLIC_KEY_FILE"
+
+  if [[ -n "$SSH_PUBLIC_KEY_FILE" ]]; then
+    if [[ -z "$PLAN_OPERATOR_SSH_PUBLIC_KEY_FILE" ]]; then
+      PLAN_OPERATOR_SSH_PUBLIC_KEY_FILE="$SSH_PUBLIC_KEY_FILE"
+    fi
+    if [[ "$SHARED_KEY" == "true" && -z "$PLAN_DEPLOY_SSH_PUBLIC_KEY_FILE" ]]; then
+      PLAN_DEPLOY_SSH_PUBLIC_KEY_FILE="$SSH_PUBLIC_KEY_FILE"
+    fi
+    return
+  fi
+
+  if [[ -n "$PLAN_OPERATOR_SSH_PUBLIC_KEY_FILE" ]]; then
+    return
+  fi
+
+  if [[ -n "$SSH_KEY" ]] && [[ -f "${SSH_KEY}.pub" ]]; then
+    PLAN_OPERATOR_SSH_PUBLIC_KEY_FILE="${SSH_KEY}.pub"
+  fi
+}
+
 resolve_deploy_public_key() {
   local out_var="$1"
   local operator_ssh_public_key_value="$2"
@@ -910,7 +916,7 @@ resolve_deploy_public_key() {
     return
   fi
 
-  if [[ "$SHARED_KEY" == "true" ]]; then
+  if [[ "$PLAN_SHARED_KEY" == "true" ]]; then
     warn_shared_key
     printf -v "$out_var" '%s' "$operator_ssh_public_key_value"
     return
@@ -921,34 +927,123 @@ resolve_deploy_public_key() {
   exit 1
 }
 
+resolve_ssh_key_plan() {
+  local operator_out_var="$1"
+  local deploy_out_var="$2"
+  local require_operator_key="$3"
+  local root_keys_path="${4:-}"
+  local operator_key_value=""
+  local deploy_key_value=""
+
+  read_public_key_file operator_key_value "$PLAN_OPERATOR_SSH_PUBLIC_KEY_FILE"
+  read_public_key_file deploy_key_value "$PLAN_DEPLOY_SSH_PUBLIC_KEY_FILE"
+  resolve_deploy_public_key deploy_key_value "$operator_key_value" "$deploy_key_value"
+
+  if [[ "$require_operator_key" == "true" && -z "$operator_key_value" && ! -s "$root_keys_path" ]]; then
+    err "No SSH public key source found for operator user."
+    err "Provide --operator-ssh-public-key-file or --ssh-public-key-file, or create $root_keys_path first."
+    err "This protects against locking yourself out when password auth is disabled."
+    exit 1
+  fi
+
+  printf -v "$operator_out_var" '%s' "$operator_key_value"
+  printf -v "$deploy_out_var" '%s' "$deploy_key_value"
+}
+
+tailscale_auth_mode() {
+  if [[ "$TAILSCALE" != "true" ]]; then
+    printf '%s' "disabled"
+  elif [[ -n "$TAILSCALE_AUTH_KEY" ]]; then
+    printf '%s' "auth-key"
+  else
+    printf '%s' "manual"
+  fi
+}
+
+cloudflare_service_mode() {
+  if [[ "$CLOUDFLARE_TUNNEL" != "true" ]]; then
+    printf '%s' "disabled"
+  elif [[ -n "$CLOUDFLARE_API_TOKEN" ]]; then
+    printf '%s' "api"
+  elif [[ -n "$CLOUDFLARE_TUNNEL_TOKEN" ]]; then
+    printf '%s' "token"
+  elif [[ -n "$CLOUDFLARE_TUNNEL_CONFIG" ]]; then
+    printf '%s' "config"
+  else
+    printf '%s' "manual"
+  fi
+}
+
+resolve_install_plan() {
+  auto_detect_mode
+  validate_mode
+
+  if [[ "$MODE" == "remote" ]]; then
+    confirm_or_prompt TARGET_HOST "Target VPS host (IP or DNS name)"
+    confirm_or_prompt BOOTSTRAP_USER "Bootstrap SSH user" "root"
+    if [[ -n "$SSH_KEY" && ! -f "$SSH_KEY" ]]; then
+      err "SSH key file not found: $SSH_KEY"
+      exit 1
+    fi
+  fi
+
+  validate_tailscale_options
+  validate_cloudflare_tunnel_options
+  validate_install_options
+  resolve_public_key_paths
+
+  PLAN_MODE="$MODE"
+  PLAN_TARGET_HOST="$TARGET_HOST"
+  PLAN_BOOTSTRAP_USER="$BOOTSTRAP_USER"
+  PLAN_SSH_KEY="$SSH_KEY"
+  PLAN_OPERATOR_USER="$OPERATOR_USER"
+  PLAN_DEPLOY_USER="$DEPLOY_USER"
+  PLAN_TIMEZONE="$TIMEZONE"
+  PLAN_LOCALE="$LOCALE"
+  PLAN_TAILSCALE="$TAILSCALE"
+  PLAN_TAILSCALE_AUTH_KEY="$TAILSCALE_AUTH_KEY"
+  PLAN_TAILSCALE_HOSTNAME="$TAILSCALE_HOSTNAME"
+  PLAN_TAILSCALE_AUTH_MODE="$(tailscale_auth_mode)"
+  PLAN_CLOUDFLARE_TUNNEL="$CLOUDFLARE_TUNNEL"
+  PLAN_CLOUDFLARE_API_TOKEN="$CLOUDFLARE_API_TOKEN"
+  PLAN_CLOUDFLARE_ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID"
+  PLAN_CLOUDFLARE_TUNNEL_TOKEN="$CLOUDFLARE_TUNNEL_TOKEN"
+  PLAN_CLOUDFLARE_TUNNEL_CONFIG="$CLOUDFLARE_TUNNEL_CONFIG"
+  PLAN_CLOUDFLARE_SERVICE_MODE="$(cloudflare_service_mode)"
+  PLAN_INSTALL_DOCKER="$INSTALL_DOCKER"
+  PLAN_INSTALL_LITESTREAM="$INSTALL_LITESTREAM"
+  PLAN_CHECK_MODE="$CHECK_MODE"
+  PLAN_SHARED_KEY="$SHARED_KEY"
+}
+
 write_extra_vars_file() {
   local file_path="$1"
   local operator_ssh_public_key_value="$2"
   local deploy_ssh_public_key_value="$3"
-  local escaped_tailscale_auth_key="${TAILSCALE_AUTH_KEY//\'/\'\"\'\"\'}"
-  local escaped_tailscale_hostname="${TAILSCALE_HOSTNAME//\'/\'\"\'\"\'}"
-  local escaped_cloudflare_api_token="${CLOUDFLARE_API_TOKEN//\'/\'\"\'\"\'}"
-  local escaped_cloudflare_account_id="${CLOUDFLARE_ACCOUNT_ID//\'/\'\"\'\"\'}"
-  local escaped_cloudflare_tunnel_token="${CLOUDFLARE_TUNNEL_TOKEN//\'/\'\"\'\"\'}"
-  local escaped_cloudflare_tunnel_config="${CLOUDFLARE_TUNNEL_CONFIG//\'/\'\"\'\"\'}"
+  local escaped_tailscale_auth_key="${PLAN_TAILSCALE_AUTH_KEY//\'/\'\"\'\"\'}"
+  local escaped_tailscale_hostname="${PLAN_TAILSCALE_HOSTNAME//\'/\'\"\'\"\'}"
+  local escaped_cloudflare_api_token="${PLAN_CLOUDFLARE_API_TOKEN//\'/\'\"\'\"\'}"
+  local escaped_cloudflare_account_id="${PLAN_CLOUDFLARE_ACCOUNT_ID//\'/\'\"\'\"\'}"
+  local escaped_cloudflare_tunnel_token="${PLAN_CLOUDFLARE_TUNNEL_TOKEN//\'/\'\"\'\"\'}"
+  local escaped_cloudflare_tunnel_config="${PLAN_CLOUDFLARE_TUNNEL_CONFIG//\'/\'\"\'\"\'}"
 
   {
-    printf 'simple_vps_operator_user: "%s"\n' "$OPERATOR_USER"
-    printf 'simple_vps_deploy_user: "%s"\n' "$DEPLOY_USER"
-    printf 'simple_vps_admin_user: "%s"\n' "$OPERATOR_USER"
-    printf 'simple_vps_allow_shared_ssh_key: %s\n' "$SHARED_KEY"
-    printf 'simple_vps_timezone: "%s"\n' "$TIMEZONE"
-    printf 'simple_vps_locale: "%s"\n' "$LOCALE"
-    printf 'security_enable_tailscale: %s\n' "$TAILSCALE"
+    printf 'simple_vps_operator_user: "%s"\n' "$PLAN_OPERATOR_USER"
+    printf 'simple_vps_deploy_user: "%s"\n' "$PLAN_DEPLOY_USER"
+    printf 'simple_vps_admin_user: "%s"\n' "$PLAN_OPERATOR_USER"
+    printf 'simple_vps_allow_shared_ssh_key: %s\n' "$PLAN_SHARED_KEY"
+    printf 'simple_vps_timezone: "%s"\n' "$PLAN_TIMEZONE"
+    printf 'simple_vps_locale: "%s"\n' "$PLAN_LOCALE"
+    printf 'security_enable_tailscale: %s\n' "$PLAN_TAILSCALE"
     printf "simple_vps_tailscale_auth_key: '%s'\n" "$escaped_tailscale_auth_key"
     printf "simple_vps_tailscale_hostname: '%s'\n" "$escaped_tailscale_hostname"
-    printf 'simple_vps_enable_cloudflare_tunnel: %s\n' "$CLOUDFLARE_TUNNEL"
+    printf 'simple_vps_enable_cloudflare_tunnel: %s\n' "$PLAN_CLOUDFLARE_TUNNEL"
     printf "simple_vps_cloudflare_api_token: '%s'\n" "$escaped_cloudflare_api_token"
     printf "simple_vps_cloudflare_account_id: '%s'\n" "$escaped_cloudflare_account_id"
     printf "simple_vps_cloudflare_tunnel_token: '%s'\n" "$escaped_cloudflare_tunnel_token"
     printf "simple_vps_cloudflare_tunnel_config_path: '%s'\n" "$escaped_cloudflare_tunnel_config"
-    printf 'simple_vps_install_docker: %s\n' "$INSTALL_DOCKER"
-    printf 'simple_vps_install_litestream: %s\n' "$INSTALL_LITESTREAM"
+    printf 'simple_vps_install_docker: %s\n' "$PLAN_INSTALL_DOCKER"
+    printf 'simple_vps_install_litestream: %s\n' "$PLAN_INSTALL_LITESTREAM"
 
     if [[ -n "$operator_ssh_public_key_value" ]]; then
       local escaped_key="${operator_ssh_public_key_value//\'/\'\"\'\"\'}"
@@ -995,7 +1090,7 @@ run_ansible_playbook() {
   local cmd=()
 
   cmd=(ansible-playbook "$@")
-  if [[ "$CHECK_MODE" == "true" ]]; then
+  if [[ "$PLAN_CHECK_MODE" == "true" ]]; then
     cmd+=(--check)
   fi
   if [[ ${#PASSTHROUGH_ARGS[@]} -gt 0 ]]; then
@@ -1005,27 +1100,51 @@ run_ansible_playbook() {
   "${cmd[@]}"
 }
 
+dump_install_plan() {
+  local operator_ssh_public_key_value=""
+  local deploy_ssh_public_key_value=""
+  local tmp_vars
+  local require_operator_key="false"
+  local root_keys_path="/root/.ssh/authorized_keys"
+
+  if [[ "$PLAN_MODE" == "local" ]]; then
+    require_operator_key="true"
+  fi
+
+  tmp_vars="$(mktemp)"
+  chmod 600 "$tmp_vars"
+  TMP_FILES+=("$tmp_vars")
+  trap cleanup_tmp_files EXIT
+
+  resolve_ssh_key_plan operator_ssh_public_key_value deploy_ssh_public_key_value "$require_operator_key" "$root_keys_path"
+  write_extra_vars_file "$tmp_vars" "$operator_ssh_public_key_value" "$deploy_ssh_public_key_value"
+
+  printf 'plan.mode=%s\n' "$PLAN_MODE"
+  printf 'plan.target_host=%s\n' "$PLAN_TARGET_HOST"
+  printf 'plan.bootstrap_user=%s\n' "$PLAN_BOOTSTRAP_USER"
+  printf 'plan.operator_user=%s\n' "$PLAN_OPERATOR_USER"
+  printf 'plan.deploy_user=%s\n' "$PLAN_DEPLOY_USER"
+  printf 'plan.shared_key=%s\n' "$PLAN_SHARED_KEY"
+  printf 'plan.tailscale=%s\n' "$PLAN_TAILSCALE"
+  printf 'plan.tailscale_auth_mode=%s\n' "$PLAN_TAILSCALE_AUTH_MODE"
+  printf 'plan.cloudflare_tunnel=%s\n' "$PLAN_CLOUDFLARE_TUNNEL"
+  printf 'plan.cloudflare_service_mode=%s\n' "$PLAN_CLOUDFLARE_SERVICE_MODE"
+  printf 'plan.docker=%s\n' "$PLAN_INSTALL_DOCKER"
+  printf 'plan.litestream=%s\n' "$PLAN_INSTALL_LITESTREAM"
+  printf 'plan.check_mode=%s\n' "$PLAN_CHECK_MODE"
+  printf '%s\n' '--- extra-vars ---'
+  cat "$tmp_vars"
+}
+
 run_remote() {
   ensure_ansible_local
 
-  confirm_or_prompt TARGET_HOST "Target VPS host (IP or DNS name)"
-  confirm_or_prompt BOOTSTRAP_USER "Bootstrap SSH user" "root"
-
-  if [[ -n "$SSH_KEY" ]] && [[ ! -f "$SSH_KEY" ]]; then
-    err "SSH key file not found: $SSH_KEY"
-    exit 1
-  fi
-
-  pick_default_public_key_from_private_key
-
   local operator_ssh_public_key_value=""
   local deploy_ssh_public_key_value=""
-  read_public_key_file operator_ssh_public_key_value "$OPERATOR_SSH_PUBLIC_KEY_FILE"
-  read_public_key_file deploy_ssh_public_key_value "$DEPLOY_SSH_PUBLIC_KEY_FILE"
-  resolve_deploy_public_key deploy_ssh_public_key_value "$operator_ssh_public_key_value" "$deploy_ssh_public_key_value"
+  resolve_ssh_key_plan operator_ssh_public_key_value deploy_ssh_public_key_value false
 
-  info "Running in remote mode against ${TARGET_HOST}"
-  preflight_ssh "$BOOTSTRAP_USER" "$TARGET_HOST" "$SSH_KEY"
+  info "Running in remote mode against ${PLAN_TARGET_HOST}"
+  preflight_ssh "$PLAN_BOOTSTRAP_USER" "$PLAN_TARGET_HOST" "$PLAN_SSH_KEY"
 
   local tmp_inventory
   local tmp_vars
@@ -1038,7 +1157,7 @@ run_remote() {
 
   cat > "$tmp_inventory" <<INVENTORY
 [simple_vps]
-simple_vps_host ansible_host=${TARGET_HOST} ansible_python_interpreter=/usr/bin/python3
+simple_vps_host ansible_host=${PLAN_TARGET_HOST} ansible_python_interpreter=/usr/bin/python3
 INVENTORY
 
   write_extra_vars_file "$tmp_vars" "$operator_ssh_public_key_value" "$deploy_ssh_public_key_value"
@@ -1049,11 +1168,11 @@ INVENTORY
     -e "@$tmp_vars"
   )
 
-  local bootstrap_ssh_args=( -u "$BOOTSTRAP_USER" )
-  local apply_ssh_args=( -u "$OPERATOR_USER" )
-  if [[ -n "$SSH_KEY" ]]; then
-    bootstrap_ssh_args+=( --private-key "$SSH_KEY" )
-    apply_ssh_args+=( --private-key "$SSH_KEY" )
+  local bootstrap_ssh_args=( -u "$PLAN_BOOTSTRAP_USER" )
+  local apply_ssh_args=( -u "$PLAN_OPERATOR_USER" )
+  if [[ -n "$PLAN_SSH_KEY" ]]; then
+    bootstrap_ssh_args+=( --private-key "$PLAN_SSH_KEY" )
+    apply_ssh_args+=( --private-key "$PLAN_SSH_KEY" )
   fi
 
   step "Phase 1/2: bootstrap"
@@ -1063,7 +1182,7 @@ INVENTORY
   step "Phase 2/2: apply"
   if ! run_ansible_playbook "$SCRIPT_DIR/playbooks/vps-apply.yml" \
       "${common_args[@]}" "${apply_ssh_args[@]}"; then
-    warn "Apply phase as '${OPERATOR_USER}' failed; retrying as '${BOOTSTRAP_USER}'."
+    warn "Apply phase as '${PLAN_OPERATOR_USER}' failed; retrying as '${PLAN_BOOTSTRAP_USER}'."
     run_ansible_playbook "$SCRIPT_DIR/playbooks/vps-apply.yml" \
       "${common_args[@]}" "${bootstrap_ssh_args[@]}"
   fi
@@ -1080,19 +1199,7 @@ run_local() {
   local operator_ssh_public_key_value=""
   local deploy_ssh_public_key_value=""
   local root_keys_path="/root/.ssh/authorized_keys"
-  pick_default_public_key_from_private_key
-  read_public_key_file operator_ssh_public_key_value "$OPERATOR_SSH_PUBLIC_KEY_FILE"
-  read_public_key_file deploy_ssh_public_key_value "$DEPLOY_SSH_PUBLIC_KEY_FILE"
-  resolve_deploy_public_key deploy_ssh_public_key_value "$operator_ssh_public_key_value" "$deploy_ssh_public_key_value"
-
-  # Prevent lockout: local mode with password-only first login needs an explicit
-  # key file or existing root authorized_keys before SSH hardening is applied.
-  if [[ -z "$operator_ssh_public_key_value" && ! -s "$root_keys_path" ]]; then
-    err "No SSH public key source found for operator user."
-    err "Provide --operator-ssh-public-key-file or --ssh-public-key-file, or create $root_keys_path first."
-    err "This protects against locking yourself out when password auth is disabled."
-    exit 1
-  fi
+  resolve_ssh_key_plan operator_ssh_public_key_value deploy_ssh_public_key_value true "$root_keys_path"
 
   info "Running in local mode on localhost"
 
@@ -1132,37 +1239,39 @@ main() {
   parse_args "$@"
   setup_colors
   maybe_run_interactive_wizard
-  auto_detect_mode
-  validate_mode
-  validate_tailscale_options
-  validate_cloudflare_tunnel_options
-  validate_install_options
+  resolve_install_plan
+
+  if [[ "$INSTALLER_DUMP_PLAN" == "true" ]]; then
+    dump_install_plan
+    return
+  fi
+
   prepare_ansible_env
   ensure_simple_vps_layout "$@"
 
   info "Simple VPS installer starting"
-  info "Mode: $MODE"
-  info "Operator user: $OPERATOR_USER"
-  info "Deploy user: $DEPLOY_USER"
-  info "Timezone: $TIMEZONE"
-  info "Tailscale: $TAILSCALE"
-  if [[ "$TAILSCALE" == "true" ]]; then
-    info "Tailscale auth: $(present_or_missing "$TAILSCALE_AUTH_KEY" "auth key provided" "manual login required")"
+  info "Mode: $PLAN_MODE"
+  info "Operator user: $PLAN_OPERATOR_USER"
+  info "Deploy user: $PLAN_DEPLOY_USER"
+  info "Timezone: $PLAN_TIMEZONE"
+  info "Tailscale: $PLAN_TAILSCALE"
+  if [[ "$PLAN_TAILSCALE" == "true" ]]; then
+    info "Tailscale auth: $(present_or_missing "$PLAN_TAILSCALE_AUTH_KEY" "auth key provided" "manual login required")"
   fi
-  info "Cloudflare Tunnel: $CLOUDFLARE_TUNNEL"
-  if [[ "$CLOUDFLARE_TUNNEL" == "true" ]]; then
-    if [[ -n "$CLOUDFLARE_API_TOKEN" ]]; then
+  info "Cloudflare Tunnel: $PLAN_CLOUDFLARE_TUNNEL"
+  if [[ "$PLAN_CLOUDFLARE_TUNNEL" == "true" ]]; then
+    if [[ -n "$PLAN_CLOUDFLARE_API_TOKEN" ]]; then
       info "Cloudflare API: token provided"
-    elif [[ -n "$CLOUDFLARE_TUNNEL_CONFIG" ]]; then
-      info "Cloudflare Tunnel config: $CLOUDFLARE_TUNNEL_CONFIG"
+    elif [[ -n "$PLAN_CLOUDFLARE_TUNNEL_CONFIG" ]]; then
+      info "Cloudflare Tunnel config: $PLAN_CLOUDFLARE_TUNNEL_CONFIG"
     else
-      info "Cloudflare Tunnel auth: $(present_or_missing "$CLOUDFLARE_TUNNEL_TOKEN" "token provided" "service not enabled")"
+      info "Cloudflare Tunnel auth: $(present_or_missing "$PLAN_CLOUDFLARE_TUNNEL_TOKEN" "token provided" "service not enabled")"
     fi
   fi
-  info "Docker: $INSTALL_DOCKER"
-  info "Litestream: $INSTALL_LITESTREAM"
+  info "Docker: $PLAN_INSTALL_DOCKER"
+  info "Litestream: $PLAN_INSTALL_LITESTREAM"
 
-  case "$MODE" in
+  case "$PLAN_MODE" in
     remote)
       run_remote
       ;;

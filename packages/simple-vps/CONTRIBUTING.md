@@ -10,6 +10,7 @@ Run these checks from repo root:
 bash -n install.sh
 PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile roles/infra/files/simple-vps
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
+tests/install_plan_test.sh
 tests/bootstrap_tarball_smoke.sh
 ansible-playbook --syntax-check playbooks/vps-bootstrap.yml
 ansible-playbook --syntax-check playbooks/vps-apply.yml
