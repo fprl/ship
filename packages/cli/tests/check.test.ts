@@ -67,6 +67,34 @@ service = "web"
     );
   });
 
+  test("validates the effective env override model", () => {
+    const root = fixture();
+    writeManifest(
+      root,
+      `
+name = "api"
+
+[env.production]
+server = "deploy@100.x.y.z"
+runtime = "bun"
+
+[services.web]
+command = "bun run src/server.ts"
+
+[env.production.services.web]
+port = 3000
+healthcheck = "/health"
+
+[routes.app]
+host = "api.example.com"
+type = "proxy"
+service = "web"
+`,
+    );
+
+    expect(checkManifest(root, "production").errors).toEqual([]);
+  });
+
   test("requires build output when build is present", () => {
     const root = fixture();
     writeManifest(

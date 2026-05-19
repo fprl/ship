@@ -29,6 +29,26 @@ type AppContext = {
   routes: Record<string, Dict>;
 };
 
+type ManifestModel = {
+  manifest: Dict;
+  appName?: string;
+  envs: Record<string, Dict>;
+  envNames: string[];
+};
+
+type EnvTarget = {
+  manifest: Dict;
+  appName?: string;
+  env: Dict;
+  envName: string;
+  server?: string;
+  appRoot?: string;
+  runtime?: string;
+  build: Dict | undefined;
+  services: Record<string, Dict>;
+  routes: Record<string, Dict>;
+};
+
 type DestroyOptions = {
   purge: boolean;
   yes: boolean;
@@ -132,6 +152,70 @@ function readManifest(root: string): Dict {
   return parseToml(path);
 }
 
+function manifestEnvBlocks(manifest: Dict): Record<string, Dict> {
+  const envs: Record<string, Dict> = {};
+  if (!isRecord(manifest.env)) return envs;
+  for (const [name, env] of Object.entries(manifest.env)) {
+    if (isRecord(env)) envs[name] = env;
+  }
+  return envs;
+}
+
+function manifestModel(manifest: Dict): ManifestModel {
+  const envs = manifestEnvBlocks(manifest);
+  return {
+    manifest,
+    appName: asString(manifest.name),
+    envs,
+    envNames: Object.keys(envs),
+  };
+}
+
+function readManifestModel(root: string): ManifestModel {
+  return manifestModel(readManifest(root));
+}
+
+function defaultAppRoot(appName: string): string {
+  return `/var/apps/${appName}`;
+}
+
+function normalizeEnvTarget(model: ManifestModel, envName: string): EnvTarget | undefined {
+  const env = model.envs[envName];
+  if (!env) return undefined;
+  return {
+    manifest: model.manifest,
+    appName: model.appName,
+    env,
+    envName,
+    server: asString(env.server),
+    appRoot: model.appName ? asString(env.path) ?? defaultAppRoot(model.appName) : undefined,
+    runtime: asString(env.runtime),
+    build: effectiveBuild(model.manifest, env),
+    services: effectiveServices(model.manifest, env),
+    routes: effectiveRoutes(model.manifest, env),
+  };
+}
+
+function requireAppContext(target: EnvTarget): AppContext {
+  const appName = requireString(target.appName, "name");
+  const server = requireString(target.server, `[env.${target.envName}].server`);
+  validateSshTarget(server, `[env.${target.envName}].server`);
+  const appRoot = target.appRoot ?? defaultAppRoot(appName);
+  const runtime = requireString(target.runtime, `[env.${target.envName}].runtime`);
+  return {
+    manifest: target.manifest,
+    appName,
+    env: target.env,
+    envName: target.envName,
+    server,
+    appRoot,
+    runtime,
+    build: target.build,
+    services: target.services,
+    routes: target.routes,
+  };
+}
+
 function mergeNamed(base: unknown, override: unknown): Record<string, Dict> {
   const merged: Record<string, Dict> = {};
   if (isRecord(base)) {
@@ -198,30 +282,29 @@ function validateBuild(build: Dict | undefined, root: string, errors: string[]) 
   }
 }
 
-function validateEnvBlock(name: string, appName: string | undefined, env: Dict, errors: string[]) {
-  if (!SERVICE_RE.test(name)) errors.push(`invalid env name: ${name}`);
-  const server = asString(env.server);
-  if (!server) errors.push(`[env.${name}].server is required`);
+function validateEnvTarget(target: EnvTarget, errors: string[]) {
+  const { appName, env, envName, server, runtime } = target;
+  if (!SERVICE_RE.test(envName)) errors.push(`invalid env name: ${envName}`);
+  if (!server) errors.push(`[env.${envName}].server is required`);
   else if (server.startsWith("-") || !SSH_TARGET_RE.test(server)) {
-    errors.push(`[env.${name}].server must be an SSH target like deploy@example.com`);
+    errors.push(`[env.${envName}].server must be an SSH target like deploy@example.com`);
   }
   if (env.path !== undefined) {
     const path = asString(env.path);
-    if (!path) errors.push(`[env.${name}].path must be a non-empty string when present`);
-    else if (!path.startsWith("/")) errors.push(`[env.${name}].path must be absolute`);
-    else if (!appName) errors.push(`[env.${name}].path requires a valid top-level name`);
-    else if (path !== `/var/apps/${appName}`) errors.push(`[env.${name}].path must be /var/apps/${appName}`);
+    if (!path) errors.push(`[env.${envName}].path must be a non-empty string when present`);
+    else if (!path.startsWith("/")) errors.push(`[env.${envName}].path must be absolute`);
+    else if (!appName) errors.push(`[env.${envName}].path requires a valid top-level name`);
+    else if (path !== defaultAppRoot(appName)) errors.push(`[env.${envName}].path must be ${defaultAppRoot(appName)}`);
   }
 
-  const runtime = asString(env.runtime);
-  if (!runtime) errors.push(`[env.${name}].runtime is required`);
-  else if (!RUNTIMES.has(runtime)) errors.push(`[env.${name}].runtime must be bun, node, or static`);
+  if (!runtime) errors.push(`[env.${envName}].runtime is required`);
+  else if (!RUNTIMES.has(runtime)) errors.push(`[env.${envName}].runtime must be bun, node, or static`);
 
   const keepReleases = env.keep_releases;
   if (keepReleases !== undefined) {
     const value = asNumber(keepReleases);
     if (value === undefined || !Number.isInteger(value) || value < 1) {
-      errors.push(`[env.${name}].keep_releases must be a positive integer`);
+      errors.push(`[env.${envName}].keep_releases must be a positive integer`);
     }
   }
 }
@@ -556,35 +639,24 @@ function copyRootFile(sourceRoot: string, file: string, targetRoot: string) {
   cpSync(source, join(targetRoot, file));
 }
 
-function resolveEnv(manifest: Dict, envName: string): Dict {
-  const envs = isRecord(manifest.env) ? manifest.env : {};
-  const env = envs[envName];
-  if (!isRecord(env)) throw new Error(`env not found: ${envName}`);
-  return env;
-}
-
 function loadAppContext(root: string, envName: string): AppContext {
-  const result = checkManifest(root, envName);
+  const model = readManifestModel(root);
+  const result = checkManifestModel(root, model, envName);
   if (result.errors.length > 0) throw new Error(result.errors.join("\n"));
 
-  const manifest = readManifest(root);
-  const appName = requireString(manifest.name, "name");
-  const env = resolveEnv(manifest, envName);
-  const server = requireString(env.server, `[env.${envName}].server`);
-  validateSshTarget(server, `[env.${envName}].server`);
-  const appRoot = asString(env.path) ?? `/var/apps/${appName}`;
-  const runtime = requireString(env.runtime, `[env.${envName}].runtime`);
-  const build = effectiveBuild(manifest, env);
-  const services = effectiveServices(manifest, env);
-  const routes = effectiveRoutes(manifest, env);
-  return { manifest, appName, env, envName, server, appRoot, runtime, build, services, routes };
+  const target = normalizeEnvTarget(model, envName);
+  if (!target) throw new Error(`env not found: ${envName}`);
+  return requireAppContext(target);
 }
 
 function loadSingleEnvContext(root: string): AppContext {
-  const result = checkManifest(root);
+  const model = readManifestModel(root);
+  const result = checkManifestModel(root, model);
   if (result.errors.length > 0) throw new Error(result.errors.join("\n"));
   if (result.envs.length !== 1) throw new Error("command requires exactly one env in simple-vps.toml");
-  return loadAppContext(root, result.envs[0]);
+  const target = normalizeEnvTarget(model, result.envs[0]);
+  if (!target) throw new Error(`env not found: ${result.envs[0]}`);
+  return requireAppContext(target);
 }
 
 function parseServerFlag(args: string[]): { server?: string; rest: string[] } {
@@ -616,44 +688,38 @@ function loadReadTarget(root: string, server: string | undefined): ReadTarget {
   return loadSingleEnvContext(root);
 }
 
-export function checkManifest(root = process.cwd(), envName?: string): CheckResult {
-  const manifest = readManifest(root);
+function checkManifestModel(root: string, model: ManifestModel, envName?: string): CheckResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  const name = asString(manifest.name);
-  if (!name) errors.push("name is required");
-  else if (!APP_RE.test(name)) errors.push("name must match ^[a-z][a-z0-9-]{1,40}$");
+  if (!model.appName) errors.push("name is required");
+  else if (!APP_RE.test(model.appName)) errors.push("name must match ^[a-z][a-z0-9-]{1,40}$");
 
-  const envs = isRecord(manifest.env) ? manifest.env : {};
-  const envNames = Object.keys(envs);
-  if (envNames.length === 0) errors.push("at least one [env.<name>] block is required");
-  if (envName && !isRecord(envs[envName])) errors.push(`env not found: ${envName}`);
+  if (model.envNames.length === 0) errors.push("at least one [env.<name>] block is required");
+  if (envName && !model.envs[envName]) errors.push(`env not found: ${envName}`);
 
-  const selectedEnvNames = envName ? [envName] : envNames;
+  const selectedEnvNames = envName ? [envName] : model.envNames;
   const locks = lockfilesIn(root);
   if (locks.length > 1) errors.push(`multiple lockfiles found: ${locks.join(", ")}`);
 
   for (const selected of selectedEnvNames) {
-    const env = envs[selected];
-    if (!isRecord(env)) continue;
-    validateEnvBlock(selected, name, env, errors);
+    const target = normalizeEnvTarget(model, selected);
+    if (!target) continue;
+    validateEnvTarget(target, errors);
+    validateBuild(target.build, root, errors);
+    validateServices(target.services, target.runtime, errors);
+    validateRoutes(target.routes, target.services, errors);
 
-    const build = effectiveBuild(manifest, env);
-    const services = effectiveServices(manifest, env);
-    const routes = effectiveRoutes(manifest, env);
-    const runtime = asString(env.runtime);
-
-    validateBuild(build, root, errors);
-    validateServices(services, runtime, errors);
-    validateRoutes(routes, services, errors);
-
-    if (installNeeded(runtime, build) && locks.length === 0) {
+    if (installNeeded(target.runtime, target.build) && locks.length === 0) {
       errors.push(`no lockfile found for env ${selected}`);
     }
   }
 
-  return { errors, warnings, envs: envNames };
+  return { errors, warnings, envs: model.envNames };
+}
+
+export function checkManifest(root = process.cwd(), envName?: string): CheckResult {
+  return checkManifestModel(root, readManifestModel(root), envName);
 }
 
 function printCheckResult(result: CheckResult) {
