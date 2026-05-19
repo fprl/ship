@@ -51,6 +51,10 @@ export type CommandRunner = {
   run(command: string[], options?: { passthrough?: boolean }): Promise<CommandResult>;
 };
 
+type ReadTarget = {
+  server: string;
+};
+
 export type MainOptions = {
   runner?: CommandRunner;
   now?: () => Date;
@@ -607,19 +611,9 @@ function validateSshTarget(value: string, label: string) {
   }
 }
 
-function loadReadTarget(root: string, server: string | undefined): { server: string } {
+function loadReadTarget(root: string, server: string | undefined): ReadTarget {
   if (server) return { server };
   return loadSingleEnvContext(root);
-}
-
-async function runRemoteReadCommand(
-  runner: CommandRunner,
-  context: { server: string },
-  command: string,
-  failureMessage: string,
-) {
-  const result = await runCommand(runner, ["ssh", context.server, command], failureMessage);
-  if (result.stdout.trim()) console.log(result.stdout.trimEnd());
 }
 
 export function checkManifest(root = process.cwd(), envName?: string): CheckResult {
@@ -749,6 +743,66 @@ async function runCommand(runner: CommandRunner, command: string[], failureMessa
   return result;
 }
 
+function simpleVpsHelperCommand(args: string[]): string {
+  return ["sudo", "simple-vps", ...args].map(shellEscape).join(" ");
+}
+
+class RemoteHost {
+  constructor(
+    private readonly runner: CommandRunner,
+    readonly server: string,
+  ) {
+    validateSshTarget(server, "server");
+  }
+
+  async ssh(command: string, failureMessage: string): Promise<CommandResult> {
+    return runCommand(this.runner, ["ssh", this.server, command], failureMessage);
+  }
+
+  async trySsh(command: string): Promise<CommandResult> {
+    return this.runner.run(["ssh", this.server, command]);
+  }
+
+  async read(command: string, failureMessage: string): Promise<CommandResult> {
+    const result = await this.ssh(command, failureMessage);
+    if (result.stdout.trim()) console.log(result.stdout.trimEnd());
+    return result;
+  }
+
+  async passthrough(): Promise<void> {
+    const result = await this.runner.run(["ssh", this.server], { passthrough: true });
+    if (result.code !== 0) throw new Error(`SSH failed for ${this.server}`);
+  }
+
+  async checkSsh(): Promise<void> {
+    await this.ssh("true", `SSH failed for ${this.server}`);
+  }
+
+  async requireTool(tool: string, failureMessage: string): Promise<void> {
+    await this.ssh(`command -v ${shellEscape(tool)}`, failureMessage);
+  }
+
+  async helper(args: string[], failureMessage: string): Promise<CommandResult> {
+    return this.ssh(simpleVpsHelperCommand(args), failureMessage);
+  }
+
+  async readHelper(args: string[], failureMessage: string): Promise<CommandResult> {
+    return this.read(simpleVpsHelperCommand(args), failureMessage);
+  }
+
+  async tryHelper(args: string[]): Promise<CommandResult> {
+    return this.trySsh(simpleVpsHelperCommand(args));
+  }
+
+  async upload(localPath: string, remotePath: string, failureMessage: string): Promise<void> {
+    await runCommand(this.runner, ["rsync", "-az", localPath, `${this.server}:${remotePath}`], failureMessage);
+  }
+}
+
+function remoteHost(runner: CommandRunner, target: ReadTarget): RemoteHost {
+  return new RemoteHost(runner, target.server);
+}
+
 async function readSecretInput(stdinText: string | undefined): Promise<string> {
   const text =
     stdinText ??
@@ -772,44 +826,34 @@ async function promptHidden(label: string): Promise<string> {
 
 async function runSetup(root: string, envName: string, runner: CommandRunner) {
   const { appName, server, runtime } = loadAppContext(root, envName);
+  const host = remoteHost(runner, { server });
 
-  await runCommand(runner, ["ssh", server, "true"], `SSH failed for ${server}`);
+  await host.checkSsh();
   for (const tool of ["simple-vps", "rsync", runtime]) {
     if (tool === "static") continue;
     const message =
       tool === "simple-vps"
         ? "missing Simple VPS server API; rerun the Simple VPS install"
         : `missing required server tool: ${tool}`;
-    await runCommand(runner, ["ssh", server, `command -v ${tool}`], message);
+    await host.requireTool(tool, message);
   }
-  await runCommand(
-    runner,
-    ["ssh", server, `sudo simple-vps app create ${appName}`],
-    "simple-vps app create failed; rerun the Simple VPS install",
-  );
+  await host.helper(["app", "create", appName], "simple-vps app create failed; rerun the Simple VPS install");
   console.log(`Setup complete for ${appName} (${envName})`);
 }
 
 async function uploadEnvContent(runner: CommandRunner, context: AppContext, content: string) {
   validateEnvironmentFile(content);
+  const host = remoteHost(runner, context);
   const localDir = mkdtempSync(join(tmpdir(), "simple-vps-env-"));
   const localPath = join(localDir, ".env");
   const remotePath = `${REMOTE_DEPLOY_TMP_DIR}/${context.appName}-env-${Date.now().toString(36)}.env`;
   writeFileSync(localPath, content, { encoding: "utf8", mode: 0o600 });
-  await runCommand(runner, ["rsync", "-az", localPath, `${context.server}:${remotePath}`], "env upload failed");
-  await runCommand(
-    runner,
-    ["ssh", context.server, `sudo simple-vps app install-env ${context.appName} ${remotePath}`],
-    "env install failed",
-  );
+  await host.upload(localPath, remotePath, "env upload failed");
+  await host.helper(["app", "install-env", context.appName, remotePath], "env install failed");
 }
 
 async function readRemoteEnv(runner: CommandRunner, context: AppContext): Promise<string> {
-  const result = await runCommand(
-    runner,
-    ["ssh", context.server, `sudo simple-vps app read-env ${context.appName}`],
-    "failed to read remote env",
-  );
+  const result = await remoteHost(runner, context).helper(["app", "read-env", context.appName], "failed to read remote env");
   return result.stdout;
 }
 
@@ -1086,8 +1130,7 @@ async function runLogs(root: string, envName: string, serviceName: string | unde
 
 async function runSsh(root: string, envName: string, runner: CommandRunner) {
   const context = loadAppContext(root, envName);
-  const result = await runner.run(["ssh", context.server], { passthrough: true });
-  if (result.code !== 0) throw new Error(`SSH failed for ${context.server}`);
+  await remoteHost(runner, context).passthrough();
 }
 
 async function runRoute(root: string, args: string[], runner: CommandRunner) {
@@ -1098,12 +1141,7 @@ async function runRoute(root: string, args: string[], runner: CommandRunner) {
   const unknown = flags.find((flag) => flag !== "--json");
   if (unknown) throw new Error(`unknown argument: ${unknown}`);
   const context = loadReadTarget(root, server);
-  await runRemoteReadCommand(
-    runner,
-    context,
-    `sudo simple-vps route list${json ? " --json" : ""}`,
-    "failed to read routes",
-  );
+  await remoteHost(runner, context).readHelper(["route", "list", ...(json ? ["--json"] : [])], "failed to read routes");
 }
 
 async function runHost(root: string, args: string[], runner: CommandRunner) {
@@ -1113,12 +1151,13 @@ async function runHost(root: string, args: string[], runner: CommandRunner) {
     throw new Error("host requires subcommand: status, doctor");
   }
   const context = loadReadTarget(root, server);
+  const host = remoteHost(runner, context);
   if (subcommand === "status") {
-    await runRemoteReadCommand(runner, context, "sudo simple-vps status", "failed to read host status");
+    await host.readHelper(["status"], "failed to read host status");
     return;
   }
 
-  const result = await runner.run(["ssh", context.server, "sudo simple-vps doctor"]);
+  const result = await host.tryHelper(["doctor"]);
   if (result.stdout.trim()) console.log(result.stdout.trimEnd());
   if (result.code !== 0) {
     const detail = result.stderr.trim();

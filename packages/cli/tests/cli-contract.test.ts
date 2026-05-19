@@ -269,4 +269,34 @@ describe("public CLI contract", () => {
     expect(commands).toEqual([["ssh", "deploy@100.x.y.z", "sudo simple-vps doctor"]]);
     expect(output).toEqual(["Simple VPS doctor\nidentity: healthy"]);
   });
+
+  test("host doctor prints degraded output before failing", async () => {
+    const root = mkdtempSync(join(tmpdir(), "simple-vps-contract-test-"));
+    const output: string[] = [];
+    const errors: string[] = [];
+    const originalLog = console.log;
+    const originalError = console.error;
+    const commands: string[][] = [];
+    const runner: CommandRunner = {
+      async run(command) {
+        commands.push(command);
+        return { code: 1, stdout: "Simple VPS doctor\nidentity: degraded\n", stderr: "legacy admin conflation" };
+      },
+    };
+    writeManifest(root);
+
+    console.log = (message?: unknown) => output.push(String(message));
+    console.error = (message?: unknown) => errors.push(String(message));
+    try {
+      await main(["host", "doctor"], root, { runner });
+    } finally {
+      console.log = originalLog;
+      console.error = originalError;
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(commands).toEqual([["ssh", "deploy@100.x.y.z", "sudo simple-vps doctor"]]);
+    expect(output).toEqual(["Simple VPS doctor\nidentity: degraded"]);
+    expect(errors.join("\n")).toContain("host doctor reported degraded: legacy admin conflation");
+  });
 });
