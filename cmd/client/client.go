@@ -903,14 +903,12 @@ func CmdDestroy(root string, envName string, yes bool, confirmApp string, purge 
 		utils.Die(err.Error(), 1)
 	}
 
-	if !yes {
-		fmt.Printf("Warning: this will destroy app %s on %s.\n", ctx.AppName, ctx.Server)
-		fmt.Printf("Are you sure? Re-run with --yes.\n")
-		os.Exit(1)
-	}
-
-	if confirmApp != ctx.AppName {
-		utils.Die(fmt.Sprintf("app name confirmation mismatch: expected %s, got %s", ctx.AppName, confirmApp), 1)
+	if purge {
+		if !yes || confirmApp != ctx.AppName {
+			utils.Die(fmt.Sprintf("destroy --purge requires --yes --confirm %s", ctx.AppName), 1)
+		}
+	} else if !yes && confirmApp != ctx.AppName {
+		utils.Die(fmt.Sprintf("destroy requires --yes or --confirm %s", ctx.AppName), 1)
 	}
 
 	runner, err := NewCommandRunner()
@@ -999,7 +997,7 @@ func CmdDeploy(root string, envName string, dirty bool, includeDotenv bool) {
 	if err != nil {
 		utils.Die(fmt.Sprintf("failed to upload artifact: %v", err), 1)
 	}
-	runSSHChecked(runner, ctx.Server, fmt.Sprintf("chmod 2775 %s", utils.ShellEscape(releaseDir)), "failed to restore release permissions")
+	fixReleasePermissions(runner, ctx, releaseDir)
 
 	// Link shared paths
 	for _, entry := range []string{".env", "db", "storage", "logs"} {
@@ -1125,6 +1123,18 @@ func activateRelease(runner *CommandRunner, ctx *config.AppContext, releaseDir s
 	}
 }
 
+func fixReleasePermissions(runner *CommandRunner, ctx *config.AppContext, releaseDir string) {
+	group := "app-" + ctx.AppName
+	escapedReleaseDir := utils.ShellEscape(releaseDir)
+	cmd := strings.Join([]string{
+		fmt.Sprintf("chgrp -R %s %s", utils.ShellEscape(group), escapedReleaseDir),
+		fmt.Sprintf("chmod -R g+rwX %s", escapedReleaseDir),
+		fmt.Sprintf("find %s -type d -exec chmod g+s {} +", escapedReleaseDir),
+		fmt.Sprintf("chmod 2775 %s", escapedReleaseDir),
+	}, " && ")
+	runSSHChecked(runner, ctx.Server, cmd, "failed to restore release permissions")
+}
+
 func healthCheckCommand(port int, path string, expectedStatus int, timeout int) string {
 	return fmt.Sprintf("for i in $(seq 1 %d); do status=$(curl -o /dev/null -s -w '%%{http_code}' --max-time 2 http://127.0.0.1:%d%s || true); [ \"$status\" = \"%d\" ] && exit 0; sleep 1; done; exit 1", timeout, port, path, expectedStatus)
 }
@@ -1180,7 +1190,7 @@ func renderUnit(appName string, envName string, release string, serviceName stri
 func publishRoutes(runner *CommandRunner, ctx *config.AppContext) {
 	for _, route := range ctx.Routes {
 		// Cloudflare publish
-		cfCmd := fmt.Sprintf("sudo simple-vps cloudflare publish %s --app %s", utils.ShellEscape(route.Host), utils.ShellEscape(ctx.AppName))
+		cfCmd := fmt.Sprintf("sudo simple-vps cloudflare publish --app %s %s", utils.ShellEscape(ctx.AppName), utils.ShellEscape(route.Host))
 		cfOut := strings.TrimSpace(runSSHChecked(runner, ctx.Server, cfCmd, fmt.Sprintf("failed to publish Cloudflare route %s", route.Host)))
 		if cfOut != "" {
 			fmt.Println(cfOut)
@@ -1192,13 +1202,13 @@ func publishRoutes(runner *CommandRunner, ctx *config.AppContext) {
 			if svc.Port != nil {
 				p = *svc.Port
 			}
-			cmd := fmt.Sprintf("sudo simple-vps route proxy %s --port %d --app %s", utils.ShellEscape(route.Host), p, utils.ShellEscape(ctx.AppName))
+			cmd := fmt.Sprintf("sudo simple-vps route proxy --port %d --app %s %s", p, utils.ShellEscape(ctx.AppName), utils.ShellEscape(route.Host))
 			runSSHChecked(runner, ctx.Server, cmd, fmt.Sprintf("failed to publish route %s", route.Host))
 		} else if route.Type == "static" {
-			cmd := fmt.Sprintf("sudo simple-vps route static %s --root %s/current --app %s", utils.ShellEscape(route.Host), utils.ShellEscape(ctx.AppRoot), utils.ShellEscape(ctx.AppName))
+			cmd := fmt.Sprintf("sudo simple-vps route static --root %s/current --app %s %s", utils.ShellEscape(ctx.AppRoot), utils.ShellEscape(ctx.AppName), utils.ShellEscape(route.Host))
 			runSSHChecked(runner, ctx.Server, cmd, fmt.Sprintf("failed to publish route %s", route.Host))
 		} else if route.Type == "redirect" {
-			cmd := fmt.Sprintf("sudo simple-vps route redirect %s --to %s --app %s", utils.ShellEscape(route.Host), utils.ShellEscape(route.To), utils.ShellEscape(ctx.AppName))
+			cmd := fmt.Sprintf("sudo simple-vps route redirect --to %s --app %s %s", utils.ShellEscape(route.To), utils.ShellEscape(ctx.AppName), utils.ShellEscape(route.Host))
 			runSSHChecked(runner, ctx.Server, cmd, fmt.Sprintf("failed to publish route %s", route.Host))
 		}
 	}

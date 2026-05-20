@@ -1,4 +1,4 @@
-.PHONY: test go-test go-build go-vet legacy-test provisioning-test build build-linux clean
+.PHONY: test go-test go-build go-vet legacy-test provisioning-test fake-vps-smoke build build-linux clean
 
 GO ?= go
 BUN ?= bun
@@ -27,6 +27,9 @@ provisioning-test:
 	provisioning/tests/bootstrap_tarball_smoke.sh
 	if command -v ansible-playbook >/dev/null 2>&1; then ANSIBLE_CONFIG=provisioning/ansible.cfg ansible-playbook --syntax-check -i provisioning/inventory/hosts.ini provisioning/playbooks/vps-bootstrap.yml; else echo "ansible-playbook not found; skipping bootstrap syntax check"; fi
 	if command -v ansible-playbook >/dev/null 2>&1; then ANSIBLE_CONFIG=provisioning/ansible.cfg ansible-playbook --syntax-check -i provisioning/inventory/hosts.ini provisioning/playbooks/vps-apply.yml; else echo "ansible-playbook not found; skipping apply syntax check"; fi
+
+fake-vps-smoke:
+	packages/cli/tests/fake_vps_smoke.sh
 
 build:
 	mkdir -p $(DIST_DIR)
