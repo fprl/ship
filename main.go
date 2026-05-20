@@ -226,7 +226,7 @@ type hostInstallCmd struct {
 	CloudflareTunnelConfig   string `help:"Cloudflare tunnel config path."`
 	InstallDocker            *bool  `name:"docker" negatable:"" help:"Install Docker."`
 	InstallLitestream        *bool  `name:"litestream" negatable:"" help:"Install Litestream."`
-	CheckMode                bool   `name:"check" help:"Run Ansible in check mode."`
+	CheckMode                bool   `name:"check" help:"Plan changes without writing files or running mutating commands."`
 	AssumeYes                bool   `name:"yes" help:"Non-interactive mode."`
 }
 

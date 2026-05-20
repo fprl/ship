@@ -2,6 +2,7 @@ package hostinstall
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/fprl/simple-vps/internal/provision"
+	"github.com/fprl/simple-vps/internal/provision/local"
+	"github.com/fprl/simple-vps/internal/utils"
 )
 
 type Options struct {
@@ -63,7 +68,6 @@ type Plan struct {
 	InstallLitestream        bool
 	CheckMode                bool
 	SharedKey                bool
-	HelperBinaryDir          string
 }
 
 type Installer struct {
@@ -92,11 +96,6 @@ func NewInstaller() *Installer {
 }
 
 func (i *Installer) RunOptions(opts Options) error {
-	provisioningDir, repoRoot, err := locateProvisioningDir()
-	if err != nil {
-		return err
-	}
-
 	plan, err := BuildPlan(opts, i.geteuid() == 0, fileExists("/etc/os-release"))
 	if err != nil {
 		return err
@@ -104,10 +103,6 @@ func (i *Installer) RunOptions(opts Options) error {
 
 	if envBool(i.Env, "SIMPLE_VPS_INSTALLER_DUMP_PLAN", false) {
 		return i.dumpInstallPlan(plan)
-	}
-
-	if err := prepareAnsibleEnv(provisioningDir); err != nil {
-		return err
 	}
 
 	i.info("Simple VPS installer starting")
@@ -135,9 +130,13 @@ func (i *Installer) RunOptions(opts Options) error {
 
 	switch plan.Mode {
 	case "remote":
-		err = i.runRemote(plan, provisioningDir, repoRoot)
+		repoRoot, err := locateRepoRoot()
+		if err != nil {
+			return err
+		}
+		err = i.runRemote(plan, repoRoot)
 	case "local":
-		err = i.runLocal(plan, provisioningDir, repoRoot)
+		err = i.runLocal(plan)
 	default:
 		err = fmt.Errorf("invalid mode: %s", plan.Mode)
 	}
@@ -278,11 +277,7 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 	}, nil
 }
 
-func (i *Installer) runRemote(plan Plan, provisioningDir string, repoRoot string) error {
-	if _, err := i.look("ansible-playbook"); err != nil {
-		return errors.New("required command not found: ansible-playbook")
-	}
-
+func (i *Installer) runRemote(plan Plan, repoRoot string) error {
 	keyPlan, err := resolveSSHKeyPlan(plan, false, "")
 	if err != nil {
 		return err
@@ -298,85 +293,77 @@ func (i *Installer) runRemote(plan Plan, provisioningDir string, repoRoot string
 		return err
 	}
 	defer cleanupHelper()
-	plan.HelperBinaryDir = helperDir
 
-	inventory, err := writeTempFile("simple-vps-inventory-", remoteInventory(plan))
+	arch, err := i.remoteArch(plan)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(inventory)
+	helper := filepath.Join(helperDir, "simple-vps-linux-"+arch)
+	if !fileExists(helper) {
+		return fmt.Errorf("Simple VPS helper binary not found for target architecture %s: %s", arch, helper)
+	}
 
-	extraVars, err := writeTempFile("simple-vps-vars-", renderExtraVars(plan, keyPlan))
+	remoteHelper := "/tmp/simple-vps-host-install"
+	if err := i.copyRemote(plan, helper, remoteHelper); err != nil {
+		return err
+	}
+	if err := i.remoteCommand(plan, "chmod 0755 "+utils.ShellEscape(remoteHelper)); err != nil {
+		return err
+	}
+	operatorKeyFile, deployKeyFile, cleanupKeys, err := i.writeRemoteKeyFiles(plan, keyPlan)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(extraVars)
+	defer cleanupKeys()
 
-	commonArgs := []string{"-i", inventory, "-e", "target=simple_vps", "-e", "@" + extraVars}
-	bootstrapArgs := append([]string{}, commonArgs...)
-	bootstrapArgs = append(bootstrapArgs, "-u", plan.BootstrapUser)
-	applyArgs := append([]string{}, commonArgs...)
-	applyArgs = append(applyArgs, "-u", plan.OperatorUser)
-	if plan.SSHKey != "" {
-		bootstrapArgs = append(bootstrapArgs, "--private-key", plan.SSHKey)
-		applyArgs = append(applyArgs, "--private-key", plan.SSHKey)
+	cmd := remoteLocalInstallCommand(remoteHelper, plan, operatorKeyFile, deployKeyFile)
+	i.step("Running Go provisioner on target")
+	if plan.BootstrapUser == "root" {
+		return i.remoteCommand(plan, cmd)
 	}
-
-	i.step("Phase 1/2: bootstrap")
-	if err := i.runAnsible(plan, provisioningDir, "vps-bootstrap.yml", bootstrapArgs); err != nil {
-		return err
-	}
-
-	i.step("Phase 2/2: apply")
-	if err := i.runAnsible(plan, provisioningDir, "vps-apply.yml", applyArgs); err != nil {
-		i.warn("Apply phase as '%s' failed; retrying as '%s'.", plan.OperatorUser, plan.BootstrapUser)
-		return i.runAnsible(plan, provisioningDir, "vps-apply.yml", bootstrapArgs)
-	}
-	return nil
+	return i.remoteCommand(plan, "sudo -n "+cmd)
 }
 
-func (i *Installer) runLocal(plan Plan, provisioningDir string, repoRoot string) error {
+func (i *Installer) runLocal(plan Plan) error {
 	if i.geteuid() != 0 {
 		return errors.New("local mode must run as root")
 	}
-	if err := i.ensureAnsibleInplace(); err != nil {
-		return err
-	}
-
 	keyPlan, err := resolveSSHKeyPlan(plan, true, "/root/.ssh/authorized_keys")
 	if err != nil {
 		return err
 	}
 
-	helperDir, cleanupHelper, err := i.prepareGoHelperBinaries(repoRoot)
+	helperPath, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	defer cleanupHelper()
-	plan.HelperBinaryDir = helperDir
 
 	i.info("Running in local mode on localhost")
-
-	inventory, err := writeTempFile("simple-vps-inventory-", localInventory())
+	summary, err := provision.RunInstall(context.Background(), local.Runner{}, provision.InstallOptions{
+		OperatorUser:           plan.OperatorUser,
+		DeployUser:             plan.DeployUser,
+		OperatorSSHPublicKeys:  nonEmptyStrings(keyPlan.Operator),
+		DeploySSHPublicKeys:    nonEmptyStrings(keyPlan.Deploy),
+		Timezone:               plan.Timezone,
+		Locale:                 plan.Locale,
+		Tailscale:              plan.Tailscale,
+		TailscaleAuthKey:       plan.TailscaleAuthKey,
+		TailscaleHostname:      plan.TailscaleHostname,
+		CloudflareTunnel:       plan.CloudflareTunnel,
+		CloudflareAPIToken:     plan.CloudflareAPIToken,
+		CloudflareAccountID:    plan.CloudflareAccountID,
+		CloudflareTunnelToken:  plan.CloudflareTunnelToken,
+		CloudflareTunnelConfig: plan.CloudflareTunnelConfig,
+		InstallDocker:          plan.InstallDocker,
+		InstallLitestream:      plan.InstallLitestream,
+		CheckMode:              plan.CheckMode,
+		HelperBinaryPath:       helperPath,
+	})
 	if err != nil {
 		return err
 	}
-	defer os.Remove(inventory)
-
-	extraVars, err := writeTempFile("simple-vps-vars-", renderExtraVars(plan, keyPlan))
-	if err != nil {
-		return err
-	}
-	defer os.Remove(extraVars)
-
-	commonArgs := []string{"-i", inventory, "-e", "target=simple_vps", "-e", "@" + extraVars}
-	i.step("Phase 1/2: bootstrap")
-	if err := i.runAnsible(plan, provisioningDir, "vps-bootstrap.yml", commonArgs); err != nil {
-		return err
-	}
-
-	i.step("Phase 2/2: apply")
-	return i.runAnsible(plan, provisioningDir, "vps-apply.yml", commonArgs)
+	i.info("Apply %s changed %d operations", summary.ApplyID, summary.OperationsChanged)
+	return nil
 }
 
 func (i *Installer) dumpInstallPlan(plan Plan) error {
@@ -405,8 +392,12 @@ func (i *Installer) dumpInstallPlan(plan Plan) error {
 	fmt.Fprintf(i.Stdout, "plan.docker=%s\n", boolText(plan.InstallDocker))
 	fmt.Fprintf(i.Stdout, "plan.litestream=%s\n", boolText(plan.InstallLitestream))
 	fmt.Fprintf(i.Stdout, "plan.check_mode=%s\n", boolText(plan.CheckMode))
-	fmt.Fprintln(i.Stdout, "--- extra-vars ---")
-	fmt.Fprint(i.Stdout, renderExtraVars(plan, keyPlan))
+	fmt.Fprintf(i.Stdout, "plan.operator_key=%s\n", presentOrMissing(keyPlan.Operator, "present", "missing"))
+	fmt.Fprintf(i.Stdout, "plan.deploy_key=%s\n", presentOrMissing(keyPlan.Deploy, "present", "missing"))
+	if plan.Mode == "remote" {
+		fmt.Fprintln(i.Stdout, "--- remote-local-command ---")
+		fmt.Fprintln(i.Stdout, remoteLocalInstallCommand("/tmp/simple-vps-host-install", plan, "/tmp/simple-vps-operator.pub", "/tmp/simple-vps-deploy.pub"))
+	}
 	return nil
 }
 
@@ -465,28 +456,143 @@ func (i *Installer) preflightSSH(plan Plan) error {
 	return nil
 }
 
-func (i *Installer) ensureAnsibleInplace() error {
-	if _, err := i.look("ansible-playbook"); err == nil {
-		return nil
+func (i *Installer) remoteArch(plan Plan) (string, error) {
+	output, err := i.remoteOutput(plan, "uname -m")
+	if err != nil {
+		return "", err
 	}
-	if _, err := i.look("apt-get"); err != nil {
-		return errors.New("required command not found: apt-get")
+	switch strings.TrimSpace(output) {
+	case "x86_64", "amd64":
+		return "amd64", nil
+	case "aarch64", "arm64":
+		return "arm64", nil
+	default:
+		return "", fmt.Errorf("unsupported target architecture: %s", strings.TrimSpace(output))
 	}
-	i.info("Ansible not found. Installing with apt-get...")
-	_ = os.Setenv("DEBIAN_FRONTEND", "noninteractive")
-	if err := i.run("apt-get", []string{"update", "-y"}, ""); err != nil {
-		return err
-	}
-	return i.run("apt-get", []string{"install", "-y", "ansible"}, "")
 }
 
-func (i *Installer) runAnsible(plan Plan, provisioningDir string, playbook string, args []string) error {
-	fullArgs := append([]string{}, args...)
-	if plan.CheckMode {
-		fullArgs = append(fullArgs, "--check")
+func (i *Installer) remoteOutput(plan Plan, command string) (string, error) {
+	args := sshArgs(plan, command)
+	cmd := exec.Command("ssh", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ssh command failed: %s: %w", strings.TrimSpace(stderr.String()), err)
 	}
-	fullArgs = append(fullArgs, filepath.Join(provisioningDir, "playbooks", playbook))
-	return i.run("ansible-playbook", fullArgs, "")
+	return stdout.String(), nil
+}
+
+func (i *Installer) remoteCommand(plan Plan, command string) error {
+	return i.run("ssh", sshArgs(plan, command), "")
+}
+
+func (i *Installer) copyRemote(plan Plan, src string, dst string) error {
+	args := []string{"-q"}
+	if plan.SSHKey != "" {
+		args = append(args, "-i", plan.SSHKey)
+	}
+	args = append(args, src, plan.BootstrapUser+"@"+plan.TargetHost+":"+dst)
+	return i.run("scp", args, "")
+}
+
+func (i *Installer) writeRemoteKeyFiles(plan Plan, keys keyPlan) (string, string, func(), error) {
+	var paths []string
+	writeKey := func(name string, key string) (string, error) {
+		if key == "" {
+			return "", nil
+		}
+		path := "/tmp/simple-vps-" + name + ".pub"
+		cmd := "printf '%s\n' " + utils.ShellEscape(key) + " > " + utils.ShellEscape(path) + " && chmod 0600 " + utils.ShellEscape(path)
+		if err := i.remoteCommand(plan, cmd); err != nil {
+			return "", err
+		}
+		paths = append(paths, path)
+		return path, nil
+	}
+	operatorPath, err := writeKey("operator", keys.Operator)
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	deployPath, err := writeKey("deploy", keys.Deploy)
+	if err != nil {
+		return "", "", func() {}, err
+	}
+	cleanup := func() {
+		for _, path := range paths {
+			_ = i.remoteCommand(plan, "rm -f "+utils.ShellEscape(path))
+		}
+	}
+	return operatorPath, deployPath, cleanup, nil
+}
+
+func sshArgs(plan Plan, command string) []string {
+	args := []string{"-o", "BatchMode=yes"}
+	if plan.SSHKey != "" {
+		args = append(args, "-i", plan.SSHKey)
+	}
+	args = append(args, plan.BootstrapUser+"@"+plan.TargetHost, command)
+	return args
+}
+
+func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string, deployKeyFile string) string {
+	args := []string{
+		binary,
+		"host",
+		"install",
+		"--mode", "local",
+		"--operator-user", plan.OperatorUser,
+		"--deploy-user", plan.DeployUser,
+		"--timezone", plan.Timezone,
+		"--locale", plan.Locale,
+	}
+	if operatorKeyFile != "" {
+		args = append(args, "--operator-ssh-public-key-file", operatorKeyFile)
+	}
+	if deployKeyFile != "" {
+		args = append(args, "--deploy-ssh-public-key-file", deployKeyFile)
+	}
+	if plan.Tailscale {
+		if plan.TailscaleAuthKey != "" {
+			args = append(args, "--tailscale-auth-key", plan.TailscaleAuthKey)
+		}
+		if plan.TailscaleHostname != "" {
+			args = append(args, "--tailscale-hostname", plan.TailscaleHostname)
+		}
+	} else {
+		args = append(args, "--no-tailscale")
+	}
+	if plan.CloudflareTunnel {
+		if plan.CloudflareAPIToken != "" {
+			args = append(args, "--cloudflare-api-token", plan.CloudflareAPIToken)
+		}
+		if plan.CloudflareAccountID != "" {
+			args = append(args, "--cloudflare-account-id", plan.CloudflareAccountID)
+		}
+		if plan.CloudflareTunnelToken != "" {
+			args = append(args, "--cloudflare-tunnel-token", plan.CloudflareTunnelToken)
+		}
+		if plan.CloudflareTunnelConfig != "" {
+			args = append(args, "--cloudflare-tunnel-config", plan.CloudflareTunnelConfig)
+		}
+	} else {
+		args = append(args, "--no-cloudflare-tunnel")
+	}
+	if plan.InstallDocker {
+		args = append(args, "--docker")
+	}
+	if !plan.InstallLitestream {
+		args = append(args, "--no-litestream")
+	}
+	if plan.CheckMode {
+		args = append(args, "--check")
+	}
+
+	escaped := make([]string, 0, len(args))
+	for _, arg := range args {
+		escaped = append(escaped, utils.ShellEscape(arg))
+	}
+	return strings.Join(escaped, " ")
 }
 
 type keyPlan struct {
@@ -519,101 +625,34 @@ func resolveSSHKeyPlan(plan Plan, requireOperator bool, rootKeysPath string) (ke
 	return keyPlan{Operator: operatorKey, Deploy: deployKey}, nil
 }
 
-func renderExtraVars(plan Plan, keys keyPlan) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "simple_vps_operator_user: \"%s\"\n", plan.OperatorUser)
-	fmt.Fprintf(&b, "simple_vps_deploy_user: \"%s\"\n", plan.DeployUser)
-	fmt.Fprintf(&b, "simple_vps_allow_shared_ssh_key: %s\n", boolText(plan.SharedKey))
-	fmt.Fprintf(&b, "simple_vps_timezone: \"%s\"\n", plan.Timezone)
-	fmt.Fprintf(&b, "simple_vps_locale: \"%s\"\n", plan.Locale)
-	fmt.Fprintf(&b, "security_enable_tailscale: %s\n", boolText(plan.Tailscale))
-	fmt.Fprintf(&b, "simple_vps_tailscale_auth_key: '%s'\n", yamlSingle(plan.TailscaleAuthKey))
-	fmt.Fprintf(&b, "simple_vps_tailscale_hostname: '%s'\n", yamlSingle(plan.TailscaleHostname))
-	fmt.Fprintf(&b, "simple_vps_enable_cloudflare_tunnel: %s\n", boolText(plan.CloudflareTunnel))
-	fmt.Fprintf(&b, "simple_vps_cloudflare_api_token: '%s'\n", yamlSingle(plan.CloudflareAPIToken))
-	fmt.Fprintf(&b, "simple_vps_cloudflare_account_id: '%s'\n", yamlSingle(plan.CloudflareAccountID))
-	fmt.Fprintf(&b, "simple_vps_cloudflare_tunnel_token: '%s'\n", yamlSingle(plan.CloudflareTunnelToken))
-	fmt.Fprintf(&b, "simple_vps_cloudflare_tunnel_config_path: '%s'\n", yamlSingle(plan.CloudflareTunnelConfig))
-	fmt.Fprintf(&b, "simple_vps_install_docker: %s\n", boolText(plan.InstallDocker))
-	fmt.Fprintf(&b, "simple_vps_install_litestream: %s\n", boolText(plan.InstallLitestream))
-	if plan.HelperBinaryDir != "" {
-		fmt.Fprintf(&b, "simple_vps_helper_binary_dir: '%s'\n", yamlSingle(plan.HelperBinaryDir))
-	}
-
-	if keys.Operator != "" {
-		fmt.Fprintln(&b, "simple_vps_operator_ssh_public_keys:")
-		fmt.Fprintf(&b, "  - '%s'\n", yamlSingle(keys.Operator))
-	} else {
-		fmt.Fprintln(&b, "simple_vps_operator_ssh_public_keys: []")
-	}
-
-	if keys.Deploy != "" {
-		fmt.Fprintln(&b, "simple_vps_deploy_ssh_public_keys:")
-		fmt.Fprintf(&b, "  - '%s'\n", yamlSingle(keys.Deploy))
-	} else {
-		fmt.Fprintln(&b, "simple_vps_deploy_ssh_public_keys: []")
-	}
-
-	return b.String()
-}
-
-func remoteInventory(plan Plan) string {
-	return fmt.Sprintf("[simple_vps]\nsimple_vps_host ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n", plan.TargetHost)
-}
-
-func localInventory() string {
-	return "[simple_vps]\nsimple_vps_local ansible_connection=local ansible_python_interpreter=/usr/bin/python3\n"
-}
-
-func locateProvisioningDir() (string, string, error) {
+func locateRepoRoot() (string, error) {
 	var candidates []string
-	if envDir := os.Getenv("SIMPLE_VPS_PROVISIONING_DIR"); envDir != "" {
+	if envDir := os.Getenv("SIMPLE_VPS_REPO_ROOT"); envDir != "" {
 		candidates = append(candidates, envDir)
 	}
 	if cwd, err := os.Getwd(); err == nil {
-		candidates = append(candidates, filepath.Join(cwd, "provisioning"))
+		candidates = append(candidates, cwd)
 	}
 	if exe, err := os.Executable(); err == nil {
 		exeDir := filepath.Dir(exe)
-		candidates = append(candidates, filepath.Join(exeDir, "provisioning"))
-		candidates = append(candidates, filepath.Join(exeDir, "..", "provisioning"))
+		candidates = append(candidates, exeDir)
+		candidates = append(candidates, filepath.Join(exeDir, ".."))
 	}
 
 	for _, candidate := range candidates {
-		if provisioningLooksValid(candidate) {
+		if repoLooksValid(candidate) {
 			abs, err := filepath.Abs(candidate)
 			if err != nil {
-				return "", "", err
+				return "", err
 			}
-			return abs, filepath.Dir(abs), nil
+			return abs, nil
 		}
 	}
-	return "", "", errors.New("Simple VPS provisioning files were not found; run from a checkout or set SIMPLE_VPS_PROVISIONING_DIR")
+	return "", errors.New("Simple VPS Go module was not found; run from a checkout or set SIMPLE_VPS_REPO_ROOT")
 }
 
-func provisioningLooksValid(dir string) bool {
-	return fileExists(filepath.Join(dir, "playbooks", "vps-bootstrap.yml")) &&
-		fileExists(filepath.Join(dir, "playbooks", "vps-apply.yml")) &&
-		fileExists(filepath.Join(dir, "roles", "system", "tasks", "main.yml"))
-}
-
-func prepareAnsibleEnv(provisioningDir string) error {
-	cfg := filepath.Join(provisioningDir, "ansible.cfg")
-	if fileExists(cfg) {
-		if err := os.Setenv("ANSIBLE_CONFIG", cfg); err != nil {
-			return err
-		}
-	}
-	if os.Getenv("ANSIBLE_LOCAL_TEMP") == "" {
-		base := os.TempDir()
-		if tmp := os.Getenv("TMPDIR"); tmp != "" {
-			base = tmp
-		}
-		if err := os.Setenv("ANSIBLE_LOCAL_TEMP", filepath.Join(base, "simple-vps-ansible-tmp")); err != nil {
-			return err
-		}
-	}
-	return os.MkdirAll(os.Getenv("ANSIBLE_LOCAL_TEMP"), 0755)
+func repoLooksValid(dir string) bool {
+	return fileExists(filepath.Join(dir, "go.mod"))
 }
 
 func tailscaleAuthMode(enabled bool, authKey string) string {
@@ -664,28 +703,6 @@ func readPublicKeyFile(path string) (string, error) {
 	return "", fmt.Errorf("SSH public key file is empty: %s", path)
 }
 
-func writeTempFile(pattern string, content string) (string, error) {
-	f, err := os.CreateTemp("", pattern)
-	if err != nil {
-		return "", err
-	}
-	name := f.Name()
-	if _, err := f.WriteString(content); err != nil {
-		_ = f.Close()
-		_ = os.Remove(name)
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(name)
-		return "", err
-	}
-	if err := os.Chmod(name, 0600); err != nil {
-		_ = os.Remove(name)
-		return "", err
-	}
-	return name, nil
-}
-
 func runPassthrough(name string, args []string, cwd string) error {
 	cmd := exec.Command(name, args...)
 	if cwd != "" {
@@ -730,15 +747,21 @@ func boolText(value bool) string {
 	return "false"
 }
 
-func yamlSingle(value string) string {
-	return strings.ReplaceAll(value, "'", "''")
-}
-
 func presentOrMissing(value string, present string, missing string) string {
 	if value != "" {
 		return present
 	}
 	return missing
+}
+
+func nonEmptyStrings(values ...string) []string {
+	var out []string
+	for _, value := range values {
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func fileExists(path string) bool {
@@ -753,10 +776,6 @@ func nonEmptyFile(path string) bool {
 
 func (i *Installer) info(format string, args ...any) {
 	fmt.Fprintf(i.Stdout, "==> "+format+"\n", args...)
-}
-
-func (i *Installer) warn(format string, args ...any) {
-	fmt.Fprintf(i.Stdout, "Warning: "+format+"\n", args...)
 }
 
 func (i *Installer) step(format string, args ...any) {

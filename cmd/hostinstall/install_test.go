@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestBuildPlanAndRenderExtraVars(t *testing.T) {
+func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 	operatorKeyFile := writeKeyFile(t, "ssh-ed25519 AAAAoperator test-operator\n")
 	deployKeyFile := writeKeyFile(t, "ssh-ed25519 AAAAdeploy test-deploy\n")
 
@@ -29,7 +29,7 @@ func TestBuildPlanAndRenderExtraVars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys, err := resolveSSHKeyPlan(plan, false, "")
+	_, err = resolveSSHKeyPlan(plan, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,20 +44,22 @@ func TestBuildPlanAndRenderExtraVars(t *testing.T) {
 		t.Fatalf("unexpected cloudflare mode: %s", plan.CloudflareServiceMode)
 	}
 
-	extraVars := renderExtraVars(plan, keys)
+	command := remoteLocalInstallCommand("/tmp/simple-vps-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub")
 	for _, want := range []string{
-		`simple_vps_operator_user: "ops"`,
-		`simple_vps_deploy_user: "deployer"`,
-		`simple_vps_tailscale_auth_key: 'tskey-auth-test'`,
-		`simple_vps_cloudflare_api_token: 'cf-token-test'`,
-		`simple_vps_cloudflare_account_id: 'account-test'`,
-		`simple_vps_install_docker: true`,
-		`simple_vps_install_litestream: false`,
-		`  - 'ssh-ed25519 AAAAoperator test-operator'`,
-		`  - 'ssh-ed25519 AAAAdeploy test-deploy'`,
+		`/tmp/simple-vps-host-install host install --mode local`,
+		`--operator-user ops`,
+		`--deploy-user deployer`,
+		`--operator-ssh-public-key-file /tmp/operator.pub`,
+		`--deploy-ssh-public-key-file /tmp/deploy.pub`,
+		`--tailscale-auth-key tskey-auth-test`,
+		`--cloudflare-api-token cf-token-test`,
+		`--cloudflare-account-id account-test`,
+		`--docker`,
+		`--no-litestream`,
+		`--check`,
 	} {
-		if !strings.Contains(extraVars, want) {
-			t.Fatalf("expected extra vars to contain %q:\n%s", want, extraVars)
+		if !strings.Contains(command, want) {
+			t.Fatalf("expected command to contain %q:\n%s", want, command)
 		}
 	}
 }
@@ -89,9 +91,11 @@ func TestSharedKeyRendersForOperatorAndDeploy(t *testing.T) {
 		t.Fatalf("unexpected cloudflare mode: %s", plan.CloudflareServiceMode)
 	}
 
-	extraVars := renderExtraVars(plan, keys)
-	if got := strings.Count(extraVars, "  - 'ssh-ed25519 AAAAoperator test-operator'"); got != 2 {
-		t.Fatalf("expected shared key to render twice, got %d:\n%s", got, extraVars)
+	if keys.Operator != "ssh-ed25519 AAAAoperator test-operator" {
+		t.Fatalf("unexpected operator key: %q", keys.Operator)
+	}
+	if keys.Deploy != keys.Operator {
+		t.Fatalf("expected deploy key to reuse operator key, got %q", keys.Deploy)
 	}
 }
 

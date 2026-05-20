@@ -117,10 +117,6 @@ run_host_installer() {
   local binary_path="$1"
   shift
 
-  if [[ -d "$SCRIPT_DIR/provisioning" ]]; then
-    export SIMPLE_VPS_PROVISIONING_DIR="${SIMPLE_VPS_PROVISIONING_DIR:-$SCRIPT_DIR/provisioning}"
-  fi
-
   exec "$binary_path" host install "$@"
 }
 
@@ -171,10 +167,6 @@ bootstrap_checkout() {
 main() {
   local binary_path=""
 
-  if [[ ! -d "$SCRIPT_DIR/provisioning" ]]; then
-    bootstrap_checkout "$@"
-  fi
-
   if binary_path="$(download_simple_vps_binary)"; then
     run_host_installer "$binary_path" "$@"
   fi
@@ -186,6 +178,8 @@ main() {
   if binary_path="$(find_simple_vps_binary)"; then
     run_host_installer "$binary_path" "$@"
   fi
+
+  bootstrap_checkout "$@"
 
   err "No Simple VPS binary found and Go is not installed."
   err "Install Go, run make build-release, or set SIMPLE_VPS_BINARY_URL to a platform binary."
