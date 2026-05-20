@@ -1,5 +1,8 @@
 # Simple VPS CLI
 
+This package is the legacy Bun implementation. The root Go module is the
+replacement path for the unified `simple-vps` binary.
+
 The Bun CLI deploys JS/TS apps from an app repo or CI runner to a prepared
 Simple VPS host. It does not install the host; use the root `install.sh` for
 that.
