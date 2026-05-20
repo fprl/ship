@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 node_modules/
 packages/*/pnpm-lock.yaml
+dist/
+.fake-vps-bin/

@@ -10,11 +10,13 @@ your app repo     ->  simple-vps deploy  ->  live app
 ## Packages
 
 ```text
-packages/simple-vps
-  Host installer, Ansible roles, and privileged server-side helper.
+.
+  Go module for the unified simple-vps binary. It owns both the app deploy CLI
+  and the privileged server API.
 
-packages/cli
-  Public Bun CLI for app deploys and app operations.
+provisioning
+  Ansible roles and host convergence assets. The Go host installer runs these
+  playbooks and installs the Go server binary.
 ```
 
 ## Start Here
@@ -22,13 +24,32 @@ packages/cli
 The public product contract lives in [SPEC.md](SPEC.md).
 The host security model lives in [docs/security-model.md](docs/security-model.md).
 
-The root installer delegates to [packages/simple-vps](packages/simple-vps):
+The root installer is a thin bootstrap that runs `simple-vps host install`:
 
 ```bash
 ./install.sh --mode remote --host 203.0.113.10 --ssh-key ~/.ssh/id_ed25519
 ```
 
+Build the Go CLI locally:
+
+```bash
+make build
+./dist/simple-vps check production
+```
+
+Build release binaries:
+
+```bash
+make build-release
+```
+
+Run the main checks:
+
+```bash
+make test
+make fake-vps-smoke   # Docker-backed Go client/helper smoke
+```
+
 Implementation references:
 
-- [packages/simple-vps/SPEC.md](packages/simple-vps/SPEC.md)
-- [packages/cli/SPEC.md](packages/cli/SPEC.md)
+- [provisioning/SPEC.md](provisioning/SPEC.md)

@@ -99,21 +99,8 @@ deploy user      identity used by the app CLI and CI
                  allowed to invoke only the server-side Simple VPS helper
 ```
 
-In 0.2 the operator and deploy users are conflated as `admin`. That is why the
-Ansible role grants broad passwordless sudo to `admin`: phase 2 of the remote
-installer connects as `admin` and uses Ansible `become: true` for host
-convergence.
-
-The same `admin` user also gets the narrow deploy API grant in 0.2:
-
-```text
-admin ALL=(root) NOPASSWD: /usr/local/bin/simple-vps
-```
-
-The 0.3 model splits those duties. The operator user keeps the root path host
-convergence needs; the deploy user gets only the `/usr/local/bin/simple-vps`
-grant. The detailed 0.3 contract is documented in
-[0.3 Operator / Deploy Split](0.3-operator-deploy-split.md).
+The operator user keeps the root path host convergence needs. The deploy user
+gets only the `/usr/local/bin/simple-vps` grant.
 
 The server-side helper owns privileged app operations such as systemd unit
 installation, env writes, Caddy route generation, and app cleanup. Keep that
@@ -134,8 +121,7 @@ Initial doctor checks should cover:
 - Public `80` and `443` closed.
 - Tailscale, cloudflared, Caddy, fail2ban, and unattended upgrades state.
 - The deploy sudoers grant points at `/usr/local/bin/simple-vps`.
-- The operator/deploy split is healthy, or the legacy 0.2 `admin` conflation is
-  reported as degraded.
+- The operator/deploy split is healthy.
 - Generated Caddy config validates.
 
 Later, if Simple VPS grows an app registry, app and route drift should be

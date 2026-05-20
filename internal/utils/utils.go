@@ -1,0 +1,103 @@
+package utils
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+)
+
+var shellEscapeRe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+
+func ShellEscape(value string) string {
+	if shellEscapeRe.MatchString(value) {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func BackupDir() string {
+	if p := os.Getenv("SIMPLE_VPS_BACKUP_DIR"); p != "" {
+		return p
+	}
+	return "/etc/simple-vps/backups"
+}
+
+func CaddyBin() string {
+	if b := os.Getenv("SIMPLE_VPS_CADDY_BIN"); b != "" {
+		return b
+	}
+	return "caddy"
+}
+
+func SystemctlBin() string {
+	if b := os.Getenv("SIMPLE_VPS_SYSTEMCTL_BIN"); b != "" {
+		return b
+	}
+	return "systemctl"
+}
+
+func Die(message string, code int) {
+	fmt.Fprintf(os.Stderr, "Error: %s\n", message)
+	os.Exit(code)
+}
+
+func RunChecked(name string, args []string, cwd string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		if stderr.Len() > 0 {
+			os.Stderr.Write(stderr.Bytes())
+		}
+		if stdout.Len() > 0 {
+			os.Stderr.Write(stdout.Bytes())
+		}
+		return nil, fmt.Errorf("command failed: %s %v: %w", name, args, err)
+	}
+	return stdout.Bytes(), nil
+}
+
+func BackupFile(path string) (string, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return "", nil
+	}
+
+	backupDir := BackupDir()
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return "", err
+	}
+
+	stamp := time.Now().UTC().Format("20060102T150405Z")
+	filename := fmt.Sprintf("%s.%s", filepath.Base(path), stamp)
+	backupPath := filepath.Join(backupDir, filename)
+
+	srcFile, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer srcFile.Close()
+
+	destFile, err := os.OpenFile(backupPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return "", err
+	}
+	defer destFile.Close()
+
+	if _, err := io.Copy(destFile, srcFile); err != nil {
+		return "", err
+	}
+
+	return backupPath, nil
+}

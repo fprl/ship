@@ -14,40 +14,42 @@ jobs:
       - name: Bash syntax checks
         run: |
           bash -n install.sh
-          bash -n packages/simple-vps/install.sh
-          bash -n packages/simple-vps/tests/bootstrap_tarball_smoke.sh
+          bash -n provisioning/install.sh
+          bash -n provisioning/tests/bootstrap_tarball_smoke.sh
+          bash -n provisioning/tests/install_plan_test.sh
       - name: Shellcheck
         run: |
-          shellcheck install.sh packages/simple-vps/install.sh packages/simple-vps/tests/bootstrap_tarball_smoke.sh
+          shellcheck install.sh provisioning/install.sh provisioning/tests/bootstrap_tarball_smoke.sh provisioning/tests/install_plan_test.sh
       - name: Bootstrap tarball smoke test
         run: |
-          packages/simple-vps/tests/bootstrap_tarball_smoke.sh
+          provisioning/tests/bootstrap_tarball_smoke.sh
 
-  python:
+  go:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Python syntax checks
-        run: |
-          PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile packages/simple-vps/roles/infra/files/simple-vps
-      - name: Python tests
-        run: |
-          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s packages/simple-vps/tests
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+      - name: Go tests
+        run: go test ./...
+      - name: Go build
+        run: go build ./...
+      - name: Release builds
+        run: make build-release
+      - name: Go vet
+        run: go vet ./...
 
-  bun:
+  fake-vps-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
       - uses: oven-sh/setup-bun@v2
-      - name: Install CLI dependencies
-        working-directory: packages/cli
-        run: bun install --frozen-lockfile
-      - name: Simple VPS CLI typecheck
-        working-directory: packages/cli
-        run: bun run typecheck
-      - name: Simple VPS CLI tests
-        working-directory: packages/cli
-        run: bun test
+      - name: Go fake VPS smoke
+        run: make fake-vps-smoke
 
   ansible:
     runs-on: ubuntu-latest
@@ -58,11 +60,11 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install ansible ansible-lint
       - name: Ansible syntax checks
-        working-directory: packages/simple-vps
+        working-directory: provisioning
         run: |
           ansible-playbook --syntax-check playbooks/vps-bootstrap.yml
           ansible-playbook --syntax-check playbooks/vps-apply.yml
       - name: Ansible lint
-        working-directory: packages/simple-vps
+        working-directory: provisioning
         run: |
           ansible-lint --profile min playbooks/vps-bootstrap.yml playbooks/vps-apply.yml
