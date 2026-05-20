@@ -1124,15 +1124,19 @@ func activateRelease(runner *CommandRunner, ctx *config.AppContext, releaseDir s
 }
 
 func fixReleasePermissions(runner *CommandRunner, ctx *config.AppContext, releaseDir string) {
-	group := "app-" + ctx.AppName
+	cmd := releasePermissionsCommand(ctx.AppName, releaseDir)
+	runSSHChecked(runner, ctx.Server, cmd, "failed to restore release permissions")
+}
+
+func releasePermissionsCommand(appName string, releaseDir string) string {
+	group := "app-" + appName
 	escapedReleaseDir := utils.ShellEscape(releaseDir)
-	cmd := strings.Join([]string{
+	return strings.Join([]string{
 		fmt.Sprintf("chgrp -R %s %s", utils.ShellEscape(group), escapedReleaseDir),
 		fmt.Sprintf("chmod -R g+rwX %s", escapedReleaseDir),
 		fmt.Sprintf("find %s -type d -exec chmod g+s {} +", escapedReleaseDir),
 		fmt.Sprintf("chmod 2775 %s", escapedReleaseDir),
 	}, " && ")
-	runSSHChecked(runner, ctx.Server, cmd, "failed to restore release permissions")
 }
 
 func healthCheckCommand(port int, path string, expectedStatus int, timeout int) string {
@@ -1189,29 +1193,39 @@ func renderUnit(appName string, envName string, release string, serviceName stri
 
 func publishRoutes(runner *CommandRunner, ctx *config.AppContext) {
 	for _, route := range ctx.Routes {
-		// Cloudflare publish
-		cfCmd := fmt.Sprintf("sudo simple-vps cloudflare publish --app %s %s", utils.ShellEscape(ctx.AppName), utils.ShellEscape(route.Host))
+		cfCmd := cloudflarePublishCommand(ctx.AppName, route.Host)
 		cfOut := strings.TrimSpace(runSSHChecked(runner, ctx.Server, cfCmd, fmt.Sprintf("failed to publish Cloudflare route %s", route.Host)))
 		if cfOut != "" {
 			fmt.Println(cfOut)
 		}
 
-		if route.Type == "proxy" {
-			svc := ctx.Services[route.Service]
-			p := 80
-			if svc.Port != nil {
-				p = *svc.Port
-			}
-			cmd := fmt.Sprintf("sudo simple-vps route proxy --port %d --app %s %s", p, utils.ShellEscape(ctx.AppName), utils.ShellEscape(route.Host))
-			runSSHChecked(runner, ctx.Server, cmd, fmt.Sprintf("failed to publish route %s", route.Host))
-		} else if route.Type == "static" {
-			cmd := fmt.Sprintf("sudo simple-vps route static --root %s/current --app %s %s", utils.ShellEscape(ctx.AppRoot), utils.ShellEscape(ctx.AppName), utils.ShellEscape(route.Host))
-			runSSHChecked(runner, ctx.Server, cmd, fmt.Sprintf("failed to publish route %s", route.Host))
-		} else if route.Type == "redirect" {
-			cmd := fmt.Sprintf("sudo simple-vps route redirect --to %s --app %s %s", utils.ShellEscape(route.To), utils.ShellEscape(ctx.AppName), utils.ShellEscape(route.Host))
+		cmd := routePublishCommand(ctx, route)
+		if cmd != "" {
 			runSSHChecked(runner, ctx.Server, cmd, fmt.Sprintf("failed to publish route %s", route.Host))
 		}
 	}
+}
+
+func cloudflarePublishCommand(appName string, host string) string {
+	return fmt.Sprintf("sudo simple-vps cloudflare publish --app %s %s", utils.ShellEscape(appName), utils.ShellEscape(host))
+}
+
+func routePublishCommand(ctx *config.AppContext, route config.Route) string {
+	if route.Type == "proxy" {
+		svc := ctx.Services[route.Service]
+		p := 80
+		if svc.Port != nil {
+			p = *svc.Port
+		}
+		return fmt.Sprintf("sudo simple-vps route proxy --port %d --app %s %s", p, utils.ShellEscape(ctx.AppName), utils.ShellEscape(route.Host))
+	}
+	if route.Type == "static" {
+		return fmt.Sprintf("sudo simple-vps route static --root %s/current --app %s %s", utils.ShellEscape(ctx.AppRoot), utils.ShellEscape(ctx.AppName), utils.ShellEscape(route.Host))
+	}
+	if route.Type == "redirect" {
+		return fmt.Sprintf("sudo simple-vps route redirect --to %s --app %s %s", utils.ShellEscape(route.To), utils.ShellEscape(ctx.AppName), utils.ShellEscape(route.Host))
+	}
+	return ""
 }
 
 // Directory copy helper
