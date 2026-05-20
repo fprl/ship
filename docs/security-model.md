@@ -70,8 +70,14 @@ The expected security services are:
   bootstrap or recovery.
 - `tailscaled` installed and enabled when Tailscale is enabled.
 - `cloudflared` installed, isolated as its own user, and enabled only when a
-  Cloudflare API token, tunnel token, or config path is provided.
+  Cloudflare tunnel token, API token, or config path is provided.
 - Caddy installed and serving generated Simple VPS route config.
+
+The default Cloudflare trust boundary is tunnel-token or config-file access:
+Simple VPS can run the tunnel on the VPS, while users configure Cloudflare
+public hostnames and DNS in Cloudflare. Cloudflare API-managed hostname and DNS
+publication is an advanced opt-in for teams comfortable storing that API token
+on the server.
 
 Once Tailscale-only SSH is the normal post-bootstrap state, fail2ban should be
 reassessed. It is not a generic protection layer for arbitrary ports users open

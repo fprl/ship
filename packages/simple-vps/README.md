@@ -39,11 +39,13 @@ Tailscale is on by default. Provide `SIMPLE_VPS_TAILSCALE_AUTH_KEY` or
 `--tailscale-auth-key` for unattended login. Public SSH is only removed after
 Tailscale is authenticated, so bootstrap runs do not lock themselves out.
 
-Cloudflare Tunnel is installed by default. Provide
-`SIMPLE_VPS_CLOUDFLARE_API_TOKEN` or `--cloudflare-api-token` to create/reuse
-the server tunnel, enable `cloudflared`, and let deploys publish public
-hostnames and CNAMEs through the server-side helper. Existing tunnel token and
-config-path modes remain available for manual setups.
+Cloudflare Tunnel is installed by default. The recommended path is to provide
+`SIMPLE_VPS_CLOUDFLARE_TUNNEL_TOKEN` / `--cloudflare-tunnel-token` or
+`SIMPLE_VPS_CLOUDFLARE_TUNNEL_CONFIG` / `--cloudflare-tunnel-config`, then
+create Cloudflare public hostnames manually with service
+`http://127.0.0.1:8080`. For teams that want Simple VPS to manage Cloudflare
+public hostnames and CNAMEs, `SIMPLE_VPS_CLOUDFLARE_API_TOKEN` /
+`--cloudflare-api-token` remains available as an advanced opt-in.
 
 Server-local route management:
 

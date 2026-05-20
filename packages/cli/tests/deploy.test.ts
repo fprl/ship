@@ -107,6 +107,45 @@ describe("deploy", () => {
     expect(joined.some((command) => command.includes("rm -rf --") && command.includes("/var/apps/api/releases"))).toBe(true);
   });
 
+  test("prints manual Cloudflare route instructions from the server helper", async () => {
+    const root = fixture();
+    const logs: string[] = [];
+    const originalLog = console.log;
+    const runner: CommandRunner = {
+      async run(command) {
+        seedMockCheckout(command);
+        const joined = command.join(" ");
+        if (joined === "git -C " + root + " rev-parse HEAD") return { code: 0, stdout: "a1b2c3d4e5f6\n", stderr: "" };
+        if (joined === "git -C " + root + " status --porcelain") return { code: 0, stdout: "", stderr: "" };
+        if (joined === "ssh deploy@100.x.y.z sudo simple-vps cloudflare publish api.example.com --app api") {
+          return {
+            code: 0,
+            stdout: [
+              "Cloudflare API publishing is not configured; configure this hostname in Cloudflare:",
+              "  public hostname: api.example.com",
+              "  service: http://127.0.0.1:8080",
+              "Local Caddy route publishing will continue.",
+              "",
+            ].join("\n"),
+            stderr: "",
+          };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    };
+
+    console.log = (message?: unknown) => logs.push(String(message));
+    try {
+      await main(["deploy", "production"], root, { runner });
+    } finally {
+      console.log = originalLog;
+    }
+
+    expect(process.exitCode).toBe(0);
+    expect(logs.join("\n")).toContain("public hostname: api.example.com");
+    expect(logs.join("\n")).toContain("service: http://127.0.0.1:8080");
+  });
+
   test("rolls current back and does not publish routes when health check fails", async () => {
     const root = fixture();
     const commands: string[][] = [];

@@ -109,7 +109,7 @@ Options:
   --tailscale-hostname <name>    Optional Tailscale device hostname
   --cloudflare-tunnel            Enable Cloudflare Tunnel setup (default)
   --no-cloudflare-tunnel         Disable Cloudflare Tunnel setup
-  --cloudflare-api-token <t>     Cloudflare API token for tunnel/DNS automation
+  --cloudflare-api-token <t>     Advanced: Cloudflare API token for tunnel/DNS automation
   --cloudflare-account-id <id>   Cloudflare account id when the token has multiple accounts
   --cloudflare-tunnel-token <t>  Cloudflare Tunnel token for managed tunnels
   --cloudflare-tunnel-config <p> Existing cloudflared config path
@@ -126,7 +126,7 @@ Options:
 Examples:
   ./install.sh --mode remote --host 203.0.113.10 --ssh-key ~/.ssh/id_ed25519 --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
   SIMPLE_VPS_TAILSCALE_AUTH_KEY=tskey-auth-... ./install.sh --mode local --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
-  SIMPLE_VPS_CLOUDFLARE_API_TOKEN=... ./install.sh --mode local --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
+  SIMPLE_VPS_CLOUDFLARE_TUNNEL_TOKEN=... ./install.sh --mode local --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
   ./install.sh --interactive
 USAGE
 }
@@ -509,8 +509,14 @@ interactive_wizard() {
   fi
   prompt_yes_no CLOUDFLARE_TUNNEL "Enable Cloudflare Tunnel?" "$CLOUDFLARE_TUNNEL" "$force_cloudflare_tunnel_prompt"
   if [[ "$CLOUDFLARE_TUNNEL" == "true" ]]; then
-    echo "  Cloudflare token: https://dash.cloudflare.com/profile/api-tokens"
-    prompt_optional_secret CLOUDFLARE_API_TOKEN "Cloudflare API token"
+    echo "  Cloudflare tunnel token: Cloudflare dashboard -> Zero Trust -> Networks -> Tunnels"
+    if [[ -z "$CLOUDFLARE_API_TOKEN" && -z "$CLOUDFLARE_TUNNEL_CONFIG" ]]; then
+      prompt_optional_secret CLOUDFLARE_TUNNEL_TOKEN "Cloudflare tunnel token"
+    fi
+    if [[ -z "$CLOUDFLARE_TUNNEL_TOKEN" && -z "$CLOUDFLARE_TUNNEL_CONFIG" ]]; then
+      echo "  Advanced API mode: https://dash.cloudflare.com/profile/api-tokens"
+      prompt_optional_secret CLOUDFLARE_API_TOKEN "Cloudflare API token for automatic DNS/hostname management"
+    fi
   fi
   prompt_yes_no INSTALL_DOCKER "Install Docker?" "$INSTALL_DOCKER" "$force_docker_prompt"
   prompt_yes_no INSTALL_LITESTREAM "Install Litestream?" "$INSTALL_LITESTREAM" "$force_litestream_prompt"

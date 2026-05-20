@@ -356,7 +356,7 @@ class SimpleVpsCliTest(unittest.TestCase):
             self.assertIn("identity: degraded", output.getvalue())
             self.assertIn("legacy admin conflation is present", output.getvalue())
 
-    def test_cloudflare_publish_skips_when_not_configured(self):
+    def test_cloudflare_publish_prints_manual_route_instructions_when_not_configured(self):
         with tempfile.TemporaryDirectory() as tmp:
             cli = load_cli(Path(tmp))
             cli.CLOUDFLARE_STATE_PATH = Path(tmp) / "cloudflare.json"
@@ -367,7 +367,10 @@ class SimpleVpsCliTest(unittest.TestCase):
                 argparse.Namespace(host="api.example.com", app="my-app"),
             )
 
-            self.assertIn("Cloudflare API not configured; skipping", output)
+            self.assertIn("Cloudflare API publishing is not configured", output)
+            self.assertIn("public hostname: api.example.com", output)
+            self.assertIn("service: http://127.0.0.1:8080", output)
+            self.assertIn("Local Caddy route publishing will continue.", output)
 
     def test_cloudflare_publish_updates_tunnel_dns_and_state(self):
         with tempfile.TemporaryDirectory() as tmp:

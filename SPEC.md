@@ -322,8 +322,9 @@ What lands:
   `/etc/sudoers.d/simple-vps` grants deploy only the server helper.
 - `simple-vps host doctor` reports the legacy 0.2 `admin` conflation as
   degraded and the split model as healthy.
-- Cloudflare API token support creates and manages tunnel public hostnames and
-  CNAME records from the server-side helper.
+- Cloudflare Tunnel setup keeps the default trust boundary at tunnel token or
+  config-file access; API-managed public hostnames and CNAME records are an
+  explicit advanced mode, not the default path.
 - `install.sh` prompts for missing values on a TTY while preserving non-TTY
   flag/env behavior.
 - Manifest `path` becomes optional and defaults to `/var/apps/<name>`.

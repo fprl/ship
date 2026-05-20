@@ -68,6 +68,19 @@ assert_contains "$OUTPUT" "simple_vps_install_litestream: false"
 assert_contains "$OUTPUT" "  - '$OPERATOR_KEY'"
 assert_contains "$OUTPUT" "  - '$DEPLOY_KEY'"
 
+TOKEN_OUTPUT="$(
+  dump_plan \
+    --mode remote \
+    --host 203.0.113.13 \
+    --operator-ssh-public-key-file "$OPERATOR_KEY_FILE" \
+    --deploy-ssh-public-key-file "$DEPLOY_KEY_FILE" \
+    --cloudflare-tunnel-token tunnel-token-test
+)"
+
+assert_contains "$TOKEN_OUTPUT" "plan.cloudflare_service_mode=token"
+assert_contains "$TOKEN_OUTPUT" "simple_vps_cloudflare_tunnel_token: 'tunnel-token-test'"
+assert_contains "$TOKEN_OUTPUT" "simple_vps_cloudflare_api_token: ''"
+
 SHARED_OUTPUT="$(
   dump_plan \
     --mode remote \

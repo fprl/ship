@@ -1064,7 +1064,16 @@ def cmd_cloudflare_publish(args):
     host = normalize_host(args.host)
     ingress = CloudflareIngress.configured()
     if ingress is None:
-        print("Cloudflare API not configured; skipping")
+        print(
+            "\n".join(
+                [
+                    "Cloudflare API publishing is not configured; configure this hostname in Cloudflare:",
+                    f"  public hostname: {host}",
+                    "  service: http://127.0.0.1:8080",
+                    "Local Caddy route publishing will continue.",
+                ]
+            )
+        )
         return
     print(ingress.publish(host, app))
 
@@ -1079,7 +1088,7 @@ def cmd_cloudflare_remove(args):
         die("provide exactly one of host or --app")
     ingress = CloudflareIngress.configured()
     if ingress is None:
-        print("Cloudflare API not configured; skipping")
+        print("Cloudflare API publishing is not configured; no Cloudflare routes to remove.")
         return
     if args.host:
         host = normalize_host(args.host)

@@ -681,9 +681,11 @@ Rules:
 
 - Routes are published at the end of a successful deploy, not before. A failed
   health check leaves the previous routes untouched.
-- Cloudflare API publication runs through the privileged server helper before
-  local Caddy route publication, so API errors fail the deploy before local
-  route state changes.
+- Cloudflare publication runs through the privileged server helper before local
+  Caddy route publication. In the default manual mode, the helper prints the
+  Cloudflare public-hostname settings and leaves Cloudflare unchanged. In
+  API-managed mode, Cloudflare errors fail the deploy before local route state
+  changes.
 - Route deletion happens only on `destroy`. Rollback never touches routes.
 - Static route `root` is always `/var/apps/<name>/current`. The release
   directory is the artifact root: build output contents are copied directly

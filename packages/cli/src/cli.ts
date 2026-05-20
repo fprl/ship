@@ -1230,7 +1230,12 @@ class ReleaseLifecycle {
     for (const route of Object.values(this.context.routes)) {
       const host = requireString(route.host, "route host");
       const type = requireString(route.type, "route type");
-      await this.ssh(`sudo simple-vps cloudflare publish ${host} --app ${this.context.appName}`, `failed to publish Cloudflare route ${host}`);
+      const cloudflareResult = await this.ssh(
+        `sudo simple-vps cloudflare publish ${host} --app ${this.context.appName}`,
+        `failed to publish Cloudflare route ${host}`,
+      );
+      const cloudflareOutput = cloudflareResult.stdout.trim();
+      if (cloudflareOutput) console.log(cloudflareOutput);
       if (type === "proxy") {
         const service = this.context.services[requireString(route.service, "route service")];
         await this.ssh(

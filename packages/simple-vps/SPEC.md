@@ -452,25 +452,33 @@ Current Tailscale behavior:
 Current Cloudflare Tunnel behavior:
 
 - `cloudflared` is installed by default from Cloudflare's apt repository.
-- `SIMPLE_VPS_CLOUDFLARE_API_TOKEN` or `--cloudflare-api-token` creates or
-  reuses a remotely-managed tunnel, stores the API token on the server at
-  `/etc/simple-vps/cloudflare-api-token`, stores tunnel state at
-  `/etc/simple-vps/cloudflare.json`, writes `/etc/cloudflared/tunnel-token`,
-  and enables the `cloudflared` service.
-- If the token can access multiple Cloudflare accounts,
-  `SIMPLE_VPS_CLOUDFLARE_ACCOUNT_ID` or `--cloudflare-account-id` selects the
-  account.
 - `SIMPLE_VPS_CLOUDFLARE_TUNNEL_TOKEN` or `--cloudflare-tunnel-token` enables
   a remotely-managed tunnel service using `/etc/cloudflared/tunnel-token`.
 - `SIMPLE_VPS_CLOUDFLARE_TUNNEL_CONFIG` or `--cloudflare-tunnel-config`
   enables a service using an existing local `cloudflared` config path.
+- With tunnel token or config-path setup, users create Cloudflare public
+  hostnames manually and point them at `http://127.0.0.1:8080`. This is the
+  default recommended trust boundary: Simple VPS owns the box, Cloudflare owns
+  Cloudflare.
+- `SIMPLE_VPS_CLOUDFLARE_API_TOKEN` or `--cloudflare-api-token` is an advanced
+  opt-in. It creates or reuses a remotely-managed tunnel, stores the API token
+  on the server at `/etc/simple-vps/cloudflare-api-token`, stores tunnel state
+  at `/etc/simple-vps/cloudflare.json`, writes `/etc/cloudflared/tunnel-token`,
+  and enables the `cloudflared` service.
+- If the API token can access multiple Cloudflare accounts,
+  `SIMPLE_VPS_CLOUDFLARE_ACCOUNT_ID` or `--cloudflare-account-id` selects the
+  account.
 - If no API token, tunnel token, or config path is provided, `cloudflared` is
   installed but the service is not enabled.
-- `simple-vps cloudflare publish HOST --app APP` ensures the tunnel public
-  hostname routes to `http://127.0.0.1:8080` and a CNAME points to
-  `<tunnel-id>.cfargotunnel.com`.
-- `simple-vps cloudflare remove --app APP` removes Cloudflare hostnames and
-  CNAME records tracked for that app.
+- Without API-managed mode, `simple-vps cloudflare publish HOST --app APP`
+  prints the manual Cloudflare public-hostname settings and leaves Cloudflare
+  unchanged.
+- With API-managed mode, `simple-vps cloudflare publish HOST --app APP` ensures
+  the tunnel public hostname routes to `http://127.0.0.1:8080` and a CNAME
+  points to `<tunnel-id>.cfargotunnel.com`.
+- With API-managed mode, `simple-vps cloudflare remove --app APP` removes
+  Cloudflare hostnames and CNAME records tracked for that app. Without
+  API-managed mode it is a no-op.
 
 Current CLI behavior:
 
@@ -507,7 +515,8 @@ Known gaps:
 3. Make Tailscale part of the secure baseline.
 4. Add Cloudflare Tunnel install and service setup.
 5. Add `/usr/local/bin/simple-vps`.
-6. Expand Cloudflare API coverage as real hosts expose edge cases.
+6. Keep Cloudflare API-managed route coverage opt-in and expand it only as real
+   hosts expose edge cases.
 7. Add fresh Ubuntu 24.04 smoke testing and idempotency testing.
 8. Only then tag v1.
 
