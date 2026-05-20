@@ -15,6 +15,13 @@ var (
 	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/simple-vps$`)
 )
 
+type doctorCmd struct{}
+
+func (doctorCmd) Run() error {
+	CmdDoctor()
+	return nil
+}
+
 func SudoersDir() string {
 	if p := os.Getenv("SIMPLE_VPS_SUDOERS_DIR"); p != "" {
 		return p
