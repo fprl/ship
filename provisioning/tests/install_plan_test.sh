@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -18,7 +18,7 @@ printf '%s\n' "$OPERATOR_KEY" > "$OPERATOR_KEY_FILE"
 printf '%s\n' "$DEPLOY_KEY" > "$DEPLOY_KEY_FILE"
 
 dump_plan() {
-  SIMPLE_VPS_BOOTSTRAP_DOWNLOAD=false SIMPLE_VPS_INSTALLER_DUMP_PLAN=true "$ROOT_DIR/install.sh" --yes "$@"
+  SIMPLE_VPS_BOOTSTRAP_DOWNLOAD=false SIMPLE_VPS_INSTALLER_DUMP_PLAN=true "$REPO_ROOT/install.sh" --yes "$@"
 }
 
 assert_contains() {

@@ -36,7 +36,7 @@ VPS hosts.
 ## Boundary With Simple VPS
 
 ```text
-packages/simple-vps -> "this server is ready to host apps"
+provisioning -> "this server is ready to host apps"
 packages/cli        -> "this app is running here, with these services and routes"
 ```
 

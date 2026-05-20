@@ -14,7 +14,7 @@ your app repo     ->  simple-vps deploy  ->  live app
   Go module for the unified simple-vps binary. This is the migration target for
   both the app deploy CLI and the privileged server helper.
 
-packages/simple-vps
+provisioning
   Host installer, Ansible roles, and legacy Python helper kept during parity
   migration.
 
@@ -28,7 +28,7 @@ packages/cli
 The public product contract lives in [SPEC.md](SPEC.md).
 The host security model lives in [docs/security-model.md](docs/security-model.md).
 
-The root installer delegates to [packages/simple-vps](packages/simple-vps):
+The root installer delegates to [provisioning](provisioning):
 
 ```bash
 ./install.sh --mode remote --host 203.0.113.10 --ssh-key ~/.ssh/id_ed25519
@@ -49,5 +49,5 @@ make build-linux
 
 Implementation references:
 
-- [packages/simple-vps/SPEC.md](packages/simple-vps/SPEC.md)
+- [provisioning/SPEC.md](provisioning/SPEC.md)
 - [packages/cli/SPEC.md](packages/cli/SPEC.md)

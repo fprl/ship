@@ -7,14 +7,7 @@ Thanks for helping improve Simple VPS.
 Run these checks from repo root:
 
 ```bash
-bash -n install.sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile roles/infra/files/simple-vps
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
-tests/install_plan_test.sh
-tests/bootstrap_tarball_smoke.sh
-ansible-playbook --syntax-check playbooks/vps-bootstrap.yml
-ansible-playbook --syntax-check playbooks/vps-apply.yml
-ansible-lint playbooks/vps-bootstrap.yml playbooks/vps-apply.yml
+make provisioning-test
 ```
 
 ## Manual Test Matrix

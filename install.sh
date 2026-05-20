@@ -24,7 +24,7 @@ require_cmd() {
 }
 
 run_simple_vps_installer() {
-  local installer_path="$SCRIPT_DIR/packages/simple-vps/install.sh"
+  local installer_path="$SCRIPT_DIR/provisioning/install.sh"
 
   if [[ -x "$installer_path" ]]; then
     exec "$installer_path" "$@"
@@ -68,8 +68,8 @@ bootstrap_checkout() {
   curl -fsSL "$SIMPLE_STACK_REPO_TARBALL_URL" -o "$archive_path"
   tar -xzf "$archive_path" -C "$source_dir" --strip-components=1
 
-  if [[ -f "$source_dir/packages/simple-vps/install.sh" ]]; then
-    installer_path="$source_dir/packages/simple-vps/install.sh"
+  if [[ -f "$source_dir/provisioning/install.sh" ]]; then
+    installer_path="$source_dir/provisioning/install.sh"
   elif [[ -f "$source_dir/install.sh" ]]; then
     installer_path="$source_dir/install.sh"
   else

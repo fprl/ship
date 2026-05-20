@@ -185,7 +185,7 @@ separate helper.
 
 ```text
 packages/cli/SPEC.md     -> "these are the simple-vps subcommands we invoke"
-packages/simple-vps/SPEC.md -> "this is the API we expose, with validation"
+provisioning/SPEC.md -> "this is the API we expose, with validation"
 ```
 
 ### Sudoers and Host Identities

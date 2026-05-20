@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP_DIR="$(mktemp -d)"
-ROOT_NAME="$(basename "$ROOT_DIR")"
+ROOT_NAME="$(basename "$REPO_ROOT")"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -13,9 +13,9 @@ trap cleanup EXIT
 ARCHIVE_PATH="$TMP_DIR/simple-vps.tar.gz"
 BARE_DIR="$TMP_DIR/bare"
 
-tar -czf "$ARCHIVE_PATH" -C "$(dirname "$ROOT_DIR")" "$ROOT_NAME"
+tar -czf "$ARCHIVE_PATH" -C "$(dirname "$REPO_ROOT")" "$ROOT_NAME"
 mkdir -p "$BARE_DIR"
-cp "$ROOT_DIR/install.sh" "$BARE_DIR/install.sh"
+cp "$REPO_ROOT/install.sh" "$BARE_DIR/install.sh"
 
 set +e
 OUTPUT="$(

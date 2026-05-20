@@ -14,14 +14,29 @@ jobs:
       - name: Bash syntax checks
         run: |
           bash -n install.sh
-          bash -n packages/simple-vps/install.sh
-          bash -n packages/simple-vps/tests/bootstrap_tarball_smoke.sh
+          bash -n provisioning/install.sh
+          bash -n provisioning/tests/bootstrap_tarball_smoke.sh
+          bash -n provisioning/tests/install_plan_test.sh
       - name: Shellcheck
         run: |
-          shellcheck install.sh packages/simple-vps/install.sh packages/simple-vps/tests/bootstrap_tarball_smoke.sh
+          shellcheck install.sh provisioning/install.sh provisioning/tests/bootstrap_tarball_smoke.sh provisioning/tests/install_plan_test.sh
       - name: Bootstrap tarball smoke test
         run: |
-          packages/simple-vps/tests/bootstrap_tarball_smoke.sh
+          provisioning/tests/bootstrap_tarball_smoke.sh
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+      - name: Go tests
+        run: go test ./...
+      - name: Go build
+        run: go build ./...
+      - name: Go vet
+        run: go vet ./...
 
   python:
     runs-on: ubuntu-latest
@@ -29,10 +44,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Python syntax checks
         run: |
-          PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile packages/simple-vps/roles/infra/files/simple-vps
+          PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile provisioning/roles/infra/files/simple-vps
       - name: Python tests
         run: |
-          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s packages/simple-vps/tests
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s provisioning/tests
 
   bun:
     runs-on: ubuntu-latest
@@ -58,11 +73,11 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install ansible ansible-lint
       - name: Ansible syntax checks
-        working-directory: packages/simple-vps
+        working-directory: provisioning
         run: |
           ansible-playbook --syntax-check playbooks/vps-bootstrap.yml
           ansible-playbook --syntax-check playbooks/vps-apply.yml
       - name: Ansible lint
-        working-directory: packages/simple-vps
+        working-directory: provisioning
         run: |
           ansible-lint --profile min playbooks/vps-bootstrap.yml playbooks/vps-apply.yml

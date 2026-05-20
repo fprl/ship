@@ -1,7 +1,7 @@
 # Simple VPS Spec
 
 Source of truth for the Simple VPS product. The package-level specs
-(`packages/simple-vps/SPEC.md`, `packages/cli/SPEC.md`) document
+(`provisioning/SPEC.md`, `packages/cli/SPEC.md`) document
 implementation; this file documents the public contract.
 
 ## Product
@@ -172,13 +172,13 @@ The expected host security posture is documented in
 
 ```text
 SPEC.md                          public product contract (this file)
-packages/simple-vps/SPEC.md      host installer + Ansible roles +
+provisioning/SPEC.md      host installer + Ansible roles +
                                  privileged Python server helper
 packages/cli/SPEC.md             unified Bun CLI implementation
 ```
 
 The unified Bun CLI lives in `packages/cli/`. The privileged server-side
-helper and the host installer live in `packages/simple-vps/`. Users do not
+helper and the host installer live in `provisioning/`. Users do not
 need to know about this split.
 
 ## Versioning
@@ -248,7 +248,7 @@ for a meaningful window without needing contract changes.
 - Rename the project. `simple-vps` is the name.
 - Change the manifest schema beyond filename.
 - Rename internal package folders beyond `simple-deploy → cli`.
-  `packages/simple-vps/` stays.
+  `provisioning/` stays.
 
 ## Future Architecture Candidates
 

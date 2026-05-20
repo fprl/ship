@@ -254,8 +254,8 @@ bootstrap_simple_vps_checkout() {
   curl -fsSL "$SIMPLE_VPS_REPO_TARBALL_URL" -o "$archive_path"
   tar -xzf "$archive_path" -C "$source_dir" --strip-components=1
 
-  if [[ -f "$source_dir/packages/simple-vps/install.sh" ]]; then
-    installer_path="$source_dir/packages/simple-vps/install.sh"
+  if [[ -f "$source_dir/provisioning/install.sh" ]]; then
+    installer_path="$source_dir/provisioning/install.sh"
   elif [[ -f "$source_dir/install.sh" ]]; then
     installer_path="$source_dir/install.sh"
   else
@@ -288,7 +288,7 @@ prepare_go_helper_binaries() {
   local arch
 
   PLAN_HELPER_BINARY_DIR=""
-  repo_root="$(cd "$SCRIPT_DIR/../.." && pwd)"
+  repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
 
   if [[ ! -f "$repo_root/go.mod" ]]; then
     return

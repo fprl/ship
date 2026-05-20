@@ -26,7 +26,7 @@ RUN useradd -m -s /bin/bash -g operator operator \
   && chown deploy:deploy /home/deploy/.ssh \
   && chmod 700 /home/deploy/.ssh
 
-COPY packages/simple-vps/roles/infra/files/simple-vps /usr/local/bin/simple-vps
+COPY provisioning/roles/infra/files/simple-vps /usr/local/bin/simple-vps
 COPY packages/cli/tests/fake-vps/fake-systemctl /usr/local/bin/systemctl
 COPY packages/cli/tests/fake-vps/fake-journalctl /usr/local/bin/journalctl
 COPY packages/cli/tests/fake-vps/fake-caddy /usr/local/bin/caddy
