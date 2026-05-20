@@ -176,15 +176,14 @@ Rules:
 
 ## Simple VPS CLI Server API
 
-The Bun CLI in `packages/cli` drives app deploys from a developer
-laptop or CI runner over SSH. It needs narrow root privileges on the server
-to create per-app system users, install systemd units, manage
-`simple-*.service` units, and publish routes. Simple VPS exposes that
-capability as subcommands of the existing `simple-vps` binary — there is no
-separate helper.
+The Go `simple-vps` CLI drives app deploys from a developer laptop or CI
+runner over SSH. It needs narrow root privileges on the server to create
+per-app system users, install systemd units, manage `simple-*.service`
+units, and publish routes. Simple VPS exposes that capability as
+subcommands of the same `simple-vps` binary — there is no separate helper.
 
 ```text
-packages/cli/SPEC.md     -> "these are the simple-vps subcommands we invoke"
+SPEC.md              -> "these are the simple-vps subcommands we invoke"
 provisioning/SPEC.md -> "this is the API we expose, with validation"
 ```
 
@@ -299,7 +298,7 @@ Enforced by `simple-vps` before any privileged action:
 
 `app create` adds the invoking sudo user to the app's group and makes
 `/var/apps/<name>` plus `/var/apps/<name>/releases` setgid group-writable
-(`2775`). That is the upload contract: the Bun CLI can rsync release
+(`2775`). That is the upload contract: the client CLI can rsync release
 artifacts as the deploy user, while services still run as `app-<name>`.
 It also ensures `/tmp/simple-deploy` exists with mode `1777`; unit uploads
 land there before `app install-unit` validates ownership and content.
@@ -307,9 +306,8 @@ land there before `app install-unit` validates ownership and content.
 ### Failure Mode
 
 If the sudoers entry or the `app` subcommands are missing on the server,
-the Bun CLI fails at `setup` time with a clear pointer to re-run the
-Simple VPS install. The CLI never installs server-side capability
-itself.
+the client CLI fails at `setup` time with a clear pointer to re-run the
+Simple VPS install. The CLI never installs server-side capability itself.
 
 ## Cloudflare Model
 
@@ -379,28 +377,23 @@ Why not Brewfile:
 - It does not own SSH hardening, UFW, users, systemd units, Cloudflare Tunnel
   config, Tailscale service setup, or rollback/validation semantics.
 
-If Ansible starts slowing down the one-script path, port the narrow role logic to
-a small Bash/Python installer later. Do not restart from scratch just to change
-the engine.
+If Ansible starts slowing down the one-script path, port the narrow role logic
+to the Go installer path later. Do not restart from scratch just to change the
+engine.
 
 ## Language Choice
 
-The privileged helper remains Python, stdlib only.
+The privileged helper target is the compiled Go `simple-vps` binary.
 
 The `/usr/local/bin/simple-vps` CLI is granted passwordless sudo by
-`/etc/sudoers.d/simple-vps`, so it lives at the privilege boundary. Python
-stdlib covers the root API this tool needs (`argparse`, `json`, `pathlib`, `re`,
-`shutil`, `subprocess`) without npm, PyPI, or transitive dependencies to audit.
+`/etc/sudoers.d/simple-vps`, so it lives at the privilege boundary. Go is a
+better fit for that boundary than TS/Bun or Python here: one static binary,
+no npm/PyPI runtime, and shared validation code between the public client and
+the server API.
 
-Revisit a Bun helper only when both conditions are true:
-
-- It ships as a compiled binary via `bun build --compile`, so root is not
-  running JIT-loaded project code.
-- CI enforces a no-dependency boundary for the helper: only stdlib, `node:*`,
-  and `bun:*` imports are allowed.
-
-Until then, contributor preference is not enough reason to move the root-owned
-server API to TS/Bun.
+The Python helper remains only as a legacy fallback during the migration.
+New server API behavior should land in Go first; Python changes should be
+limited to compatibility until it is deleted.
 
 ## Current Implementation
 

@@ -47,6 +47,13 @@ Build Linux helper binaries for provisioning:
 make build-linux
 ```
 
+Run the main checks:
+
+```bash
+make test
+make fake-vps-smoke   # Docker-backed Go client/helper smoke
+```
+
 Implementation references:
 
 - [provisioning/SPEC.md](provisioning/SPEC.md)

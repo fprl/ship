@@ -38,6 +38,17 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
+  fake-vps-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22.x'
+      - uses: oven-sh/setup-bun@v2
+      - name: Go fake VPS smoke
+        run: make fake-vps-smoke
+
   python:
     runs-on: ubuntu-latest
     steps:

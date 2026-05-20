@@ -89,16 +89,14 @@ Read-only view of the route table.
 
 ## Internal CLI (server-side)
 
-The privileged server-side API is served by a separate `simple-vps` binary
-installed at `/usr/local/bin/simple-vps` on the host. It is invoked over
-SSH by the public CLI via `sudo` and is not run directly by users. The
-public Bun CLI on the laptop and the server-side helper share a name by
-design — they live in different contexts and are never both invoked from
-the same shell.
+The Go `simple-vps` binary serves both the public app-deploy CLI and the
+privileged server-side API installed at `/usr/local/bin/simple-vps`.
+Public verbs run on a laptop or CI runner. Internal verbs run on the host
+through SSH via `sudo` and are not user-facing product commands.
 
-The Bun public CLI's `--help` lists the public verbs above. The server
-helper's `--help` lists the internal verbs below. Neither leaks into the
-other.
+`simple-vps --help` advertises the public verbs. The internal API remains
+documented here because it is the contract between the deploy client,
+installer, and host helper.
 
 ```bash
 sudo simple-vps app create <name>
@@ -111,9 +109,9 @@ sudo simple-vps app run-as <name> --cwd <path> -- <cmd> [args...]
 sudo simple-vps app install-env <name> <path>
 sudo simple-vps app read-env <name>
 
-sudo simple-vps route proxy <host> --port <port> --app <name>
-sudo simple-vps route static <host> --root <path> --app <name>
-sudo simple-vps route redirect <host> --to <url> --app <name>
+sudo simple-vps route proxy --port <port> --app <name> <host>
+sudo simple-vps route static --root <path> --app <name> <host>
+sudo simple-vps route redirect --to <url> --app <name> <host>
 sudo simple-vps route remove --app <name>
 ```
 
@@ -172,14 +170,30 @@ The expected host security posture is documented in
 
 ```text
 SPEC.md                          public product contract (this file)
-provisioning/SPEC.md      host installer + Ansible roles +
-                                 privileged Python server helper
-packages/cli/SPEC.md             unified Bun CLI implementation
+provisioning/SPEC.md             host installer + Ansible roles
+packages/cli/SPEC.md             legacy Bun CLI parity reference
+cmd/, internal/                  active Go implementation
 ```
 
-The unified Bun CLI lives in `packages/cli/`. The privileged server-side
-helper and the host installer live in `provisioning/`. Users do not
-need to know about this split.
+The active implementation lives in the root Go module. `packages/cli/`
+and the Python helper under `provisioning/roles/infra/files/` remain
+legacy parity references while the Go port is finished. Users do not need
+to know about this split.
+
+## Go Port Direction
+
+The root Go module is the migration target for both sides of the product:
+the public deploy CLI and the privileged host helper. New behavior should
+land in Go first.
+
+The legacy Bun CLI and Python helper are still useful as executable specs
+while parity is being proven, but they are not the direction of travel.
+The installer already prefers compiled Go helper binaries when available,
+and the fake-VPS smoke now runs the Go client against the Go helper.
+
+The cleanup target is one maintained implementation: Go plus the
+provisioning shell/Ansible layer. TypeScript and Python stay only until
+their remaining coverage value has been replaced.
 
 ## Versioning
 
@@ -207,7 +221,10 @@ Pre-1.0 minors may include breaking changes. Patch versions are
 non-breaking by intent. Tag `1.0.0` once the product has survived real use
 for a meaningful window without needing contract changes.
 
-## 0.2.0 Scope
+## 0.2.0 Scope (Historical)
+
+This section records the shipped 0.2 TypeScript/Python milestone. The active
+direction is the Go port described above.
 
 ### What lands
 
@@ -259,16 +276,13 @@ re-litigated from scratch every time someone asks.
 - **Thin `simple-vps host install` wrapper.** A CLI verb that shells out
   to the existing `install.sh` flow so every user-typed command starts
   with `simple-vps`. Pure cohesion polish. Worth doing only if "two
-  entry points" turns out to be real friction. Cheap (~50 lines of
-  Bun).
+  entry points" turns out to be real friction.
 
-- **Bun privileged server helper.** Replace the Python helper with a Bun
-  equivalent only when the helper ships as a compiled binary via
-  `bun build --compile` and CI enforces a no-dependency boundary: only
-  stdlib, `node:*`, and `bun:*` imports. Cohesion alone is not sufficient
-  justification; the helper lives at the sudo boundary.
+- **Delete legacy implementations.** Once Go parity is covered by unit tests,
+  installer tests, and the fake-VPS smoke, remove the Bun CLI and Python
+  helper instead of keeping parallel implementations alive.
 
-- **Thinner bootstrap.** Shrink `install.sh` to install Bun and the CLI
+- **Thinner bootstrap.** Shrink `install.sh` to install the Go binary
   only, then exec `simple-vps host install` for the rest. Requires the
   privileged helper port first. Revisit only if `install.sh` becomes
   a real maintenance burden.
@@ -276,9 +290,9 @@ re-litigated from scratch every time someone asks.
 What stays out of consideration:
 
 - **Replacing Ansible.** Ansible is the right tool for host convergence
-  (apt, systemd, UFW, sudoers, idempotent state). Rewriting it in Bun
-  is months of work for marginal user-facing improvement. Ansible
-  stays unless a concrete product reason appears.
+  (apt, systemd, UFW, sudoers, idempotent state). Rewriting that host
+  convergence layer is months of work for marginal user-facing improvement.
+  Ansible stays unless a concrete product reason appears.
 
 The 0.3.0 slice was picked from real friction after 0.2.0 landed:
 operator/deploy separation, Cloudflare setup, install prompts, manifest
@@ -342,4 +356,4 @@ What stays out:
 - Managed-resource abstractions.
 - OAuth for Cloudflare or Tailscale.
 - Multi-host orchestration.
-- A Bun privileged helper.
+- A TS/Bun privileged helper.

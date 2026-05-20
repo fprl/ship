@@ -1,7 +1,8 @@
 # Simple VPS CLI Spec
 
-Implementation reference for the Bun CLI. The public product contract lives in
-the root [SPEC.md](../../SPEC.md).
+Historical implementation reference for the legacy Bun CLI. The active
+implementation is the root Go module; the public product contract lives in the
+root [SPEC.md](../../SPEC.md).
 
 ## Goal
 
@@ -36,8 +37,9 @@ VPS hosts.
 ## Boundary With Simple VPS
 
 ```text
-provisioning -> "this server is ready to host apps"
-packages/cli        -> "this app is running here, with these services and routes"
+provisioning   -> "this server is ready to host apps"
+root Go module -> "this app is running here, with these services and routes"
+packages/cli   -> legacy Bun parity reference
 ```
 
 Simple VPS owns:
