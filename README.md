@@ -15,8 +15,8 @@ your app repo     ->  simple-vps deploy  ->  live app
   both the app deploy CLI and the privileged server helper.
 
 provisioning
-  Host installer and Ansible roles. The installer builds or selects the Go
-  helper binaries that Ansible installs on the server.
+  Ansible roles and host convergence assets. The Go host installer runs these
+  playbooks and installs the Go server binary.
 ```
 
 ## Start Here
@@ -24,7 +24,7 @@ provisioning
 The public product contract lives in [SPEC.md](SPEC.md).
 The host security model lives in [docs/security-model.md](docs/security-model.md).
 
-The root installer delegates to [provisioning](provisioning):
+The root installer is a thin bootstrap that runs `simple-vps host install`:
 
 ```bash
 ./install.sh --mode remote --host 203.0.113.10 --ssh-key ~/.ssh/id_ed25519
@@ -37,10 +37,10 @@ make build
 ./dist/simple-vps check production
 ```
 
-Build Linux helper binaries for provisioning:
+Build release binaries:
 
 ```bash
-make build-linux
+make build-release
 ```
 
 Run the main checks:

@@ -15,8 +15,8 @@ CLI shape, implementation decisions, and current status.
 
 ## Current State
 
-The repo currently uses `install.sh` as the entrypoint and Ansible as the
-converge engine.
+The repo currently uses `install.sh` as the one-line bootstrap, `simple-vps host
+install` as the installer, and Ansible as the converge engine.
 
 Default install path:
 
@@ -88,8 +88,8 @@ Use separate SSH keys for the operator and deploy users. `--shared-key` is
 available for small single-person hosts, but it gives that one key access to both
 identities.
 
-The hosted installer bootstrap path exists, but the final v1 one-liner is still
-part of the work tracked in [SPEC.md](SPEC.md).
+The hosted installer bootstrap path exists; v1 still needs full fresh-host
+validation before treating the public one-liner as done.
 
 ## Validation
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/fprl/simple-vps/cmd/client"
 	"github.com/fprl/simple-vps/cmd/helper"
+	"github.com/fprl/simple-vps/cmd/hostinstall"
 )
 
 func usage() {
@@ -28,6 +29,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  simple-vps env push <env> <file>")
 	fmt.Fprintln(os.Stderr, "  simple-vps host status [--server <ssh-target>]")
 	fmt.Fprintln(os.Stderr, "  simple-vps host doctor [--server <ssh-target>]")
+	fmt.Fprintln(os.Stderr, "  simple-vps host install [install options]")
 	fmt.Fprintln(os.Stderr, "  simple-vps route list [--json] [--server <ssh-target>]")
 }
 
@@ -205,7 +207,14 @@ func main() {
 		client.CmdEnvPush(".", args[1], args[2])
 
 	case "host":
-		client.CmdHost(args)
+		if len(args) > 0 && args[0] == "install" {
+			if err := hostinstall.Run(args[1:]); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+				os.Exit(1)
+			}
+		} else {
+			client.CmdHost(args)
+		}
 
 	case "route":
 		isClient := false

@@ -339,7 +339,7 @@ Per-server Cloudflare setup should be automated by Simple VPS.
 
 ## Installer Model
 
-`install.sh` should be the public entrypoint.
+`install.sh` should be the public bootstrap entrypoint.
 
 Target one-liner:
 
@@ -347,11 +347,11 @@ Target one-liner:
 curl -fsSL https://simple-vps.dev/install.sh | bash
 ```
 
-The hosted script should download a pinned release/tarball, then run the real
-installer from that extracted checkout.
+The hosted script should download a pinned release/tarball, find or build the
+Go binary, then exec `simple-vps host install` from that extracted checkout.
 
-Current implementation already has a bootstrap-download path, but v1 still needs
-the full production flow validated on a fresh VPS.
+The current implementation has that bootstrap path. v1 still needs the full
+production flow validated on a fresh VPS.
 
 ## Ansible Decision
 
@@ -368,7 +368,7 @@ Boundaries:
 
 - Do not turn this into a generic Ansible framework.
 - Do not add roles/profiles unless they remove immediate complexity.
-- Keep `install.sh` as the only user-facing install entrypoint.
+- Keep `install.sh` as the one-line bootstrap entrypoint.
 
 Why not Brewfile:
 
@@ -519,7 +519,7 @@ Local checks:
 ```bash
 go test ./...
 go build ./...
-make build-linux
+make build-release
 bash -n install.sh
 bash -n provisioning/install.sh
 provisioning/tests/install_plan_test.sh

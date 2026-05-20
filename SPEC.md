@@ -74,10 +74,13 @@ Writes are atomic via the privileged server API. No auto-restart.
 ```bash
 simple-vps host status [--server <ssh-target>]
 simple-vps host doctor [--server <ssh-target>]
+simple-vps host install [install options]
 ```
 
-These run *on the box* and report on host readiness. Bootstrapping a fresh
-VPS is the job of `install.sh` (see Installation), not the CLI.
+`status` and `doctor` run on the box and report on host readiness. `host install`
+runs the Ansible-backed host installer from the Go binary. The public
+`install.sh` entrypoint remains as a tiny bootstrap for the one-line install
+path.
 
 ### Diagnostics
 
@@ -137,8 +140,8 @@ package and covered by the Go test suite.
 
 ## Installation
 
-Bootstrapping a fresh Ubuntu 24.04 host is the job of `install.sh`. The
-unified CLI does not replace it.
+Bootstrapping a fresh Ubuntu 24.04 host starts with `install.sh`. The script
+finds, downloads, or builds a Go binary, then execs `simple-vps host install`.
 
 ```text
 # on a fresh box, ssh'd as root:
@@ -155,6 +158,11 @@ curl -fsSL https://simple-vps.dev/install.sh | bash \
 ```
 
 `install.sh` supports both remote-from-laptop and local-on-box modes.
+The Go command underneath accepts the same flags:
+
+```bash
+simple-vps host install --mode remote --host <ip> --bootstrap-user root
+```
 
 After install, the primary checks are:
 
@@ -245,7 +253,7 @@ direction is the Go port described above.
 
 ### What stays out of 0.2.0
 
-- Bootstrap orchestration as a CLI verb. `install.sh` keeps that job.
+- Replacing the `install.sh` one-liner. The script stays as bootstrap glue.
 - Auto-setup on first deploy. `setup` stays explicit because it creates
   system users.
 - Compatibility shims for `simple-deploy.toml` or the `simple-deploy`
@@ -262,19 +270,8 @@ direction is the Go port described above.
 
 ## Future Architecture Candidates
 
-Options worth considering after 0.2.0 surfaces concrete friction. Not
-scheduled. Not promised. Listed so they aren't forgotten and don't get
-re-litigated from scratch every time someone asks.
-
-- **Thin `simple-vps host install` wrapper.** A CLI verb that shells out
-  to the existing `install.sh` flow so every user-typed command starts
-  with `simple-vps`. Pure cohesion polish. Worth doing only if "two
-  entry points" turns out to be real friction.
-
-- **Thinner bootstrap.** Shrink `install.sh` to install the Go binary
-  only, then exec `simple-vps host install` for the rest. Requires the
-  privileged helper port first. Revisit only if `install.sh` becomes
-  a real maintenance burden.
+No active candidates in this phase. The next work is hardening the Go installer
+and release path while leaving Ansible in place.
 
 What stays out of consideration:
 
@@ -328,8 +325,8 @@ What lands:
 - Cloudflare Tunnel setup keeps the default trust boundary at tunnel token or
   config-file access; API-managed public hostnames and CNAME records are an
   explicit advanced mode, not the default path.
-- `install.sh` prompts for missing values on a TTY while preserving non-TTY
-  flag/env behavior.
+- `simple-vps host install` owns non-TTY flag/env behavior; `install.sh` is
+  bootstrap glue.
 - Manifest `path` becomes optional and defaults to `/var/apps/<name>`.
 - Host status/doctor and route listing can target `--server <ssh-target>` from
   outside an app repo.

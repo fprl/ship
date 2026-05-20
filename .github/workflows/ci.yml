@@ -35,8 +35,8 @@ jobs:
         run: go test ./...
       - name: Go build
         run: go build ./...
-      - name: Linux helper builds
-        run: make build-linux
+      - name: Release builds
+        run: make build-release
       - name: Go vet
         run: go vet ./...
 
