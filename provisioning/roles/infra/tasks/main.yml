@@ -130,6 +130,13 @@
         "version": 2
       }
 
+- name: Require Simple VPS helper binary directory
+  fail:
+    msg: >-
+      simple_vps_helper_binary_dir is required. Run the installer so it can
+      build or select Go helper binaries.
+  when: simple_vps_helper_binary_dir | default('') | length == 0
+
 - name: Set Simple VPS helper binary architecture
   set_fact:
     infra_simple_vps_helper_arch: >-
@@ -143,31 +150,24 @@
 - name: Fail on unsupported Simple VPS helper architecture
   fail:
     msg: "Simple VPS Go helper install is not configured for architecture {{ ansible_facts['architecture'] }}."
-  when:
-    - simple_vps_helper_binary_dir | default('') | length > 0
-    - infra_simple_vps_helper_arch | length == 0
+  when: infra_simple_vps_helper_arch | length == 0
 
 - name: Check compiled Simple VPS helper
   stat:
     path: "{{ simple_vps_helper_binary_dir }}/simple-vps-linux-{{ infra_simple_vps_helper_arch }}"
   delegate_to: localhost
   register: infra_simple_vps_helper_binary
-  when: simple_vps_helper_binary_dir | default('') | length > 0
 
 - name: Fail when compiled Simple VPS helper is missing
   fail:
-    msg: "Compiled Simple VPS helper not found at {{ simple_vps_helper_binary_dir }}/simple-vps-linux-{{ infra_simple_vps_helper_arch }}."
-  when:
-    - simple_vps_helper_binary_dir | default('') | length > 0
-    - not infra_simple_vps_helper_binary.stat.exists
+    msg: >-
+      Compiled Simple VPS helper not found at
+      {{ simple_vps_helper_binary_dir }}/simple-vps-linux-{{ infra_simple_vps_helper_arch }}.
+  when: not infra_simple_vps_helper_binary.stat.exists
 
 - name: Install Simple VPS CLI
   copy:
-    src: >-
-      {{
-        (simple_vps_helper_binary_dir | default('') | length > 0)
-        | ternary(simple_vps_helper_binary_dir ~ '/simple-vps-linux-' ~ infra_simple_vps_helper_arch, 'simple-vps')
-      }}
+    src: "{{ simple_vps_helper_binary_dir }}/simple-vps-linux-{{ infra_simple_vps_helper_arch }}"
     dest: /usr/local/bin/simple-vps
     owner: root
     group: root

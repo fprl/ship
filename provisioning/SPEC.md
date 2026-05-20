@@ -391,9 +391,8 @@ better fit for that boundary than TS/Bun or Python here: one static binary,
 no npm/PyPI runtime, and shared validation code between the public client and
 the server API.
 
-The Python helper remains only as a legacy fallback during the migration.
-New server API behavior should land in Go first; Python changes should be
-limited to compatibility until it is deleted.
+Ansible installs the compiled Go binary supplied by the installer. There is no
+Python helper fallback.
 
 ## Current Implementation
 
@@ -518,13 +517,15 @@ Known gaps:
 Local checks:
 
 ```bash
+go test ./...
+go build ./...
+make build-linux
 bash -n install.sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile roles/infra/files/simple-vps
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
-tests/install_plan_test.sh
-tests/bootstrap_tarball_smoke.sh
-ansible-playbook --syntax-check playbooks/vps-bootstrap.yml
-ansible-playbook --syntax-check playbooks/vps-apply.yml
+bash -n provisioning/install.sh
+provisioning/tests/install_plan_test.sh
+provisioning/tests/bootstrap_tarball_smoke.sh
+ANSIBLE_CONFIG=provisioning/ansible.cfg ansible-playbook --syntax-check -i provisioning/inventory/hosts.ini provisioning/playbooks/vps-bootstrap.yml
+ANSIBLE_CONFIG=provisioning/ansible.cfg ansible-playbook --syntax-check -i provisioning/inventory/hosts.ini provisioning/playbooks/vps-apply.yml
 ```
 
 CI should also run:

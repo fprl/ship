@@ -282,8 +282,15 @@ cleanup_tmp_files() {
   fi
 }
 
+helper_binaries_exist() {
+  local binary_dir="$1"
+
+  [[ -f "$binary_dir/simple-vps-linux-amd64" && -f "$binary_dir/simple-vps-linux-arm64" ]]
+}
+
 prepare_go_helper_binaries() {
   local repo_root
+  local dist_dir
   local output_dir
   local arch
 
@@ -291,12 +298,21 @@ prepare_go_helper_binaries() {
   repo_root="$(cd "$SCRIPT_DIR/.." && pwd)"
 
   if [[ ! -f "$repo_root/go.mod" ]]; then
+    err "Simple VPS Go module not found at $repo_root; cannot prepare helper binaries."
+    exit 1
+  fi
+
+  dist_dir="$repo_root/dist"
+  if helper_binaries_exist "$dist_dir"; then
+    PLAN_HELPER_BINARY_DIR="$dist_dir"
+    info "Using prebuilt Simple VPS Go helper binaries from $dist_dir"
     return
   fi
 
   if ! command -v go >/dev/null 2>&1; then
-    warn "Go toolchain not found; installer will keep using the bundled Python helper."
-    return
+    err "Simple VPS Go helper binaries are required, but no prebuilt dist/ binaries were found and Go is not installed."
+    err "Install Go or run 'make build-linux' from a checkout that includes dist/simple-vps-linux-amd64 and dist/simple-vps-linux-arm64."
+    exit 1
   fi
 
   output_dir="$(mktemp -d)"

@@ -35,6 +35,8 @@ jobs:
         run: go test ./...
       - name: Go build
         run: go build ./...
+      - name: Linux helper builds
+        run: make build-linux
       - name: Go vet
         run: go vet ./...
 
@@ -48,32 +50,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Go fake VPS smoke
         run: make fake-vps-smoke
-
-  python:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Python syntax checks
-        run: |
-          PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile provisioning/roles/infra/files/simple-vps
-      - name: Python tests
-        run: |
-          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s provisioning/tests
-
-  bun:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - name: Install CLI dependencies
-        working-directory: packages/cli
-        run: bun install --frozen-lockfile
-      - name: Simple VPS CLI typecheck
-        working-directory: packages/cli
-        run: bun run typecheck
-      - name: Simple VPS CLI tests
-        working-directory: packages/cli
-        run: bun test
 
   ansible:
     runs-on: ubuntu-latest

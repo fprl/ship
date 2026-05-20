@@ -1,8 +1,8 @@
 # Simple VPS Spec
 
-Source of truth for the Simple VPS product. The package-level specs
-(`provisioning/SPEC.md`, `packages/cli/SPEC.md`) document
-implementation; this file documents the public contract.
+Source of truth for the Simple VPS product. Implementation details live in
+`provisioning/SPEC.md`, `cmd/`, and `internal/`; this file documents the public
+contract.
 
 ## Product
 
@@ -130,8 +130,8 @@ the grant belongs to the deploy user:
 The manifest is `simple-vps.toml` at the app repo root.
 
 Schema, validation rules, three build modes (A/B/C), env override blocks,
-include/dotenv handling, and lockfile detection are unchanged from
-`packages/cli/SPEC.md`. Only the filename changes.
+include/dotenv handling, and lockfile detection are owned by the Go config
+package and covered by the Go test suite.
 
 `simple-deploy.toml` is not read. There is no fallback path.
 
@@ -171,14 +171,12 @@ The expected host security posture is documented in
 ```text
 SPEC.md                          public product contract (this file)
 provisioning/SPEC.md             host installer + Ansible roles
-packages/cli/SPEC.md             legacy Bun CLI parity reference
 cmd/, internal/                  active Go implementation
 ```
 
-The active implementation lives in the root Go module. `packages/cli/`
-and the Python helper under `provisioning/roles/infra/files/` remain
-legacy parity references while the Go port is finished. Users do not need
-to know about this split.
+The active implementation lives in the root Go module. Ansible remains the
+host convergence layer, but the CLI and privileged server API are both served
+by the compiled Go `simple-vps` binary.
 
 ## Go Port Direction
 
@@ -186,14 +184,9 @@ The root Go module is the migration target for both sides of the product:
 the public deploy CLI and the privileged host helper. New behavior should
 land in Go first.
 
-The legacy Bun CLI and Python helper are still useful as executable specs
-while parity is being proven, but they are not the direction of travel.
-The installer already prefers compiled Go helper binaries when available,
-and the fake-VPS smoke now runs the Go client against the Go helper.
-
-The cleanup target is one maintained implementation: Go plus the
-provisioning shell/Ansible layer. TypeScript and Python stay only until
-their remaining coverage value has been replaced.
+The legacy Bun CLI and Python helper have been removed from the active tree.
+The cleanup target is one maintained implementation: Go plus the provisioning
+shell/Ansible layer.
 
 ## Versioning
 
@@ -277,10 +270,6 @@ re-litigated from scratch every time someone asks.
   to the existing `install.sh` flow so every user-typed command starts
   with `simple-vps`. Pure cohesion polish. Worth doing only if "two
   entry points" turns out to be real friction.
-
-- **Delete legacy implementations.** Once Go parity is covered by unit tests,
-  installer tests, and the fake-VPS smoke, remove the Bun CLI and Python
-  helper instead of keeping parallel implementations alive.
 
 - **Thinner bootstrap.** Shrink `install.sh` to install the Go binary
   only, then exec `simple-vps host install` for the rest. Requires the

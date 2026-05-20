@@ -15,12 +15,8 @@ your app repo     ->  simple-vps deploy  ->  live app
   both the app deploy CLI and the privileged server helper.
 
 provisioning
-  Host installer, Ansible roles, and legacy Python helper kept during parity
-  migration.
-
-packages/cli
-  Legacy Bun CLI for app deploys and app operations. The Go binary is replacing
-  this package.
+  Host installer and Ansible roles. The installer builds or selects the Go
+  helper binaries that Ansible installs on the server.
 ```
 
 ## Start Here
@@ -57,4 +53,3 @@ make fake-vps-smoke   # Docker-backed Go client/helper smoke
 Implementation references:
 
 - [provisioning/SPEC.md](provisioning/SPEC.md)
-- [packages/cli/SPEC.md](packages/cli/SPEC.md)
