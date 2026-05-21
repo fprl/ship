@@ -41,7 +41,7 @@ cmd/hostinstall/        CLI surface and remote bootstrap over OpenSSH CLI
 internal/provision/     plan/apply/status/doctor orchestration
 internal/provision/host/     the bounded operation primitives
 internal/provision/local/    on-host runner for local apply
-internal/provision/state/    /etc/simple-vps/*.json schemas (see ADR-0002)
+internal/store/         /etc/simple-vps/*.json schemas (see ADR-0002)
 ```
 
 ### 2. Operation Budget - Exactly These Primitives

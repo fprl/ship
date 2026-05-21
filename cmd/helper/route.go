@@ -1,12 +1,12 @@
 package helper
 
 import (
-	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/fprl/simple-vps/internal/caddy"
-	"github.com/fprl/simple-vps/internal/state"
+	"github.com/fprl/simple-vps/internal/store"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -31,6 +31,7 @@ type routeProxyCmd struct {
 	Host    string   `arg:"" help:"Route hostname."`
 	Port    int      `required:"" help:"Local app port."`
 	App     string   `help:"App name."`
+	Service string   `help:"Service name."`
 	Force   bool     `help:"Force replace existing route."`
 	Headers []string `name:"header" help:"Custom header Name: value."`
 }
@@ -41,11 +42,12 @@ func (c routeProxyCmd) Run() error {
 		utils.Die(err.Error(), 1)
 	}
 
-	route, err := state.NormalizeRoute(state.StateRoute{
+	route, err := store.NormalizeRoute(store.Route{
 		Host:    c.Host,
 		Type:    "proxy",
 		Port:    &c.Port,
 		App:     c.App,
+		Service: c.Service,
 		Headers: hdrMap,
 	})
 	if err != nil {
@@ -70,7 +72,7 @@ func (c routeStaticCmd) Run() error {
 		utils.Die(err.Error(), 1)
 	}
 
-	route, err := state.NormalizeRoute(state.StateRoute{
+	route, err := store.NormalizeRoute(store.Route{
 		Host:    c.Host,
 		Type:    "static",
 		Root:    c.Root,
@@ -93,7 +95,7 @@ type routeRedirectCmd struct {
 }
 
 func (c routeRedirectCmd) Run() error {
-	route, err := state.NormalizeRoute(state.StateRoute{
+	route, err := store.NormalizeRoute(store.Route{
 		Host: c.Host,
 		Type: "redirect",
 		To:   c.To,
@@ -126,7 +128,7 @@ func (c routeRemoveCmd) Run() error {
 		return nil
 	}
 
-	host, err := state.NormalizeHost(c.Host)
+	host, err := store.NormalizeHost(c.Host)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -139,12 +141,12 @@ type generateCaddyCmd struct {
 }
 
 func (c generateCaddyCmd) Run() error {
-	s, err := state.LoadState()
+	routes, err := store.Default().ReadRoutes()
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
 
-	changed, err := caddy.ApplyCaddyfile(s, c.Force)
+	changed, err := caddy.ApplyCaddyfile(routes, c.Force)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -157,7 +159,7 @@ func (c generateCaddyCmd) Run() error {
 	return nil
 }
 
-func getRouteTarget(r state.StateRoute) string {
+func getRouteTarget(r store.Route) string {
 	switch r.Type {
 	case "proxy":
 		if r.Port != nil {
@@ -178,7 +180,7 @@ func parseHeaderArgs(headers []string) (map[string]string, error) {
 			return nil, fmt.Errorf("invalid header %q; expected 'Name: value'", h)
 		}
 		parts := strings.SplitN(h, ":", 2)
-		norm, err := state.NormalizeHeaders(map[string]string{parts[0]: parts[1]})
+		norm, err := store.NormalizeHeaders(map[string]string{parts[0]: parts[1]})
 		if err != nil {
 			return nil, err
 		}
@@ -189,21 +191,20 @@ func parseHeaderArgs(headers []string) (map[string]string, error) {
 	return res, nil
 }
 
-func upsertRoute(route *state.StateRoute, force bool) {
-	s, err := state.LoadState()
+func upsertRoute(route *store.Route, force bool) {
+	stateStore := store.Default()
+	s, err := stateStore.ReadRoutes()
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
 
-	prevRoutes := make([]state.StateRoute, len(s.Routes))
+	prevRoutes := make([]store.Route, len(s.Routes))
 	copy(prevRoutes, s.Routes)
 
-	idx := state.RouteIndex(s.Routes, route.Host)
+	idx := store.RouteIndex(s.Routes, route.Host)
 	if idx != -1 {
 		existing := s.Routes[idx]
-		existingJSON, _ := json.Marshal(existing)
-		routeJSON, _ := json.Marshal(route)
-		if string(existingJSON) == string(routeJSON) {
+		if reflect.DeepEqual(existing, *route) {
 			fmt.Printf("%s already has the requested %s route\n", route.Host, route.Type)
 			return
 		}
@@ -215,7 +216,7 @@ func upsertRoute(route *state.StateRoute, force bool) {
 		s.Routes = append(s.Routes, *route)
 	}
 
-	err = state.WriteState(s)
+	err = stateStore.WriteRoutes(*s)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -223,7 +224,7 @@ func upsertRoute(route *state.StateRoute, force bool) {
 	_, err = caddy.ApplyCaddyfile(s, force)
 	if err != nil {
 		s.Routes = prevRoutes
-		_ = state.WriteState(s)
+		_ = stateStore.WriteRoutes(*s)
 		utils.Die(err.Error(), 1)
 	}
 
@@ -231,22 +232,23 @@ func upsertRoute(route *state.StateRoute, force bool) {
 }
 
 func removeRoute(host string, force bool) {
-	s, err := state.LoadState()
+	stateStore := store.Default()
+	s, err := stateStore.ReadRoutes()
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
 
-	prevRoutes := make([]state.StateRoute, len(s.Routes))
+	prevRoutes := make([]store.Route, len(s.Routes))
 	copy(prevRoutes, s.Routes)
 
-	idx := state.RouteIndex(s.Routes, host)
+	idx := store.RouteIndex(s.Routes, host)
 	if idx == -1 {
 		utils.Die(fmt.Sprintf("%s is not routed", host), 1)
 	}
 
 	s.Routes = append(s.Routes[:idx], s.Routes[idx+1:]...)
 
-	err = state.WriteState(s)
+	err = stateStore.WriteRoutes(*s)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -254,7 +256,7 @@ func removeRoute(host string, force bool) {
 	_, err = caddy.ApplyCaddyfile(s, force)
 	if err != nil {
 		s.Routes = prevRoutes
-		_ = state.WriteState(s)
+		_ = stateStore.WriteRoutes(*s)
 		utils.Die(err.Error(), 1)
 	}
 
@@ -262,20 +264,21 @@ func removeRoute(host string, force bool) {
 }
 
 func removeRoutesByApp(app string, force bool) {
-	s, err := state.LoadState()
+	stateStore := store.Default()
+	s, err := stateStore.ReadRoutes()
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
 
-	normApp, err := state.NormalizeApp(app)
+	normApp, err := store.NormalizeApp(app)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
 
-	prevRoutes := make([]state.StateRoute, len(s.Routes))
+	prevRoutes := make([]store.Route, len(s.Routes))
 	copy(prevRoutes, s.Routes)
 
-	var nextRoutes []state.StateRoute
+	var nextRoutes []store.Route
 	for _, r := range s.Routes {
 		if r.App != normApp {
 			nextRoutes = append(nextRoutes, r)
@@ -289,7 +292,7 @@ func removeRoutesByApp(app string, force bool) {
 	}
 
 	s.Routes = nextRoutes
-	err = state.WriteState(s)
+	err = stateStore.WriteRoutes(*s)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -297,7 +300,7 @@ func removeRoutesByApp(app string, force bool) {
 	_, err = caddy.ApplyCaddyfile(s, force)
 	if err != nil {
 		s.Routes = prevRoutes
-		_ = state.WriteState(s)
+		_ = stateStore.WriteRoutes(*s)
 		utils.Die(err.Error(), 1)
 	}
 

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/fprl/simple-vps/internal/state"
+	"github.com/fprl/simple-vps/internal/store"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -100,7 +100,7 @@ func SystemServiceStatus(service string) string {
 }
 
 func normalizeRequiredApp(name string) (string, error) {
-	normalized, err := state.NormalizeApp(name)
+	normalized, err := store.NormalizeApp(name)
 	if err != nil {
 		return "", err
 	}
@@ -115,7 +115,7 @@ func DeployUserFromSudo() (string, error) {
 	if user == "" || user == "root" {
 		return "", nil
 	}
-	systemUserRe := state.SystemUserRe
+	systemUserRe := store.SystemUserRe
 	if !systemUserRe.MatchString(user) {
 		return "", fmt.Errorf("invalid SUDO_USER")
 	}
@@ -227,7 +227,10 @@ func AppCreate(name string) error {
 	if err := GrantDeployUserAccess(name); err != nil {
 		return err
 	}
-	return EnsureAppDirectories(name)
+	if err := EnsureAppDirectories(name); err != nil {
+		return err
+	}
+	return store.Default().RegisterApp(name, AppPath(name))
 }
 
 func AppDestroy(name string) error {
@@ -244,7 +247,10 @@ func AppDestroy(name string) error {
 	if err := EnsureAppUserAbsent(name); err != nil {
 		return err
 	}
-	return EnsureAppGroupAbsent(name)
+	if err := EnsureAppGroupAbsent(name); err != nil {
+		return err
+	}
+	return store.Default().UnregisterApp(name)
 }
 
 func AppReadEnv(name string) (string, error) {
@@ -425,7 +431,7 @@ func AppInstallUnit(name string, service string, pathToUnitFile string) error {
 	if err != nil {
 		return err
 	}
-	service, err = state.NormalizeService(service)
+	service, err = store.NormalizeService(service)
 	if err != nil {
 		return err
 	}
@@ -447,7 +453,7 @@ func AppInstallUnit(name string, service string, pathToUnitFile string) error {
 
 	_ = os.Chmod(appTarget, 0644)
 	_ = os.Chmod(systemdTarget, 0644)
-	return nil
+	return store.Default().RegisterAppService(name, service)
 }
 
 func AppUninstallUnit(name string, service string) error {
@@ -455,7 +461,7 @@ func AppUninstallUnit(name string, service string) error {
 	if err != nil {
 		return err
 	}
-	service, err = state.NormalizeService(service)
+	service, err = store.NormalizeService(service)
 	if err != nil {
 		return err
 	}
@@ -471,7 +477,7 @@ func AppUninstallUnit(name string, service string) error {
 			_ = os.Remove(path)
 		}
 	}
-	return nil
+	return store.Default().UnregisterAppService(name, service)
 }
 
 func AppDaemonReload() error {
@@ -488,7 +494,7 @@ func AppServiceAction(action string, name string, service string) (string, error
 	if err != nil {
 		return "", err
 	}
-	service, err = state.NormalizeService(service)
+	service, err = store.NormalizeService(service)
 	if err != nil {
 		return "", err
 	}

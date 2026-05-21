@@ -1288,7 +1288,12 @@ func routePublishCommand(ctx *config.AppContext, route config.Route) string {
 		if svc.Port != nil {
 			p = *svc.Port
 		}
-		return serverCommand("route", "proxy", "--port", strconv.Itoa(p), "--app", ctx.AppName, route.Host)
+		args := []string{"route", "proxy", "--port", strconv.Itoa(p), "--app", ctx.AppName}
+		if route.Service != "" {
+			args = append(args, "--service", route.Service)
+		}
+		args = append(args, route.Host)
+		return serverCommand(args...)
 	}
 	if route.Type == "static" {
 		return serverCommand("route", "static", "--root", ctx.AppRoot+"/current", "--app", ctx.AppName, route.Host)

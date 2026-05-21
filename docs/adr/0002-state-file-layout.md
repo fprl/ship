@@ -182,8 +182,12 @@ to `/srv/simple-vps/apps/<name>` is out of scope for this ADR.
   "account_id": "...",
   "tunnel_id": "...",
   "tunnel_name": "simple-vps-prod-1",
-  "dns_records": {
-    "api.example.com": "record-id"
+  "routes": {
+    "api.example.com": {
+      "app": "api",
+      "zone_id": "zone-id",
+      "dns_record_id": "record-id"
+    }
   }
 }
 ```
@@ -229,11 +233,11 @@ to converge with that system.
 
 ## Out of scope
 
-- Migrating the existing `/etc/simple-vps/state.json` shape to this layout.
-  That migration belongs in its own state-package change.
 - Moving the app root from `/var/apps/<name>` to `/srv/simple-vps/apps/<name>`.
 - A daemon that watches these files for change. Files are read on command
   invocation; nothing observes them between invocations.
+- Cross-command file locking. Each file write is atomic, but commands do not
+  take a global lock across multiple store files.
 
 ## Notes
 

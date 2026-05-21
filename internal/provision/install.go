@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/fprl/simple-vps/internal/provision/host"
-	"github.com/fprl/simple-vps/internal/provision/state"
+	"github.com/fprl/simple-vps/internal/store"
 )
 
 const litestreamVersion = "0.5.8"
@@ -59,20 +59,20 @@ func RunInstall(ctx context.Context, runner host.Runner, opts InstallOptions) (I
 		CheckMode: opts.CheckMode,
 		State:     &host.RunState{},
 	}
-	store := state.Store{Root: opts.StateRoot}
+	stateStore := store.Store{Root: opts.StateRoot}
 	startedAt := opts.Now().UTC()
 	applyID := opts.ApplyID
 	if applyID == "" {
 		applyID = startedAt.Format("20060102T150405Z")
 	}
 
-	ops := installOperations(opts, store)
+	ops := installOperations(opts, stateStore)
 	changedCount := 0
 	for _, op := range ops {
 		changed, err := op.run(apply)
 		if err != nil {
 			if !opts.CheckMode {
-				_ = writeApplyState(store, opts, applyID, startedAt, opts.Now().UTC(), "failed", changedCount)
+				_ = writeApplyState(stateStore, opts, applyID, startedAt, opts.Now().UTC(), "failed", changedCount)
 			}
 			return InstallSummary{ApplyID: applyID, OperationsChanged: changedCount}, fmt.Errorf("%s: %w", op.name, err)
 		}
@@ -82,14 +82,14 @@ func RunInstall(ctx context.Context, runner host.Runner, opts InstallOptions) (I
 	}
 
 	if !opts.CheckMode {
-		if err := writeApplyState(store, opts, applyID, startedAt, opts.Now().UTC(), "ok", changedCount); err != nil {
+		if err := writeApplyState(stateStore, opts, applyID, startedAt, opts.Now().UTC(), "ok", changedCount); err != nil {
 			return InstallSummary{ApplyID: applyID, OperationsChanged: changedCount}, err
 		}
 	}
 	return InstallSummary{ApplyID: applyID, OperationsChanged: changedCount}, nil
 }
 
-func installOperations(opts InstallOptions, store state.Store) []operation {
+func installOperations(opts InstallOptions, stateStore store.Store) []operation {
 	var ops []operation
 	add := func(name string, run func(host.Apply) (bool, error)) {
 		ops = append(ops, operation{name: name, run: run})
@@ -97,12 +97,12 @@ func installOperations(opts InstallOptions, store state.Store) []operation {
 
 	add("write host desired state", func(apply host.Apply) (bool, error) {
 		desired := desiredHost(opts)
-		changed, err := hostDesiredChanged(store, desired)
+		changed, err := hostDesiredChanged(stateStore, desired)
 		if err != nil {
 			return false, err
 		}
 		if changed && !opts.CheckMode {
-			if err := store.WriteHostDesired(desired); err != nil {
+			if err := stateStore.WriteHostDesired(desired); err != nil {
 				return false, err
 			}
 		}
@@ -511,14 +511,20 @@ func cloudflareTunnelAlreadyConfigured(apply host.Apply) (bool, error) {
 		}
 		return false, err
 	}
-	data, err := apply.Runner.ReadFile(apply.ContextOrBackground(), "/etc/simple-vps/cloudflare.json")
+	stateStore := store.Default()
+	cloudflarePath := stateStore.CloudflarePath()
+	data, err := apply.Runner.ReadFile(apply.ContextOrBackground(), cloudflarePath)
 	if err != nil {
 		if errors.Is(err, host.ErrNotExist) {
 			return false, nil
 		}
 		return false, err
 	}
-	return strings.Contains(string(data.Content), `"tunnel_id"`) && strings.Contains(string(data.Content), `"tunnel_name"`), nil
+	var file store.CloudflareFile
+	if err := json.Unmarshal(data.Content, &file); err != nil {
+		return false, fmt.Errorf("invalid %s: %w", cloudflarePath, err)
+	}
+	return file.TunnelID != "" && file.TunnelName != "", nil
 }
 
 func runCommand(program string, args ...string) func(host.Apply) (bool, error) {
@@ -558,24 +564,24 @@ func commandOK(result host.CommandResult, program string, args []string) error {
 	return fmt.Errorf("command failed: %s %v: exit %d: %s", program, args, result.ExitCode, strings.TrimSpace(string(result.Stderr)))
 }
 
-func desiredHost(opts InstallOptions) state.HostDesired {
-	ingress := state.HostIngressDesired{Expose: state.ExposePublic, Tunnel: state.TunnelNone}
+func desiredHost(opts InstallOptions) store.HostDesired {
+	ingress := store.HostIngressDesired{Expose: store.ExposePublic, Tunnel: store.TunnelNone}
 	if opts.CloudflareTunnel {
-		ingress = state.HostIngressDesired{Expose: state.ExposePrivate, Tunnel: state.TunnelCloudflare}
+		ingress = store.HostIngressDesired{Expose: store.ExposePrivate, Tunnel: store.TunnelCloudflare}
 	}
-	packages := map[string]state.DesiredPackage{
+	packages := map[string]store.DesiredPackage{
 		"caddy": {Source: "caddy-apt", Track: "stable"},
 	}
 	if opts.InstallLitestream {
-		packages["litestream"] = state.DesiredPackage{Source: "github-release", Version: litestreamVersion}
+		packages["litestream"] = store.DesiredPackage{Source: "github-release", Version: litestreamVersion}
 	}
 	if opts.InstallDocker {
-		packages["docker"] = state.DesiredPackage{Source: "docker-apt", Track: "stable"}
+		packages["docker"] = store.DesiredPackage{Source: "docker-apt", Track: "stable"}
 	}
-	return state.HostDesired{
-		Users:   state.HostUsers{Operator: opts.OperatorUser, Deploy: opts.DeployUser},
+	return store.HostDesired{
+		Users:   store.HostUsers{Operator: opts.OperatorUser, Deploy: opts.DeployUser},
 		Ingress: ingress,
-		Features: state.HostFeatures{
+		Features: store.HostFeatures{
 			Docker:     opts.InstallDocker,
 			Litestream: opts.InstallLitestream,
 			Runtimes:   []string{},
@@ -584,8 +590,8 @@ func desiredHost(opts InstallOptions) state.HostDesired {
 	}
 }
 
-func hostDesiredChanged(store state.Store, desired state.HostDesired) (bool, error) {
-	current, err := store.ReadHost()
+func hostDesiredChanged(stateStore store.Store, desired store.HostDesired) (bool, error) {
+	current, err := stateStore.ReadHost()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return true, nil
@@ -603,13 +609,13 @@ func hostDesiredChanged(store state.Store, desired state.HostDesired) (bool, err
 	return string(currentData) != string(nextData), nil
 }
 
-func writeApplyState(store state.Store, opts InstallOptions, applyID string, startedAt time.Time, finishedAt time.Time, status string, changed int) error {
-	return store.WriteHostState(state.HostObserved{
-		Packages: map[string]state.ObservedPackage{},
-		Ingress:  state.HostIngressObserved{CloudflaredServiceActive: opts.CloudflareTunnel},
-	}, state.HostMeta{
+func writeApplyState(stateStore store.Store, opts InstallOptions, applyID string, startedAt time.Time, finishedAt time.Time, status string, changed int) error {
+	return stateStore.WriteHostState(store.HostObserved{
+		Packages: map[string]store.ObservedPackage{},
+		Ingress:  store.HostIngressObserved{CloudflaredServiceActive: opts.CloudflareTunnel},
+	}, store.HostMeta{
 		SimpleVPSVersion: "dev",
-		LastApply: &state.ApplyMeta{
+		LastApply: &store.ApplyMeta{
 			ID:                applyID,
 			StartedAt:         startedAt.Format(time.RFC3339),
 			FinishedAt:        finishedAt.Format(time.RFC3339),

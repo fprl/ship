@@ -29,7 +29,7 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"status"},
 		{"doctor"},
 		{"route", "list", "--json"},
-		{"route", "proxy", "--port", "3000", "--app", "api", "--header", "X-Test: yes", "api.example.com"},
+		{"route", "proxy", "--port", "3000", "--app", "api", "--service", "web", "--header", "X-Test: yes", "api.example.com"},
 		{"route", "static", "--root", "/var/apps/api/current", "--app", "api", "--header", "Cache-Control: no-store", "static.example.com"},
 		{"route", "redirect", "--to", "https://new.example.com", "--app", "api", "old.example.com"},
 		{"route", "remove", "--app", "api"},

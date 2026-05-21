@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/fprl/simple-vps/internal/provision/host"
-	"github.com/fprl/simple-vps/internal/provision/state"
+	"github.com/fprl/simple-vps/internal/store"
 )
 
 func TestRunInstallWritesHonestChangedCount(t *testing.T) {
@@ -46,7 +46,7 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 		t.Fatal("expected install to report changed operations")
 	}
 
-	loaded, err := (state.Store{Root: root}).ReadHost()
+	loaded, err := (store.Store{Root: root}).ReadHost()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,6 +139,34 @@ func TestRunInstallSkipsPinnedLitestream(t *testing.T) {
 		if strings.Contains(joined, "litestream-"+litestreamVersion) && (command.Program == "curl" || command.Program == "apt-get") {
 			t.Fatalf("pinned Litestream should not be downloaded or reinstalled, command: %+v", command)
 		}
+	}
+}
+
+func TestCloudflareTunnelGuardReadsADRProviderState(t *testing.T) {
+	runner := &installFakeRunner{files: map[string]host.FileState{
+		"/etc/cloudflared/tunnel-token": {
+			Content: []byte("token-test\n"),
+			Owner:   "root",
+			Group:   "cloudflared",
+			Mode:    0640,
+		},
+		"/etc/simple-vps/providers/cloudflare.json": {
+			Content: []byte(`{"version":1,"account_id":"account-test","tunnel_id":"tunnel-test","tunnel_name":"simple-vps-test","routes":{}}`),
+			Owner:   "root",
+			Group:   "root",
+			Mode:    0600,
+		},
+	}}
+
+	ready, err := cloudflareTunnelAlreadyConfigured(host.Apply{
+		Context: context.Background(),
+		Runner:  runner,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ready {
+		t.Fatal("expected Cloudflare tunnel guard to read providers/cloudflare.json")
 	}
 }
 

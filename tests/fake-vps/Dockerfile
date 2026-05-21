@@ -32,9 +32,13 @@ COPY tests/fake-vps/fake-journalctl /usr/local/bin/journalctl
 COPY tests/fake-vps/fake-caddy /usr/local/bin/caddy
 
 RUN chmod 0755 /usr/local/bin/simple-vps /usr/local/bin/systemctl /usr/local/bin/journalctl /usr/local/bin/caddy \
-  && printf '%s\n' '{"routes":[],"version":2}' > /etc/simple-vps/state.json \
+  && mkdir -p /etc/simple-vps/providers \
+  && printf '%s\n' '{"apps":{},"version":1}' > /etc/simple-vps/apps.json \
+  && printf '%s\n' '{"routes":[],"version":1}' > /etc/simple-vps/routes.json \
+  && printf '%s\n' '{"routes":{},"version":1}' > /etc/simple-vps/providers/cloudflare.json \
   && printf '%s\n' 'operator ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/operator \
   && printf '%s\n' 'deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps' > /etc/sudoers.d/simple-vps \
+  && chmod 0600 /etc/simple-vps/providers/cloudflare.json \
   && chmod 0440 /etc/sudoers.d/operator /etc/sudoers.d/simple-vps
 
 EXPOSE 22

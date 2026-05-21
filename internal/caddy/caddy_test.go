@@ -6,14 +6,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fprl/simple-vps/internal/state"
+	"github.com/fprl/simple-vps/internal/store"
 )
 
 func TestRenderRoutesCaddyfileIncludesTypedRoutes(t *testing.T) {
 	port := 3000
-	content, err := RenderRoutesCaddyfile(&state.HostState{
-		Version: 2,
-		Routes: []state.StateRoute{
+	content, err := RenderRoutesCaddyfile(&store.RoutesFile{
+		Version: store.CurrentVersion,
+		Routes: []store.Route{
 			{
 				Host: "api.example.com",
 				Type: "proxy",
@@ -37,6 +37,7 @@ func TestRenderRoutesCaddyfileIncludesTypedRoutes(t *testing.T) {
 	}
 
 	for _, want := range []string{
+		"# Source: /etc/simple-vps/routes.json",
 		"http://:8080 {",
 		"bind 127.0.0.1",
 		"@route_0 host api.example.com",
@@ -56,7 +57,7 @@ func TestRenderRoutesCaddyfileIncludesTypedRoutes(t *testing.T) {
 
 func TestApplyCaddyfileWritesManagedFilesAndIsIdempotent(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("SIMPLE_VPS_STATE_PATH", filepath.Join(root, "state.json"))
+	t.Setenv("SIMPLE_VPS_STATE_DIR", root)
 	t.Setenv("SIMPLE_VPS_CADDYFILE_PATH", filepath.Join(root, "Caddyfile"))
 	t.Setenv("SIMPLE_VPS_MANAGED_CADDY_DIR", filepath.Join(root, "simple-vps"))
 	t.Setenv("SIMPLE_VPS_USER_CADDY_DIR", filepath.Join(root, "conf.d"))
@@ -64,7 +65,7 @@ func TestApplyCaddyfileWritesManagedFilesAndIsIdempotent(t *testing.T) {
 	t.Setenv("SIMPLE_VPS_CADDY_BIN", "true")
 	t.Setenv("SIMPLE_VPS_SYSTEMCTL_BIN", "true")
 
-	changed, err := ApplyCaddyfile(&state.HostState{Version: 2}, false)
+	changed, err := ApplyCaddyfile(&store.RoutesFile{Version: store.CurrentVersion}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestApplyCaddyfileWritesManagedFilesAndIsIdempotent(t *testing.T) {
 		t.Fatalf("expected managed routes hash to be valid:\n%s", string(routesFile))
 	}
 
-	changed, err = ApplyCaddyfile(&state.HostState{Version: 2}, false)
+	changed, err = ApplyCaddyfile(&store.RoutesFile{Version: store.CurrentVersion}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestApplyCaddyfileWritesManagedFilesAndIsIdempotent(t *testing.T) {
 
 func TestApplyCaddyfileRejectsManualEditInManagedRoutes(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("SIMPLE_VPS_STATE_PATH", filepath.Join(root, "state.json"))
+	t.Setenv("SIMPLE_VPS_STATE_DIR", root)
 	t.Setenv("SIMPLE_VPS_CADDYFILE_PATH", filepath.Join(root, "Caddyfile"))
 	t.Setenv("SIMPLE_VPS_MANAGED_CADDY_DIR", filepath.Join(root, "simple-vps"))
 	t.Setenv("SIMPLE_VPS_USER_CADDY_DIR", filepath.Join(root, "conf.d"))
@@ -107,7 +108,7 @@ func TestApplyCaddyfileRejectsManualEditInManagedRoutes(t *testing.T) {
 	t.Setenv("SIMPLE_VPS_CADDY_BIN", "true")
 	t.Setenv("SIMPLE_VPS_SYSTEMCTL_BIN", "true")
 
-	if _, err := ApplyCaddyfile(&state.HostState{Version: 2}, false); err != nil {
+	if _, err := ApplyCaddyfile(&store.RoutesFile{Version: store.CurrentVersion}, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -125,9 +126,9 @@ func TestApplyCaddyfileRejectsManualEditInManagedRoutes(t *testing.T) {
 	}
 
 	port := 3000
-	_, err = ApplyCaddyfile(&state.HostState{
-		Version: 2,
-		Routes: []state.StateRoute{{
+	_, err = ApplyCaddyfile(&store.RoutesFile{
+		Version: store.CurrentVersion,
+		Routes: []store.Route{{
 			Host: "api.example.com",
 			Type: "proxy",
 			Port: &port,

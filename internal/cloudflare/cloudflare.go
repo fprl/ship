@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/state"
+	"github.com/fprl/simple-vps/internal/store"
 )
 
 var ErrNotConfigured = errors.New("Cloudflare integration is not configured")
@@ -317,8 +317,8 @@ func DeleteCloudflareDnsRecord(token string, zoneId string, recordId string) err
 	return err
 }
 
-func ConfiguredCloudflare() (string, *state.CloudflareState, string, string, error) {
-	stateObj, err := state.LoadCloudflareState()
+func ConfiguredCloudflare() (string, *store.CloudflareFile, string, string, error) {
+	stateObj, err := store.Default().ReadCloudflare()
 	if err != nil {
 		return "", nil, "", "", err
 	}
@@ -326,15 +326,15 @@ func ConfiguredCloudflare() (string, *state.CloudflareState, string, string, err
 	if err != nil {
 		return "", nil, "", "", err
 	}
-	if token == "" || stateObj.TunnelId == "" || stateObj.AccountId == "" {
+	if token == "" || stateObj.TunnelID == "" || stateObj.AccountID == "" {
 		return "", nil, "", "", ErrNotConfigured
 	}
-	return token, stateObj, stateObj.AccountId, stateObj.TunnelId, nil
+	return token, stateObj, stateObj.AccountID, stateObj.TunnelID, nil
 }
 
 type CloudflareIngress struct {
 	Token     string
-	State     *state.CloudflareState
+	State     *store.CloudflareFile
 	AccountId string
 	TunnelId  string
 }
@@ -388,21 +388,22 @@ func (c *CloudflareIngress) Publish(host string, app string) (string, error) {
 	}
 
 	if c.State.Routes == nil {
-		c.State.Routes = make(map[string]state.CloudflareRouteState)
+		c.State.Routes = make(map[string]store.CloudflareRoute)
 	}
-	c.State.Routes[host] = state.CloudflareRouteState{
+	c.State.Routes[host] = store.CloudflareRoute{
 		App:         app,
-		ZoneId:      zoneId,
-		DnsRecordId: recordId,
+		ZoneID:      zoneId,
+		DNSRecordID: recordId,
 	}
 
-	if err := state.WriteCloudflareState(c.State); err != nil {
+	stateStore := store.Default()
+	if err := stateStore.WriteCloudflare(*c.State); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("Cloudflare route ready: %s", host), nil
 }
 
-func (c *CloudflareIngress) RemoveHost(host string, routeState state.CloudflareRouteState) error {
+func (c *CloudflareIngress) RemoveHost(host string, routeState store.CloudflareRoute) error {
 	prevConfig, err := CloudflareTunnelConfig(c.Token, c.AccountId, c.TunnelId)
 	if err != nil {
 		return err
@@ -410,8 +411,8 @@ func (c *CloudflareIngress) RemoveHost(host string, routeState state.CloudflareR
 	nextConfig := WithoutCloudflareHostname(prevConfig, host)
 
 	_, _, err = c.ReplaceTunnelConfig(prevConfig, nextConfig, func() (string, string, error) {
-		if routeState.ZoneId != "" && routeState.DnsRecordId != "" {
-			err := DeleteCloudflareDnsRecord(c.Token, routeState.ZoneId, routeState.DnsRecordId)
+		if routeState.ZoneID != "" && routeState.DNSRecordID != "" {
+			err := DeleteCloudflareDnsRecord(c.Token, routeState.ZoneID, routeState.DNSRecordID)
 			if err != nil {
 				return "", "", err
 			}
@@ -423,23 +424,23 @@ func (c *CloudflareIngress) RemoveHost(host string, routeState state.CloudflareR
 
 func (c *CloudflareIngress) Remove(host string, app string) ([]string, error) {
 	if c.State.Routes == nil {
-		c.State.Routes = make(map[string]state.CloudflareRouteState)
+		c.State.Routes = make(map[string]store.CloudflareRoute)
 	}
 
 	var targets []struct {
 		host string
-		rc   state.CloudflareRouteState
+		rc   store.CloudflareRoute
 	}
 
 	if host != "" {
 		if rc, ok := c.State.Routes[host]; ok {
 			targets = append(targets, struct {
 				host string
-				rc   state.CloudflareRouteState
+				rc   store.CloudflareRoute
 			}{host, rc})
 		}
 	} else if app != "" {
-		normApp, err := state.NormalizeApp(app)
+		normApp, err := store.NormalizeApp(app)
 		if err != nil {
 			return nil, err
 		}
@@ -447,7 +448,7 @@ func (c *CloudflareIngress) Remove(host string, app string) ([]string, error) {
 			if rc.App == normApp {
 				targets = append(targets, struct {
 					host string
-					rc   state.CloudflareRouteState
+					rc   store.CloudflareRoute
 				}{h, rc})
 			}
 		}
@@ -466,7 +467,8 @@ func (c *CloudflareIngress) Remove(host string, app string) ([]string, error) {
 		removed = append(removed, target.host)
 	}
 
-	if err := state.WriteCloudflareState(c.State); err != nil {
+	stateStore := store.Default()
+	if err := stateStore.WriteCloudflare(*c.State); err != nil {
 		return nil, err
 	}
 	return removed, nil

@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/fprl/simple-vps/internal/state"
+	"github.com/fprl/simple-vps/internal/store"
 	"github.com/fprl/simple-vps/internal/systemd"
 	"github.com/fprl/simple-vps/internal/utils"
 )
@@ -36,13 +36,14 @@ func toolStatus(tool string) string {
 }
 
 func CmdStatus() {
-	s, err := state.LoadState()
+	lines, err := statusStateLines(store.Default())
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
 	fmt.Println("Simple VPS")
-	fmt.Printf("state: %s\n", state.StatePath())
-	fmt.Printf("routes: %d\n", len(s.Routes))
+	for _, line := range lines {
+		fmt.Println(line)
+	}
 	fmt.Println("services:")
 	for _, service := range []string{"tailscaled", "cloudflared", "caddy"} {
 		fmt.Printf("  %s: %s\n", service, systemd.SystemServiceStatus(service))
@@ -53,23 +54,47 @@ func CmdStatus() {
 	}
 }
 
+func statusStateLines(stateStore store.Store) ([]string, error) {
+	installed, err := stateStore.HostInstalled()
+	if err != nil {
+		return nil, err
+	}
+	var lines []string
+	if installed {
+		lines = append(lines, fmt.Sprintf("state: installed (%s)", stateStore.HostPath()))
+	} else {
+		lines = append(lines, fmt.Sprintf("state: not installed (missing %s)", stateStore.HostPath()))
+	}
+	apps, err := stateStore.ReadApps()
+	if err != nil {
+		return nil, err
+	}
+	routes, err := stateStore.ReadRoutes()
+	if err != nil {
+		return nil, err
+	}
+	lines = append(lines, fmt.Sprintf("apps: %d", len(apps.Apps)))
+	lines = append(lines, fmt.Sprintf("routes: %d", len(routes.Routes)))
+	return lines, nil
+}
+
 func CmdRoutes(jsonFlag bool) {
-	s, err := state.LoadState()
+	routes, err := store.Default().ReadRoutes()
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
 	if jsonFlag {
 		type routesWrap struct {
-			Routes []state.StateRoute `json:"routes"`
+			Routes []store.Route `json:"routes"`
 		}
-		data, err := json.MarshalIndent(routesWrap{Routes: s.Routes}, "", "  ")
+		data, err := json.MarshalIndent(routesWrap{Routes: routes.Routes}, "", "  ")
 		if err != nil {
 			utils.Die(err.Error(), 1)
 		}
 		fmt.Println(string(data))
 		return
 	}
-	if len(s.Routes) == 0 {
+	if len(routes.Routes) == 0 {
 		fmt.Println("No routes configured.")
 		return
 	}
@@ -78,7 +103,7 @@ func CmdRoutes(jsonFlag bool) {
 	typeWidth := len("TYPE")
 	targetWidth := len("TARGET")
 
-	for _, r := range s.Routes {
+	for _, r := range routes.Routes {
 		if len(r.Host) > hostWidth {
 			hostWidth = len(r.Host)
 		}
@@ -95,7 +120,7 @@ func CmdRoutes(jsonFlag bool) {
 	rowFormat := fmt.Sprintf("%%-%ds  %%-%ds  %%-%ds  %%s\n", hostWidth, typeWidth, targetWidth)
 
 	fmt.Printf(headerFormat, "HOST", "TYPE", "TARGET")
-	for _, r := range s.Routes {
+	for _, r := range routes.Routes {
 		fmt.Printf(rowFormat, r.Host, r.Type, getRouteTarget(r), r.App)
 	}
 }

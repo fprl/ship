@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/fprl/simple-vps/internal/store"
 )
 
 var (
@@ -137,14 +139,51 @@ func doctorIdentityFindings() []string {
 }
 
 func CmdDoctor() {
-	findings := doctorIdentityFindings()
+	stateFindings := doctorStateFindings(store.Default())
+	identityFindings := doctorIdentityFindings()
 	fmt.Println("Simple VPS doctor")
-	if len(findings) > 0 {
-		fmt.Println("identity: degraded")
-		for _, f := range findings {
+	if len(stateFindings) > 0 {
+		fmt.Println("state: degraded")
+		for _, f := range stateFindings {
 			fmt.Printf("  - %s\n", f)
 		}
+	} else {
+		fmt.Println("state: healthy")
+	}
+	if len(identityFindings) > 0 {
+		fmt.Println("identity: degraded")
+		for _, f := range identityFindings {
+			fmt.Printf("  - %s\n", f)
+		}
+	} else {
+		fmt.Println("identity: healthy")
+	}
+	if len(stateFindings) > 0 || len(identityFindings) > 0 {
 		os.Exit(1)
 	}
-	fmt.Println("identity: healthy")
+}
+
+func doctorStateFindings(stateStore store.Store) []string {
+	installed, err := stateStore.HostInstalled()
+	if err != nil {
+		return []string{fmt.Sprintf("cannot read host install state: %v", err)}
+	}
+	if !installed {
+		return []string{fmt.Sprintf("host is not installed (missing %s)", stateStore.HostPath())}
+	}
+
+	var findings []string
+	if _, err := stateStore.ReadHost(); err != nil {
+		findings = append(findings, fmt.Sprintf("host state: %v", err))
+	}
+	if _, err := stateStore.ReadApps(); err != nil {
+		findings = append(findings, fmt.Sprintf("apps state: %v", err))
+	}
+	if _, err := stateStore.ReadRoutes(); err != nil {
+		findings = append(findings, fmt.Sprintf("routes state: %v", err))
+	}
+	if _, err := stateStore.ReadCloudflare(); err != nil {
+		findings = append(findings, fmt.Sprintf("cloudflare state: %v", err))
+	}
+	return findings
 }

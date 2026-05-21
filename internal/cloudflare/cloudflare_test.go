@@ -2,8 +2,11 @@ package cloudflare
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/fprl/simple-vps/internal/store"
 )
 
 func TestCloudflaredTunnelTokenDefaultPathMatchesServerContract(t *testing.T) {
@@ -79,11 +82,44 @@ func TestWithoutCloudflareHostnameKeepsCatchAll(t *testing.T) {
 
 func TestConfiguredCloudflareReportsNotConfiguredWithoutTokenOrTunnel(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("SIMPLE_VPS_CLOUDFLARE_STATE_PATH", filepath.Join(root, "cloudflare.json"))
+	t.Setenv("SIMPLE_VPS_STATE_DIR", root)
 	t.Setenv("SIMPLE_VPS_CLOUDFLARE_API_TOKEN_PATH", filepath.Join(root, "token"))
 
 	_, _, _, _, err := ConfiguredCloudflare()
 	if !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("expected ErrNotConfigured, got %v", err)
+	}
+}
+
+func TestConfiguredCloudflareReadsADRProviderState(t *testing.T) {
+	root := t.TempDir()
+	tokenPath := filepath.Join(root, "token")
+	t.Setenv("SIMPLE_VPS_STATE_DIR", root)
+	t.Setenv("SIMPLE_VPS_CLOUDFLARE_API_TOKEN_PATH", tokenPath)
+
+	if err := os.WriteFile(tokenPath, []byte("token-test\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stateStore := store.Default()
+	if err := stateStore.WriteCloudflare(store.CloudflareFile{
+		Version:   store.CurrentVersion,
+		AccountID: "account-test",
+		TunnelID:  "tunnel-test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	token, cfState, accountID, tunnelID, err := ConfiguredCloudflare()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "token-test" || accountID != "account-test" || tunnelID != "tunnel-test" {
+		t.Fatalf("unexpected configured Cloudflare values: token=%q account=%q tunnel=%q", token, accountID, tunnelID)
+	}
+	if cfState.AccountID != "account-test" || cfState.TunnelID != "tunnel-test" {
+		t.Fatalf("unexpected Cloudflare state: %+v", cfState)
+	}
+	if got := stateStore.CloudflarePath(); got != filepath.Join(root, "providers", "cloudflare.json") {
+		t.Fatalf("unexpected provider state path: %s", got)
 	}
 }

@@ -118,7 +118,15 @@ func TestPublishCommandsPutFlagsBeforeHost(t *testing.T) {
 				Type:    "proxy",
 				Service: "web",
 			}),
-			want: "sudo simple-vps server route proxy --port 3000 --app api api.example.com",
+			want: "sudo simple-vps server route proxy --port 3000 --app api --service web api.example.com",
+		},
+		{
+			name: "proxy without service",
+			got: routePublishCommand(ctx, config.Route{
+				Host: "api.example.com",
+				Type: "proxy",
+			}),
+			want: "sudo simple-vps server route proxy --port 80 --app api api.example.com",
 		},
 		{
 			name: "static",

@@ -256,6 +256,7 @@ ssh fake-vps test -L /var/apps/api/current/db
 ssh fake-vps curl -fsS http://127.0.0.1:3000/health >/dev/null
 ssh fake-vps curl -fsS http://127.0.0.1:3000/ | grep -q '^mode-a$'
 ssh fake-vps sudo simple-vps server route list --json | grep -q '"host": "api.example.com"'
+ssh fake-vps sudo simple-vps server route list --json | grep -q '"service": "web"'
 (cd "$mode_a" && simple_vps status production) | grep -q 'service web: active'
 (cd "$mode_a" && simple_vps logs production web) | grep -q 'server:mode-a'
 printf 'API_KEY=from-env\n' > "$mode_a/production.env"

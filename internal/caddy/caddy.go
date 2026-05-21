@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fprl/simple-vps/internal/state"
+	"github.com/fprl/simple-vps/internal/store"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -124,13 +124,13 @@ func EnsureCanReplaceManagedFile(path string, force bool, allowDefault bool) err
 }
 
 func RenderCaddyfile() string {
-	statePath := state.StatePath()
+	statePath := store.Default().RoutesPath()
 	body := fmt.Sprintf("# Source: %s\n\nimport simple-vps/*.caddy\nimport conf.d/*.caddy\n\n", statePath)
 	return ManagedContent(body)
 }
 
-func RenderRoutesCaddyfile(s *state.HostState) (string, error) {
-	statePath := state.StatePath()
+func RenderRoutesCaddyfile(s *store.RoutesFile) (string, error) {
+	statePath := store.Default().RoutesPath()
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("# Source: %s\n\nhttp://:8080 {\n\tbind 127.0.0.1\n", statePath))
 
@@ -175,7 +175,7 @@ func sortStringsCaseInsensitive(slice []string) {
 	})
 }
 
-func renderRoute(r state.StateRoute, index int) ([]string, error) {
+func renderRoute(r store.Route, index int) ([]string, error) {
 	matcher := fmt.Sprintf("route_%d", index)
 	lines := []string{
 		fmt.Sprintf("\t@%s host %s", matcher, r.Host),
@@ -248,7 +248,7 @@ func ValidateGeneratedCaddy(caddyfileContent string, routesContent string) error
 	return err
 }
 
-func ApplyCaddyfile(s *state.HostState, force bool) (bool, error) {
+func ApplyCaddyfile(s *store.RoutesFile, force bool) (bool, error) {
 	caddyfileContent := RenderCaddyfile()
 	routesContent, err := RenderRoutesCaddyfile(s)
 	if err != nil {
@@ -318,7 +318,7 @@ func ApplyCaddyfile(s *state.HostState, force bool) (bool, error) {
 			return false, err
 		}
 		backups = append(backups, struct{ path, backup string }{caddyfilePath, backup})
-		if err := state.AtomicWrite(caddyfilePath, []byte(caddyfileContent), 0644); err != nil {
+		if err := store.AtomicWrite(caddyfilePath, []byte(caddyfileContent), 0644); err != nil {
 			rollback()
 			return false, err
 		}
@@ -330,7 +330,7 @@ func ApplyCaddyfile(s *state.HostState, force bool) (bool, error) {
 			return false, err
 		}
 		backups = append(backups, struct{ path, backup string }{routesCaddyfilePath, backup})
-		if err := state.AtomicWrite(routesCaddyfilePath, []byte(routesContent), 0644); err != nil {
+		if err := store.AtomicWrite(routesCaddyfilePath, []byte(routesContent), 0644); err != nil {
 			rollback()
 			return false, err
 		}
@@ -355,7 +355,7 @@ func copyFile(src string, dst string) error {
 	if err != nil {
 		return err
 	}
-	return state.AtomicWrite(dst, data, 0644)
+	return store.AtomicWrite(dst, data, 0644)
 }
 
 func reloadCaddy() error {

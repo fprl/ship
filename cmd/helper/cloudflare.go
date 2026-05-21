@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/fprl/simple-vps/internal/cloudflare"
-	"github.com/fprl/simple-vps/internal/state"
+	"github.com/fprl/simple-vps/internal/store"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -59,22 +59,23 @@ func (c cloudflareSetupTunnelCmd) Run() error {
 		utils.Die("Cloudflare API did not return a tunnel token", 1)
 	}
 
-	err = state.AtomicWrite(cloudflare.CloudflaredTunnelTokenPath(), []byte(tunnelToken+"\n"), 0640)
+	err = store.AtomicWrite(cloudflare.CloudflaredTunnelTokenPath(), []byte(tunnelToken+"\n"), 0640)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
 
 	_ = exec.Command("chown", "root:cloudflared", cloudflare.CloudflaredTunnelTokenPath()).Run()
 
-	cfState, err := state.LoadCloudflareState()
+	stateStore := store.Default()
+	cfState, err := stateStore.ReadCloudflare()
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	cfState.AccountId = accID
-	cfState.TunnelId = tunnelID
+	cfState.AccountID = accID
+	cfState.TunnelID = tunnelID
 	cfState.TunnelName = c.Name
 
-	err = state.WriteCloudflareState(cfState)
+	err = stateStore.WriteCloudflare(*cfState)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
