@@ -2,8 +2,11 @@ package provision
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -139,6 +142,111 @@ func TestRunInstallSkipsPinnedLitestream(t *testing.T) {
 		if strings.Contains(joined, "litestream-"+litestreamVersion) && (command.Program == "curl" || command.Program == "apt-get") {
 			t.Fatalf("pinned Litestream should not be downloaded or reinstalled, command: %+v", command)
 		}
+	}
+}
+
+func TestRunInstallRejectsLitestreamChecksumMismatch(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "simple-vps")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &installFakeRunner{files: map[string]host.FileState{}}
+
+	_, err := RunInstall(context.Background(), runner, InstallOptions{
+		OperatorUser:          "operator",
+		DeployUser:            "deploy",
+		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
+		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		Tailscale:             false,
+		CloudflareTunnel:      false,
+		InstallLitestream:     true,
+		StateRoot:             root,
+		HelperBinaryPath:      helper,
+	})
+	if err == nil {
+		t.Fatal("expected Litestream checksum mismatch to fail")
+	}
+	if !strings.Contains(err.Error(), "litestream checksum mismatch") {
+		t.Fatalf("expected checksum mismatch error, got: %v", err)
+	}
+	for _, command := range runner.commands {
+		joined := command.Program + " " + strings.Join(command.Args, " ")
+		if command.Program == "apt-get" && strings.Contains(joined, ".deb") {
+			t.Fatalf("mismatched Litestream artifact should not be installed, command: %+v", command)
+		}
+	}
+}
+
+func TestRunInstallInstallsLitestreamAfterChecksumMatch(t *testing.T) {
+	arch := litestreamArch(runtime.GOARCH)
+	if arch == "" {
+		t.Skipf("unsupported test architecture: %s", runtime.GOARCH)
+	}
+	root := t.TempDir()
+	helper := filepath.Join(root, "simple-vps")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	deb := fmt.Sprintf("/tmp/simple-vps-litestream.TEST/litestream-%s-linux-%s.deb", litestreamVersion, arch)
+	runner := &installFakeRunner{
+		files: map[string]host.FileState{},
+		commandResults: map[string]host.CommandResult{
+			"sha256sum " + deb: {Stdout: []byte(litestreamSHA256(arch) + "  " + deb + "\n")},
+		},
+	}
+
+	_, err := RunInstall(context.Background(), runner, InstallOptions{
+		OperatorUser:          "operator",
+		DeployUser:            "deploy",
+		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
+		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		Tailscale:             false,
+		CloudflareTunnel:      false,
+		InstallLitestream:     true,
+		StateRoot:             root,
+		HelperBinaryPath:      helper,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	checkIndex := -1
+	installIndex := -1
+	for i, command := range runner.commands {
+		joined := command.Program + " " + strings.Join(command.Args, " ")
+		if joined == "sha256sum "+deb {
+			checkIndex = i
+		}
+		if joined == "apt-get install -y "+deb {
+			installIndex = i
+		}
+	}
+	if checkIndex == -1 {
+		t.Fatalf("expected Litestream checksum verification, commands: %+v", runner.commands)
+	}
+	if installIndex == -1 {
+		t.Fatalf("expected Litestream deb install, commands: %+v", runner.commands)
+	}
+	if checkIndex > installIndex {
+		t.Fatalf("Litestream deb was installed before checksum verification, commands: %+v", runner.commands)
+	}
+}
+
+func TestRequireFileSHA256RejectsMalformedOutput(t *testing.T) {
+	runner := &installFakeRunner{
+		files: map[string]host.FileState{},
+		commandResults: map[string]host.CommandResult{
+			"sha256sum /tmp/artifact.deb": {Stdout: []byte("not-a-sha\n")},
+		},
+	}
+
+	err := requireFileSHA256(host.Apply{Context: context.Background(), Runner: runner}, "artifact", "/tmp/artifact.deb", strings.Repeat("a", 64))
+	if err == nil {
+		t.Fatal("expected malformed checksum output to fail")
+	}
+	if !strings.Contains(err.Error(), "checksum output malformed") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -460,12 +568,54 @@ func (r *installFakeRunner) Run(_ context.Context, command host.Command) (host.C
 		return host.CommandResult{Stdout: []byte("System Locale: LANG=en_US.UTF-8\n")}, nil
 	case "gpg":
 		return r.runGPG(command)
+	case "curl":
+		return r.runCurl(command), nil
+	case "sha256sum":
+		return r.runSHA256Sum(command), nil
 	case "mktemp":
 		if len(command.Args) == 2 && command.Args[0] == "-d" {
 			return host.CommandResult{Stdout: []byte(strings.TrimSuffix(command.Args[1], ".XXXXXX") + ".TEST\n")}, nil
 		}
 	}
 	return host.CommandResult{}, nil
+}
+
+func (r *installFakeRunner) runCurl(command host.Command) host.CommandResult {
+	output := ""
+	url := ""
+	for i := 0; i < len(command.Args); i++ {
+		arg := command.Args[i]
+		switch {
+		case arg == "-o" && i+1 < len(command.Args):
+			output = command.Args[i+1]
+			i++
+		case strings.HasPrefix(arg, "-"):
+		default:
+			url = arg
+		}
+	}
+	if output != "" {
+		r.files[output] = host.FileState{
+			Content: []byte("fake curl content for " + url + "\n"),
+			Owner:   "root",
+			Group:   "root",
+			Mode:    0644,
+		}
+	}
+	return host.CommandResult{}
+}
+
+func (r *installFakeRunner) runSHA256Sum(command host.Command) host.CommandResult {
+	if len(command.Args) != 1 {
+		return host.CommandResult{ExitCode: 1, Stderr: []byte("unsupported fake sha256sum command")}
+	}
+	path := command.Args[0]
+	file, ok := r.files[path]
+	if !ok {
+		return host.CommandResult{ExitCode: 1, Stderr: []byte("missing fake file")}
+	}
+	sum := sha256.Sum256(file.Content)
+	return host.CommandResult{Stdout: []byte(fmt.Sprintf("%x  %s\n", sum, path))}
 }
 
 func (r *installFakeRunner) runGPG(command host.Command) (host.CommandResult, error) {

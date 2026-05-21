@@ -4,7 +4,8 @@
 - **Date**: 2026-05-20
 - **Supersedes**: earlier implementation notes that kept Ansible as the host
   convergence tool.
-- **Related**: ADR-0002 (state file layout).
+- **Related**: ADR-0002 (state file layout), ADR-0004 (non-apt release
+  artifact verification).
 
 ## Context
 
@@ -155,6 +156,8 @@ ADR-0002). The provisioner records observed versions alongside.
 
 Third-party apt repositories verify their signing keys by pinned OpenPGP
 fingerprint before the `signed-by=` source entry is trusted. See ADR-0003.
+Non-apt release artifacts verify pinned SHA256 digests before install. See
+ADR-0004.
 
 Language runtimes (Node, Bun, pnpm) are **not installed by default during
 `host install`**. In the current product shape they are explicit host

@@ -17,6 +17,8 @@ import (
 
 const (
 	litestreamVersion           = "0.5.8"
+	litestreamSHA256X8664       = "854ed88ce4c30da887e7c099ffb2941bae2f7108db89886e7ec5ee80c81356b7"
+	litestreamSHA256ARM64       = "bc92d95bc8203a41afe9b5df552aafe1bc0781c6b4341d52970e3f1cd7220c8d"
 	caddyAptKeyFingerprint      = "65760C51EDEA2017CEA2CA15155B6D79CA56EA34"
 	dockerAptKeyFingerprint     = "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 	tailscaleAptKeyFingerprint  = "2596A99EAAB33821893C0A79458CA832957F5868"
@@ -354,7 +356,10 @@ func addLitestream(ops *[]operation) {
 		if arch == "" {
 			return false, fmt.Errorf("unsupported Litestream architecture: %s", runtime.GOARCH)
 		}
-		deb := fmt.Sprintf("/tmp/litestream-%s-linux-%s.deb", litestreamVersion, arch)
+		expectedSHA256 := litestreamSHA256(arch)
+		if expectedSHA256 == "" {
+			return false, fmt.Errorf("missing Litestream checksum for architecture: %s", arch)
+		}
 		url := fmt.Sprintf("https://github.com/benbjohnson/litestream/releases/download/v%s/litestream-%s-linux-%s.deb", litestreamVersion, litestreamVersion, arch)
 		installed, err := litestreamInstalled(apply)
 		if err != nil {
@@ -366,11 +371,21 @@ func addLitestream(ops *[]operation) {
 		if apply.CheckMode {
 			return true, nil
 		}
+		tempDir, err := createLitestreamTempDir(apply)
+		if err != nil {
+			return false, err
+		}
+		defer cleanupTempDir(apply, tempDir)
+
+		deb := fmt.Sprintf("%s/litestream-%s-linux-%s.deb", tempDir, litestreamVersion, arch)
 		result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "curl", Args: []string{"-fsSL", url, "-o", deb}})
 		if err != nil {
 			return false, err
 		}
 		if err := commandOK(result, "curl", []string{"-fsSL", url, "-o", deb}); err != nil {
+			return false, err
+		}
+		if err := requireFileSHA256(apply, "litestream", deb, expectedSHA256); err != nil {
 			return false, err
 		}
 		result, err = apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "apt-get", Args: []string{"install", "-y", deb}})
@@ -379,6 +394,58 @@ func addLitestream(ops *[]operation) {
 		}
 		return true, commandOK(result, "apt-get", []string{"install", "-y", deb})
 	}})
+}
+
+func litestreamSHA256(arch string) string {
+	switch arch {
+	case "x86_64":
+		return litestreamSHA256X8664
+	case "arm64":
+		return litestreamSHA256ARM64
+	default:
+		return ""
+	}
+}
+
+func createLitestreamTempDir(apply host.Apply) (string, error) {
+	args := []string{"-d", "/tmp/simple-vps-litestream.XXXXXX"}
+	result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "mktemp", Args: args})
+	if err != nil {
+		return "", err
+	}
+	if err := commandOK(result, "mktemp", args); err != nil {
+		return "", err
+	}
+	path := strings.TrimSpace(string(result.Stdout))
+	if path == "" {
+		return "", errors.New("litestream temp dir creation returned empty path")
+	}
+	return path, nil
+}
+
+func cleanupTempDir(apply host.Apply, path string) {
+	_, _ = apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "rm", Args: []string{"-rf", "--", path}})
+}
+
+func requireFileSHA256(apply host.Apply, label string, path string, expected string) error {
+	args := []string{path}
+	result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "sha256sum", Args: args})
+	if err != nil {
+		return err
+	}
+	if err := commandOK(result, "sha256sum", args); err != nil {
+		return err
+	}
+	fields := strings.Fields(string(result.Stdout))
+	if len(fields) < 2 || len(fields[0]) != 64 {
+		return fmt.Errorf("%s checksum output malformed for %s", label, path)
+	}
+	got := strings.ToLower(fields[0])
+	want := strings.ToLower(strings.TrimSpace(expected))
+	if got != want {
+		return fmt.Errorf("%s checksum mismatch for %s: expected %s, got %s", label, path, want, got)
+	}
+	return nil
 }
 
 func litestreamInstalled(apply host.Apply) (bool, error) {
