@@ -43,7 +43,8 @@ Run the main checks:
 
 ```bash
 make test
-make fake-vps-smoke   # Docker-backed Go client/helper smoke
+make fake-vps-smoke           # Docker-backed Go client/helper smoke
+make fake-vps-install-smoke   # Docker-backed fresh host install smoke
 ```
 
 Implementation references:

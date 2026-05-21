@@ -18,6 +18,8 @@ const fakeVPSImage = "simple-vps-fake-vps:local"
 type smokeEnv struct {
 	ctx        context.Context
 	repoRoot   string
+	image      string
+	dockerfile string
 	tmp        string
 	binDir     string
 	goBin      string
@@ -44,7 +46,7 @@ func TestSmoke(t *testing.T) {
 	env.buildBinaries(t)
 	env.buildImage(t)
 	env.startContainer(t)
-	env.configureSSH(t)
+	env.configureSSH(t, "deploy")
 	env.waitForSSH(t)
 
 	t.Run("node app deploys routes secrets rollbacks and rejects unhealthy release", env.testNodeAppLifecycle)
@@ -56,22 +58,25 @@ func TestSmoke(t *testing.T) {
 
 func newSmokeEnv(t *testing.T, ctx context.Context) *smokeEnv {
 	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test file path")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join(filepath.Dir(file), "..", ".."))
-	if err != nil {
-		t.Fatal(err)
+	return newSmokeEnvWithImage(t, ctx, fakeVPSImage, "")
+}
+
+func newSmokeEnvWithImage(t *testing.T, ctx context.Context, image string, dockerfile string) *smokeEnv {
+	t.Helper()
+	repoRoot := repoRootForTest(t)
+	if dockerfile == "" {
+		dockerfile = filepath.Join(repoRoot, "tests/fake-vps/Dockerfile")
 	}
 	tmp := t.TempDir()
 	env := &smokeEnv{
-		ctx:      ctx,
-		repoRoot: repoRoot,
-		tmp:      tmp,
-		binDir:   filepath.Join(repoRoot, ".fake-vps-bin"),
-		goBin:    filepath.Join(tmp, "simple-vps"),
-		linuxBin: filepath.Join(repoRoot, ".fake-vps-bin", "simple-vps-linux-amd64"),
+		ctx:        ctx,
+		repoRoot:   repoRoot,
+		image:      image,
+		dockerfile: dockerfile,
+		tmp:        tmp,
+		binDir:     filepath.Join(repoRoot, ".fake-vps-bin"),
+		goBin:      filepath.Join(tmp, "simple-vps"),
+		linuxBin:   filepath.Join(repoRoot, ".fake-vps-bin", "simple-vps-linux-amd64"),
 	}
 	t.Cleanup(func() {
 		if os.Getenv("KEEP_FAKE_VPS") == "1" {
@@ -86,6 +91,19 @@ func newSmokeEnv(t *testing.T, ctx context.Context) *smokeEnv {
 		_ = os.RemoveAll(env.binDir)
 	})
 	return env
+}
+
+func repoRootForTest(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve test file path")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join(filepath.Dir(file), "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repoRoot
 }
 
 func (e *smokeEnv) buildBinaries(t *testing.T) {
@@ -106,19 +124,19 @@ func (e *smokeEnv) buildBinaries(t *testing.T) {
 
 func (e *smokeEnv) buildImage(t *testing.T) {
 	t.Helper()
-	e.mustRun(t, e.repoRoot, nil, "docker", "build", "-f", filepath.Join(e.repoRoot, "tests/fake-vps/Dockerfile"), "-t", fakeVPSImage, e.repoRoot)
+	e.mustRun(t, e.repoRoot, nil, "docker", "build", "-f", e.dockerfile, "-t", e.image, e.repoRoot)
 }
 
 func (e *smokeEnv) startContainer(t *testing.T) {
 	t.Helper()
-	out := e.mustRun(t, e.repoRoot, nil, "docker", "run", "-d", "-p", "127.0.0.1::22", fakeVPSImage)
+	out := e.mustRun(t, e.repoRoot, nil, "docker", "run", "-d", "-p", "127.0.0.1::22", e.image)
 	e.container = strings.TrimSpace(out)
 	if e.container == "" {
 		t.Fatal("docker run returned empty container id")
 	}
 }
 
-func (e *smokeEnv) configureSSH(t *testing.T) {
+func (e *smokeEnv) configureSSH(t *testing.T, user string) {
 	t.Helper()
 	keyPath := filepath.Join(e.tmp, "id_ed25519")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath)
@@ -127,7 +145,14 @@ func (e *smokeEnv) configureSSH(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.mustRunWithStdin(t, e.repoRoot, nil, pub, "docker", "exec", "-i", e.container, "bash", "-lc", "cat > /home/deploy/.ssh/authorized_keys && chown deploy:deploy /home/deploy/.ssh/authorized_keys && chmod 600 /home/deploy/.ssh/authorized_keys")
+	sshDir := "/home/" + user + "/.ssh"
+	owner := user + ":" + user
+	if user == "root" {
+		sshDir = "/root/.ssh"
+		owner = "root:root"
+	}
+	authorize := fmt.Sprintf("mkdir -p %[1]s && cat > %[1]s/authorized_keys && chown %[2]s %[1]s/authorized_keys && chmod 600 %[1]s/authorized_keys", sshDir, owner)
+	e.mustRunWithStdin(t, e.repoRoot, nil, pub, "docker", "exec", "-i", e.container, "bash", "-lc", authorize)
 
 	portOutput := strings.TrimSpace(e.mustRun(t, e.repoRoot, nil, "docker", "port", e.container, "22/tcp"))
 	colon := strings.LastIndex(portOutput, ":")
@@ -143,14 +168,14 @@ func (e *smokeEnv) configureSSH(t *testing.T) {
 	config := fmt.Sprintf(`Host fake-vps
   HostName 127.0.0.1
   Port %s
-  User deploy
+  User %s
   IdentityFile %s
   IdentitiesOnly yes
   BatchMode yes
   StrictHostKeyChecking no
   UserKnownHostsFile /dev/null
   LogLevel ERROR
-`, port, keyPath)
+`, port, user, keyPath)
 	if err := os.WriteFile(filepath.Join(homeSSH, "config"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -165,6 +190,14 @@ func (e *smokeEnv) configureSSH(t *testing.T) {
 	}
 	wrapper := fmt.Sprintf("#!/usr/bin/env bash\nexec %q -F %q \"$@\"\n", hostSSH, filepath.Join(homeSSH, "config"))
 	if err := os.WriteFile(filepath.Join(binDir, "ssh"), []byte(wrapper), 0755); err != nil {
+		t.Fatal(err)
+	}
+	hostSCP, err := exec.LookPath("scp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scpWrapper := fmt.Sprintf("#!/usr/bin/env bash\nexec %q -F %q \"$@\"\n", hostSCP, filepath.Join(homeSSH, "config"))
+	if err := os.WriteFile(filepath.Join(binDir, "scp"), []byte(scpWrapper), 0755); err != nil {
 		t.Fatal(err)
 	}
 	e.pathPrefix = binDir

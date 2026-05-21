@@ -1,0 +1,43 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    openssh-server \
+    rsync \
+    sudo \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /run/sshd /root/.ssh /run/simple-vps-fresh-host /etc/caddy/simple-vps /etc/caddy/conf.d \
+  && chmod 700 /root/.ssh \
+  && useradd --system --home-dir /var/lib/caddy --shell /usr/sbin/nologin --create-home caddy
+
+COPY .fake-vps-bin/simple-vps-linux-amd64 /usr/local/bin/simple-vps
+COPY tests/fake-vps/fake-caddy /usr/local/bin/caddy
+COPY tests/fake-vps/fake-install-apt-get /usr/local/bin/apt-get
+COPY tests/fake-vps/fake-install-curl /usr/local/bin/curl
+COPY tests/fake-vps/fake-install-dpkg-query /usr/local/bin/dpkg-query
+COPY tests/fake-vps/fake-install-localectl /usr/local/bin/localectl
+COPY tests/fake-vps/fake-install-systemctl /usr/local/bin/systemctl
+COPY tests/fake-vps/fake-install-timedatectl /usr/local/bin/timedatectl
+COPY tests/fake-vps/fake-install-ufw /usr/local/bin/ufw
+
+RUN chmod 0755 \
+    /usr/local/bin/simple-vps \
+    /usr/local/bin/caddy \
+    /usr/local/bin/apt-get \
+    /usr/local/bin/curl \
+    /usr/local/bin/dpkg-query \
+    /usr/local/bin/localectl \
+    /usr/local/bin/systemctl \
+    /usr/local/bin/timedatectl \
+    /usr/local/bin/ufw
+
+EXPOSE 22
+
+CMD ["/usr/sbin/sshd", "-D", "-e"]

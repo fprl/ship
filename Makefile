@@ -1,7 +1,18 @@
-.PHONY: test go-test go-build go-vet shell-test fake-vps-smoke build build-linux build-darwin build-release clean
+.PHONY: test go-test go-build go-vet shell-test fake-vps-smoke fake-vps-install-smoke build build-linux build-darwin build-release clean
 
 GO ?= go
 DIST_DIR ?= dist
+FAKE_VPS_SHELL_SCRIPTS := \
+	tests/fake-vps/fake-caddy \
+	tests/fake-vps/fake-install-apt-get \
+	tests/fake-vps/fake-install-curl \
+	tests/fake-vps/fake-install-dpkg-query \
+	tests/fake-vps/fake-install-localectl \
+	tests/fake-vps/fake-install-systemctl \
+	tests/fake-vps/fake-install-timedatectl \
+	tests/fake-vps/fake-install-ufw \
+	tests/fake-vps/fake-journalctl \
+	tests/fake-vps/fake-systemctl
 
 test: go-test go-build go-vet shell-test
 
@@ -16,12 +27,13 @@ go-vet:
 
 shell-test:
 	bash -n install.sh
-	bash -n tests/fake-vps/fake-caddy
-	bash -n tests/fake-vps/fake-journalctl
-	bash -n tests/fake-vps/fake-systemctl
+	for script in $(FAKE_VPS_SHELL_SCRIPTS); do bash -n $$script; done
 
 fake-vps-smoke:
 	SIMPLE_VPS_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestSmoke -count=1 -timeout 20m
+
+fake-vps-install-smoke:
+	SIMPLE_VPS_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestFreshHostInstall -count=1 -timeout 20m
 
 build:
 	mkdir -p $(DIST_DIR)

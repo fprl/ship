@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+package="${@: -1}"
+state="/run/simple-vps-fresh-host/packages/$package"
+
+if [[ -f "$state" ]]; then
+  if [[ "$*" == *'${Version}'* ]]; then
+    printf '0.0-fake'
+  else
+    printf 'install ok installed'
+  fi
+  exit 0
+fi
+
+exec /usr/bin/dpkg-query "$@"

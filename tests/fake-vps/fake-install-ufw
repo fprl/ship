@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir=/run/simple-vps-fresh-host
+rules_file="$state_dir/ufw-rules"
+active_file="$state_dir/ufw-active"
+mkdir -p "$state_dir"
+touch "$rules_file"
+
+printf 'ufw %s\n' "$*" >> "$state_dir/ufw.log"
+
+status_output() {
+  if [[ -f "$active_file" ]]; then
+    echo "Status: active"
+  else
+    echo "Status: inactive"
+  fi
+  if grep -qx 'default deny incoming' "$rules_file"; then
+    echo "Default: deny (incoming)"
+  fi
+  if grep -qx 'default allow outgoing' "$rules_file"; then
+    echo "Default: allow (outgoing)"
+  fi
+  while IFS= read -r rule; do
+    case "$rule" in
+      allow\ *)
+        port="${rule#allow }"
+        printf '%s ALLOW IN Anywhere\n' "$port"
+        ;;
+      deny\ *)
+        port="${rule#deny }"
+        printf '%s DENY IN Anywhere\n' "$port"
+        ;;
+    esac
+  done < "$rules_file"
+}
+
+if [[ "${1:-}" == "status" ]]; then
+  status_output
+  exit 0
+fi
+
+args=()
+delete=0
+for arg in "$@"; do
+  case "$arg" in
+    --force)
+      ;;
+    delete)
+      delete=1
+      ;;
+    enable)
+      touch "$active_file"
+      exit 0
+      ;;
+    *)
+      args+=("$arg")
+      ;;
+  esac
+done
+
+rule="${args[*]}"
+if [[ -z "$rule" ]]; then
+  echo "fake ufw: missing rule" >&2
+  exit 1
+fi
+
+if [[ "$delete" == "1" ]]; then
+  if grep -qxF "$rule" "$rules_file"; then
+    grep -vxF "$rule" "$rules_file" > "$rules_file.tmp"
+    mv "$rules_file.tmp" "$rules_file"
+    exit 0
+  fi
+  echo "Could not delete non-existent rule" >&2
+  exit 1
+fi
+
+if grep -qxF "$rule" "$rules_file"; then
+  echo "Skipping adding existing rule"
+  exit 0
+fi
+
+printf '%s\n' "$rule" >> "$rules_file"
+echo "Rule added"

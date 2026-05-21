@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir=/run/simple-vps-fresh-host
+active_dir="$state_dir/systemctl-active"
+mkdir -p "$active_dir"
+
+action="${1:-}"
+shift || true
+printf 'systemctl %s %s\n' "$action" "$*" >> "$state_dir/systemctl.log"
+
+unit_from_args() {
+  local unit=""
+  for arg in "$@"; do
+    case "$arg" in
+      -*)
+        ;;
+      *)
+        unit="$arg"
+        ;;
+    esac
+  done
+  printf '%s\n' "$unit"
+}
+
+active_file() {
+  printf '%s/%s\n' "$active_dir" "${1//\//_}"
+}
+
+case "$action" in
+  daemon-reload|enable|disable)
+    exit 0
+    ;;
+  is-active)
+    unit="$(unit_from_args "$@")"
+    if [[ -n "$unit" && -f "$(active_file "$unit")" ]]; then
+      echo active
+      exit 0
+    fi
+    echo inactive
+    exit 3
+    ;;
+  status)
+    "$0" is-active "$@"
+    ;;
+  start|restart|reload)
+    unit="$(unit_from_args "$@")"
+    if [[ -z "$unit" ]]; then
+      echo "fake systemctl: missing unit" >&2
+      exit 1
+    fi
+    printf 'active\n' > "$(active_file "$unit")"
+    exit 0
+    ;;
+  stop)
+    unit="$(unit_from_args "$@")"
+    if [[ -n "$unit" ]]; then
+      rm -f "$(active_file "$unit")"
+    fi
+    exit 0
+    ;;
+  *)
+    echo "fake systemctl: unsupported command $action $*" >&2
+    exit 1
+    ;;
+esac

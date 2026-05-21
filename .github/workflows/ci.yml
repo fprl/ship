@@ -12,14 +12,10 @@ jobs:
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Bash syntax checks
-        run: |
-          bash -n install.sh
-          bash -n tests/fake-vps/fake-caddy
-          bash -n tests/fake-vps/fake-journalctl
-          bash -n tests/fake-vps/fake-systemctl
+        run: make shell-test
       - name: Shellcheck
         run: |
-          shellcheck install.sh tests/fake-vps/fake-caddy tests/fake-vps/fake-journalctl tests/fake-vps/fake-systemctl
+          shellcheck install.sh tests/fake-vps/fake-*
 
   go:
     runs-on: ubuntu-latest
@@ -47,3 +43,5 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Go fake VPS smoke
         run: make fake-vps-smoke
+      - name: Go fresh host install smoke
+        run: make fake-vps-install-smoke

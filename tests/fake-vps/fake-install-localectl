@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir=/run/simple-vps-fresh-host
+locale_file="$state_dir/locale"
+mkdir -p "$state_dir"
+
+case "${1:-}" in
+  status)
+    printf 'System Locale: LANG=%s\n' "$(cat "$locale_file" 2>/dev/null || printf 'C.UTF-8')"
+    ;;
+  set-locale)
+    value="${2:-}"
+    printf '%s\n' "${value#LANG=}" > "$locale_file"
+    ;;
+  *)
+    echo "fake localectl: unsupported command $*" >&2
+    exit 1
+    ;;
+esac

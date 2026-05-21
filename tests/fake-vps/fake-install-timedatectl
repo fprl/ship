@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir=/run/simple-vps-fresh-host
+timezone_file="$state_dir/timezone"
+mkdir -p "$state_dir"
+
+case "${1:-}" in
+  show)
+    cat "$timezone_file" 2>/dev/null || printf 'UTC\n'
+    ;;
+  set-timezone)
+    printf '%s\n' "${2:-}" > "$timezone_file"
+    ;;
+  *)
+    echo "fake timedatectl: unsupported command $*" >&2
+    exit 1
+    ;;
+esac

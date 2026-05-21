@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir=/run/simple-vps-fresh-host
+package_dir="$state_dir/packages"
+mkdir -p "$package_dir"
+
+printf 'apt-get %s\n' "$*" >> "$state_dir/apt-get.log"
+
+case "${1:-}" in
+  update)
+    exit 0
+    ;;
+  install)
+    shift
+    for arg in "$@"; do
+      case "$arg" in
+        -*)
+          ;;
+        *.deb)
+          pkg="$(basename "$arg")"
+          printf 'installed\n' > "$package_dir/${pkg%%_*}"
+          ;;
+        *)
+          printf 'installed\n' > "$package_dir/$arg"
+          ;;
+      esac
+    done
+    exit 0
+    ;;
+  *)
+    echo "fake apt-get: unsupported command $*" >&2
+    exit 1
+    ;;
+esac
