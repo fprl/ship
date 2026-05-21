@@ -22,6 +22,7 @@ COPY tests/fake-vps/fake-caddy /usr/local/bin/caddy
 COPY tests/fake-vps/fake-install-apt-get /usr/local/bin/apt-get
 COPY tests/fake-vps/fake-install-curl /usr/local/bin/curl
 COPY tests/fake-vps/fake-install-dpkg-query /usr/local/bin/dpkg-query
+COPY tests/fake-vps/fake-install-gpg /usr/local/bin/gpg
 COPY tests/fake-vps/fake-install-localectl /usr/local/bin/localectl
 COPY tests/fake-vps/fake-install-systemctl /usr/local/bin/systemctl
 COPY tests/fake-vps/fake-install-timedatectl /usr/local/bin/timedatectl
@@ -33,6 +34,7 @@ RUN chmod 0755 \
     /usr/local/bin/apt-get \
     /usr/local/bin/curl \
     /usr/local/bin/dpkg-query \
+    /usr/local/bin/gpg \
     /usr/local/bin/localectl \
     /usr/local/bin/systemctl \
     /usr/local/bin/timedatectl \

@@ -93,6 +93,235 @@ func TestEnsureFileRejectsMissingMode(t *testing.T) {
 	}
 }
 
+func TestEnsureAptRepoReplacesUntrustedKey(t *testing.T) {
+	runner := newFakeRunner()
+	runner.files["/usr/share/keyrings/example.gpg"] = FileState{
+		Content: []byte("old key"),
+		Owner:   "root",
+		Group:   "root",
+		Mode:    0644,
+	}
+	runner.commandResults = map[string]CommandResult{
+		"gpg --show-keys --with-colons --fingerprint /usr/share/keyrings/example.gpg": {
+			Stdout: []byte(gpgFingerprintOutput("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")),
+		},
+		"gpg --show-keys --with-colons --fingerprint /tmp/simple-vps-example-apt-key": {
+			Stdout: []byte(gpgFingerprintOutput("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")),
+		},
+	}
+	apply := Apply{Context: context.Background(), Runner: runner, State: &RunState{}}
+
+	changed, err := EnsureAptRepo(apply, AptRepo{
+		Name:           "example",
+		KeyURL:         "https://example.test/repo.gpg",
+		KeyPath:        "/usr/share/keyrings/example.gpg",
+		KeyFingerprint: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		SourcePath:     "/etc/apt/sources.list.d/example.list",
+		SourceLine:     "deb [signed-by=/usr/share/keyrings/example.gpg] https://example.test stable main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected untrusted key to be replaced")
+	}
+
+	wantCommands := []Command{
+		{Program: "gpg", Args: []string{"--show-keys", "--with-colons", "--fingerprint", "/usr/share/keyrings/example.gpg"}},
+		{Program: "curl", Args: []string{"-fsSL", "https://example.test/repo.gpg", "-o", "/tmp/simple-vps-example-apt-key"}},
+		{Program: "gpg", Args: []string{"--show-keys", "--with-colons", "--fingerprint", "/tmp/simple-vps-example-apt-key"}},
+		{Program: "install", Args: []string{"-o", "root", "-g", "root", "-m", "0644", "/tmp/simple-vps-example-apt-key", "/usr/share/keyrings/example.gpg"}},
+		{Program: "rm", Args: []string{"-f", "/tmp/simple-vps-example-apt-key"}},
+		{Program: "apt-get", Args: []string{"update", "-y"}},
+	}
+	if !reflect.DeepEqual(runner.commands, wantCommands) {
+		t.Fatalf("unexpected commands:\nwant: %+v\n got: %+v", wantCommands, runner.commands)
+	}
+}
+
+func TestEnsureAptRepoSkipsTrustedKeyAndConvergedSource(t *testing.T) {
+	runner := newFakeRunner()
+	runner.files["/usr/share/keyrings/example.gpg"] = FileState{
+		Content: []byte("trusted key"),
+		Owner:   "root",
+		Group:   "root",
+		Mode:    0644,
+	}
+	runner.files["/etc/apt/sources.list.d/example.list"] = FileState{
+		Content: []byte("deb [signed-by=/usr/share/keyrings/example.gpg] https://example.test stable main\n"),
+		Owner:   "root",
+		Group:   "root",
+		Mode:    0644,
+	}
+	runner.commandResults = map[string]CommandResult{
+		"gpg --show-keys --with-colons --fingerprint /usr/share/keyrings/example.gpg": {
+			Stdout: []byte(gpgFingerprintOutput("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")),
+		},
+	}
+	apply := Apply{Context: context.Background(), Runner: runner, State: &RunState{}}
+
+	changed, err := EnsureAptRepo(apply, AptRepo{
+		Name:           "example",
+		KeyURL:         "https://example.test/repo.gpg",
+		KeyPath:        "/usr/share/keyrings/example.gpg",
+		KeyFingerprint: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		SourcePath:     "/etc/apt/sources.list.d/example.list",
+		SourceLine:     "deb [signed-by=/usr/share/keyrings/example.gpg] https://example.test stable main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("expected trusted repo to be unchanged")
+	}
+
+	wantCommands := []Command{
+		{Program: "gpg", Args: []string{"--show-keys", "--with-colons", "--fingerprint", "/usr/share/keyrings/example.gpg"}},
+	}
+	if !reflect.DeepEqual(runner.commands, wantCommands) {
+		t.Fatalf("unexpected commands:\nwant: %+v\n got: %+v", wantCommands, runner.commands)
+	}
+}
+
+func TestEnsureAptRepoRejectsDownloadedKeyWithWrongFingerprint(t *testing.T) {
+	runner := newFakeRunner()
+	runner.commandResults = map[string]CommandResult{
+		"gpg --show-keys --with-colons --fingerprint /tmp/simple-vps-example-apt-key": {
+			Stdout: []byte(gpgFingerprintOutput("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")),
+		},
+	}
+	apply := Apply{Context: context.Background(), Runner: runner, State: &RunState{}}
+
+	changed, err := EnsureAptRepo(apply, AptRepo{
+		Name:           "example",
+		KeyURL:         "https://example.test/repo.gpg",
+		KeyPath:        "/usr/share/keyrings/example.gpg",
+		KeyFingerprint: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		SourcePath:     "/etc/apt/sources.list.d/example.list",
+		SourceLine:     "deb [signed-by=/usr/share/keyrings/example.gpg] https://example.test stable main",
+	})
+	if err == nil {
+		t.Fatal("expected fingerprint mismatch to fail")
+	}
+	if changed {
+		t.Fatal("failed fingerprint check must not report changed")
+	}
+	if _, ok := runner.files["/etc/apt/sources.list.d/example.list"]; ok {
+		t.Fatal("failed fingerprint check must not write source list")
+	}
+	if runner.ranCommand("install", "-o root -g root -m 0644 /tmp/simple-vps-example-apt-key /usr/share/keyrings/example.gpg") {
+		t.Fatalf("failed fingerprint check installed key, commands: %+v", runner.commands)
+	}
+	if runner.ranCommand("apt-get", "update -y") {
+		t.Fatalf("failed fingerprint check updated apt, commands: %+v", runner.commands)
+	}
+}
+
+func TestEnsureAptRepoRequiresFingerprintForKey(t *testing.T) {
+	runner := newFakeRunner()
+	apply := Apply{Context: context.Background(), Runner: runner}
+
+	changed, err := EnsureAptRepo(apply, AptRepo{
+		Name:       "example",
+		KeyURL:     "https://example.test/repo.gpg",
+		KeyPath:    "/usr/share/keyrings/example.gpg",
+		SourcePath: "/etc/apt/sources.list.d/example.list",
+		SourceLine: "deb [signed-by=/usr/share/keyrings/example.gpg] https://example.test stable main",
+	})
+	if err == nil {
+		t.Fatal("expected missing fingerprint to fail")
+	}
+	if changed {
+		t.Fatal("missing fingerprint must not report changed")
+	}
+	if len(runner.commands) != 0 || len(runner.writes) != 0 {
+		t.Fatalf("missing fingerprint touched host: commands=%+v writes=%+v", runner.commands, runner.writes)
+	}
+}
+
+func TestEnsureAptRepoDearmorsArmoredKeyBeforeInstall(t *testing.T) {
+	runner := newFakeRunner()
+	runner.commandResults = map[string]CommandResult{
+		"gpg --show-keys --with-colons --fingerprint /tmp/simple-vps-example-apt-key": {
+			Stdout: []byte(gpgFingerprintOutput("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")),
+		},
+		"gpg --show-keys --with-colons --fingerprint /tmp/simple-vps-example-apt-key.gpg": {
+			Stdout: []byte(gpgFingerprintOutput("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")),
+		},
+	}
+	apply := Apply{Context: context.Background(), Runner: runner, State: &RunState{}}
+
+	changed, err := EnsureAptRepo(apply, AptRepo{
+		Name:           "example",
+		KeyURL:         "https://example.test/repo.asc",
+		KeyPath:        "/usr/share/keyrings/example.gpg",
+		KeyFingerprint: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		KeyDearmor:     true,
+		SourcePath:     "/etc/apt/sources.list.d/example.list",
+		SourceLine:     "deb [signed-by=/usr/share/keyrings/example.gpg] https://example.test stable main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected missing repo to change")
+	}
+
+	wantCommands := []Command{
+		{Program: "curl", Args: []string{"-fsSL", "https://example.test/repo.asc", "-o", "/tmp/simple-vps-example-apt-key"}},
+		{Program: "gpg", Args: []string{"--show-keys", "--with-colons", "--fingerprint", "/tmp/simple-vps-example-apt-key"}},
+		{Program: "gpg", Args: []string{"--dearmor", "--yes", "-o", "/tmp/simple-vps-example-apt-key.gpg", "/tmp/simple-vps-example-apt-key"}},
+		{Program: "gpg", Args: []string{"--show-keys", "--with-colons", "--fingerprint", "/tmp/simple-vps-example-apt-key.gpg"}},
+		{Program: "install", Args: []string{"-o", "root", "-g", "root", "-m", "0644", "/tmp/simple-vps-example-apt-key.gpg", "/usr/share/keyrings/example.gpg"}},
+		{Program: "rm", Args: []string{"-f", "/tmp/simple-vps-example-apt-key", "/tmp/simple-vps-example-apt-key.gpg"}},
+		{Program: "apt-get", Args: []string{"update", "-y"}},
+	}
+	if !reflect.DeepEqual(runner.commands, wantCommands) {
+		t.Fatalf("unexpected commands:\nwant: %+v\n got: %+v", wantCommands, runner.commands)
+	}
+}
+
+func TestEnsureAptRepoReplacesArmoredKeyWhenDearmorRequired(t *testing.T) {
+	runner := newFakeRunner()
+	runner.files["/usr/share/keyrings/example.gpg"] = FileState{
+		Content: []byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\ntrusted armored key\n-----END PGP PUBLIC KEY BLOCK-----\n"),
+		Owner:   "root",
+		Group:   "root",
+		Mode:    0644,
+	}
+	runner.commandResults = map[string]CommandResult{
+		"gpg --show-keys --with-colons --fingerprint /usr/share/keyrings/example.gpg": {
+			Stdout: []byte(gpgFingerprintOutput("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")),
+		},
+		"gpg --show-keys --with-colons --fingerprint /tmp/simple-vps-example-apt-key": {
+			Stdout: []byte(gpgFingerprintOutput("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")),
+		},
+		"gpg --show-keys --with-colons --fingerprint /tmp/simple-vps-example-apt-key.gpg": {
+			Stdout: []byte(gpgFingerprintOutput("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")),
+		},
+	}
+	apply := Apply{Context: context.Background(), Runner: runner, State: &RunState{}}
+
+	changed, err := EnsureAptRepo(apply, AptRepo{
+		Name:           "example",
+		KeyURL:         "https://example.test/repo.asc",
+		KeyPath:        "/usr/share/keyrings/example.gpg",
+		KeyFingerprint: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		KeyDearmor:     true,
+		SourcePath:     "/etc/apt/sources.list.d/example.list",
+		SourceLine:     "deb [signed-by=/usr/share/keyrings/example.gpg] https://example.test stable main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected armored key to be replaced when dearmor is required")
+	}
+	if !runner.ranCommand("gpg", "--dearmor --yes -o /tmp/simple-vps-example-apt-key.gpg /tmp/simple-vps-example-apt-key") {
+		t.Fatalf("expected dearmor command, commands: %+v", runner.commands)
+	}
+}
+
 func TestEnsureSudoersFileValidatesBeforeWriting(t *testing.T) {
 	runner := newFakeRunner()
 	runner.validateErr = errors.New("bad sudoers")
@@ -440,8 +669,21 @@ func (r *fakeRunner) Run(_ context.Context, command Command) (CommandResult, err
 	return CommandResult{}, nil
 }
 
+func (r *fakeRunner) ranCommand(program string, args string) bool {
+	for _, command := range r.commands {
+		if command.Program == program && strings.Join(command.Args, " ") == args {
+			return true
+		}
+	}
+	return false
+}
+
 func commandKey(command Command) string {
 	return command.Program + " " + strings.Join(command.Args, " ")
+}
+
+func gpgFingerprintOutput(fingerprint string) string {
+	return "pub:::::::::\nfpr:::::::::" + fingerprint + ":\n"
 }
 
 func assertWrites(t *testing.T, runner *fakeRunner, path string) {

@@ -53,7 +53,7 @@ removing, or changing the contract of any of them requires a new ADR.
 |---|---|
 | `EnsureDirectory` | directory create/update with owner, group, mode |
 | `EnsurePackage` | apt package install/absent |
-| `EnsureAptRepo` | apt repo + GPG key + sources.list.d entry |
+| `EnsureAptRepo` | apt repo + pinned GPG key fingerprint + sources.list.d entry |
 | `EnsureUser` | system user with shell/home/uid policy |
 | `EnsureGroupMembership` | user-in-group |
 | `EnsureSudoersFile` | a single `/etc/sudoers.d/*` entry, `visudo -c` validated |
@@ -152,6 +152,9 @@ ADR-0002). The provisioner records observed versions alongside.
 | Docker | Docker apt repo | stable track, opt-in only |
 | Node | external host prerequisite | app-driven requirement |
 | Bun | external host prerequisite | app-driven requirement |
+
+Third-party apt repositories verify their signing keys by pinned OpenPGP
+fingerprint before the `signed-by=` source entry is trusted. See ADR-0003.
 
 Language runtimes (Node, Bun, pnpm) are **not installed by default during
 `host install`**. In the current product shape they are explicit host

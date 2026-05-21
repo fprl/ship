@@ -15,7 +15,13 @@ import (
 	"github.com/fprl/simple-vps/internal/store"
 )
 
-const litestreamVersion = "0.5.8"
+const (
+	litestreamVersion           = "0.5.8"
+	caddyAptKeyFingerprint      = "65760C51EDEA2017CEA2CA15155B6D79CA56EA34"
+	dockerAptKeyFingerprint     = "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+	tailscaleAptKeyFingerprint  = "2596A99EAAB33821893C0A79458CA832957F5868"
+	cloudflareAptKeyFingerprint = "CC94B39C77AE7342A68B89628A682D308D4E5E73"
+)
 
 type InstallOptions struct {
 	OperatorUser           string
@@ -318,11 +324,13 @@ func addHelper(ops *[]operation, opts InstallOptions) {
 func addCaddy(ops *[]operation) {
 	*ops = append(*ops, operation{name: "caddy repo", run: func(apply host.Apply) (bool, error) {
 		return host.EnsureAptRepo(apply, host.AptRepo{
-			Name:       "caddy",
-			KeyURL:     "https://dl.cloudsmith.io/public/caddy/stable/gpg.key",
-			KeyPath:    "/usr/share/keyrings/caddy-stable-archive-keyring.gpg",
-			SourcePath: "/etc/apt/sources.list.d/caddy-stable.list",
-			SourceLine: "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main",
+			Name:           "caddy",
+			KeyURL:         "https://dl.cloudsmith.io/public/caddy/stable/gpg.key",
+			KeyPath:        "/usr/share/keyrings/caddy-stable-archive-keyring.gpg",
+			KeyFingerprint: caddyAptKeyFingerprint,
+			KeyDearmor:     true,
+			SourcePath:     "/etc/apt/sources.list.d/caddy-stable.list",
+			SourceLine:     "deb [signed-by=/usr/share/keyrings/caddy-stable-archive-keyring.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main",
 		})
 	}})
 	*ops = append(*ops, operation{name: "caddy package", run: func(apply host.Apply) (bool, error) { return host.EnsurePackage(apply, "caddy") }})
@@ -391,11 +399,12 @@ func addDocker(ops *[]operation, opts InstallOptions) {
 			return false, err
 		}
 		return host.EnsureAptRepo(apply, host.AptRepo{
-			Name:       "docker",
-			KeyURL:     "https://download.docker.com/linux/ubuntu/gpg",
-			KeyPath:    "/usr/share/keyrings/docker.asc",
-			SourcePath: "/etc/apt/sources.list.d/docker.list",
-			SourceLine: "deb [arch=" + debArch(runtime.GOARCH) + " signed-by=/usr/share/keyrings/docker.asc] https://download.docker.com/linux/ubuntu " + codename + " stable",
+			Name:           "docker",
+			KeyURL:         "https://download.docker.com/linux/ubuntu/gpg",
+			KeyPath:        "/usr/share/keyrings/docker.asc",
+			KeyFingerprint: dockerAptKeyFingerprint,
+			SourcePath:     "/etc/apt/sources.list.d/docker.list",
+			SourceLine:     "deb [arch=" + debArch(runtime.GOARCH) + " signed-by=/usr/share/keyrings/docker.asc] https://download.docker.com/linux/ubuntu " + codename + " stable",
 		})
 	}})
 	for _, pkg := range []string{"docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin"} {
@@ -420,11 +429,12 @@ func addTailscale(ops *[]operation, opts InstallOptions) {
 			return false, err
 		}
 		return host.EnsureAptRepo(apply, host.AptRepo{
-			Name:       "tailscale",
-			KeyURL:     "https://pkgs.tailscale.com/stable/ubuntu/" + codename + ".noarmor.gpg",
-			KeyPath:    "/usr/share/keyrings/tailscale-archive-keyring.gpg",
-			SourcePath: "/etc/apt/sources.list.d/tailscale.list",
-			SourceLine: "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu " + codename + " main",
+			Name:           "tailscale",
+			KeyURL:         "https://pkgs.tailscale.com/stable/ubuntu/" + codename + ".noarmor.gpg",
+			KeyPath:        "/usr/share/keyrings/tailscale-archive-keyring.gpg",
+			KeyFingerprint: tailscaleAptKeyFingerprint,
+			SourcePath:     "/etc/apt/sources.list.d/tailscale.list",
+			SourceLine:     "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu " + codename + " main",
 		})
 	}})
 	*ops = append(*ops, operation{name: "tailscale package", run: func(apply host.Apply) (bool, error) { return host.EnsurePackage(apply, "tailscale") }})
@@ -463,11 +473,12 @@ func tailscaleRunning(apply host.Apply) (bool, error) {
 func addCloudflare(ops *[]operation, opts InstallOptions) {
 	*ops = append(*ops, operation{name: "cloudflared repo", run: func(apply host.Apply) (bool, error) {
 		return host.EnsureAptRepo(apply, host.AptRepo{
-			Name:       "cloudflared",
-			KeyURL:     "https://pkg.cloudflare.com/cloudflare-main.gpg",
-			KeyPath:    "/usr/share/keyrings/cloudflare-main.gpg",
-			SourcePath: "/etc/apt/sources.list.d/cloudflared.list",
-			SourceLine: "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main",
+			Name:           "cloudflared",
+			KeyURL:         "https://pkg.cloudflare.com/cloudflare-main.gpg",
+			KeyPath:        "/usr/share/keyrings/cloudflare-main.gpg",
+			KeyFingerprint: cloudflareAptKeyFingerprint,
+			SourcePath:     "/etc/apt/sources.list.d/cloudflared.list",
+			SourceLine:     "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main",
 		})
 	}})
 	*ops = append(*ops, operation{name: "cloudflared package", run: func(apply host.Apply) (bool, error) { return host.EnsurePackage(apply, "cloudflared") }})

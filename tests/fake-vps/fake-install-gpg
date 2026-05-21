@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir=/run/simple-vps-fresh-host
+mkdir -p "$state_dir"
+printf 'gpg %s\n' "$*" >> "$state_dir/gpg.log"
+
+fingerprint_for_path() {
+  local path="$1"
+  local content=""
+  if [[ -f "$path" ]]; then
+    content="$(cat "$path")"
+  fi
+
+  case "$path $content" in
+    *caddy*)
+      printf '65760C51EDEA2017CEA2CA15155B6D79CA56EA34'
+      ;;
+    *docker*)
+      printf '9DC858229FC7DD38854AE2D88D81803C0EBFCD88'
+      ;;
+    *tailscale*)
+      printf '2596A99EAAB33821893C0A79458CA832957F5868'
+      ;;
+    *cloudflare*)
+      printf 'CC94B39C77AE7342A68B89628A682D308D4E5E73'
+      ;;
+  esac
+}
+
+if [[ "$*" == *"--show-keys"* ]]; then
+  path="${@: -1}"
+  fingerprint="$(fingerprint_for_path "$path")"
+  if [[ -z "$fingerprint" ]]; then
+    echo "fake gpg: unknown key $path" >&2
+    exit 2
+  fi
+  printf 'pub:::::::::\nfpr:::::::::%s:\n' "$fingerprint"
+  exit 0
+fi
+
+if [[ "${1:-}" == "--dearmor" ]]; then
+  output=""
+  input=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -o)
+        output="${2:-}"
+        shift 2
+        ;;
+      --dearmor|--yes)
+        shift
+        ;;
+      *)
+        input="$1"
+        shift
+        ;;
+    esac
+  done
+  if [[ -z "$output" || -z "$input" ]]; then
+    echo "fake gpg: dearmor requires input and -o output" >&2
+    exit 2
+  fi
+  mkdir -p "$(dirname "$output")"
+  printf 'fake dearmored key for %s\n' "$(cat "$input")" > "$output"
+  exit 0
+fi
+
+echo "fake gpg: unsupported command $*" >&2
+exit 1

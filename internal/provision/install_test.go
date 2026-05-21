@@ -344,7 +344,7 @@ func TestRunInstallUsesHostUbuntuCodenameForDockerAndTailscaleRepos(t *testing.T
 	if !strings.Contains(tailscaleSource, " jammy main") {
 		t.Fatalf("tailscale repo did not use host codename:\n%s", tailscaleSource)
 	}
-	if !runner.ranCommand("curl", "-fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /usr/share/keyrings/tailscale-archive-keyring.gpg") {
+	if !runner.ranCommand("curl", "-fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /tmp/simple-vps-tailscale-apt-key") {
 		t.Fatalf("tailscale key URL did not use host codename, commands: %+v", runner.commands)
 	}
 }
@@ -458,12 +458,40 @@ func (r *installFakeRunner) Run(_ context.Context, command host.Command) (host.C
 		}
 	case "localectl":
 		return host.CommandResult{Stdout: []byte("System Locale: LANG=en_US.UTF-8\n")}, nil
+	case "gpg":
+		return r.runGPG(command)
 	}
 	return host.CommandResult{}, nil
 }
 
+func (r *installFakeRunner) runGPG(command host.Command) (host.CommandResult, error) {
+	joined := strings.Join(command.Args, " ")
+	if strings.Contains(joined, "--dearmor") {
+		return host.CommandResult{}, nil
+	}
+	if !strings.Contains(joined, "--show-keys") {
+		return host.CommandResult{ExitCode: 1, Stderr: []byte("unsupported fake gpg command")}, nil
+	}
+	path := command.Args[len(command.Args)-1]
+	switch {
+	case strings.Contains(path, "caddy"):
+		return host.CommandResult{Stdout: []byte(gpgFingerprintOutput(caddyAptKeyFingerprint))}, nil
+	case strings.Contains(path, "docker"):
+		return host.CommandResult{Stdout: []byte(gpgFingerprintOutput(dockerAptKeyFingerprint))}, nil
+	case strings.Contains(path, "tailscale"):
+		return host.CommandResult{Stdout: []byte(gpgFingerprintOutput(tailscaleAptKeyFingerprint))}, nil
+	case strings.Contains(path, "cloudflare"):
+		return host.CommandResult{Stdout: []byte(gpgFingerprintOutput(cloudflareAptKeyFingerprint))}, nil
+	}
+	return host.CommandResult{ExitCode: 1, Stderr: []byte("unknown fake gpg key")}, nil
+}
+
 func installCommandKey(command host.Command) string {
 	return command.Program + " " + strings.Join(command.Args, " ")
+}
+
+func gpgFingerprintOutput(fingerprint string) string {
+	return "pub:::::::::\nfpr:::::::::" + fingerprint + ":\n"
 }
 
 func (r *installFakeRunner) ranCommand(program string, args string) bool {
