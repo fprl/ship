@@ -67,13 +67,29 @@ produces, not by which framework was used.
 
 ### 2. Container engine: Podman
 
-Podman is rootless by default, has no long-running daemon, integrates with
-systemd via `podman generate systemd`, and accepts unmodified Dockerfiles
-via BuildKit-compatible `podman build`. Same UX as Docker, meaningfully
-smaller blast radius (no root daemon, no socket to leak).
+Podman has no long-running daemon, integrates with systemd via
+`podman generate systemd`, and accepts unmodified Dockerfiles via
+BuildKit-compatible `podman build`. Same UX as Docker, meaningfully
+smaller blast radius — no persistent root daemon, no socket to leak.
 
-Docker remains a valid escape hatch if a future use case demonstrates it is
-required, but Podman is the supported default.
+The helper invokes Podman as **root** (it already holds root via
+passwordless sudo from `deploy@`). Container *processes* run as the
+per-app user `app-<name>` per Section 7's security floor (`--user`,
+`--cap-drop=ALL`, `--security-opt=no-new-privileges`, read-only rootfs,
+resource caps).
+
+Truly rootless Podman per app user was considered and rejected:
+per-user image storage breaks shared image caches across apps, rootless
+networking has port-binding limitations (no <1024 binds without
+setcap), and on a single-host VPS the operator already holds root via
+SSH — the marginal "extra layer before host root" isolation gain does
+not outweigh the operational complexity. The win that does carry over
+from rootless mode is the absence of a persistent root daemon; that
+remains true under rootful Podman invocation because `podman` is a
+short-lived CLI, not a long-running service.
+
+Docker remains a valid escape hatch if a future use case demonstrates
+it is required, but Podman is the supported default.
 
 ### 3. Required Dockerfile — no `image:` field
 
@@ -200,25 +216,41 @@ and deploy B. Two explicit, grep-able actions; no hidden takeover path.
 
 ### 9. Deploy is content-addressed
 
-`simple-vps deploy <env>` does as little work as the diff requires. It is the
-universal verb; there is no separate `deploy --config-only` or `apply` flag.
+`simple-vps deploy <env>` does as little work as the diff requires. It
+is the universal verb; there is no separate `deploy --config-only` or
+`apply` flag.
 
-Mode is selected by comparing the local `(git_sha, manifest_hash)` against
-the helper's last-successful-deploy record for this app:
+Mode is selected by comparing a **content signature** against the
+helper's last-successful-deploy record. The signature components depend
+on app shape:
+
+- **Container apps:** `(git_sha, manifest_hash)`. The git SHA covers
+  the build context because `git archive HEAD` is content-addressed by
+  SHA. Dirty-worktree deploys add a timestamp suffix that forces a
+  fresh signature.
+- **Static apps:** `(static_tree_hash, manifest_hash)`. The static
+  directory is gitignored in the common case, so git SHA does not
+  cover what is actually shipped. `static_tree_hash` is computed
+  deterministically server-side from the uploaded tarball (e.g.,
+  `sha256sum` over a sorted listing of file paths, modes, and content
+  hashes) so a rebuilt `dist/` with byte-different content always
+  triggers a deploy.
 
 | Diff | Action | Typical time |
 |---|---|---|
 | No diff | No-op, report "nothing to deploy" | ~1 s (one SSH check) |
 | Manifest only | Reconcile config (routes / env / secrets / mounts / limits) | 1-3 s; +container restart if runtime flags changed |
-| Code or Dockerfile changed | Build new image, blue/green swap, reconcile config | 5-90 s depending on layer cache |
+| Container: code or Dockerfile changed | Build new image, blue/green swap, reconcile config | 5-90 s depending on layer cache |
+| Static: tree hash changed | Upload tarball, snapshot to `releases/<id>`, atomic symlink swap | 1-3 s |
 
-This collapses the wrangler-style "many imperative verbs" surface into one
-declarative verb that converges actual state to the manifest's intent. It
-matches `fly deploy`. The user's mental model is uniform: edit manifest, run
-deploy, the system figures out the cheapest path.
+This collapses the wrangler-style "many imperative verbs" surface into
+one declarative verb that converges actual state to the manifest's
+intent. It matches `fly deploy`. The user's mental model is uniform:
+edit manifest (or rebuild the static output), run deploy, the system
+figures out the cheapest path.
 
-The helper persists the `(git_sha, manifest_hash)` of the last successful
-deploy in its per-app state file (extending the ADR-0002 schema).
+The helper persists the last-successful-deploy signature per app in
+its state file (extending the ADR-0002 schema).
 
 ### 10. Container deploy lifecycle (full-build path)
 
@@ -230,21 +262,27 @@ When Section 9 selects the full-build mode:
    simple-vps/<app>:<sha> --label app=<name> --label
    simple_vps_release=<sha> -`. The CPUQuota cap bounds contention with
    apps already serving traffic on the same host.
-3. **Helper:** `podman run --name app-<name>-new` with the Section 7
-   security floor, `--env-file /var/apps/<app>/shared/.env`, `--mount` for
-   `/var/apps/<app>/shared` and any declared `mounts`.
-4. **Health check:** `curl 127.0.0.1:<service-port><healthcheck>` until
-   success or timeout.
-5. **Swap:** rewrite Caddy upstream from `app-<name>` to `app-<name>-new`,
-   `caddy reload`.
-6. **Reap old:** stop the previous container, rename `app-<name>-new` to
-   `app-<name>`.
-7. **Reconcile:** apply manifest routes (Section 11), record new
-   `(git_sha, manifest_hash)` in helper state, untag stale images per
-   Section 6, `podman image prune -f`.
+3. **Helper:** allocate a fresh host-loopback port per service (stored
+   in helper state, see Section 16's networking model), then
+   `podman run --name app-<name>-new` with the Section 7 security
+   floor, `--env-file /var/apps/<app>/shared/.env`, `--mount` for
+   `/var/apps/<app>/shared` and any declared `mounts`,
+   `--network=app-<name>` for intra-app container-to-container
+   traffic, and
+   `--publish 127.0.0.1:<allocated-port>:<service-port>` per service.
+4. **Health check:** `curl 127.0.0.1:<allocated-port><healthcheck>`
+   until success or timeout.
+5. **Swap:** rewrite Caddy upstream from the previous
+   `127.0.0.1:<old-port>` to `127.0.0.1:<new-port>`, `caddy reload`.
+6. **Reap old:** stop the previous container, rename `app-<name>-new`
+   to `app-<name>`, release the old allocated port back to the pool.
+7. **Reconcile:** apply manifest routes (Section 13), record new
+   content signature (Section 9) in helper state, untag stale images
+   per Section 6, `podman image prune -f`.
 
-Health-check failure: stop `app-<name>-new`, leave the previous container
-serving traffic, fail the deploy. No state mutation.
+Health-check failure: stop `app-<name>-new`, release its allocated
+port, leave the previous container and its existing Caddy upstream
+untouched, fail the deploy. No state mutation.
 
 ### 11. Config-only reconcile (manifest-only diff path)
 
@@ -293,7 +331,19 @@ Lifecycle:
 3. **Helper:** extract to `/var/apps/<name>/releases/<id>/`, where
    `<id>` is timestamp + short git SHA (or `dirty-<timestamp>` for an
    unclean worktree).
-4. **Helper:** atomic symlink swap, `ln -sfn releases/<id> web`.
+4. **Helper:** atomic symlink swap via `rename(2)`:
+
+   ```
+   ln -sfn releases/<id> web.next
+   mv -Tf web.next web
+   ```
+
+   `ln -sfn` alone is not atomic — it unlinks then re-creates the
+   symlink, leaving a brief window where `web` does not exist. The
+   temp-symlink + `mv -Tf` pattern uses `rename(2)`, which is atomic
+   for symlink replacement on Linux. Requests in flight during the
+   swap either see the old release or the new one, never a missing
+   path.
 5. **Helper:** reconcile manifest routes (Caddy `root` pointing at
    `/var/apps/<name>/web` + `file_server`).
 6. `caddy reload`.
@@ -414,6 +464,50 @@ This narrows the trust boundary to "manifest schema + secret values,"
 both validated server-side. Compromised client credentials still grant
 deploy access — unavoidable — but cannot inject arbitrary unit content,
 container flags, or out-of-schema Caddy directives.
+
+### 16. Networking: host-loopback published ports
+
+Host-Caddy talks to containers via **host-loopback published ports**.
+This is the only routing path; Caddy does not join any Podman network.
+
+Concretely:
+
+- Each service in the manifest is assigned a host-loopback port by the
+  helper at deploy time, from a configurable range (default
+  `33000-33999`).
+- The container is started with
+  `--publish 127.0.0.1:<allocated>:<service-port>`. The bind is
+  loopback-only — the port is not exposed on any external interface.
+- Caddy upstream is `127.0.0.1:<allocated>`.
+- Health checks hit `127.0.0.1:<allocated><healthcheck-path>`.
+- During a full-build deploy, the new container gets a fresh port; the
+  old port is released to the pool only after the old container stops
+  (Section 10 step 6). The blue/green swap is at the Caddy-upstream
+  layer, not at the port-binding layer.
+
+The per-app Podman network `app-<name>` still exists, but its purpose is
+**intra-app container-to-container traffic** (multi-container apps
+talking to each other by container name). It is not the path Caddy uses
+to reach app services.
+
+State: the helper records `(app, service) -> host_port` in its state
+file and survives restarts. Port collisions across apps are prevented
+by the allocator; manifests do not specify host ports.
+
+Trade-offs vs the alternative "host Caddy joins the Podman network and
+resolves container names":
+
+- Host-loopback wins on simplicity (Caddy stays a plain host service,
+  no Podman networking on the Caddy side), debuggability
+  (`curl 127.0.0.1:<port>` from the host always works), and
+  compatibility (works identically under rootful or rootless Podman).
+- Container-network membership would let Caddy address upstreams by
+  container name without port allocation, at the cost of putting Caddy
+  inside Podman's network plane. Rejected for this tool's
+  "Caddy is a host service" architecture.
+
+Static apps do not use host-loopback ports; host Caddy serves their
+files directly via `file_server` (Section 12).
 
 ## Consequences
 
@@ -544,6 +638,23 @@ Cutover is complete when:
     server-side from typed manifest input. The current
     `app install-unit` verb is removed; `app apply --from-manifest`
     replaces it.
+16. Podman runs rootful (helper invokes as root); container processes
+    run as `app-<name>` per Section 7's security floor. No rootless
+    Podman per-user setup.
+17. Static deploy symlink swap uses `rename(2)` via `mv -Tf`, not
+    `ln -sfn` alone.
+18. Content signature is shape-dependent: container apps use
+    `(git_sha, manifest_hash)`; static apps use
+    `(static_tree_hash, manifest_hash)`. Helper computes
+    `static_tree_hash` server-side from the uploaded tarball.
+19. Helper state schema (ADR-0002) extends to record
+    `(app, service) -> host_port` allocations from a configurable
+    range (default 33000-33999), and the last-successful-deploy
+    signature per app.
+20. Host-Caddy reaches container services via
+    `--publish 127.0.0.1:<allocated>:<service-port>`. Caddy does not
+    join any Podman network. The per-app `app-<name>` Podman network
+    exists for intra-app traffic only.
 
 ## Notes
 
