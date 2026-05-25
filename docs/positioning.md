@@ -92,11 +92,12 @@ What simple-vps does that Kamal doesn't:
   running" is a product bar, not a recipe (per ADR-0007).
 - **Go binary** — no Ruby runtime required on the client.
 
-What Kamal does that simple-vps doesn't (and won't):
+What Kamal does that simple-vps doesn't ship today:
 
 - Multi-host deploys.
 - Custom in-house proxy (kamal-proxy). simple-vps stays on Caddy —
-  already small, no Traefik-grade complexity to escape from.
+  already small, with none of the Traefik complexity that drove Kamal
+  to build a custom proxy.
 
 ## Why not the other options
 
@@ -170,9 +171,9 @@ its own product, not feature creep into this one.
   window committed to in ADR-0006.
 - New ADRs amend or supersede prior ones explicitly. ADRs are not
   deleted; superseded ones get a header.
-- The audience and the design discipline tests above do not change.
-  New audiences are addressed by new products, not by scope creep
-  here.
+- The audience and the design discipline tests above are the lens we
+  apply today. They could evolve, but new audiences are usually better
+  served by new products than by stretching this one.
 
 ## Related documents
 

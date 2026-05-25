@@ -26,20 +26,27 @@ The DX is flyctl-shaped: the manifest is the source of truth, one
 declarative `deploy` verb reconciles state, no daemon between commands,
 no opaque magic.
 
-## Non-Goals
+## Out of scope today
 
-- No Kubernetes.
-- No multi-host fleet management.
-- No managed services tier (Postgres, Redis, object storage).
+Things simple-vps doesn't ship in the CLI today. Any of these could
+become right for the product later; if so, they'd warrant their own
+design, not feature creep into the current shape. See
+[docs/positioning.md](docs/positioning.md) for the full reasoning.
+
+- Not Kubernetes-shaped.
+- Not multi-host fleet management.
+- No managed services tier (Postgres, Redis, object storage) — those
+  run as containers like everything else.
 - No multi-provider abstraction.
 - No git-push deploy.
 - No dashboard UI shipped by us. The state-in-files + JSON-CLI surface
-  is composable for someone (community, future product) to build one on
-  top.
+  is composable so someone (community, future product, you later) can
+  build one on top.
 - No built-in recurring scheduler. Framework schedulers (Sidekiq,
   Oban, BullMQ, Laravel scheduler) and host cron / systemd timers
-  cover that surface.
-- No plugin system.
+  cover that surface today.
+- No sanctioned plugin system. Extension happens through the
+  composable primitive.
 
 ## Public CLI
 
