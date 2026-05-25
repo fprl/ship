@@ -34,7 +34,7 @@ sections to preserve the audit signal.
   routes.json                  ingress route table
   providers/
     cloudflare.json            Cloudflare account / tunnel / DNS state
-  secrets/                     per-app secret env files (existing)
+  secrets/                     per-app/env secret value files
 ```
 
 Filename convention: `{scope}.json`. `host.json` is host-scoped. `apps.json` is
@@ -57,23 +57,23 @@ not a layout change.
       "tunnel": "cloudflare"
     },
     "features": {
-      "docker": false,
-      "litestream": true,
-      "runtimes": ["bun"]
+      "podman": true,
+      "litestream": true
     },
     "packages": {
-      "caddy":      { "source": "caddy-apt",      "track": "stable" },
+      "podman":     { "source": "ubuntu",         "track": "noble" },
       "litestream": { "source": "github-release", "version": "0.5.8" }
     }
   },
   "observed": {
     "packages": {
-      "caddy":      { "version": "2.8.4" },
+      "podman":     { "version": "4.9.3" },
       "litestream": { "version": "0.5.8" }
     },
     "ingress": {
       "ufw_80_443_allowed": false,
-      "cloudflared_service_active": true
+      "cloudflared_service_active": true,
+      "caddy_container_active": true
     }
   },
   "meta": {
@@ -128,7 +128,7 @@ These rules apply to every file under `/etc/simple-vps/`:
    - `host.json` - root:root 0644
    - `apps.json`, `routes.json` - root:root 0644
    - `providers/cloudflare.json` - root:root 0600 (contains external IDs)
-   - `secrets/<app>.env` - root:`app-<name>` 0640 (per-app, group-readable)
+   - `secrets/<app>/<env>.env` - root:root 0600 (per-app/env secret values)
 
 ### 5. `apps.json` and `routes.json` stay separate
 

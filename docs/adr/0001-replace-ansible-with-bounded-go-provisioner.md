@@ -141,6 +141,10 @@ record typed operations there.
 
 ### 7. Dependency policy
 
+The app-runtime rows in this section are historical. ADR-0005 supersedes the
+runtime story: app runtimes now belong inside the app Dockerfile, and the host
+provisioner installs Podman instead of Node/Bun/package-manager tooling.
+
 Package versions live in `host.json` under `desired.packages.<name>` (see
 ADR-0002). The provisioner records observed versions alongside.
 
@@ -159,13 +163,11 @@ fingerprint before the `signed-by=` source entry is trusted. See ADR-0003.
 Non-apt release artifacts verify pinned SHA256 digests before install. See
 ADR-0004.
 
-Language runtimes (Node, Bun, pnpm) are **not installed by default during
-`host install`**. In the current product shape they are explicit host
-prerequisites: `simple-vps deploy` fails fast when the manifest runtime or
-lockfile requires a missing host tool (`node`, `npm`, `bun`, `pnpm`, or
-`yarn`). Surprise installs at deploy time are explicitly excluded. A future ADR
-can add first-class `host install` runtime feature flags once version and source
-policy are pinned.
+Language runtime handling in this ADR is superseded by ADR-0005. In the
+current product shape, `simple-vps deploy` builds container apps from the
+repo's Dockerfile and app runtimes live inside that image. Host install must
+not install Node, Bun, pnpm, yarn, or other app language toolchains by
+surprise.
 
 ### 8. Cutover plan
 

@@ -9,8 +9,7 @@ There is no control plane, no dashboard, no managed services tier. The CLI
 is the product.
 
 This document is the design discipline reference: who simple-vps is for,
-what is permanently in scope, what is permanently out, and the tests every
-new feature must pass.
+what is in scope, what is out, and the tests every new feature must pass.
 
 ## Audience
 
@@ -26,7 +25,7 @@ Not the audience:
 - Engineers who want a free Heroku — Coolify is closer.
 - Anyone whose deploy story needs multi-host fleet management.
 
-## In scope (permanently)
+## In scope
 
 - **One CLI** doing host hardening, app deploy, routing, secrets, and
   backups.
@@ -34,6 +33,9 @@ Not the audience:
 - **Manifest in your git repo** as the source of truth.
 - **Hardened by default**: firewall, deploy user, TLS via Caddy,
   locked-down systemd / Podman.
+- **Ingress modes, not a provider matrix**: public Caddy as the
+  direct VPS ownership path; Cloudflare Tunnel and Tailscale admin
+  access as supported hardening modes for teams that want them.
 - **Composable primitive**: state in flat files (per ADR-0002), CLI is
   the API, `--json` output on every read. Dashboards, schedulers, and
   multi-host coordinators are someone else's product (or our future
@@ -57,6 +59,11 @@ feature creep into the current shape.
 - **Managed services tier** (managed Postgres, managed Redis, managed
   object storage). Those run as containers like everything else; the
   user owns the data and the lifecycle.
+- **Built-in recurring scheduler / jobs primitive.** Framework
+  schedulers (Sidekiq, Oban, Celery beat, BullMQ, Laravel scheduler)
+  cover recurring work inside app stacks. System cron, systemd timers,
+  or external schedulers cover host-level scheduling. simple-vps does
+  not own the scheduler.
 - **Git-push deploy.** Explicit `deploy` keeps the trigger surface
   controlled and scriptable.
 - **Plugin system.** Extension happens through the composable
@@ -81,6 +88,8 @@ What simple-vps does that Kamal doesn't:
 - **Static apps as a first-class shape.** No container required for
   static output; Caddy serves files directly.
 - **Per-env first-class** in the manifest, not grafted on.
+- **Backup and restore as a primitive.** "Fresh VPS, restore app to
+  running" is a product bar, not a recipe (per ADR-0007).
 - **Go binary** — no Ruby runtime required on the client.
 
 What Kamal does that simple-vps doesn't (and won't):
@@ -93,7 +102,7 @@ What Kamal does that simple-vps doesn't (and won't):
 
 | Tool | What it offers an indie hacker | What simple-vps offers over it |
 |---|---|---|
-| **Coolify / Dokploy / CapRover** | Heroku-like UI, one-click deploys, ecosystem | No dashboard process to run, secure, or update; manifest in repo, not in a database; smaller footprint |
+| **Coolify / Dokploy / CapRover** | Dashboard-first self-hosted PaaS: control panel, database-backed state, app templates, click-driven flows | CLI-first deploy primitive: repo-owned manifest, flat-file host state, JSON API, no dashboard process, no hidden UI-owned config |
 | **Dokku** | Mature, Heroku-shaped, git-push, plugins | Modern Go binary instead of bash sprawl; hardened host included; no buildpack guesswork |
 | **Compose + Traefik + scripts** | Standard Docker tools, fully under your control | Hardened host included; secret management included; route synthesis included; backup/restore included; not a script you have to maintain |
 | **Kubernetes / k3s** | Real fleet management, autoscaling | If you need k8s, you are not the audience |
@@ -168,7 +177,8 @@ its own product, not feature creep into this one.
 ## Related documents
 
 - [SPEC.md](../SPEC.md) — public CLI surface and manifest contract
-- [docs/security-model.md](security-model.md) — host security posture
+- [docs/security-model.md](security-model.md) — host security posture and
+  ingress / admin modes
 - [docs/adr/0001-replace-ansible-with-bounded-go-provisioner.md](adr/0001-replace-ansible-with-bounded-go-provisioner.md)
   — hardened-host installer
 - [docs/adr/0002-state-file-layout.md](adr/0002-state-file-layout.md)

@@ -1,30 +1,44 @@
 # Security Model
 
 Simple VPS is not a general compliance hardening framework. It has one
-security model: expose apps through Cloudflare Tunnel, keep direct host access
-on Tailscale, and make the expected host state inspectable.
+host posture: least-open-by-default, explicit ingress/admin modes, and an
+expected host state that is inspectable.
 
 ## Opinionated Choices
 
-Simple VPS picks Tailscale for admin access and Cloudflare Tunnel for public
-ingress. Alternatives such as Headscale, ZeroTier, NetBird, public Caddy,
-Fastly Tunnels, or ngrok are out of scope for v1.
+Simple VPS always uses Caddy as the local ingress router and OpenSSH for
+bootstrap/recovery access. The operator chooses ingress and admin modes:
 
-The host bootstrap should not install or configure other mesh VPN or tunnel
-providers. The point is a small, inspectable production path, not a provider
-matrix.
+- `--ingress public`: Caddy listens on public `80`/`443`.
+- `--ingress cloudflare`: Cloudflare Tunnel reaches Caddy over loopback;
+  public `80`/`443` stay closed.
+- `--ingress private`: no public HTTP ingress.
+- `--admin public-ssh`: public SSH remains available with keys only.
+- `--admin tailscale`: SSH moves to Tailscale once Tailscale is ready.
+
+Alternatives such as Headscale, ZeroTier, NetBird, Fastly Tunnels, or ngrok
+are out of scope for v1. The host bootstrap should not install or configure a
+provider matrix.
 
 ## Ingress
 
-Public app traffic should enter through Cloudflare Tunnel and reach Caddy on
-the VPS over loopback:
+Public app traffic reaches Caddy through the selected ingress mode.
+
+Public mode:
+
+```text
+internet -> VPS:80/443 -> Caddy -> app
+```
+
+Cloudflare mode:
 
 ```text
 internet -> Cloudflare -> cloudflared -> 127.0.0.1:8080 -> Caddy -> app
 ```
 
-The VPS firewall should not expose public `80` or `443`. Caddy is still the
-local ingress router, but Cloudflare Tunnel is the public edge.
+Private mode exposes no public HTTP entrypoint. Caddy may still serve local or
+private routes for future internal use, but the firewall does not open public
+`80` or `443`.
 
 ## SSH
 
@@ -33,8 +47,10 @@ The target steady state is:
 - SSH keys only.
 - `PasswordAuthentication no`.
 - Root SSH disabled with `PermitRootLogin no`.
-- SSH reachable through Tailscale once Tailscale is authenticated.
-- Public SSH allowed only as a bootstrap/recovery fallback.
+- If `--admin tailscale` is selected, SSH reachable through Tailscale once
+  Tailscale is authenticated.
+- Public SSH allowed as bootstrap/recovery access, or as the steady state when
+  `--admin public-ssh` is selected.
 
 The installer uses a bootstrap compromise: it creates the operator and deploy
 users and copies SSH keys first, then applies hardening after operator access is
@@ -42,9 +58,10 @@ expected to work. Today the role sets `PermitRootLogin prohibit-password`, which
 blocks root password login but still allows root key login. That is safer than
 root passwords, but it is still not the desired steady state.
 
-`simple-vps host doctor` should make this visible. A host with public SSH open,
-password SSH enabled, or root key login still enabled should be reported as
-degraded unless the system is explicitly in bootstrap or recovery mode.
+`simple-vps host doctor` should make this visible. A host with password SSH
+enabled or root key login still enabled should be reported as degraded. Public
+SSH is degraded only when `--admin tailscale` is the desired steady state and
+Tailscale is ready.
 
 ## Firewall
 
@@ -52,10 +69,12 @@ The expected UFW state is:
 
 - Incoming traffic denied by default.
 - Outgoing traffic allowed by default.
-- SSH allowed on `tailscale0` when Tailscale is ready.
-- Public SSH removed when Tailscale SSH access is ready.
+- Public `80` and `443` allowed only for `--ingress public`.
+- Public `80` and `443` removed for `--ingress cloudflare` and
+  `--ingress private`.
+- SSH allowed on `tailscale0` when Tailscale admin mode is ready.
+- Public SSH removed when Tailscale admin mode is ready.
 - Tailscale WireGuard UDP allowed when Tailscale is enabled.
-- Public `80` and `443` removed.
 
 Firewall changes must prefer recoverability over theoretical neatness. If
 Tailscale is installed but not authenticated, public SSH stays open so the
@@ -71,7 +90,7 @@ The expected security services are:
 - `tailscaled` installed and enabled when Tailscale is enabled.
 - `cloudflared` installed, isolated as its own user, and enabled only when a
   Cloudflare tunnel token, API token, or config path is provided.
-- Caddy installed and serving generated Simple VPS route config.
+- Caddy running as the generated Simple VPS ingress container.
 
 The default Cloudflare trust boundary is tunnel-token or config-file access:
 Simple VPS can run the tunnel on the VPS, while users configure Cloudflare
@@ -79,9 +98,9 @@ public hostnames and DNS in Cloudflare. Cloudflare API-managed hostname and DNS
 publication is an advanced opt-in for teams comfortable storing that API token
 on the server.
 
-Once Tailscale-only SSH is the normal post-bootstrap state, fail2ban should be
-reassessed. It is not a generic protection layer for arbitrary ports users open
-by hand; service-specific exposure needs service-specific policy.
+When Tailscale-only SSH is the selected post-bootstrap state, fail2ban should
+be reassessed. It is not a generic protection layer for arbitrary ports users
+open by hand; service-specific exposure needs service-specific policy.
 
 ## Privileged API
 
@@ -117,8 +136,8 @@ Initial doctor checks should cover:
 
 - SSH password login disabled.
 - Root login disabled after bootstrap.
-- Public SSH closed when Tailscale is ready.
-- Public `80` and `443` closed.
+- Public SSH closed when Tailscale admin mode is desired and ready.
+- Public `80` and `443` match the desired ingress mode.
 - Tailscale, cloudflared, Caddy, fail2ban, and unattended upgrades state.
 - The deploy sudoers grant points at `/usr/local/bin/simple-vps`.
 - The operator/deploy split is healthy.

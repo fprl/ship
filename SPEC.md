@@ -36,6 +36,9 @@ no opaque magic.
 - No dashboard UI shipped by us. The state-in-files + JSON-CLI surface
   is composable for someone (community, future product) to build one on
   top.
+- No built-in recurring scheduler. Framework schedulers (Sidekiq,
+  Oban, BullMQ, Laravel scheduler) and host cron / systemd timers
+  cover that surface.
 - No plugin system.
 
 ## Public CLI
@@ -48,12 +51,12 @@ The user-facing surface. `simple-vps --help` lists exactly these verbs.
 simple-vps init                                       # scaffold simple-vps.toml
 simple-vps check [env]                                # validate manifest
 simple-vps setup <env>                                # create app on the host
-simple-vps deploy <env> [--dirty] [--include-dotenv]
+simple-vps deploy <env> [--dirty] [--rebuild]
 simple-vps rollback <env> [release]
 simple-vps destroy <env> [--yes] [--confirm <name>] [--purge]
 simple-vps restart <env> <service>
-simple-vps status <env>
-simple-vps logs <env> [service] [--tail]
+simple-vps status <env> [--json]
+simple-vps logs <env> [service] [--tail] [--json]
 simple-vps ssh <env>
 ```
 
@@ -61,26 +64,55 @@ simple-vps ssh <env>
 
 ```bash
 simple-vps secret put <env> <KEY>
-simple-vps secret list <env>
+simple-vps secret list <env> [--json]
 simple-vps secret rm <env> <KEY>
-simple-vps env push <env> <file>
 ```
 
 `secret put` reads stdin only, never argv.
 `secret list` prints names only, never values.
 Writes are atomic via the privileged server API. No auto-restart.
 
+Non-secret env values live in `[env.<env>.env]` blocks in the manifest.
+Secret values are referenced by whole-value `@secret:KEY` references and
+resolved on the host before deploy execution.
+
+### Backup and restore
+
+```bash
+simple-vps backup <env>
+simple-vps backup <env> --to=<destination>
+simple-vps backup list <env> [--json]
+simple-vps backup rm <env> <backup-id>
+
+simple-vps restore <env> --from=<backup-id>
+simple-vps restore <env> --from=<backup-id> --dry-run
+```
+
+Backup and restore are paired primitives. The bar is: fresh VPS, host
+bootstrap, one `restore`, app running again when source access and secret
+master key requirements are satisfied. See ADR-0007.
+
 ### Host operations
 
 ```bash
-simple-vps host status [--server <ssh-target>]
-simple-vps host doctor [--server <ssh-target>]
+simple-vps host status [--server <ssh-target>] [--json]
+simple-vps host doctor [--server <ssh-target>] [--json]
 simple-vps host install [install options]
 ```
 
-`status` and `doctor` report on host readiness through SSH. `host install` runs
-the bounded Go host provisioner from the Go binary. The public `install.sh`
-entrypoint is a tiny bootstrap for the one-line install path.
+`status` and `doctor` report on host readiness through SSH. `host install`
+runs the bounded Go host provisioner from the Go binary. The public
+`install.sh` entrypoint is a tiny bootstrap for the one-line install path.
+
+`host install` supports ingress / admin modes:
+
+```bash
+simple-vps host install --ingress public
+simple-vps host install --ingress cloudflare --cloudflare-tunnel-token=...
+simple-vps host install --ingress private --admin tailscale --tailscale-auth-key=...
+```
+
+See [docs/security-model.md](docs/security-model.md) for the supported modes.
 
 ### Diagnostics
 
@@ -105,22 +137,13 @@ installer, and host helper.
 sudo simple-vps server status
 sudo simple-vps server doctor
 
-sudo simple-vps server app create <name>
-sudo simple-vps server app destroy <name>
-sudo simple-vps server app install-unit <name> <service> <path>
-sudo simple-vps server app uninstall-unit <name> <service>
-sudo simple-vps server app daemon-reload
-sudo simple-vps server app service <action> <name> <service>
-sudo simple-vps server app run-as <name> --cwd <path> -- <cmd> [args...]
-sudo simple-vps server app install-env <name> <path>
-sudo simple-vps server app read-env <name>
+sudo simple-vps server app apply --from-manifest <app> <env>
+sudo simple-vps server app destroy <app> <env>
+sudo simple-vps server app service <action> <app> <env> <service>
+sudo simple-vps server app read-env <app> <env>
 
 sudo simple-vps server route list [--json]
-sudo simple-vps server route proxy --port <port> --app <name> <host>
-sudo simple-vps server route static --root <path> --app <name> <host>
-sudo simple-vps server route redirect --to <url> --app <name> <host>
-sudo simple-vps server route remove <host>
-sudo simple-vps server route remove --app <name>
+sudo simple-vps server route apply --from-manifest <app> <env>
 
 sudo simple-vps server cloudflare publish --app <name> <host>
 sudo simple-vps server cloudflare remove <host>
@@ -141,14 +164,28 @@ The sudoers contract is one line for the whole server binary, installed at
 
 The manifest is `simple-vps.toml` at the app repo root.
 
-Schema, validation rules, three build modes (A/B/C), env override blocks,
-include/dotenv handling, and lockfile detection are owned by the Go config
-package and covered by the Go test suite.
+Schema, validation rules, app shape detection, env blocks, command rules,
+secret references, and backup config are owned by the Go config package
+and covered by the Go test suite.
 
-Language runtimes are host prerequisites, not surprise deploy-time installs.
-`deploy` checks the selected runtime and lockfile before creating a release and
-fails fast if the host is missing the required tool (`node`, `npm`, `bun`,
-`pnpm`, or `yarn`).
+The manifest describes one app. App shape is inferred from the repo:
+
+- `Dockerfile` present, no `static = "..."`: container app.
+- `static = "..."` present, no `Dockerfile`: static app.
+- Both present or both absent: validation error.
+
+Container apps build on the VPS with Podman. The Dockerfile is the runtime
+contract; Node, Bun, Python, Ruby, Go, and other runtimes belong inside the
+image, not on the host. Static apps upload a pre-built directory and Caddy
+serves it directly.
+
+Services are long-running containers from the app image. Service commands
+accept string form and array form; array form is recommended for commands
+with arguments because it avoids shell quoting.
+
+Migrations are a deploy concern, not a separate verb. v1 users can run
+migrations from the image's startup wrapper (`migrate && serve`). A future
+ADR may add a `predeploy` hook.
 
 ## Installation
 
@@ -158,13 +195,13 @@ finds, downloads, or builds a Go binary, then execs `simple-vps host install`.
 ```text
 # on a fresh box, ssh'd as root:
 curl -fsSL https://simple-vps.dev/install.sh | bash \
-    --tailscale-auth-key=... \
-    --cloudflare-tunnel-token=... \
+    --ingress public \
     --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
 
 # or from a laptop, against a fresh box:
 ./install.sh --mode remote --host <ip> --bootstrap-user root \
     --ssh-key ~/.ssh/id_ed25519 \
+    --ingress public \
     --operator-ssh-public-key-file ~/.ssh/id_ed25519.pub \
     --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
 ```
@@ -174,6 +211,14 @@ The Go command underneath accepts the same flags:
 
 ```bash
 simple-vps host install --mode remote --host <ip> --bootstrap-user root
+```
+
+Cloudflare Tunnel and Tailscale admin access are supported install modes,
+not required product identity:
+
+```bash
+simple-vps host install --ingress cloudflare --cloudflare-tunnel-token=...
+simple-vps host install --admin tailscale --tailscale-auth-key=...
 ```
 
 After install, the primary checks are:
