@@ -5,7 +5,10 @@ Source of truth for the Simple VPS product. Implementation details live in
 
 ## Product
 
-Simple VPS is one CLI for running JS/TS apps on your own VPS without Docker.
+Simple VPS is one CLI for deploying containerized apps to a single hardened
+VPS — built for solo developers and small teams. Audience, scope, and the
+design discipline that gates new features live in
+[docs/positioning.md](docs/positioning.md).
 
 ```text
 fresh Ubuntu VPS  ->  install.sh           ->  hardened box
@@ -19,19 +22,20 @@ Two responsibilities, one CLI:
 - **App operations** deploy, observe, and manage apps on a prepared VPS.
   Frequent. The 90% case.
 
-The DX is wrangler-shaped in spirit: the app repo is the control plane, the
-CLI is explicit about what runs where, no daemon, no opaque magic. Not a
-wrangler clone.
+The DX is flyctl-shaped: the manifest is the source of truth, one
+declarative `deploy` verb reconciles state, no daemon between commands,
+no opaque magic.
 
 ## Non-Goals
 
-- No Docker as the app deployment runtime. The host installer can install
-  Docker as an opt-in system package for users who need it outside Simple VPS.
 - No Kubernetes.
-- No managed bindings (KV/D1/queues abstraction).
+- No multi-host fleet management.
+- No managed services tier (Postgres, Redis, object storage).
 - No multi-provider abstraction.
 - No git-push deploy.
-- No dashboard UI.
+- No dashboard UI shipped by us. The state-in-files + JSON-CLI surface
+  is composable for someone (community, future product) to build one on
+  top.
 - No plugin system.
 
 ## Public CLI

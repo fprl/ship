@@ -1,6 +1,7 @@
 # Simple VPS
 
-Simple VPS is one CLI for running JS/TS apps on your own VPS without Docker.
+Simple VPS is one CLI for deploying containerized apps to a single hardened
+VPS — built for solo developers and small teams.
 
 ```text
 fresh Ubuntu VPS  ->  install.sh         ->  hardened box
@@ -17,6 +18,8 @@ simple-vps
 
 ## Start Here
 
+The product positioning and design discipline live in
+[docs/positioning.md](docs/positioning.md).
 The public product contract lives in [SPEC.md](SPEC.md).
 The host security model lives in [docs/security-model.md](docs/security-model.md).
 
