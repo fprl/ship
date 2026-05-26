@@ -504,6 +504,102 @@ func TestOSReleaseValue(t *testing.T) {
 	}
 }
 
+// --- Podman provisioner coverage (ADR-0005 cutover items 23, 24; ADR-0006 Cut 2) ---
+
+func TestRunInstallInstallsPodmanFromUbuntuUniverse(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "simple-vps")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &installFakeRunner{files: map[string]host.FileState{}}
+
+	_, err := RunInstall(context.Background(), runner, InstallOptions{
+		OperatorUser:          "operator",
+		DeployUser:            "deploy",
+		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
+		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		StateRoot:             root,
+		HelperBinaryPath:      helper,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !runner.ranCommand("apt-get", "install -y podman") {
+		t.Fatalf("expected podman to be installed via apt-get, commands: %+v", runner.commands)
+	}
+
+	loaded, err := (store.Store{Root: root}).ReadHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := loaded.Desired.Packages["podman"]
+	if !ok {
+		t.Fatalf("expected podman in desired packages, got %+v", loaded.Desired.Packages)
+	}
+	if got.Source != "ubuntu" {
+		t.Fatalf("expected podman source=ubuntu, got %+v", got)
+	}
+}
+
+func TestRunInstallCreatesIngressNetworkWhenAbsent(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "simple-vps")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &installFakeRunner{
+		files: map[string]host.FileState{},
+		commandResults: map[string]host.CommandResult{
+			"podman network exists ingress": {ExitCode: 1},
+		},
+	}
+
+	_, err := RunInstall(context.Background(), runner, InstallOptions{
+		OperatorUser:          "operator",
+		DeployUser:            "deploy",
+		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
+		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		StateRoot:             root,
+		HelperBinaryPath:      helper,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !runner.ranCommand("podman", "network create ingress") {
+		t.Fatalf("expected ingress network to be created, commands: %+v", runner.commands)
+	}
+}
+
+func TestRunInstallSkipsIngressNetworkCreationWhenPresent(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "simple-vps")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Default fake runner returns ExitCode 0 for unknown commands, so
+	// "podman network exists ingress" reports "exists" (exit 0).
+	runner := &installFakeRunner{files: map[string]host.FileState{}}
+
+	_, err := RunInstall(context.Background(), runner, InstallOptions{
+		OperatorUser:          "operator",
+		DeployUser:            "deploy",
+		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
+		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		StateRoot:             root,
+		HelperBinaryPath:      helper,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if runner.ranCommand("podman", "network create ingress") {
+		t.Fatalf("ingress network create should be skipped when present, commands: %+v", runner.commands)
+	}
+}
+
 func TestUbuntuCodenameFallsBackToNoble(t *testing.T) {
 	runner := &installFakeRunner{files: map[string]host.FileState{}}
 	got, err := ubuntuCodename(host.Apply{Context: context.Background(), Runner: runner})

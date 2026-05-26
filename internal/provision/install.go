@@ -160,6 +160,7 @@ func installOperations(opts InstallOptions, stateStore store.Store) []operation 
 	addSSHHardening(&ops)
 	addSecurity(&ops, opts)
 	addHelper(&ops, opts)
+	addPodman(&ops)
 	addCaddy(&ops)
 	if opts.InstallLitestream {
 		addLitestream(&ops)
@@ -321,6 +322,45 @@ func addHelper(ops *[]operation, opts InstallOptions) {
 	*ops = append(*ops, operation{name: "simple-vps sudoers", run: func(apply host.Apply) (bool, error) {
 		return host.EnsureSudoersFile(apply, "simple-vps", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/simple-vps\n", opts.DeployUser)))
 	}})
+}
+
+// addPodman installs the Podman container engine and creates the shared
+// `ingress` network used by Caddy to reach app containers.
+//
+// Per ADR-0005 Section 14: Podman is installed from the Ubuntu 24.04
+// Universe archive, no third-party apt repo. The Universe-shipped Podman
+// (4.9.x on Noble) is sufficient for systemd integration and the security
+// flags Section 7 requires.
+//
+// Per ADR-0006 Cut 2: the `ingress` Podman network is created once at host
+// install time; app containers join it at run time so Caddy can reach them
+// by container DNS.
+func addPodman(ops *[]operation) {
+	*ops = append(*ops, operation{name: "podman package", run: func(apply host.Apply) (bool, error) {
+		return host.EnsurePackage(apply, "podman")
+	}})
+	*ops = append(*ops, operation{name: "podman ingress network", run: ensureIngressNetwork})
+}
+
+func ensureIngressNetwork(apply host.Apply) (bool, error) {
+	if apply.CheckMode {
+		return true, nil
+	}
+	probe, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "podman", Args: []string{"network", "exists", "ingress"}})
+	if err != nil {
+		return false, err
+	}
+	if probe.ExitCode == 0 {
+		return false, nil
+	}
+	create, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "podman", Args: []string{"network", "create", "ingress"}})
+	if err != nil {
+		return false, err
+	}
+	if err := commandOK(create, "podman", []string{"network", "create", "ingress"}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func addCaddy(ops *[]operation) {
@@ -707,7 +747,8 @@ func desiredHost(opts InstallOptions) store.HostDesired {
 		ingress = store.HostIngressDesired{Expose: store.ExposePrivate, Tunnel: store.TunnelCloudflare}
 	}
 	packages := map[string]store.DesiredPackage{
-		"caddy": {Source: "caddy-apt", Track: "stable"},
+		"caddy":  {Source: "caddy-apt", Track: "stable"},
+		"podman": {Source: "ubuntu", Track: "noble"},
 	}
 	if opts.InstallLitestream {
 		packages["litestream"] = store.DesiredPackage{Source: "github-release", Version: litestreamVersion}
