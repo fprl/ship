@@ -10,6 +10,11 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
+const (
+	ShapeContainer = "container"
+	ShapeStatic    = "static"
+)
+
 var (
 	AppRe        = regexp.MustCompile(`^[a-z][a-z0-9-]{1,40}$`)
 	ServiceRe    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,30}$`)
@@ -17,7 +22,10 @@ var (
 	SystemUserRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}\$?$`)
 )
 
-type Build struct {
+// legacyBuild captures the old [build] block so we can reject it explicitly.
+// Per ADR-0005: container apps build via Dockerfile, static apps ship a
+// pre-built directory. simple-vps does not run host-side builds.
+type legacyBuild struct {
 	Command string   `toml:"command"`
 	Output  string   `toml:"output"`
 	Include []string `toml:"include"`
@@ -43,32 +51,32 @@ type Route struct {
 
 type EnvBlock struct {
 	Server       string             `toml:"server"`
-	Runtime      string             `toml:"runtime"`
-	Path         *string            `toml:"path"`
+	Runtime      string             `toml:"runtime"` // legacy; rejected at check time
 	KeepReleases *int               `toml:"keep_releases"`
-	Build        *Build             `toml:"build"`
+	Build        *legacyBuild       `toml:"build"` // legacy; rejected at check time
 	Services     map[string]Service `toml:"services"`
 	Routes       map[string]Route   `toml:"routes"`
 }
 
 type Manifest struct {
 	Name     string              `toml:"name"`
-	Build    *Build              `toml:"build"`
+	Static   string              `toml:"static"`
+	Build    *legacyBuild        `toml:"build"` // legacy; rejected at check time
 	Services map[string]Service  `toml:"services"`
 	Routes   map[string]Route    `toml:"routes"`
 	Env      map[string]EnvBlock `toml:"env"`
 }
 
 type AppContext struct {
-	AppName   string
-	EnvName   string
-	Server    string
-	AppRoot   string
-	Runtime   string
-	Build     *Build
-	Services  map[string]Service
-	Routes    map[string]Route
-	Lockfiles []string
+	AppName    string
+	EnvName    string
+	Server     string
+	AppRoot    string
+	Shape      string
+	Dockerfile string
+	StaticDir  string
+	Services   map[string]Service
+	Routes     map[string]Route
 }
 
 // Validation helpers
@@ -123,15 +131,30 @@ func ReadManifest(root string) (*Manifest, error) {
 	return &manifest, nil
 }
 
-func GetLockfiles(root string) []string {
-	var found []string
-	known := []string{"bun.lock", "bun.lockb", "pnpm-lock.yaml", "package-lock.json", "yarn.lock"}
-	for _, file := range known {
-		if _, err := os.Stat(filepath.Join(root, file)); err == nil {
-			found = append(found, file)
-		}
+// detectShape returns the inferred app shape ("container" or "static") plus
+// any validation error. The rules from ADR-0005 Section 1:
+//
+//   - Dockerfile present, no static = "..." → container
+//   - static = "..." present, no Dockerfile → static
+//   - both present → error (ambiguous)
+//   - neither present → error (nothing to deploy)
+func detectShape(root string, staticField string) (string, string) {
+	hasDockerfile := false
+	if _, err := os.Stat(filepath.Join(root, "Dockerfile")); err == nil {
+		hasDockerfile = true
 	}
-	return found
+	hasStatic := staticField != ""
+
+	switch {
+	case hasDockerfile && hasStatic:
+		return "", fmt.Sprintf("manifest declares both shapes: a Dockerfile is present and static = %q is set; pick one", staticField)
+	case hasDockerfile:
+		return ShapeContainer, ""
+	case hasStatic:
+		return ShapeStatic, ""
+	default:
+		return "", `manifest is missing a shape: add a Dockerfile (container app) or set top-level static = "<dir>" (static app)`
+	}
 }
 
 func CheckManifest(root string, envName string) ([]string, []string, error) {
@@ -147,6 +170,29 @@ func CheckManifest(root string, envName string) ([]string, []string, error) {
 		errors = append(errors, "name is required")
 	} else if !AppRe.MatchString(manifest.Name) {
 		errors = append(errors, "name must match ^[a-z][a-z0-9-]{1,40}$")
+	}
+
+	if manifest.Build != nil {
+		errors = append(errors, "[build] block is no longer supported; container apps build via Dockerfile, static apps ship a pre-built directory")
+	}
+
+	if manifest.Static != "" {
+		if strings.HasPrefix(manifest.Static, "/") || strings.Contains(manifest.Static, "..") || strings.ContainsAny(manifest.Static, "*?[]{}") {
+			errors = append(errors, "static must be a relative path without '..' or globs")
+		} else {
+			if _, err := os.Stat(filepath.Join(root, manifest.Static)); err != nil {
+				errors = append(errors, fmt.Sprintf("static = %q: directory does not exist", manifest.Static))
+			}
+		}
+	}
+
+	shape, shapeErr := detectShape(root, manifest.Static)
+	if shapeErr != "" {
+		errors = append(errors, shapeErr)
+	}
+
+	if shape == ShapeStatic && len(manifest.Services) > 0 {
+		errors = append(errors, "static apps cannot declare services")
 	}
 
 	if len(manifest.Env) == 0 {
@@ -171,11 +217,6 @@ func CheckManifest(root string, envName string) ([]string, []string, error) {
 		selectedEnvNames = []string{envName}
 	}
 
-	locks := GetLockfiles(root)
-	if len(locks) > 1 {
-		errors = append(errors, fmt.Sprintf("multiple lockfiles found: %s", strings.Join(locks, ", ")))
-	}
-
 	for _, selected := range selectedEnvNames {
 		envBlock := manifest.Env[selected]
 		if !ServiceRe.MatchString(selected) {
@@ -188,50 +229,23 @@ func CheckManifest(root string, envName string) ([]string, []string, error) {
 			errors = append(errors, fmt.Sprintf("[env.%s].server must be an SSH target like deploy@example.com", selected))
 		}
 
-		if envBlock.Path != nil {
-			p := *envBlock.Path
-			if p == "" {
-				errors = append(errors, fmt.Sprintf("[env.%s].path must be a non-empty string when present", selected))
-			} else if !strings.HasPrefix(p, "/") {
-				errors = append(errors, fmt.Sprintf("[env.%s].path must be absolute", selected))
-			} else if manifest.Name == "" || !AppRe.MatchString(manifest.Name) {
-				errors = append(errors, fmt.Sprintf("[env.%s].path requires a valid top-level name", selected))
-			} else {
-				expected := "/var/apps/" + manifest.Name
-				if p != expected {
-					errors = append(errors, fmt.Sprintf("[env.%s].path must be %s", selected, expected))
-				}
-			}
+		if envBlock.Runtime != "" {
+			errors = append(errors, fmt.Sprintf("[env.%s].runtime is no longer supported; shape is inferred from Dockerfile or static = \"<dir>\"", selected))
 		}
 
-		if envBlock.Runtime == "" {
-			errors = append(errors, fmt.Sprintf("[env.%s].runtime is required", selected))
-		} else if envBlock.Runtime != "bun" && envBlock.Runtime != "node" && envBlock.Runtime != "static" {
-			errors = append(errors, fmt.Sprintf("[env.%s].runtime must be bun, node, or static", selected))
+		if envBlock.Build != nil {
+			errors = append(errors, fmt.Sprintf("[env.%s.build] block is no longer supported; container apps build via Dockerfile", selected))
 		}
 
-		if envBlock.KeepReleases != nil {
-			if *envBlock.KeepReleases < 1 {
-				errors = append(errors, fmt.Sprintf("[env.%s].keep_releases must be a positive integer", selected))
-			}
+		if envBlock.KeepReleases != nil && *envBlock.KeepReleases < 1 {
+			errors = append(errors, fmt.Sprintf("[env.%s].keep_releases must be a positive integer", selected))
 		}
 
-		// Merge and validate build
-		mergedBuild := mergeBuild(manifest.Build, envBlock.Build)
-		validateBuild(mergedBuild, root, selected, &errors)
-
-		// Merge and validate services
 		mergedServices := mergeServices(manifest.Services, envBlock.Services)
-		validateServices(mergedServices, envBlock.Runtime, selected, &errors)
+		validateServices(mergedServices, shape, selected, &errors)
 
-		// Merge and validate routes
 		mergedRoutes := mergeRoutes(manifest.Routes, envBlock.Routes)
 		validateRoutes(mergedRoutes, mergedServices, selected, &errors)
-
-		// Check lockfile necessity
-		if isInstallNeeded(envBlock.Runtime, mergedBuild) && len(locks) == 0 {
-			errors = append(errors, fmt.Sprintf("no lockfile found for env %s", selected))
-		}
 	}
 
 	return errors, warnings, nil
@@ -255,53 +269,28 @@ func LoadAppContext(root string, envName string) (*AppContext, error) {
 		return nil, fmt.Errorf("env not found: %s", envName)
 	}
 
-	appRoot := "/var/apps/" + manifest.Name
-	if envBlock.Path != nil && *envBlock.Path != "" {
-		appRoot = *envBlock.Path
+	shape, _ := detectShape(root, manifest.Static)
+	dockerfile := ""
+	if shape == ShapeContainer {
+		dockerfile = filepath.Join(root, "Dockerfile")
 	}
 
+	appRoot := fmt.Sprintf("/var/apps/%s/%s", manifest.Name, envName)
+
 	return &AppContext{
-		AppName:   manifest.Name,
-		EnvName:   envName,
-		Server:    envBlock.Server,
-		AppRoot:   appRoot,
-		Runtime:   envBlock.Runtime,
-		Build:     mergeBuild(manifest.Build, envBlock.Build),
-		Services:  mergeServices(manifest.Services, envBlock.Services),
-		Routes:    mergeRoutes(manifest.Routes, envBlock.Routes),
-		Lockfiles: GetLockfiles(root),
+		AppName:    manifest.Name,
+		EnvName:    envName,
+		Server:     envBlock.Server,
+		AppRoot:    appRoot,
+		Shape:      shape,
+		Dockerfile: dockerfile,
+		StaticDir:  manifest.Static,
+		Services:   mergeServices(manifest.Services, envBlock.Services),
+		Routes:     mergeRoutes(manifest.Routes, envBlock.Routes),
 	}, nil
 }
 
 // Merge helpers
-
-func mergeBuild(base *Build, override *Build) *Build {
-	if base == nil && override == nil {
-		return nil
-	}
-	res := &Build{}
-	if base != nil {
-		res.Command = base.Command
-		res.Output = base.Output
-		res.Include = append([]string(nil), base.Include...)
-		res.Install = base.Install
-	}
-	if override != nil {
-		if override.Command != "" {
-			res.Command = override.Command
-		}
-		if override.Output != "" {
-			res.Output = override.Output
-		}
-		if len(override.Include) > 0 {
-			res.Include = append([]string(nil), override.Include...)
-		}
-		if override.Install != nil {
-			res.Install = override.Install
-		}
-	}
-	return res
-}
 
 func mergeServices(base map[string]Service, override map[string]Service) map[string]Service {
 	res := make(map[string]Service)
@@ -368,41 +357,8 @@ func mergeRoutes(base map[string]Route, override map[string]Route) map[string]Ro
 	return res
 }
 
-func validateRelativePath(path string, label string, errors *[]string) {
-	if path == "" {
-		*errors = append(*errors, fmt.Sprintf("%s must be a non-empty string", label))
-		return
-	}
-	if strings.HasPrefix(path, "/") || strings.Contains(path, "..") || strings.ContainsAny(path, "*?[]{}") {
-		*errors = append(*errors, fmt.Sprintf("%s must be a relative path without '..' or globs", label))
-	}
-}
-
-func validateBuild(build *Build, root string, env string, errors *[]string) {
-	if build == nil {
-		return
-	}
-	if build.Command == "" {
-		*errors = append(*errors, "[build].command is required when [build] is present")
-	}
-	validateRelativePath(build.Output, "[build].output", errors)
-
-	for i, entry := range build.Include {
-		label := fmt.Sprintf("[build].include[%d]", i)
-		validateRelativePath(entry, label, errors)
-		if entry != "" && !strings.HasPrefix(entry, "/") && !strings.Contains(entry, "..") {
-			if _, err := os.Stat(filepath.Join(root, entry)); err != nil {
-				*errors = append(*errors, fmt.Sprintf("%s does not exist: %s", label, entry))
-			}
-		}
-	}
-}
-
-func validateServices(services map[string]Service, runtime string, env string, errors *[]string) {
+func validateServices(services map[string]Service, shape string, env string, errors *[]string) {
 	ports := make(map[int]string)
-	if runtime == "static" && len(services) > 0 {
-		*errors = append(*errors, `runtime = "static" cannot declare services`)
-	}
 
 	reserved := map[string]bool{"current": true, "releases": true, "shared": true}
 
@@ -413,9 +369,12 @@ func validateServices(services map[string]Service, runtime string, env string, e
 		if reserved[name] {
 			*errors = append(*errors, fmt.Sprintf("reserved service name: %s", name))
 		}
-		if svc.Command == "" {
-			*errors = append(*errors, fmt.Sprintf("[services.%s].command is required", name))
-		}
+		// Command is optional for container apps (Dockerfile CMD covers it);
+		// per-service command overrides the image CMD (ADR-0005 Section 13).
+		// For other shapes, command is also optional in this revision; the
+		// runtime check (and any required-command rule) will land with the
+		// per-shape deploy lifecycle work.
+		_ = svc.Command
 		if svc.Port != nil {
 			port := *svc.Port
 			if port < 1 || port > 65535 {
@@ -480,14 +439,4 @@ func validateRoutes(routes map[string]Route, services map[string]Service, env st
 			}
 		}
 	}
-}
-
-func isInstallNeeded(runtime string, build *Build) bool {
-	if runtime == "static" {
-		return false
-	}
-	if build != nil && build.Install != nil {
-		return *build.Install
-	}
-	return true
 }
