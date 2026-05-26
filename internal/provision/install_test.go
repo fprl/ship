@@ -573,6 +573,33 @@ func TestRunInstallCreatesIngressNetworkWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestRunInstallCreatesDeployTmpDirWithStickyMode(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "simple-vps")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &installFakeRunner{files: map[string]host.FileState{}}
+
+	_, err := RunInstall(context.Background(), runner, InstallOptions{
+		OperatorUser:          "operator",
+		DeployUser:            "deploy",
+		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
+		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		StateRoot:             root,
+		HelperBinaryPath:      helper,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Mode 1777 = sticky world-writable. The deploy user needs to drop
+	// files there, but other local users must not delete them mid-deploy.
+	if !runner.ranCommand("install", "-d -o root -g root -m 1777 /tmp/simple-vps-deploy") {
+		t.Fatalf("expected /tmp/simple-vps-deploy to be created with mode 1777, commands: %+v", runner.commands)
+	}
+}
+
 func TestRunInstallSkipsIngressNetworkCreationWhenPresent(t *testing.T) {
 	root := t.TempDir()
 	helper := filepath.Join(root, "simple-vps")

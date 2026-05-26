@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# Test stand-in for `podman`. Records state under /run/fake-podman so
+# tests can introspect what the helper asked for, and exposes just
+# enough surface for the container-deploy lifecycle in
+# cmd/helper/app_apply.go to run end-to-end without a real container
+# engine.
+#
+# Scope is deliberately narrow. Add commands as the smoke tests grow.
+set -euo pipefail
+
+state_dir=/run/fake-podman
+mkdir -p "$state_dir/networks" "$state_dir/containers" "$state_dir/images" "$state_dir/listeners"
+chmod -R 1777 "$state_dir" 2>/dev/null || true
+
+log_path="$state_dir/commands.log"
+printf '%s\n' "podman $*" >> "$log_path"
+
+verb="${1:-}"
+shift || true
+
+case "$verb" in
+  network)
+    sub="${1:-}"
+    name="${2:-}"
+    case "$sub" in
+      exists)
+        if [[ -f "$state_dir/networks/$name" ]]; then
+          exit 0
+        fi
+        exit 1
+        ;;
+      create)
+        : > "$state_dir/networks/$name"
+        printf '%s\n' "$name"
+        exit 0
+        ;;
+      *)
+        echo "fake podman: unsupported network command: $sub" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+
+  ps)
+    # Used by globalUsedHostPorts() — print the
+    # `simple_vps_host_port` label for every recorded container.
+    # `podman ps -a --format '{{ index .Labels "simple_vps_host_port" }}'`
+    # is the only invocation we need to satisfy.
+    for f in "$state_dir"/containers/*.labels; do
+      [[ -f "$f" ]] || continue
+      grep -E '^simple_vps_host_port=' "$f" 2>/dev/null | cut -d= -f2- || true
+    done
+    exit 0
+    ;;
+
+  inspect)
+    # `podman inspect --format '{{ index .Config.Labels "simple_vps_host_port" }}' <name>`
+    # The helper uses this to discover an existing allocation.
+    name="${!#}"
+    labels_file="$state_dir/containers/$name.labels"
+    if [[ ! -f "$labels_file" ]]; then
+      echo "no such container: $name" >&2
+      exit 1
+    fi
+    grep -E '^simple_vps_host_port=' "$labels_file" 2>/dev/null | cut -d= -f2- || echo ""
+    exit 0
+    ;;
+
+  build)
+    # Parse for -t <tag> so we can record an image entry; everything
+    # else is accepted as-is.
+    tag=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -t)
+          tag="${2:-}"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    if [[ -n "$tag" ]]; then
+      : > "$state_dir/images/$(printf '%s' "$tag" | tr '/:' '__')"
+    fi
+    exit 0
+    ;;
+
+  rm)
+    # `podman rm -f <name>` — accept and forget. If the container has
+    # a recorded listener PID, kill it.
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -f|-a|-v)
+          shift
+          ;;
+        *)
+          name="$1"
+          listener="$state_dir/listeners/$name.pid"
+          if [[ -f "$listener" ]]; then
+            kill "$(cat "$listener")" 2>/dev/null || true
+            rm -f "$listener"
+          fi
+          rm -f "$state_dir/containers/$name.labels"
+          shift
+          ;;
+      esac
+    done
+    exit 0
+    ;;
+
+  run)
+    # `podman run -d --name <name> ... <flags> <image> [cmd...]`
+    # We need to record labels (for the port allocator) and start a
+    # tiny HTTP listener on the published loopback port so the
+    # helper's healthcheck (GET <healthcheck>) returns 200.
+    name=""
+    publish_host_port=""
+    declare -a labels=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --name)
+          name="$2"
+          shift 2
+          ;;
+        --label)
+          labels+=("$2")
+          shift 2
+          ;;
+        --publish)
+          # 127.0.0.1:<host>:<container>
+          publish_host_port="$(printf '%s' "$2" | awk -F: '{print $2}')"
+          shift 2
+          ;;
+        -d|--read-only)
+          shift
+          ;;
+        --user|--cap-drop|--security-opt|--pids-limit|--restart|--network|-v|--tmpfs|--env-file)
+          shift 2
+          ;;
+        *)
+          # First non-flag is the image; ignore the rest.
+          shift
+          ;;
+      esac
+    done
+    if [[ -z "$name" ]]; then
+      echo "fake podman: run requires --name" >&2
+      exit 1
+    fi
+    labels_file="$state_dir/containers/$name.labels"
+    : > "$labels_file"
+    for label in "${labels[@]:-}"; do
+      [[ -n "$label" ]] && printf '%s\n' "$label" >> "$labels_file"
+    done
+
+    if [[ -n "$publish_host_port" ]]; then
+      python3 -u - "$publish_host_port" >/dev/null 2>"$state_dir/listeners/$name.log" <<'PY' &
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import sys
+
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        return
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"ok")
+    def do_HEAD(self):
+        self.do_GET()
+
+HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+PY
+      echo $! > "$state_dir/listeners/$name.pid"
+      # Wait briefly so the listener is accepting before the helper
+      # starts its healthcheck loop.
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        if python3 -c "import socket,sys; s=socket.socket(); s.settimeout(0.2); sys.exit(0 if s.connect_ex(('127.0.0.1', int(sys.argv[1])))==0 else 1)" "$publish_host_port" 2>/dev/null; then
+          break
+        fi
+        sleep 0.1
+      done
+    fi
+    exit 0
+    ;;
+
+  logs)
+    # `podman logs --tail N <name>` — return empty stdout on success.
+    exit 0
+    ;;
+
+  *)
+    echo "fake podman: unsupported verb: $verb" >&2
+    exit 1
+    ;;
+esac

@@ -43,6 +43,19 @@ func (c appSetupEnvCmd) Run() error {
 	shared := identity.SharedDir(c.App, c.Env)
 	appRoot := identity.AppRoot(c.App)
 
+	// 0. Make sure the shared deploy tmp dir exists with sticky +
+	// world-writable perms. The provisioner creates this at install
+	// time; setup-env ensures it for hosts that pre-date the
+	// provisioner change so a deploy on an upgraded box doesn't fail
+	// with "Permission denied" on the upload step.
+	deployTmp := systemd.DeployTmpDir()
+	if err := os.MkdirAll(deployTmp, 0755); err != nil {
+		utils.Die(fmt.Sprintf("mkdir %s: %v", deployTmp, err), 1)
+	}
+	if err := os.Chmod(deployTmp, os.ModeSticky|0777); err != nil {
+		utils.Die(fmt.Sprintf("chmod %s: %v", deployTmp, err), 1)
+	}
+
 	// 1. Ensure the per-env system user exists.
 	if !systemd.CommandSucceeds("id", "-u", user) {
 		if _, err := utils.RunChecked("useradd",

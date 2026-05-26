@@ -22,7 +22,7 @@ RUN useradd -m -s /bin/bash -g operator operator \
   && useradd -m -s /bin/bash -U deploy \
   && printf 'operator:operator\n' | chpasswd \
   && printf 'deploy:deploy\n' | chpasswd \
-  && mkdir -p /home/deploy/.ssh /run/sshd /etc/simple-vps /etc/caddy/simple-vps /etc/caddy/conf.d /var/apps /tmp/simple-vps-deploy \
+  && mkdir -p /home/deploy/.ssh /run/sshd /etc/simple-vps /etc/caddy/simple-vps /etc/caddy/conf.d /var/apps \
   && chown deploy:deploy /home/deploy/.ssh \
   && chmod 700 /home/deploy/.ssh
 
@@ -30,8 +30,9 @@ COPY .fake-vps-bin/simple-vps-linux-amd64 /usr/local/bin/simple-vps
 COPY tests/fake-vps/fake-systemctl /usr/local/bin/systemctl
 COPY tests/fake-vps/fake-journalctl /usr/local/bin/journalctl
 COPY tests/fake-vps/fake-caddy /usr/local/bin/caddy
+COPY tests/fake-vps/fake-podman /usr/local/bin/podman
 
-RUN chmod 0755 /usr/local/bin/simple-vps /usr/local/bin/systemctl /usr/local/bin/journalctl /usr/local/bin/caddy \
+RUN chmod 0755 /usr/local/bin/simple-vps /usr/local/bin/systemctl /usr/local/bin/journalctl /usr/local/bin/caddy /usr/local/bin/podman \
   && mkdir -p /etc/simple-vps/providers \
   && printf '%s\n' '{"apps":{},"version":1}' > /etc/simple-vps/apps.json \
   && printf '%s\n' '{"routes":[],"version":1}' > /etc/simple-vps/routes.json \
