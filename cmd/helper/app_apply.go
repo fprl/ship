@@ -332,6 +332,12 @@ func startService(app, env, svcName string, svc config.Service, imageTag, userID
 	// Stop and remove any existing container of the same name.
 	_, _ = utils.RunChecked("podman", []string{"rm", "-f", containerName}, "")
 
+	// Initial hardening subset from ADR-0005 §7: user/cap-drop/
+	// no-new-privileges/pids-limit/per-env network, plus read-only
+	// rootfs with a small writable tmpfs at /tmp. Manifest-driven
+	// `--memory` and `--cpus` limits, and `--cap-add=NET_BIND_SERVICE`
+	// for services binding <1024, require schema additions and land in
+	// a follow-up PR.
 	args := []string{
 		"run", "-d",
 		"--name", containerName,
@@ -340,6 +346,8 @@ func startService(app, env, svcName string, svc config.Service, imageTag, userID
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges",
 		"--pids-limit", "512",
+		"--read-only",
+		"--tmpfs", "/tmp:size=64m",
 		"--network", appNet,
 		"--network", "ingress",
 		"-v", shared + ":" + shared + ":Z",
