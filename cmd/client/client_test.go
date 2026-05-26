@@ -16,22 +16,25 @@ func writeClientManifest(t *testing.T, root string, body string) {
 	}
 }
 
-func writeClientLockfile(t *testing.T, root string) {
+func writeClientDockerfile(t *testing.T, root string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(root, "bun.lock"), []byte("\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "Dockerfile"), []byte("FROM alpine\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestReadTargetServerUsesSingleManifestEnv(t *testing.T) {
 	root := t.TempDir()
-	writeClientLockfile(t, root)
+	writeClientDockerfile(t, root)
 	writeClientManifest(t, root, `
 name = "api"
 
 [env.staging]
 server = "deploy@100.x.y.z"
-runtime = "bun"
+
+[services.web]
+port = 3000
+healthcheck = "/health"
 `)
 
 	server, err := readTargetServer(root, "")
@@ -45,17 +48,19 @@ runtime = "bun"
 
 func TestReadTargetServerRejectsMultipleManifestEnvs(t *testing.T) {
 	root := t.TempDir()
-	writeClientLockfile(t, root)
+	writeClientDockerfile(t, root)
 	writeClientManifest(t, root, `
 name = "api"
 
 [env.production]
 server = "deploy@100.x.y.z"
-runtime = "bun"
 
 [env.staging]
 server = "deploy@100.x.y.z"
-runtime = "bun"
+
+[services.web]
+port = 3000
+healthcheck = "/health"
 `)
 
 	_, err := readTargetServer(root, "")
@@ -169,36 +174,3 @@ func TestReleasePermissionsCommandGrantsAppGroupWrite(t *testing.T) {
 	}
 }
 
-func TestRuntimeCheckCommandRequiresHostTools(t *testing.T) {
-	tests := []struct {
-		name      string
-		runtime   string
-		lockfiles []string
-		wantTools []string
-	}{
-		{name: "static", runtime: "static"},
-		{name: "node", runtime: "node", lockfiles: []string{"package-lock.json"}, wantTools: []string{"node", "npm"}},
-		{name: "bun", runtime: "bun", lockfiles: []string{"bun.lock"}, wantTools: []string{"bun"}},
-		{name: "pnpm node app", runtime: "node", lockfiles: []string{"pnpm-lock.yaml"}, wantTools: []string{"node", "pnpm"}},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := runtimeCheckCommand(tt.runtime, tt.lockfiles)
-			if len(tt.wantTools) == 0 {
-				if got != "" {
-					t.Fatalf("expected no runtime check, got %s", got)
-				}
-				return
-			}
-			for _, tool := range tt.wantTools {
-				if !strings.Contains(got, "command -v "+tool+" ") {
-					t.Fatalf("expected runtime check for %s:\n%s", tool, got)
-				}
-				if !strings.Contains(got, "missing runtime tool: "+tool) {
-					t.Fatalf("expected missing-tool message for %s:\n%s", tool, got)
-				}
-			}
-		})
-	}
-}

@@ -166,99 +166,6 @@ func runCommandPassthrough(name string, args []string) error {
 	return cmd.Run()
 }
 
-func packageManagerForLockfile(lockfile string) string {
-	switch lockfile {
-	case "bun.lock", "bun.lockb":
-		return "bun"
-	case "pnpm-lock.yaml":
-		return "pnpm"
-	case "yarn.lock":
-		return "yarn"
-	case "package-lock.json":
-		return "npm"
-	}
-	return "bun"
-}
-
-func runtimeForLockfile(lockfile string) string {
-	if lockfile == "" {
-		return "bun"
-	}
-	if lockfile == "bun.lock" || lockfile == "bun.lockb" {
-		return "bun"
-	}
-	return "node"
-}
-
-func installCommandFor(lockfile string) string {
-	switch lockfile {
-	case "bun.lock", "bun.lockb":
-		return "bun install --production --frozen-lockfile"
-	case "pnpm-lock.yaml":
-		return "pnpm install --prod --frozen-lockfile"
-	case "package-lock.json":
-		return "npm ci --omit=dev"
-	case "yarn.lock":
-		return "yarn install --production --frozen-lockfile"
-	}
-	return "bun install --production --frozen-lockfile"
-}
-
-func runtimeCheckCommand(runtime string, lockfiles []string) string {
-	tools := runtimeRequiredTools(runtime, lockfiles)
-	if len(tools) == 0 {
-		return ""
-	}
-	parts := []string{"missing=0"}
-	for _, tool := range tools {
-		// Tool names are closed over manifest runtime and known lockfile names.
-		parts = append(parts, fmt.Sprintf("command -v %s >/dev/null 2>&1 || { echo 'missing runtime tool: %s' >&2; missing=1; }", tool, tool))
-	}
-	parts = append(parts, `exit "$missing"`)
-	return strings.Join(parts, "; ")
-}
-
-func runtimeRequiredTools(runtime string, lockfiles []string) []string {
-	var tools []string
-	add := func(tool string) {
-		for _, existing := range tools {
-			if existing == tool {
-				return
-			}
-		}
-		tools = append(tools, tool)
-	}
-	switch runtime {
-	case "static":
-		return nil
-	case "bun":
-		add("bun")
-	case "node":
-		add("node")
-	}
-	for _, lockfile := range lockfiles {
-		switch lockfile {
-		case "package-lock.json":
-			add("npm")
-		case "pnpm-lock.yaml":
-			add("pnpm")
-		case "yarn.lock":
-			add("yarn")
-		}
-	}
-	return tools
-}
-
-func isInstallNeeded(runtime string, build *config.Build) bool {
-	if runtime == "static" {
-		return false
-	}
-	if build != nil && build.Install != nil {
-		return *build.Install
-	}
-	return true
-}
-
 func envKeys(content string) []string {
 	var keys []string
 	lines := strings.Split(content, "\n")
@@ -502,52 +409,43 @@ func CmdInit(root string) {
 		utils.Die("simple-vps.toml already exists", 1)
 	}
 
-	locks := config.GetLockfiles(root)
-	lock := ""
-	if len(locks) > 0 {
-		lock = locks[0]
-	}
-	pm := packageManagerForLockfile(lock)
-	rt := runtimeForLockfile(lock)
-
-	// Try reading package.json for script start/build
 	name := filepath.Base(root)
-	startCmd := fmt.Sprintf("%s run start", pm)
-	if rt == "bun" {
-		startCmd = "bun run src/server.ts"
-	}
-	buildBlock := ""
-
 	packageJsonPath := filepath.Join(root, "package.json")
 	if data, err := os.ReadFile(packageJsonPath); err == nil {
-		// Scrape name and scripts
 		var pkg struct {
-			Name    string            `json:"name"`
-			Scripts map[string]string `json:"scripts"`
+			Name string `json:"name"`
 		}
-		// best effort parse
 		_ = json.Unmarshal(data, &pkg)
 		if pkg.Name != "" {
 			name = pkg.Name
 		}
-		if pkg.Scripts != nil {
-			if _, ok := pkg.Scripts["build"]; ok {
-				buildBlock = fmt.Sprintf("[build]\ncommand = \"%s run build\"\noutput = \"dist\"\n\n", pm)
-			}
-			if _, ok := pkg.Scripts["start"]; !ok && rt == "node" {
-				startCmd = "node dist/index.js"
-			}
+	}
+
+	dockerfilePath := filepath.Join(root, "Dockerfile")
+	createdDockerfile := false
+	if _, err := os.Stat(dockerfilePath); os.IsNotExist(err) {
+		dockerfileBody := `# Edit to fit your app. The Dockerfile is the build contract;
+# language runtimes live in the image, not on the host.
+FROM oven/bun:1
+WORKDIR /app
+COPY package.json bun.lock* ./
+RUN bun install --frozen-lockfile --production
+COPY . .
+EXPOSE 3000
+CMD ["bun", "run", "src/server.ts"]
+`
+		if err := os.WriteFile(dockerfilePath, []byte(dockerfileBody), 0644); err != nil {
+			utils.Die(err.Error(), 1)
 		}
+		createdDockerfile = true
 	}
 
 	content := fmt.Sprintf(`name = "%s"
 
-%s[env.production]
+[env.production]
 server = "deploy@100.x.y.z"
-runtime = "%s"
 
 [services.web]
-command = "%s"
 port = 3000
 healthcheck = "/health"
 
@@ -555,14 +453,17 @@ healthcheck = "/health"
 host = "app.example.com"
 type = "proxy"
 service = "web"
-`, name, buildBlock, rt, startCmd)
+`, name)
 
 	if err := os.WriteFile(manifestPath, []byte(content), 0644); err != nil {
 		utils.Die(err.Error(), 1)
 	}
 	fmt.Printf("Created %s\n", ManifestFile)
+	if createdDockerfile {
+		fmt.Println("Created Dockerfile")
+	}
 	fmt.Println("Next:")
-	fmt.Printf("1. edit %s\n", ManifestFile)
+	fmt.Printf("1. edit %s and Dockerfile\n", ManifestFile)
 	fmt.Println("2. simple-vps setup production")
 	fmt.Println("3. simple-vps deploy production")
 }
@@ -603,10 +504,10 @@ func CmdSetup(root string, envName string) {
 	runSSHChecked(runner, ctx.Server, "true", fmt.Sprintf("SSH failed for %s", ctx.Server))
 
 	// 2. check required server tools
+	// Per ADR-0005: language runtimes live in the container image, not on
+	// the host. The host supplies simple-vps + rsync only; Podman/Caddy are
+	// checked by the installer, not per-deploy.
 	tools := []string{"simple-vps", "rsync"}
-	if ctx.Runtime != "static" {
-		tools = append(tools, ctx.Runtime)
-	}
 	for _, tool := range tools {
 		errMsg := fmt.Sprintf("missing required server tool: %s", tool)
 		if tool == "simple-vps" {
@@ -1091,8 +992,10 @@ func CmdDeploy(root string, envName string, dirty bool, includeDotenv bool) {
 	// Assert shared directory on host
 	runSSHChecked(runner, ctx.Server, fmt.Sprintf("test -d %s/shared", ctx.AppRoot), fmt.Sprintf("setup has not run for %s", envName))
 
-	// Prepare artifact locally
-	artifactDir, locks, err := prepareArtifact(root, ctx.Build, ctx.Runtime, worktreeDirty)
+	// Prepare artifact locally. With the container/static pivot the artifact
+	// is just the source (container) or the prebuilt static directory; no
+	// host-side build, no lockfile-driven install.
+	artifactDir, err := prepareArtifact(root, worktreeDirty)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -1103,9 +1006,6 @@ func CmdDeploy(root string, envName string, dirty bool, includeDotenv bool) {
 		if err := validateArtifactDotenv(artifactDir); err != nil {
 			utils.Die(err.Error(), 1)
 		}
-	}
-	if cmd := runtimeCheckCommand(ctx.Runtime, locks); cmd != "" {
-		runSSHChecked(runner, ctx.Server, cmd, "host runtime check failed")
 	}
 
 	// Create release dir
@@ -1121,11 +1021,6 @@ func CmdDeploy(root string, envName string, dirty bool, includeDotenv bool) {
 	// Link shared paths
 	for _, entry := range []string{".env", "db", "storage", "logs"} {
 		runSSHChecked(runner, ctx.Server, fmt.Sprintf("ln -sfn %s/shared/%s %s/%s", ctx.AppRoot, entry, releaseDir, entry), fmt.Sprintf("failed to link shared %s", entry))
-	}
-
-	// Dependencies install
-	if isInstallNeeded(ctx.Runtime, ctx.Build) && len(locks) > 0 {
-		runSSHChecked(runner, ctx.Server, serverAppRunAsCommand(ctx.AppName, releaseDir, installCommandFor(locks[0])), "production install failed")
 	}
 
 	// Generate systemd unit files locally
@@ -1432,10 +1327,15 @@ func validateArtifactDotenv(artifactDir string) error {
 	return nil
 }
 
-func prepareArtifact(root string, build *config.Build, runtime string, dirty bool) (string, []string, error) {
+// prepareArtifact produces the release artifact from the source tree.
+// Per ADR-0005, simple-vps does not run host-side builds: container apps
+// build via Dockerfile on the VPS, and static apps ship a pre-built
+// directory. The artifact is the source itself (or the worktree for
+// --dirty deploys).
+func prepareArtifact(root string, dirty bool) (string, error) {
 	checkoutDir, err := os.MkdirTemp("", "simple-vps-checkout-")
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	var cmd *exec.Cmd
 	if dirty {
@@ -1445,55 +1345,8 @@ func prepareArtifact(root string, build *config.Build, runtime string, dirty boo
 	}
 	if err := cmd.Run(); err != nil {
 		os.RemoveAll(checkoutDir)
-		return "", nil, fmt.Errorf("failed to create release checkout: %w", err)
+		return "", fmt.Errorf("failed to create release checkout: %w", err)
 	}
 
-	lockfiles := config.GetLockfiles(checkoutDir)
-
-	if build == nil {
-		return checkoutDir, lockfiles, nil
-	}
-
-	if build.Command != "" {
-		buildCmd := exec.Command("sh", "-c", fmt.Sprintf("cd %s && %s", utils.ShellEscape(checkoutDir), build.Command))
-		buildCmd.Stdout = os.Stdout
-		buildCmd.Stderr = os.Stderr
-		if err := buildCmd.Run(); err != nil {
-			os.RemoveAll(checkoutDir)
-			return "", nil, fmt.Errorf("build failed: %w", err)
-		}
-	}
-
-	artifactDir, err := os.MkdirTemp("", "simple-vps-artifact-")
-	if err != nil {
-		os.RemoveAll(checkoutDir)
-		return "", nil, err
-	}
-
-	outputDir := filepath.Join(checkoutDir, build.Output)
-	if err := copyDirectoryContents(outputDir, artifactDir); err != nil {
-		os.RemoveAll(checkoutDir)
-		os.RemoveAll(artifactDir)
-		return "", nil, fmt.Errorf("failed to copy build output: %w", err)
-	}
-
-	for _, entry := range build.Include {
-		src := filepath.Join(checkoutDir, entry)
-		dst := filepath.Join(artifactDir, entry)
-		if err := copyPath(src, dst); err != nil {
-			os.RemoveAll(checkoutDir)
-			os.RemoveAll(artifactDir)
-			return "", nil, fmt.Errorf("failed to copy include path %q: %w", entry, err)
-		}
-	}
-
-	if isInstallNeeded(runtime, build) {
-		_ = copyFile(filepath.Join(checkoutDir, "package.json"), filepath.Join(artifactDir, "package.json"))
-		if len(lockfiles) > 0 {
-			_ = copyFile(filepath.Join(checkoutDir, lockfiles[0]), filepath.Join(artifactDir, lockfiles[0]))
-		}
-	}
-
-	os.RemoveAll(checkoutDir)
-	return artifactDir, lockfiles, nil
+	return checkoutDir, nil
 }
