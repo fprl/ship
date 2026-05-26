@@ -254,6 +254,46 @@ healthcheck = "/health"
 	}
 }
 
+func TestCheckManifestStaticAppCannotDeclareEnvScopedServices(t *testing.T) {
+	root := t.TempDir()
+	writeStaticDir(t, root, "dist")
+	writeManifest(t, root, `
+name = "site"
+static = "dist"
+
+[env.production]
+server = "deploy@100.x.y.z"
+
+[env.production.services.web]
+port = 3000
+healthcheck = "/health"
+`)
+
+	errors := checkErrors(t, root, "production")
+	if !slices.Contains(errors, "static apps cannot declare services") {
+		t.Fatalf("expected static-services error for env-scoped services, got %v", errors)
+	}
+}
+
+func TestCheckManifestRejectsStaticFieldPointingAtFile(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "dist"), []byte("not a dir"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeManifest(t, root, `
+name = "site"
+static = "dist"
+
+[env.production]
+server = "deploy@100.x.y.z"
+`)
+
+	errors := checkErrors(t, root, "production")
+	if !slices.Contains(errors, "static = \"dist\": must be a directory") {
+		t.Fatalf("expected static-not-directory error, got %v", errors)
+	}
+}
+
 func TestLoadAppContextReturnsContainerShape(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root)
