@@ -17,6 +17,8 @@ type cli struct {
 	Check  checkCmd         `cmd:"" help:"Validate an app manifest."`
 	Setup  setupCmd         `cmd:"" help:"Create the per-env Linux user, directories, and Podman network on the host."`
 	Deploy deployCmd        `cmd:"" help:"Build the container image on the host and run the app's services."`
+	Status statusCmd        `cmd:"" help:"Show running services for an environment."`
+	Logs   logsCmd          `cmd:"" help:"Tail logs for one service."`
 	Secret secretCmd        `cmd:"" help:"Manage per-(app, env, key) secret values referenced from the manifest."`
 	SSH    sshCmd           `cmd:"ssh" help:"Open an SSH session to an app environment."`
 	Host   hostCmd          `cmd:"" help:"Install or inspect a Simple VPS host."`
@@ -65,6 +67,28 @@ type sshCmd struct {
 
 func (c sshCmd) Run() error {
 	client.CmdSSH(".", c.Env)
+	return nil
+}
+
+type statusCmd struct {
+	Env  string `arg:"" help:"Environment to inspect."`
+	JSON bool   `name:"json" help:"Emit structured JSON instead of the text table."`
+}
+
+func (c statusCmd) Run() error {
+	client.CmdStatus(".", c.Env, c.JSON)
+	return nil
+}
+
+type logsCmd struct {
+	Env     string `arg:"" help:"Environment containing the service."`
+	Service string `arg:"" optional:"" help:"Service name. Optional when only one service runs."`
+	Follow  bool   `name:"follow" short:"f" help:"Stream new log lines."`
+	Tail    int    `name:"tail" default:"100" help:"How many trailing lines to show. Ignored in --follow mode."`
+}
+
+func (c logsCmd) Run() error {
+	client.CmdLogs(".", c.Env, c.Service, c.Follow, c.Tail)
 	return nil
 }
 

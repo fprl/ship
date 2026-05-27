@@ -2,6 +2,7 @@ package fakevps
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,7 @@ func TestContainerSmoke(t *testing.T) {
 
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
 	t.Run("@secret refs resolve through put/list/rm into the runtime env", env.testSecretLifecycle)
+	t.Run("status + logs surface deployed services without SSHing in", env.testStatusAndLogs)
 }
 
 func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
@@ -229,6 +231,73 @@ service = "web"
 	}
 	if !strings.Contains(result.stderr+result.stdout, "DATABASE_URL") || !strings.Contains(result.stderr+result.stdout, "db_url") {
 		t.Fatalf("unresolved-ref error must name the env var and the secret key, got:\nstdout: %s\nstderr: %s", result.stdout, result.stderr)
+	}
+}
+
+// testStatusAndLogs covers the read-only operator surface introduced
+// in PR #38. Assumes the earlier subtests have already deployed the
+// `api` container app and left its `web` service running.
+func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
+	app := filepath.Join(e.tmp, "container-api")
+
+	// Text status surfaces the web service, its container, and the
+	// simple_vps_release label baked in by `app apply`.
+	text := e.simpleVPS(t, app, nil, "status", "production")
+	assertContains(t, text, "api (production)")
+	assertContains(t, text, "web")
+	assertContains(t, text, "running")
+	assertContains(t, text, "release=")
+	if strings.Contains(text, "no services running") {
+		t.Fatalf("status reported `no services running` after a successful deploy:\n%s", text)
+	}
+
+	// JSON status carries the same data in a structured shape.
+	// Parse it back to prove the contract — text-mode regressions
+	// might still slip through a substring check.
+	rawJSON := e.simpleVPS(t, app, nil, "status", "--json", "production")
+	var payload struct {
+		App      string `json:"app"`
+		Env      string `json:"env"`
+		Services []struct {
+			Service   string `json:"service"`
+			Container string `json:"container"`
+			State     string `json:"state"`
+			Release   string `json:"release"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal([]byte(rawJSON), &payload); err != nil {
+		t.Fatalf("status --json output not parseable as JSON: %v\nraw:\n%s", err, rawJSON)
+	}
+	if payload.App != "api" || payload.Env != "production" {
+		t.Fatalf("status --json mis-identifies the app: %+v", payload)
+	}
+	if len(payload.Services) != 1 || payload.Services[0].Service != "web" {
+		t.Fatalf("expected one service `web`, got: %+v", payload.Services)
+	}
+	if payload.Services[0].Container != "app-api-production-web" {
+		t.Fatalf("unexpected container name: %+v", payload.Services[0])
+	}
+	if payload.Services[0].Release == "" {
+		t.Fatalf("status --json missing simple_vps_release label: %+v", payload.Services[0])
+	}
+
+	// Logs reaches `podman logs` on the right container and prints
+	// the deterministic stub line.
+	logs := e.simpleVPS(t, app, nil, "logs", "production", "web")
+	assertContains(t, logs, "fake podman logs for app-api-production-web")
+
+	// Service argument is required when... actually our fixture only
+	// has one service, so omitting it should work too. Cover that.
+	logsNoSvc := e.simpleVPS(t, app, nil, "logs", "production")
+	assertContains(t, logsNoSvc, "fake podman logs for app-api-production-web")
+
+	// Unknown service errors clearly.
+	missing := e.runSimpleVPS(t, app, nil, "logs", "production", "nope")
+	if missing.err == nil {
+		t.Fatal("expected logs to fail when service is unknown")
+	}
+	if !strings.Contains(missing.stderr, "nope") {
+		t.Fatalf("error should name the missing service, got: %s", missing.stderr)
 	}
 }
 

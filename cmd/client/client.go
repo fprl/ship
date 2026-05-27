@@ -224,6 +224,28 @@ func serverAppApplyCommand(appName string, envName string, tarballPath string, m
 	)
 }
 
+func serverAppStatusCommand(appName, envName string, jsonFlag bool) string {
+	if jsonFlag {
+		return serverCommand("app", "status", "--json", appName, envName)
+	}
+	return serverCommand("app", "status", appName, envName)
+}
+
+func serverAppLogsCommand(appName, envName, service string, follow bool, tail int) string {
+	args := []string{"app", "logs"}
+	if follow {
+		args = append(args, "--follow")
+	}
+	if tail > 0 && !follow {
+		args = append(args, fmt.Sprintf("--tail=%d", tail))
+	}
+	args = append(args, appName, envName)
+	if service != "" {
+		args = append(args, service)
+	}
+	return serverCommand(args...)
+}
+
 func serverAppSecretPutCommand(appName, envName, key string) string {
 	return serverCommand("app", "secret", "put", appName, envName, key)
 }
@@ -415,6 +437,48 @@ func CmdSSH(root string, envName string) {
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
+}
+
+func CmdStatus(root string, envName string, jsonFlag bool) {
+	ctx, err := config.LoadAppContext(root, envName)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer runner.Close()
+
+	out := runSSHChecked(runner, ctx.Server, serverAppStatusCommand(ctx.AppName, envName, jsonFlag), "status failed")
+	// Pass the helper's output through unchanged so `--json` produces
+	// pipeable JSON and the text mode keeps its line breaks.
+	fmt.Print(out)
+}
+
+func CmdLogs(root string, envName string, service string, follow bool, tail int) {
+	ctx, err := config.LoadAppContext(root, envName)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer runner.Close()
+
+	// Follow mode needs interactive stdout/stderr passthrough so the
+	// user sees the stream as it arrives. Non-follow mode reads a
+	// bounded amount and prints once.
+	cmdStr := serverAppLogsCommand(ctx.AppName, envName, service, follow, tail)
+	if follow {
+		if err := runner.RunSSHPassthrough(ctx.Server, cmdStr); err != nil {
+			utils.Die(err.Error(), 1)
+		}
+		return
+	}
+	out := runSSHChecked(runner, ctx.Server, cmdStr, "logs failed")
+	fmt.Print(out)
 }
 
 // secretValueFromStdin reads the secret value from this process's

@@ -49,12 +49,78 @@ case "$verb" in
     ;;
 
   ps)
-    # Used by older code paths that scanned labels (port allocator).
-    # Kept as a generic label dump in case future tests want it.
-    for f in "$state_dir"/containers/*.labels; do
-      [[ -f "$f" ]] || continue
-      cat "$f"
+    # Supports two shapes:
+    #   * raw label dump (legacy callers like the old port allocator)
+    #   * `podman ps -a [--filter label=K=V ...] --format json` — what
+    #     `server app status` now uses. Returns a JSON array matching
+    #     the fields containerEntry in cmd/helper/app_status.go cares
+    #     about: Names, State, Status, Image, Labels.
+    fmt=""
+    declare -a filters=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --format)
+          fmt="$2"; shift 2 ;;
+        --filter)
+          filters+=("$2"); shift 2 ;;
+        -a)
+          shift ;;
+        *)
+          shift ;;
+      esac
     done
+
+    if [[ "$fmt" != "json" ]]; then
+      # Legacy dump — unchanged behavior.
+      for f in "$state_dir"/containers/*.labels; do
+        [[ -f "$f" ]] || continue
+        cat "$f"
+      done
+      exit 0
+    fi
+
+    # Emit JSON for every container whose labels match every
+    # `label=K=V` filter. Python keeps the JSON shaping honest.
+    python3 - "$state_dir" "${filters[@]}" <<'PY'
+import json, os, sys, glob
+
+state_dir = sys.argv[1]
+filters = []
+for arg in sys.argv[2:]:
+    if arg.startswith("label="):
+        kv = arg[len("label="):]
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            filters.append((k, v))
+
+out = []
+for labels_path in sorted(glob.glob(os.path.join(state_dir, "containers", "*.labels"))):
+    name = os.path.splitext(os.path.basename(labels_path))[0]
+    labels = {}
+    with open(labels_path) as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if "=" in line:
+                k, v = line.split("=", 1)
+                labels[k] = v
+    if any(labels.get(k) != v for k, v in filters):
+        continue
+    image_file = os.path.join(state_dir, "containers", f"{name}.image")
+    image = ""
+    if os.path.exists(image_file):
+        with open(image_file) as f:
+            image = f.read().strip()
+    out.append({
+        "Names": [name],
+        # Fake-podman doesn't really track state; if the listener
+        # PID exists the container is "running", otherwise "exited".
+        "State": "running" if os.path.exists(os.path.join(state_dir, "listeners", f"{name}.pid")) else "exited",
+        "Status": "Up (fake)",
+        "Image": image,
+        "Labels": labels,
+    })
+print(json.dumps(out))
+PY
     exit 0
     ;;
 
@@ -215,6 +281,29 @@ case "$verb" in
     ;;
 
   logs)
+    # `podman logs [-f] [--tail=N] <name>`. Strip flags, then return a
+    # deterministic single line per container so smoke tests can
+    # assert against it. Real container output isn't captured in the
+    # fake; the goal is just "log retrieval reached the right
+    # container".
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -f|--follow)
+          shift ;;
+        --tail|--since)
+          shift 2 ;;
+        --tail=*|--since=*)
+          shift ;;
+        *)
+          break ;;
+      esac
+    done
+    name="${1:-}"
+    if [[ -z "$name" || ! -f "$state_dir/containers/$name.labels" ]]; then
+      echo "fake podman: no such container: $name" >&2
+      exit 1
+    fi
+    printf 'fake podman logs for %s\n' "$name"
     exit 0
     ;;
 

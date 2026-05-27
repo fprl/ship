@@ -305,6 +305,13 @@ func buildPodmanRunArgs(app, env, svcName string, svc config.Service, imageTag, 
 		"--label", "env=" + env,
 		"--label", "service=" + svcName,
 	}
+	// Mirror the `simple_vps_release` label from the image onto the
+	// container so `podman ps --format json` surfaces it without an
+	// extra `podman image inspect` hop. The image tag is canonical
+	// `simple-vps/<app>-<env>:<sha>`; pull the SHA off the end.
+	if i := strings.LastIndex(imageTag, ":"); i > 0 && i < len(imageTag)-1 {
+		args = append(args, "--label", "simple_vps_release="+imageTag[i+1:])
+	}
 	for _, path := range sortedKeys(svc.Tmpfs) {
 		args = append(args, "--tmpfs", path+":size="+svc.Tmpfs[path]+",mode=1777")
 	}
