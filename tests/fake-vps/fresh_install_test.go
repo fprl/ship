@@ -48,7 +48,7 @@ func TestFreshHostInstall(t *testing.T) {
 
 func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {
 	t.Helper()
-	output := e.simpleVPS(t, e.repoRoot, nil,
+	result := e.runSimpleVPS(t, e.repoRoot, nil,
 		"host", "install",
 		"--mode", "remote",
 		"--host", "fake-vps",
@@ -61,14 +61,19 @@ func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {
 		"--no-cloudflare-tunnel",
 		"--no-litestream",
 	)
-	assertContains(t, output, "Provisioning complete")
-	// The trailing `Apply ... changed N operations` line printed by the
-	// inner installer over SSH gets dropped on some CI runners (Linux
-	// Docker on the GitHub Actions image is the known one); local
-	// macOS/Docker captures it reliably. Read the count from
-	// /etc/simple-vps/host.json instead — that's the authoritative
-	// record per ADR-0002 Section 2 and survives any SSH pipe-close
-	// race in `runRemote`.
+	// Always log the install output. When a downstream assertion fails
+	// (e.g., last_apply.status != "ok") the install transcript is the
+	// only place that names the failing op; `t.Logf` is printed when
+	// the test fails and is invisible on a green run.
+	t.Logf("install stdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	if result.err != nil {
+		t.Fatalf("simple-vps host install failed: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
+	}
+	assertContains(t, result.stdout, "Provisioning complete")
+	// Read operations-changed from /etc/simple-vps/host.json on the
+	// VPS. The trailing `Apply ... changed N operations` stdout line
+	// can be dropped by SSH pipe-close races on some Linux/Docker
+	// runners; host.json is the authoritative record (ADR-0002 §2).
 	return changedOperationsFromHostState(t, e)
 }
 
