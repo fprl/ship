@@ -27,6 +27,11 @@ COPY tests/fake-vps/fake-install-localectl /usr/local/bin/localectl
 COPY tests/fake-vps/fake-install-systemctl /usr/local/bin/systemctl
 COPY tests/fake-vps/fake-install-timedatectl /usr/local/bin/timedatectl
 COPY tests/fake-vps/fake-install-ufw /usr/local/bin/ufw
+# fake-podman stands in for the real binary because fake-apt-get does
+# not actually install packages — without this shim the provisioner's
+# `podman network exists ingress` op (ADR-0005 §14 / ADR-0006 Cut 2)
+# fails with "executable not found in $PATH".
+COPY tests/fake-vps/fake-podman /usr/local/bin/podman
 
 RUN chmod 0755 \
     /usr/local/bin/simple-vps \
@@ -38,7 +43,8 @@ RUN chmod 0755 \
     /usr/local/bin/localectl \
     /usr/local/bin/systemctl \
     /usr/local/bin/timedatectl \
-    /usr/local/bin/ufw
+    /usr/local/bin/ufw \
+    /usr/local/bin/podman
 
 EXPOSE 22
 

@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -50,7 +48,7 @@ func TestFreshHostInstall(t *testing.T) {
 
 func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {
 	t.Helper()
-	output := e.simpleVPS(t, e.repoRoot, nil,
+	result := e.runSimpleVPS(t, e.repoRoot, nil,
 		"host", "install",
 		"--mode", "remote",
 		"--host", "fake-vps",
@@ -63,8 +61,20 @@ func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {
 		"--no-cloudflare-tunnel",
 		"--no-litestream",
 	)
-	assertContains(t, output, "Provisioning complete")
-	return changedOperations(t, output)
+	// Always log the install output. When a downstream assertion fails
+	// (e.g., last_apply.status != "ok") the install transcript is the
+	// only place that names the failing op; `t.Logf` is printed when
+	// the test fails and is invisible on a green run.
+	t.Logf("install stdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	if result.err != nil {
+		t.Fatalf("simple-vps host install failed: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
+	}
+	assertContains(t, result.stdout, "Provisioning complete")
+	// Read operations-changed from /etc/simple-vps/host.json on the
+	// VPS. The trailing `Apply ... changed N operations` stdout line
+	// can be dropped by SSH pipe-close races on some Linux/Docker
+	// runners; host.json is the authoritative record (ADR-0002 §2).
+	return changedOperationsFromHostState(t, e)
 }
 
 func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
@@ -161,15 +171,22 @@ func (e *smokeEnv) assertHostDoctorHealthy(t *testing.T) {
 	assertContains(t, output, "identity: healthy")
 }
 
-func changedOperations(t *testing.T, output string) int {
+// changedOperationsFromHostState reads /etc/simple-vps/host.json from
+// the fake VPS and returns meta.last_apply.operations_changed. Reading
+// the file directly avoids the SSH pipe-close race that drops trailing
+// inner-installer stdout on some Linux/Docker runners.
+func changedOperationsFromHostState(t *testing.T, e *smokeEnv) int {
 	t.Helper()
-	match := regexp.MustCompile(`changed ([0-9]+) operations`).FindStringSubmatch(output)
-	if match == nil {
-		t.Fatalf("install output did not include changed operation count:\n%s", output)
+	raw := e.ssh(t, "cat /etc/simple-vps/host.json")
+	var state struct {
+		Meta struct {
+			LastApply struct {
+				OperationsChanged int `json:"operations_changed"`
+			} `json:"last_apply"`
+		} `json:"meta"`
 	}
-	n, err := strconv.Atoi(match[1])
-	if err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		t.Fatalf("decode host.json: %v\n%s", err, raw)
 	}
-	return n
+	return state.Meta.LastApply.OperationsChanged
 }
