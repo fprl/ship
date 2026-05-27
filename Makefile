@@ -34,6 +34,7 @@ fake-vps-smoke:
 	SIMPLE_VPS_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestContainerSmoke -count=1 -timeout 20m
 
 fake-vps-install-smoke:
+	rm -rf $(DIST_DIR) # ensure host install smoke builds fresh helper binaries
 	SIMPLE_VPS_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestFreshHostInstall -count=1 -timeout 20m
 
 build:
