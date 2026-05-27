@@ -226,22 +226,25 @@ func writeEnvFile(app, env string, vals map[string]string) error {
 	return nil
 }
 
-func startService(app, env, svcName string, svc config.Service, imageTag, userID, groupID string) error {
+// buildPodmanRunArgs is the pure-function core of startService:
+// produces the `podman run` argv for one service. Extracted so it can
+// be unit-tested without shelling out.
+//
+// The initial hardening subset from ADR-0005 §7 is always present:
+// per-env Linux user, --cap-drop=ALL, --security-opt no-new-privileges,
+// --pids-limit, --read-only with a default 64 MiB tmpfs at /tmp.
+// Manifest-declared tmpfs entries (validated at check time) extend
+// the read-only rootfs with additional writable scratch in a
+// deterministic, sorted order. No --publish: Caddy reaches the
+// service over the shared `ingress` network by container DNS
+// (ADR-0006 Cut 2). Manifest-driven --memory / --cpus /
+// --cap-add=NET_BIND_SERVICE land in their own follow-up PR.
+func buildPodmanRunArgs(app, env, svcName string, svc config.Service, imageTag, userID, groupID string, envFileExists bool) []string {
 	containerName := identity.ContainerName(app, env, svcName)
-	envFile := identity.EnvFile(app, env)
 	shared := identity.SharedDir(app, env)
 	appNet := identity.Network(app, env)
+	envFile := identity.EnvFile(app, env)
 
-	// Stop and remove any existing container of the same name.
-	_, _ = utils.RunChecked("podman", []string{"rm", "-f", containerName}, "")
-
-	// Initial hardening subset from ADR-0005 §7: user/cap-drop/
-	// no-new-privileges/pids-limit/per-env network, plus read-only
-	// rootfs with a small writable tmpfs at /tmp. Manifest-driven
-	// `--memory` and `--cpus` limits, and `--cap-add=NET_BIND_SERVICE`
-	// for services binding <1024, require schema additions and land in
-	// a follow-up PR. No `--publish`: Caddy reaches the service over
-	// the shared `ingress` network by container DNS (ADR-0006 Cut 2).
 	args := []string{
 		"run", "-d",
 		"--name", containerName,
@@ -251,7 +254,12 @@ func startService(app, env, svcName string, svc config.Service, imageTag, userID
 		"--security-opt", "no-new-privileges",
 		"--pids-limit", "512",
 		"--read-only",
-		"--tmpfs", "/tmp:size=64m",
+		// mode=1777 (sticky world-writable) so the per-env container
+		// user (--user above) can actually write here. Without it,
+		// the tmpfs is owned by root and the unprivileged container
+		// process fails with EACCES. Same shape applies to every
+		// manifest-declared tmpfs below.
+		"--tmpfs", "/tmp:size=64m,mode=1777",
 		"--network", appNet,
 		"--network", "ingress",
 		"-v", shared + ":" + shared + ":Z",
@@ -259,7 +267,10 @@ func startService(app, env, svcName string, svc config.Service, imageTag, userID
 		"--label", "env=" + env,
 		"--label", "service=" + svcName,
 	}
-	if _, err := os.Stat(envFile); err == nil {
+	for _, path := range sortedKeys(svc.Tmpfs) {
+		args = append(args, "--tmpfs", path+":size="+svc.Tmpfs[path]+",mode=1777")
+	}
+	if envFileExists {
 		args = append(args, "--env-file", envFile)
 	}
 	args = append(args, imageTag)
@@ -268,6 +279,21 @@ func startService(app, env, svcName string, svc config.Service, imageTag, userID
 		// command as a single string (ADR-0005 §13).
 		args = append(args, "/bin/sh", "-c", svc.Command)
 	}
+	return args
+}
+
+func startService(app, env, svcName string, svc config.Service, imageTag, userID, groupID string) error {
+	containerName := identity.ContainerName(app, env, svcName)
+	envFile := identity.EnvFile(app, env)
+
+	// Stop and remove any existing container of the same name.
+	_, _ = utils.RunChecked("podman", []string{"rm", "-f", containerName}, "")
+
+	envFileExists := false
+	if _, err := os.Stat(envFile); err == nil {
+		envFileExists = true
+	}
+	args := buildPodmanRunArgs(app, env, svcName, svc, imageTag, userID, groupID, envFileExists)
 
 	if _, err := utils.RunChecked("podman", args, ""); err != nil {
 		return fmt.Errorf("podman run %s: %v", containerName, err)

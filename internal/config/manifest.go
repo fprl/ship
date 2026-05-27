@@ -32,6 +32,13 @@ type Service struct {
 	Healthcheck        string `toml:"healthcheck"`
 	HealthcheckStatus  *int   `toml:"healthcheck_status"`
 	HealthcheckTimeout *int   `toml:"healthcheck_timeout"`
+	// Tmpfs declares additional writable tmpfs mounts for stock
+	// images that need scratch beyond the always-on `/tmp:64m` from
+	// the §7 security floor (e.g., nginx wants `/var/cache/nginx`
+	// and `/var/run`). Keys are absolute paths; values are Podman
+	// size strings (`64m`, `1g`, ...). Validation in `validateServiceTmpfs`
+	// enforces a denylist of dangerous targets and the size grammar.
+	Tmpfs map[string]string `toml:"tmpfs"`
 }
 
 type Route struct {
@@ -398,6 +405,17 @@ func mergeServices(base map[string]Service, override map[string]Service) map[str
 		if v.HealthcheckTimeout != nil {
 			existing.HealthcheckTimeout = v.HealthcheckTimeout
 		}
+		if len(v.Tmpfs) > 0 {
+			// Env-level tmpfs fully replaces the base map rather than
+			// per-key merging — keeps the semantics simple ("the env
+			// decides scratch space") and avoids subtle "I declared
+			// /var/cache here but it survives from the base block" bugs.
+			merged := make(map[string]string, len(v.Tmpfs))
+			for k2, v2 := range v.Tmpfs {
+				merged[k2] = v2
+			}
+			existing.Tmpfs = merged
+		}
 		res[k] = existing
 	}
 	return res
@@ -476,6 +494,58 @@ func validateServices(services map[string]Service, shape string, env string, err
 			if status < 100 || status > 599 {
 				*errors = append(*errors, fmt.Sprintf("[services.%s].healthcheck_status must be an HTTP status code", name))
 			}
+		}
+		validateServiceTmpfs(name, svc.Tmpfs, errors)
+	}
+}
+
+// tmpfsSizeRe matches Podman's `--tmpfs path:size=...` value grammar
+// we accept: a positive integer followed by a unit (k/m/g). Strict
+// lowercase keeps the manifest unambiguous; mixed-case or extra units
+// (Ki, MiB, etc.) are rejected even if Podman happens to accept them.
+var tmpfsSizeRe = regexp.MustCompile(`^[1-9][0-9]*(k|m|g)$`)
+
+// tmpfsReservedPaths refuses mounts that would either break the
+// container or shadow critical config the entrypoint relies on:
+//   - /                          rootfs over rootfs = broken container
+//   - /etc, /proc, /sys, /dev    hides /etc/passwd, /proc, /sys, /dev
+//   - /tmp                       reserved for the §7 security floor's
+//                                always-on `--tmpfs /tmp:size=64m`;
+//                                manifest can't override or duplicate
+var tmpfsReservedPaths = map[string]bool{
+	"/":     true,
+	"/etc":  true,
+	"/proc": true,
+	"/sys":  true,
+	"/dev":  true,
+	"/tmp":  true,
+}
+
+func validateServiceTmpfs(serviceName string, tmpfs map[string]string, errors *[]string) {
+	for path, size := range tmpfs {
+		label := fmt.Sprintf("[services.%s.tmpfs].%q", serviceName, path)
+		if !strings.HasPrefix(path, "/") {
+			*errors = append(*errors, label+" must be an absolute path")
+			continue
+		}
+		if strings.Contains(path, "..") {
+			*errors = append(*errors, label+` must not contain ".."`)
+			continue
+		}
+		// Reject trailing slashes so the rendered Podman flag is
+		// canonical (`/var/cache/nginx`, never `/var/cache/nginx/`)
+		// and the reserved-path check matches by literal equality.
+		if path != "/" && strings.HasSuffix(path, "/") {
+			*errors = append(*errors, label+" must not have a trailing slash")
+			continue
+		}
+		if tmpfsReservedPaths[path] {
+			*errors = append(*errors, fmt.Sprintf("[services.%s.tmpfs].%q is reserved and cannot be a tmpfs mount", serviceName, path))
+			continue
+		}
+		if !tmpfsSizeRe.MatchString(size) {
+			*errors = append(*errors, fmt.Sprintf("[services.%s.tmpfs].%q size %q must match ^[1-9][0-9]*(k|m|g)$", serviceName, path, size))
+			continue
 		}
 	}
 }

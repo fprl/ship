@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -341,6 +342,178 @@ server = "deploy@100.x.y.z"
 	errors := checkErrors(t, root, "production")
 	if !slices.Contains(errors, "static = \"dist\": must be a directory") {
 		t.Fatalf("expected static-not-directory error, got %v", errors)
+	}
+}
+
+// --- services.<name>.tmpfs (real-box smoke finding 5) ---
+
+func TestCheckManifestAcceptsServiceWithoutTmpfs(t *testing.T) {
+	root := t.TempDir()
+	writeDockerfile(t, root)
+	writeManifest(t, root, `
+name = "api"
+
+[env.production]
+server = "deploy@100.x.y.z"
+
+[services.web]
+port = 3000
+healthcheck = "/health"
+`)
+	if errors := checkErrors(t, root, "production"); len(errors) != 0 {
+		t.Fatalf("expected no errors, got %v", errors)
+	}
+}
+
+func TestCheckManifestAcceptsServiceTmpfsValidEntries(t *testing.T) {
+	root := t.TempDir()
+	writeDockerfile(t, root)
+	writeManifest(t, root, `
+name = "api"
+
+[env.production]
+server = "deploy@100.x.y.z"
+
+[services.web]
+port = 3000
+healthcheck = "/health"
+
+[services.web.tmpfs]
+"/var/cache/nginx" = "64m"
+"/var/run" = "16m"
+"/run/lock" = "1k"
+"/var/lib/scratch" = "1g"
+`)
+	if errors := checkErrors(t, root, "production"); len(errors) != 0 {
+		t.Fatalf("expected no errors, got %v", errors)
+	}
+}
+
+func TestCheckManifestRejectsRelativeTmpfsPath(t *testing.T) {
+	root := t.TempDir()
+	writeDockerfile(t, root)
+	writeManifest(t, root, `
+name = "api"
+
+[env.production]
+server = "deploy@100.x.y.z"
+
+[services.web]
+port = 3000
+healthcheck = "/health"
+
+[services.web.tmpfs]
+"var/cache" = "64m"
+`)
+	errors := checkErrors(t, root, "production")
+	want := `[services.web.tmpfs]."var/cache" must be an absolute path`
+	if !slices.Contains(errors, want) {
+		t.Fatalf("expected %q, got %v", want, errors)
+	}
+}
+
+func TestCheckManifestRejectsTmpfsPathWithDotDot(t *testing.T) {
+	root := t.TempDir()
+	writeDockerfile(t, root)
+	writeManifest(t, root, `
+name = "api"
+
+[env.production]
+server = "deploy@100.x.y.z"
+
+[services.web]
+port = 3000
+healthcheck = "/health"
+
+[services.web.tmpfs]
+"/var/../etc" = "16m"
+`)
+	errors := checkErrors(t, root, "production")
+	want := `[services.web.tmpfs]."/var/../etc" must not contain ".."`
+	if !slices.Contains(errors, want) {
+		t.Fatalf("expected %q, got %v", want, errors)
+	}
+}
+
+func TestCheckManifestRejectsTmpfsPathOnDenylist(t *testing.T) {
+	// Mounting tmpfs over root, /etc, /proc, /sys, /dev would either
+	// brick the container immediately or hide critical config from
+	// the entrypoint. Block at check time.
+	for _, denied := range []string{"/", "/etc", "/proc", "/sys", "/dev"} {
+		t.Run(denied, func(t *testing.T) {
+			root := t.TempDir()
+			writeDockerfile(t, root)
+			writeManifest(t, root, fmt.Sprintf(`
+name = "api"
+
+[env.production]
+server = "deploy@100.x.y.z"
+
+[services.web]
+port = 3000
+healthcheck = "/health"
+
+[services.web.tmpfs]
+%q = "16m"
+`, denied))
+			errors := checkErrors(t, root, "production")
+			want := fmt.Sprintf("[services.web.tmpfs].%q is reserved and cannot be a tmpfs mount", denied)
+			if !slices.Contains(errors, want) {
+				t.Fatalf("expected %q, got %v", want, errors)
+			}
+		})
+	}
+}
+
+func TestCheckManifestRejectsTmpfsReservedTmpPath(t *testing.T) {
+	// /tmp is the always-on tmpfs from the container security floor.
+	// Manifest can't override or duplicate it.
+	root := t.TempDir()
+	writeDockerfile(t, root)
+	writeManifest(t, root, `
+name = "api"
+
+[env.production]
+server = "deploy@100.x.y.z"
+
+[services.web]
+port = 3000
+healthcheck = "/health"
+
+[services.web.tmpfs]
+"/tmp" = "128m"
+`)
+	errors := checkErrors(t, root, "production")
+	want := `[services.web.tmpfs]."/tmp" is reserved and cannot be a tmpfs mount`
+	if !slices.Contains(errors, want) {
+		t.Fatalf("expected %q, got %v", want, errors)
+	}
+}
+
+func TestCheckManifestRejectsBadTmpfsSize(t *testing.T) {
+	for _, bad := range []string{"", "64", "64M", "64MiB", "1.5g", "0m", "g", "abc", "16m ", " 16m"} {
+		t.Run("size="+bad, func(t *testing.T) {
+			root := t.TempDir()
+			writeDockerfile(t, root)
+			writeManifest(t, root, fmt.Sprintf(`
+name = "api"
+
+[env.production]
+server = "deploy@100.x.y.z"
+
+[services.web]
+port = 3000
+healthcheck = "/health"
+
+[services.web.tmpfs]
+"/var/cache" = %q
+`, bad))
+			errors := checkErrors(t, root, "production")
+			want := fmt.Sprintf(`[services.web.tmpfs]."/var/cache" size %q must match ^[1-9][0-9]*(k|m|g)$`, bad)
+			if !slices.Contains(errors, want) {
+				t.Fatalf("expected %q, got %v", want, errors)
+			}
+		})
 	}
 }
 

@@ -296,9 +296,16 @@ all worth follow-ups, none of them invalidating the architecture.
   ask. Closes finding 6; the smoke runbook's manual `sed` injection
   is gone.
 
-**Still open as named follow-ups** (manifest/product semantics, not
-provisioner host-baseline):
+**Landed (continued):**
 
-- **`feat: manifest service-level tmpfs mounts`** (finding 5) — let
-  users declare writable scratch beyond `/tmp` so images like
-  `nginx:alpine` work under `--read-only`.
+- **#36** — `[services.<name>.tmpfs]` manifest knob: map of
+  absolute path → size (`64m`, `1g`, ...). Rendered as
+  `--tmpfs <path>:size=<value>,mode=1777` alongside the always-on
+  `/tmp:64m`. The `mode=1777` was a follow-on real-box finding —
+  Podman's default tmpfs is owned by root, so the unprivileged
+  per-env container user (`--user uid:gid`) gets EACCES on write
+  without it. Closes finding 5; the smoke fixture now uses
+  `nginx:alpine` with declared tmpfs for `/var/cache/nginx` and
+  `/var/run` and serves traffic end-to-end under `--read-only`.
+
+All six real-box smoke findings are now closed.

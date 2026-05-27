@@ -81,7 +81,7 @@ EOF`)
 	assertContains(t, commandsLog, "--name app-api-production-web")
 	assertContains(t, commandsLog, "--user ") // numeric uid:gid
 	assertContains(t, commandsLog, "--read-only")
-	assertContains(t, commandsLog, "--tmpfs /tmp:size=64m")
+	assertContains(t, commandsLog, "--tmpfs /tmp:size=64m,mode=1777")
 	assertContains(t, commandsLog, "--cap-drop ALL")
 	assertContains(t, commandsLog, "--security-opt no-new-privileges")
 	assertContains(t, commandsLog, "--network app-api-production")

@@ -78,14 +78,9 @@ cat /etc/simple-vps/host.json \
 mkdir -p /tmp/simple-vps-smoke-app && cd /tmp/simple-vps-smoke-app
 
 cat > Dockerfile <<'EOF'
-FROM docker.io/library/python:3-alpine
-RUN mkdir -p /var/www \
- && printf 'smoke-ok' > /var/www/index.html \
- && printf 'ok'       > /var/www/health
-WORKDIR /var/www
-ENV PYTHONDONTWRITEBYTECODE=1
+FROM docker.io/library/nginx:alpine
+RUN printf 'server {\n  listen 3000;\n  location = /health { add_header Content-Type text/plain; return 200 "ok"; }\n  location = / { add_header Content-Type text/plain; return 200 "smoke-ok-nginx"; }\n  location / { return 404; }\n}\n' > /etc/nginx/conf.d/default.conf
 EXPOSE 3000
-CMD ["python3", "-m", "http.server", "3000"]
 EOF
 
 cat > simple-vps.toml <<'EOF'
@@ -97,6 +92,15 @@ server = "deploy@<IP>"
 [services.web]
 port = 3000
 healthcheck = "/health"
+
+# `--read-only` is on by default per ADR-0005 §7. Most stock images
+# (nginx, Apache httpd, postgres, ...) need writable scratch beyond
+# `/tmp:64m`. Declare the extra mounts here. Keys are absolute paths;
+# values match `^[1-9][0-9]*(k|m|g)$`. The provisioner adds mode=1777
+# so the per-env container user can actually write.
+[services.web.tmpfs]
+"/var/cache/nginx" = "32m"
+"/var/run" = "16m"
 
 [routes.app]
 host = "smoke.<your-domain>"
@@ -111,15 +115,19 @@ git config user.name "Smoke"
 git add . && git commit -q -m "fixture"
 ```
 
-`python:3-alpine` is the smallest image that:
+`nginx:alpine` is the smallest image that:
 
 - Has a stateless HTTP server.
-- Doesn't try to mkdir into the rootfs (so it survives `--read-only`).
-- Doesn't depend on writable `/var/cache` (so it works without extra
-  tmpfs mounts).
+- Has a well-known set of writable paths (`/var/cache/nginx`,
+  `/var/run`) that we cover with manifest tmpfs entries.
+- Exercises the `--read-only` + tmpfs combination, so a broken
+  combination of the two would surface here before a real user hits
+  it. (Earlier smokes used `python:3-alpine` because it didn't need
+  any writable rootfs paths — fine as a sanity check, but doesn't
+  exercise tmpfs.)
 
-If you swap it for a different base image, check finding 5 — most
-stock distro server images need writable scratch.
+If you swap it for a different image, check what paths the image
+writes to at startup and add them under `[services.<name>.tmpfs]`.
 
 ## 3. Setup and deploy
 

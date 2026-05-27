@@ -9,6 +9,106 @@ import (
 	"github.com/fprl/simple-vps/internal/config"
 )
 
+// --- buildPodmanRunArgs: container security floor + manifest tmpfs ---
+
+func TestBuildPodmanRunArgsAlwaysEmitsHardeningFloor(t *testing.T) {
+	svc := config.Service{}
+	args := buildPodmanRunArgs("api", "production", "web", svc, "img:tag", "999", "988", false)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{
+		"--cap-drop ALL",
+		"--security-opt no-new-privileges",
+		"--pids-limit 512",
+		"--read-only",
+		// mode=1777 is required so the unprivileged container user can
+		// actually write to the tmpfs. See finding in PR #36.
+		"--tmpfs /tmp:size=64m,mode=1777",
+		"--user 999:988",
+		"--network app-api-production",
+		"--network ingress",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in args:\n%s", want, joined)
+		}
+	}
+}
+
+func TestBuildPodmanRunArgsAppendsManifestTmpfsAfterDefault(t *testing.T) {
+	svc := config.Service{
+		Tmpfs: map[string]string{
+			"/var/cache/nginx": "64m",
+			"/var/run":         "16m",
+			"/run/lock":        "1k",
+		},
+	}
+	args := buildPodmanRunArgs("api", "production", "web", svc, "img:tag", "999", "988", false)
+
+	// Default /tmp tmpfs always present.
+	tmpfsValues := []string{}
+	for i, a := range args {
+		if a == "--tmpfs" && i+1 < len(args) {
+			tmpfsValues = append(tmpfsValues, args[i+1])
+		}
+	}
+	want := []string{
+		"/tmp:size=64m,mode=1777",
+		"/run/lock:size=1k,mode=1777",
+		"/var/cache/nginx:size=64m,mode=1777",
+		"/var/run:size=16m,mode=1777",
+	}
+	if len(tmpfsValues) != len(want) {
+		t.Fatalf("expected %d --tmpfs values, got %d: %v", len(want), len(tmpfsValues), tmpfsValues)
+	}
+	for i, w := range want {
+		if tmpfsValues[i] != w {
+			t.Fatalf("--tmpfs values not in deterministic order:\nwant: %v\n got: %v", want, tmpfsValues)
+		}
+	}
+}
+
+func TestBuildPodmanRunArgsImageComesAfterFlagsAndBeforeCommand(t *testing.T) {
+	svc := config.Service{
+		Command: "/usr/bin/myserver --foo",
+		Tmpfs:   map[string]string{"/var/cache": "16m"},
+	}
+	args := buildPodmanRunArgs("api", "production", "web", svc, "simple-vps/api-production:abcd1234", "999", "988", true)
+
+	var imageIdx, shIdx, cmdIdx int = -1, -1, -1
+	for i, a := range args {
+		switch a {
+		case "simple-vps/api-production:abcd1234":
+			imageIdx = i
+		case "/bin/sh":
+			shIdx = i
+		case "-c":
+			cmdIdx = i
+		}
+	}
+	if imageIdx == -1 {
+		t.Fatalf("image tag missing from args: %v", args)
+	}
+	if !(shIdx == imageIdx+1 && cmdIdx == imageIdx+2) {
+		t.Fatalf("expected image followed by /bin/sh -c, got args:\n%s", strings.Join(args, " "))
+	}
+	// Every --tmpfs/--env-file/--label flag should precede the image.
+	for i, a := range args {
+		if a == "--tmpfs" || a == "--env-file" || a == "--label" {
+			if i > imageIdx {
+				t.Fatalf("flag %q at index %d appears after image at %d", a, i, imageIdx)
+			}
+		}
+	}
+}
+
+func TestBuildPodmanRunArgsSkipsEnvFileWhenAbsent(t *testing.T) {
+	args := buildPodmanRunArgs("api", "production", "web", config.Service{}, "img:tag", "999", "988", false)
+	for _, a := range args {
+		if a == "--env-file" {
+			t.Fatalf("did not expect --env-file when env file is absent, args:\n%s", strings.Join(args, " "))
+		}
+	}
+}
+
 func TestRenderEnvFileEmitsSortedKeyValuePairs(t *testing.T) {
 	vals := map[string]string{
 		"LOG_LEVEL": "info",
