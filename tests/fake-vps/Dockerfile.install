@@ -13,9 +13,48 @@ RUN apt-get update \
     sudo \
   && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /run/sshd /root/.ssh /run/simple-vps-fresh-host /etc/caddy/simple-vps /etc/caddy/conf.d \
+RUN mkdir -p /run/sshd /root/.ssh /run/simple-vps-fresh-host /etc/caddy/simple-vps /etc/caddy/conf.d /etc/ufw /etc/default \
   && chmod 700 /root/.ssh \
   && useradd --system --home-dir /var/lib/caddy --shell /usr/sbin/nologin --create-home caddy
+
+# Seed the standard Ubuntu UFW config files. fake-install-apt-get
+# only records the `apt install -y ufw` call; the real apt would drop
+# these. The provisioner's `podman ufw rules` op reads before.rules
+# and rewrites the forward policy in default/ufw, so without them it
+# would error out with "remote file does not exist" on a fresh
+# fake-install run.
+RUN printf '%s\n' \
+    '#' \
+    '# rules.before' \
+    '#' \
+    '# Rules that should be run before the ufw command line added rules. Custom' \
+    '# rules should be added to one of these chains:' \
+    '#   ufw-before-input' \
+    '#   ufw-before-output' \
+    '#   ufw-before-forward' \
+    '#' \
+    '' \
+    '# Don'\''t delete these required lines, otherwise there will be errors' \
+    '*filter' \
+    ':ufw-before-input - [0:0]' \
+    ':ufw-before-output - [0:0]' \
+    ':ufw-before-forward - [0:0]' \
+    ':ufw-not-local - [0:0]' \
+    '# End required lines' \
+    '' \
+    '# allow all on loopback' \
+    '-A ufw-before-input -i lo -j ACCEPT' \
+    '-A ufw-before-output -o lo -j ACCEPT' \
+    '' \
+    'COMMIT' \
+    > /etc/ufw/before.rules \
+ && chmod 0640 /etc/ufw/before.rules \
+ && printf '%s\n' \
+    'IPV6=yes' \
+    'DEFAULT_INPUT_POLICY="DROP"' \
+    'DEFAULT_OUTPUT_POLICY="ACCEPT"' \
+    'DEFAULT_FORWARD_POLICY="DROP"' \
+    > /etc/default/ufw
 
 COPY .fake-vps-bin/simple-vps-linux-amd64 /usr/local/bin/simple-vps
 COPY tests/fake-vps/fake-caddy /usr/local/bin/caddy

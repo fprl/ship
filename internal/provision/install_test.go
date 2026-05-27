@@ -650,6 +650,225 @@ func TestRunInstallWritesCaddyContainerSystemdUnit(t *testing.T) {
 	}
 }
 
+// --- Podman host baseline: UFW podman+ rules + registries.conf.d ---
+// (real-box smoke findings 3 + 4)
+
+const ubuntuBeforeRules = `#
+# rules.before
+#
+# Rules that should be run before the ufw command line added rules. Custom
+# rules should be added to one of these chains:
+#   ufw-before-input
+#   ufw-before-output
+#   ufw-before-forward
+#
+
+# Don't delete these required lines, otherwise there will be errors
+*filter
+:ufw-before-input - [0:0]
+:ufw-before-output - [0:0]
+:ufw-before-forward - [0:0]
+:ufw-not-local - [0:0]
+# End required lines
+
+# allow all on loopback
+-A ufw-before-input -i lo -j ACCEPT
+-A ufw-before-output -o lo -j ACCEPT
+
+COMMIT
+`
+
+func TestInjectPodmanUfwBlockFreshInsert(t *testing.T) {
+	next, changed, err := injectPodmanUfwBlock(ubuntuBeforeRules, podmanUfwBlock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected change on fresh insert")
+	}
+	if !strings.Contains(next, "# BEGIN simple-vps podman bridges\n") {
+		t.Fatalf("missing BEGIN marker:\n%s", next)
+	}
+	if !strings.Contains(next, "\n# END simple-vps podman bridges\n") {
+		t.Fatalf("missing END marker:\n%s", next)
+	}
+	if !strings.Contains(next, "-A ufw-before-input -i podman+ -j ACCEPT\n") {
+		t.Fatalf("missing input ACCEPT line:\n%s", next)
+	}
+	if !strings.Contains(next, "-A ufw-before-forward -i podman+ -j ACCEPT\n") {
+		t.Fatalf("missing forward-in ACCEPT line:\n%s", next)
+	}
+	if !strings.Contains(next, "-A ufw-before-forward -o podman+ -j ACCEPT\n") {
+		t.Fatalf("missing forward-out ACCEPT line:\n%s", next)
+	}
+	// Block must land AFTER the anchor (chain declarations) and
+	// BEFORE COMMIT, otherwise the rules don't take effect.
+	anchorIdx := strings.Index(next, "# End required lines")
+	beginIdx := strings.Index(next, "# BEGIN simple-vps podman bridges")
+	commitIdx := strings.Index(next, "\nCOMMIT")
+	if !(anchorIdx < beginIdx && beginIdx < commitIdx) {
+		t.Fatalf("block in wrong position: anchor=%d begin=%d commit=%d\n%s", anchorIdx, beginIdx, commitIdx, next)
+	}
+}
+
+func TestInjectPodmanUfwBlockIsIdempotent(t *testing.T) {
+	once, _, err := injectPodmanUfwBlock(ubuntuBeforeRules, podmanUfwBlock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	twice, changed, err := injectPodmanUfwBlock(once, podmanUfwBlock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("second injection must be a no-op")
+	}
+	if twice != once {
+		t.Fatalf("second injection mutated content:\nfirst:\n%s\nsecond:\n%s", once, twice)
+	}
+}
+
+func TestInjectPodmanUfwBlockReplacesExistingBlock(t *testing.T) {
+	stale := strings.Replace(
+		ubuntuBeforeRules,
+		"# End required lines\n",
+		"# End required lines\n\n# BEGIN simple-vps podman bridges\n-A ufw-before-input -i podman+ -j REJECT\n# END simple-vps podman bridges\n\n",
+		1,
+	)
+	next, changed, err := injectPodmanUfwBlock(stale, podmanUfwBlock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected change when replacing a stale block")
+	}
+	if strings.Contains(next, "-j REJECT") {
+		t.Fatalf("stale REJECT rule survived replacement:\n%s", next)
+	}
+	if !strings.Contains(next, "-A ufw-before-input -i podman+ -j ACCEPT") {
+		t.Fatalf("canonical ACCEPT rule missing after replace:\n%s", next)
+	}
+	// Exactly one BEGIN/END pair after replacement.
+	if strings.Count(next, "# BEGIN simple-vps podman bridges") != 1 {
+		t.Fatalf("expected exactly one BEGIN marker:\n%s", next)
+	}
+	if strings.Count(next, "# END simple-vps podman bridges") != 1 {
+		t.Fatalf("expected exactly one END marker:\n%s", next)
+	}
+}
+
+func TestInjectPodmanUfwBlockPreservesUserContent(t *testing.T) {
+	customized := strings.Replace(
+		ubuntuBeforeRules,
+		"-A ufw-before-input -i lo -j ACCEPT\n",
+		"-A ufw-before-input -i lo -j ACCEPT\n# user: allow vpn\n-A ufw-before-input -p udp --dport 51820 -j ACCEPT\n",
+		1,
+	)
+	next, _, err := injectPodmanUfwBlock(customized, podmanUfwBlock())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(next, "# user: allow vpn") {
+		t.Fatalf("dropped user comment:\n%s", next)
+	}
+	if !strings.Contains(next, "-A ufw-before-input -p udp --dport 51820 -j ACCEPT") {
+		t.Fatalf("dropped user rule:\n%s", next)
+	}
+}
+
+func TestInjectPodmanUfwBlockRejectsHalfMarker(t *testing.T) {
+	half := strings.Replace(
+		ubuntuBeforeRules,
+		"# End required lines\n",
+		"# End required lines\n\n# BEGIN simple-vps podman bridges\n# but no END here\n",
+		1,
+	)
+	if _, _, err := injectPodmanUfwBlock(half, podmanUfwBlock()); err == nil {
+		t.Fatal("expected error on half-present marker pair")
+	}
+}
+
+func TestInjectPodmanUfwBlockRejectsMissingAnchor(t *testing.T) {
+	noAnchor := strings.ReplaceAll(ubuntuBeforeRules, "# End required lines\n", "")
+	if _, _, err := injectPodmanUfwBlock(noAnchor, podmanUfwBlock()); err == nil {
+		t.Fatal("expected error when the anchor line is absent")
+	}
+}
+
+func TestRunInstallWritesPodmanHostBaseline(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "simple-vps")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &installFakeRunner{
+		files: map[string]host.FileState{
+			"/etc/ufw/before.rules": {
+				Content: []byte(ubuntuBeforeRules),
+				Owner:   "root", Group: "root", Mode: 0640,
+			},
+			"/etc/default/ufw": {
+				Content: []byte("DEFAULT_FORWARD_POLICY=\"DROP\"\nIPV6=yes\n"),
+				Owner:   "root", Group: "root", Mode: 0644,
+			},
+		},
+	}
+
+	_, err := RunInstall(context.Background(), runner, InstallOptions{
+		OperatorUser:          "operator",
+		DeployUser:            "deploy",
+		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
+		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		StateRoot:             root,
+		HelperBinaryPath:      helper,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. before.rules has our marker block inserted after the anchor.
+	updated, ok := runner.files["/etc/ufw/before.rules"]
+	if !ok {
+		t.Fatal("expected /etc/ufw/before.rules to be written")
+	}
+	if !strings.Contains(string(updated.Content), "-A ufw-before-input -i podman+ -j ACCEPT") {
+		t.Fatalf("before.rules missing input ACCEPT:\n%s", updated.Content)
+	}
+	if !strings.Contains(string(updated.Content), "-A ufw-before-forward -i podman+ -j ACCEPT") ||
+		!strings.Contains(string(updated.Content), "-A ufw-before-forward -o podman+ -j ACCEPT") {
+		t.Fatalf("before.rules missing forward ACCEPT pair:\n%s", updated.Content)
+	}
+	if !strings.Contains(string(updated.Content), "# allow all on loopback") {
+		t.Fatalf("before.rules lost the user/distro content below the anchor:\n%s", updated.Content)
+	}
+
+	// 2. default/ufw flipped to ACCEPT, IPV6 line preserved.
+	policy, ok := runner.files["/etc/default/ufw"]
+	if !ok {
+		t.Fatal("expected /etc/default/ufw to be written")
+	}
+	if !strings.Contains(string(policy.Content), `DEFAULT_FORWARD_POLICY="ACCEPT"`) {
+		t.Fatalf("default/ufw did not flip forward policy:\n%s", policy.Content)
+	}
+	if !strings.Contains(string(policy.Content), "IPV6=yes") {
+		t.Fatalf("default/ufw lost unrelated lines:\n%s", policy.Content)
+	}
+
+	// 3. registries drop-in written.
+	reg, ok := runner.files["/etc/containers/registries.conf.d/00-simple-vps.conf"]
+	if !ok {
+		t.Fatal("expected /etc/containers/registries.conf.d/00-simple-vps.conf to be written")
+	}
+	if !strings.Contains(string(reg.Content), `unqualified-search-registries = ["docker.io"]`) {
+		t.Fatalf("registries drop-in missing the docker.io entry:\n%s", reg.Content)
+	}
+
+	// 4. `ufw reload` was invoked at least once.
+	if !runner.ranCommand("ufw", "reload") {
+		t.Fatalf("expected `ufw reload` after editing UFW config, commands: %+v", runner.commands)
+	}
+}
+
 func TestRunInstallSkipsIngressNetworkCreationWhenPresent(t *testing.T) {
 	root := t.TempDir()
 	helper := filepath.Join(root, "simple-vps")
@@ -695,11 +914,32 @@ type installFakeRunner struct {
 }
 
 func (r *installFakeRunner) ReadFile(_ context.Context, path string) (host.FileState, error) {
-	file, ok := r.files[path]
-	if !ok {
-		return host.FileState{}, host.ErrNotExist
+	if file, ok := r.files[path]; ok {
+		return file, nil
 	}
-	return file, nil
+	// Pretend the essential package install seeded the standard
+	// Ubuntu config files. The fake doesn't actually run apt, so
+	// tests that exercise ops which read those files (e.g.
+	// addPodmanHostBaseline reading /etc/ufw/before.rules) would
+	// otherwise hit ErrNotExist on a "successful" essentials step.
+	if defaults, ok := installFakeDefaults[path]; ok {
+		return defaults, nil
+	}
+	return host.FileState{}, host.ErrNotExist
+}
+
+// installFakeDefaults mirrors what `apt-get install -y ufw` etc.
+// drop on a fresh Ubuntu 24.04 box. Add entries here when a new op
+// needs to read a file the install assumes is already present.
+var installFakeDefaults = map[string]host.FileState{
+	"/etc/ufw/before.rules": {
+		Content: []byte(ubuntuBeforeRules),
+		Owner:   "root", Group: "root", Mode: 0640,
+	},
+	"/etc/default/ufw": {
+		Content: []byte("IPV6=yes\nDEFAULT_INPUT_POLICY=\"DROP\"\nDEFAULT_OUTPUT_POLICY=\"ACCEPT\"\nDEFAULT_FORWARD_POLICY=\"DROP\"\n"),
+		Owner:   "root", Group: "root", Mode: 0644,
+	},
 }
 
 func (r *installFakeRunner) WriteFile(_ context.Context, file host.File) error {
