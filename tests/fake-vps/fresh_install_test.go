@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -64,7 +62,14 @@ func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {
 		"--no-litestream",
 	)
 	assertContains(t, output, "Provisioning complete")
-	return changedOperations(t, output)
+	// The trailing `Apply ... changed N operations` line printed by the
+	// inner installer over SSH gets dropped on some CI runners (Linux
+	// Docker on the GitHub Actions image is the known one); local
+	// macOS/Docker captures it reliably. Read the count from
+	// /etc/simple-vps/host.json instead — that's the authoritative
+	// record per ADR-0002 Section 2 and survives any SSH pipe-close
+	// race in `runRemote`.
+	return changedOperationsFromHostState(t, e)
 }
 
 func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
@@ -161,15 +166,22 @@ func (e *smokeEnv) assertHostDoctorHealthy(t *testing.T) {
 	assertContains(t, output, "identity: healthy")
 }
 
-func changedOperations(t *testing.T, output string) int {
+// changedOperationsFromHostState reads /etc/simple-vps/host.json from
+// the fake VPS and returns meta.last_apply.operations_changed. Reading
+// the file directly avoids the SSH pipe-close race that drops trailing
+// inner-installer stdout on some Linux/Docker runners.
+func changedOperationsFromHostState(t *testing.T, e *smokeEnv) int {
 	t.Helper()
-	match := regexp.MustCompile(`changed ([0-9]+) operations`).FindStringSubmatch(output)
-	if match == nil {
-		t.Fatalf("install output did not include changed operation count:\n%s", output)
+	raw := e.ssh(t, "cat /etc/simple-vps/host.json")
+	var state struct {
+		Meta struct {
+			LastApply struct {
+				OperationsChanged int `json:"operations_changed"`
+			} `json:"last_apply"`
+		} `json:"meta"`
 	}
-	n, err := strconv.Atoi(match[1])
-	if err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		t.Fatalf("decode host.json: %v\n%s", err, raw)
 	}
-	return n
+	return state.Meta.LastApply.OperationsChanged
 }
