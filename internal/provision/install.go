@@ -161,6 +161,7 @@ func installOperations(opts InstallOptions, stateStore store.Store) []operation 
 	addSecurity(&ops, opts)
 	addHelper(&ops, opts)
 	addPodman(&ops)
+	addPodmanHostBaseline(&ops)
 	addDeployTmpDir(&ops)
 	addCaddy(&ops)
 	if opts.InstallLitestream {
@@ -378,6 +379,180 @@ func ensureDeployTmpDir(apply host.Apply) (bool, error) {
 		return false, err
 	}
 	return true, commandOK(res, "install", args)
+}
+
+// addPodmanHostBaseline writes the host config that makes Podman bridge
+// networking actually work on Ubuntu's default-deny UFW posture, and
+// makes short image names (`FROM nginx:alpine`) resolve. Both surfaced
+// during the first real-box smoke (docs/smoke-real-box-results.md
+// findings 3 and 4); the fake-VPS fixture couldn't catch them because
+// it doesn't run real podman or real ufw.
+//
+// Scope is deliberately narrow:
+//
+//   - Allow input + forward on `podman+` interfaces only. No public
+//     interface is touched. Public posture (22/80/443 per install
+//     mode) is unchanged.
+//   - Flip DEFAULT_FORWARD_POLICY from DROP to ACCEPT so the kernel
+//     forwards between Podman bridges. Same scope: only matters for
+//     traffic the kernel would otherwise drop on FORWARD, which
+//     today is bridge-internal Podman traffic.
+//   - Configure unqualified-search-registries=docker.io so user
+//     Dockerfiles don't have to fully qualify every image.
+//
+// All three are idempotent: the UFW block is delimited by BEGIN/END
+// markers so unrelated user edits to before.rules survive; the
+// default/ufw line is regex-targeted; the registries file is a
+// dedicated drop-in under /etc/containers/registries.conf.d/ so we
+// never touch the main file.
+func addPodmanHostBaseline(ops *[]operation) {
+	*ops = append(*ops, operation{name: "podman ufw rules", run: ensurePodmanUfwRules})
+	*ops = append(*ops, operation{name: "podman unqualified registries", run: ensurePodmanRegistries})
+}
+
+const podmanUfwMarker = "simple-vps podman bridges"
+
+func podmanUfwBlock() string {
+	return strings.Join([]string{
+		"# Allow Podman bridge interfaces (podman0/podman1/...) to reach",
+		"# the host's bridge gateway for aardvark-dns and to forward",
+		"# between containers on the same bridge. Scope is bridge-internal",
+		"# only; public ingress is unchanged. See ADR-0006 Cut 2 and",
+		"# docs/security-model.md.",
+		"-A ufw-before-input -i podman+ -j ACCEPT",
+		"-A ufw-before-forward -i podman+ -j ACCEPT",
+		"-A ufw-before-forward -o podman+ -j ACCEPT",
+	}, "\n")
+}
+
+func ensurePodmanUfwRules(apply host.Apply) (bool, error) {
+	rulesChanged, err := ensurePodmanUfwBeforeRules(apply)
+	if err != nil {
+		return false, err
+	}
+	policyChanged, err := host.EnsureLineInFile(apply, host.LineInFile{
+		Path:   "/etc/default/ufw",
+		Regexp: `^DEFAULT_FORWARD_POLICY=`,
+		Line:   `DEFAULT_FORWARD_POLICY="ACCEPT"`,
+		Owner:  "root",
+		Group:  "root",
+		Mode:   0644,
+	})
+	if err != nil {
+		return false, err
+	}
+	if !rulesChanged && !policyChanged {
+		return false, nil
+	}
+	if apply.CheckMode {
+		return true, nil
+	}
+	// Reload UFW so the in-kernel rules pick up our edits. If UFW
+	// isn't active yet (first install runs this before
+	// addSecurity's `ufw --force enable`), `ufw reload` no-ops
+	// cleanly. Either way, the edits are on disk for the next
+	// `ufw enable`/reload.
+	result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "ufw", Args: []string{"reload"}})
+	if err != nil {
+		return false, err
+	}
+	// `ufw reload` exits non-zero with "Firewall not enabled" before
+	// `ufw enable` runs. That's expected on first install — don't
+	// surface it.
+	if result.ExitCode != 0 && !strings.Contains(string(result.Stdout)+string(result.Stderr), "not enabled") {
+		return false, fmt.Errorf("ufw reload: exit %d: %s", result.ExitCode, strings.TrimSpace(string(result.Stderr)))
+	}
+	return true, nil
+}
+
+// ensurePodmanUfwBeforeRules splices our marked block into
+// /etc/ufw/before.rules just after the `# End required lines` anchor
+// that every default Ubuntu file ships with. If the markers already
+// exist, the block is replaced in place. Unrelated lines are left
+// untouched. If the anchor is missing (user heavily rewrote the file),
+// we refuse to guess at a safe insertion point and error out so the
+// operator can decide.
+func ensurePodmanUfwBeforeRules(apply host.Apply) (bool, error) {
+	const path = "/etc/ufw/before.rules"
+	current, err := apply.Runner.ReadFile(apply.ContextOrBackground(), path)
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", path, err)
+	}
+	next, changed, err := injectPodmanUfwBlock(string(current.Content), podmanUfwBlock())
+	if err != nil {
+		return false, err
+	}
+	if !changed {
+		return false, nil
+	}
+	if apply.CheckMode {
+		return true, nil
+	}
+	return host.EnsureFile(apply, host.File{
+		Path:    path,
+		Content: []byte(next),
+		Owner:   "root",
+		Group:   "root",
+		Mode:    0640,
+	})
+}
+
+// injectPodmanUfwBlock is the pure-function core of
+// ensurePodmanUfwBeforeRules. Exported as a free function for unit
+// testing without a fake runner.
+func injectPodmanUfwBlock(text string, body string) (string, bool, error) {
+	begin := "# BEGIN " + podmanUfwMarker
+	end := "# END " + podmanUfwMarker
+	desired := begin + "\n" + strings.TrimRight(body, "\n") + "\n" + end
+
+	// Replace-in-place path: both markers present and well-ordered.
+	startIdx := strings.Index(text, begin)
+	endIdx := strings.Index(text, end)
+	if startIdx >= 0 && endIdx > startIdx {
+		// Extend endIdx past the marker line itself.
+		endIdx += len(end)
+		next := text[:startIdx] + desired + text[endIdx:]
+		return next, next != text, nil
+	}
+	// Inconsistent: one marker without the other → refuse.
+	if (startIdx < 0) != (endIdx < 0) {
+		return "", false, fmt.Errorf("/etc/ufw/before.rules has one of `# BEGIN/END %s` but not both; resolve manually", podmanUfwMarker)
+	}
+	// Fresh insert: must land inside the *filter table block, after
+	// the chain declarations. Ubuntu's default file marks the boundary
+	// with `# End required lines`.
+	const anchor = "# End required lines"
+	anchorIdx := strings.Index(text, anchor)
+	if anchorIdx < 0 {
+		return "", false, fmt.Errorf("/etc/ufw/before.rules is missing the `%s` anchor; cannot safely insert the simple-vps podman block", anchor)
+	}
+	// Insert after the line containing the anchor.
+	lineEnd := strings.Index(text[anchorIdx:], "\n")
+	if lineEnd < 0 {
+		return "", false, fmt.Errorf("/etc/ufw/before.rules ends mid-line at the `%s` anchor", anchor)
+	}
+	insertAt := anchorIdx + lineEnd + 1
+	next := text[:insertAt] + "\n" + desired + "\n" + text[insertAt:]
+	return next, true, nil
+}
+
+func ensurePodmanRegistries(apply host.Apply) (bool, error) {
+	// Drop-in under /etc/containers/registries.conf.d/ so we never
+	// touch the distro-shipped /etc/containers/registries.conf.
+	body := strings.Join([]string{
+		"# Managed by simple-vps. Lets `FROM nginx:alpine` and similar",
+		"# short image names resolve via docker.io. To pull from another",
+		"# registry, fully qualify the image in your Dockerfile.",
+		`unqualified-search-registries = ["docker.io"]`,
+		"",
+	}, "\n")
+	return host.EnsureFile(apply, host.File{
+		Path:    "/etc/containers/registries.conf.d/00-simple-vps.conf",
+		Content: []byte(body),
+		Owner:   "root",
+		Group:   "root",
+		Mode:    0644,
+	})
 }
 
 func ensureIngressNetwork(apply host.Apply) (bool, error) {
