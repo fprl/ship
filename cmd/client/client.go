@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -93,6 +94,35 @@ func (r *CommandRunner) RunSSH(server string, command string) (string, string, i
 	}
 	args = append(args, server, command)
 	return runCommand("ssh", args, "")
+}
+
+// RunSSHWithStdin pipes `stdin` to the remote command and captures
+// stdout/stderr/exit. Used by `simple-vps secret put` so the secret
+// value never lands in argv, the host process table, or shell
+// history — it crosses the wire on the helper's stdin and goes
+// straight to disk on the other side.
+func (r *CommandRunner) RunSSHWithStdin(server string, command string, stdin []byte) (string, string, int, error) {
+	var args []string
+	if len(r.SshOptions) > 0 {
+		args = append(args, r.SshOptions...)
+	}
+	args = append(args, server, command)
+	cmd := exec.Command("ssh", args...)
+	cmd.Stdin = bytes.NewReader(stdin)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	code := 0
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			code = exitErr.ExitCode()
+		} else {
+			code = 1
+		}
+	}
+	return stdout.String(), stderr.String(), code, err
 }
 
 func (r *CommandRunner) RunSSHPassthrough(server string, command string) error {
@@ -192,6 +222,18 @@ func serverAppApplyCommand(appName string, envName string, tarballPath string, m
 		"--sha", sha,
 		appName, envName,
 	)
+}
+
+func serverAppSecretPutCommand(appName, envName, key string) string {
+	return serverCommand("app", "secret", "put", appName, envName, key)
+}
+
+func serverAppSecretListCommand(appName, envName string) string {
+	return serverCommand("app", "secret", "list", appName, envName)
+}
+
+func serverAppSecretRmCommand(appName, envName, key string) string {
+	return serverCommand("app", "secret", "rm", appName, envName, key)
 }
 
 func parseServerFlag(args []string) (string, []string, error) {
@@ -373,6 +415,112 @@ func CmdSSH(root string, envName string) {
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
+}
+
+// secretValueFromStdin reads the secret value from this process's
+// stdin and trims at most one trailing newline (the kind a tty `read`
+// or an `echo` tacks on). Returns the bytes verbatim past that — so
+// a multi-line heredoc with intentional newlines comes through
+// intact.
+func secretValueFromStdin() ([]byte, error) {
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return nil, fmt.Errorf("read secret value from stdin: %v", err)
+	}
+	if n := len(data); n > 0 && data[n-1] == '\n' {
+		data = data[:n-1]
+	}
+	return data, nil
+}
+
+func CmdSecretPut(root string, envName string, key string) {
+	ctx, err := config.LoadAppContext(root, envName)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	if err := envKeyValid(key); err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	value, err := secretValueFromStdin()
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer runner.Close()
+
+	// Pipe the value over the helper's stdin — never argv, never a
+	// file on disk between hops. The helper writes it straight to
+	// /etc/simple-vps/secrets/<app>/<env>/<key>.
+	stdout, stderr, code, err := runner.RunSSHWithStdin(ctx.Server, serverAppSecretPutCommand(ctx.AppName, envName, key), value)
+	if err != nil || code != 0 {
+		detail := strings.TrimSpace(stderr)
+		if detail == "" {
+			detail = strings.TrimSpace(stdout)
+		}
+		if detail == "" {
+			detail = "no error detail"
+		}
+		utils.Die(fmt.Sprintf("secret put failed: %s", detail), 1)
+	}
+	// Don't echo stdout — it'd carry the helper's confirmation
+	// (which already names the key but not the value). Print our own.
+	fmt.Printf("Stored secret %s for %s (%s). Run `simple-vps deploy %s` to apply.\n", key, ctx.AppName, envName, envName)
+}
+
+func CmdSecretList(root string, envName string) {
+	ctx, err := config.LoadAppContext(root, envName)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer runner.Close()
+
+	out := runSSHChecked(runner, ctx.Server, serverAppSecretListCommand(ctx.AppName, envName), "secret list failed")
+	out = strings.TrimSuffix(out, "\n")
+	if out == "" {
+		// No keys — print nothing rather than an explicit "no
+		// secrets" line so the output stays pipeable.
+		return
+	}
+	fmt.Println(out)
+}
+
+func CmdSecretRm(root string, envName string, key string) {
+	ctx, err := config.LoadAppContext(root, envName)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	if err := envKeyValid(key); err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer runner.Close()
+
+	out := runSSHChecked(runner, ctx.Server, serverAppSecretRmCommand(ctx.AppName, envName, key), "secret rm failed")
+	// The helper prints either "Removed secret X for ..." or
+	// "Secret X was not set for ..."; pass it through directly so
+	// the user sees the difference.
+	fmt.Print(out)
+}
+
+// envKeyValid mirrors `secrets.SecretKeyRe` without taking a dep on
+// the helper-only `internal/secrets` package — keeps the client
+// binary's surface narrow.
+func envKeyValid(key string) error {
+	if !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(key) {
+		return fmt.Errorf("invalid secret key %q: must match ^[A-Za-z_][A-Za-z0-9_]*$", key)
+	}
+	return nil
 }
 
 func CmdHost(args []string) {

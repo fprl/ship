@@ -7,7 +7,89 @@ import (
 	"testing"
 
 	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/secrets"
 )
+
+// --- resolveEnv: literal + secret merging for app apply ---
+
+func TestResolveEnvMergesLiteralsAndSecrets(t *testing.T) {
+	t.Setenv("SIMPLE_VPS_SECRETS_DIR", t.TempDir())
+	if err := secrets.Put("api", "production", "db_url", []byte("postgres://x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := secrets.Put("api", "production", "stripe_key", []byte("sk_test_123")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveEnv("api", "production",
+		map[string]string{"LOG_LEVEL": "info", "PUBLIC_API_URL": "https://api.example.com"},
+		map[string]string{"DATABASE_URL": "db_url", "STRIPE_KEY": "stripe_key"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]string{
+		"LOG_LEVEL":      "info",
+		"PUBLIC_API_URL": "https://api.example.com",
+		"DATABASE_URL":   "postgres://x",
+		"STRIPE_KEY":     "sk_test_123",
+	} {
+		if got[k] != want {
+			t.Fatalf("resolved %s = %q, want %q (full: %v)", k, got[k], want, got)
+		}
+	}
+}
+
+func TestResolveEnvFailsOnMissingSecretBeforeAnyContainerStarts(t *testing.T) {
+	t.Setenv("SIMPLE_VPS_SECRETS_DIR", t.TempDir())
+	// Only one of the two refs is in the store. Deploy must fail
+	// rather than silently emit the env file with one variable.
+	if err := secrets.Put("api", "production", "stripe_key", []byte("sk_x")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := resolveEnv("api", "production",
+		nil,
+		map[string]string{"DATABASE_URL": "db_url", "STRIPE_KEY": "stripe_key"},
+	)
+	if err == nil {
+		t.Fatal("expected error for missing @secret reference")
+	}
+	if !strings.Contains(err.Error(), "DATABASE_URL") || !strings.Contains(err.Error(), "db_url") {
+		t.Fatalf("error should name the missing env-var AND the secret key, got: %v", err)
+	}
+	// And tell the user how to fix it.
+	if !strings.Contains(err.Error(), "simple-vps secret put") {
+		t.Fatalf("error should point at `simple-vps secret put`, got: %v", err)
+	}
+}
+
+func TestResolveEnvPreservesLiteralsWhenNoSecrets(t *testing.T) {
+	t.Setenv("SIMPLE_VPS_SECRETS_DIR", t.TempDir())
+	got, err := resolveEnv("api", "production",
+		map[string]string{"LOG_LEVEL": "info"},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got["LOG_LEVEL"] != "info" {
+		t.Fatalf("expected single literal, got %v", got)
+	}
+}
+
+func TestResolveEnvDoesNotMutateInputMaps(t *testing.T) {
+	t.Setenv("SIMPLE_VPS_SECRETS_DIR", t.TempDir())
+	_ = secrets.Put("api", "production", "k", []byte("v"))
+	literals := map[string]string{"L": "lit"}
+	refs := map[string]string{"R": "k"}
+	_, err := resolveEnv("api", "production", literals, refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := literals["R"]; ok {
+		t.Fatal("resolveEnv leaked resolved secrets back into the literals map")
+	}
+}
 
 // --- buildPodmanRunArgs: container security floor + manifest tmpfs ---
 

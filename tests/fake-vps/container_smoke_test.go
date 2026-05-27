@@ -40,6 +40,7 @@ func TestContainerSmoke(t *testing.T) {
 	env.waitForSSH(t)
 
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
+	t.Run("@secret refs resolve through put/list/rm into the runtime env", env.testSecretLifecycle)
 }
 
 func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
@@ -126,6 +127,108 @@ EOF`)
 	secondFragment := e.ssh(t, "cat /etc/caddy/conf.d/simple-vps-api-production.caddy")
 	if firstFragment != secondFragment {
 		t.Fatalf("expected stable fragment across deploys, got:\nfirst:\n%s\nsecond:\n%s", firstFragment, secondFragment)
+	}
+}
+
+// testSecretLifecycle covers the @secret:KEY resolution path end-to-end
+// against the helper-side store under /etc/simple-vps/secrets/:
+//
+//  1. setup the app/env baseline
+//  2. `simple-vps secret put` over SSH-stdin (value never on argv)
+//  3. `simple-vps secret list` shows the key (NOT the value)
+//  4. deploy a manifest that references @secret:db_url
+//  5. the on-host env file contains the literal env values AND the
+//     resolved secret, with mode 0600 owned by the per-env user
+//  6. `simple-vps secret rm` removes the key
+//  7. a subsequent deploy with the ref still present fails fast at
+//     `app apply` with the unresolved-ref error
+func (e *smokeEnv) testSecretLifecycle(t *testing.T) {
+	app := filepath.Join(e.tmp, "container-secrets")
+	mustMkdir(t, app)
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "sec"
+
+[env.production]
+server = "fake-vps"
+
+[env.production.env]
+LOG_LEVEL = "info"
+DATABASE_URL = "@secret:db_url"
+
+[services.web]
+port = 3000
+healthcheck = "/health"
+
+[routes.app]
+host = "sec.example.com"
+type = "proxy"
+service = "web"
+`)
+	e.commitFixture(t, app)
+	e.simpleVPS(t, app, nil, "setup", "production")
+
+	// 1. put: value over stdin, never argv. The fake-VPS harness uses
+	// docker exec ssh under the hood and the helper reads from its
+	// own stdin in `secret put`.
+	e.simpleVPS(t, app, []byte("postgres://verybadidea"), "secret", "put", "production", "db_url")
+
+	// 2. file lands at the expected path, root-owned, mode 0600,
+	// containing the value verbatim (no trailing newline — the client
+	// trims one if present). Read as root via dockerExec because the
+	// deploy user only has passwordless sudo for /usr/local/bin/simple-vps.
+	listing := strings.TrimSpace(e.dockerExec(t, "ls -l /etc/simple-vps/secrets/sec/production"))
+	if !strings.Contains(listing, " db_url") {
+		t.Fatalf("expected db_url in /etc/simple-vps/secrets/sec/production listing:\n%s", listing)
+	}
+	if !strings.Contains(listing, "-rw-------") {
+		t.Fatalf("secret file is not mode 0600:\n%s", listing)
+	}
+	body := strings.TrimSuffix(e.dockerExec(t, "cat /etc/simple-vps/secrets/sec/production/db_url"), "\n")
+	if body != "postgres://verybadidea" {
+		t.Fatalf("secret value didn't round-trip:\nwant: postgres://verybadidea\n got: %q", body)
+	}
+
+	// 3. list shows the key — NEVER the value.
+	listing = e.simpleVPS(t, app, nil, "secret", "list", "production")
+	if !strings.Contains(listing, "db_url") {
+		t.Fatalf("secret list missing db_url:\n%s", listing)
+	}
+	if strings.Contains(listing, "postgres://") {
+		t.Fatalf("secret list leaked the value:\n%s", listing)
+	}
+
+	// 4. deploy: helper resolves @secret:db_url into the env file
+	// next to the literal LOG_LEVEL.
+	e.simpleVPS(t, app, nil, "deploy", "production")
+	envFile := e.dockerExec(t, "cat /var/apps/sec/production/shared/.env")
+	if !strings.Contains(envFile, "LOG_LEVEL=info\n") {
+		t.Fatalf("env file missing literal LOG_LEVEL:\n%s", envFile)
+	}
+	if !strings.Contains(envFile, "DATABASE_URL=postgres://verybadidea\n") {
+		t.Fatalf("env file missing resolved DATABASE_URL:\n%s", envFile)
+	}
+
+	// 5. env file mode + ownership: 0600 owned by the per-env user.
+	envStat := strings.TrimSpace(e.dockerExec(t, "stat -c '%a %U' /var/apps/sec/production/shared/.env"))
+	if envStat != "600 app-sec-production" {
+		t.Fatalf("env file perms wrong: %q (want `600 app-sec-production`)", envStat)
+	}
+
+	// 6. rm removes the key.
+	e.simpleVPS(t, app, nil, "secret", "rm", "production", "db_url")
+	if missing := strings.TrimSpace(e.dockerExec(t, "ls /etc/simple-vps/secrets/sec/production")); missing != "" {
+		t.Fatalf("expected empty secret dir after rm, got:\n%s", missing)
+	}
+
+	// 7. next deploy with the ref still in the manifest fails fast.
+	result := e.runSimpleVPS(t, app, nil, "deploy", "production")
+	if result.err == nil {
+		t.Fatal("expected deploy to fail with unresolved @secret reference")
+	}
+	if !strings.Contains(result.stderr+result.stdout, "DATABASE_URL") || !strings.Contains(result.stderr+result.stdout, "db_url") {
+		t.Fatalf("unresolved-ref error must name the env var and the secret key, got:\nstdout: %s\nstderr: %s", result.stdout, result.stderr)
 	}
 }
 

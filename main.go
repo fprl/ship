@@ -17,6 +17,7 @@ type cli struct {
 	Check  checkCmd         `cmd:"" help:"Validate an app manifest."`
 	Setup  setupCmd         `cmd:"" help:"Create the per-env Linux user, directories, and Podman network on the host."`
 	Deploy deployCmd        `cmd:"" help:"Build the container image on the host and run the app's services."`
+	Secret secretCmd        `cmd:"" help:"Manage per-(app, env, key) secret values referenced from the manifest."`
 	SSH    sshCmd           `cmd:"ssh" help:"Open an SSH session to an app environment."`
 	Host   hostCmd          `cmd:"" help:"Install or inspect a Simple VPS host."`
 	Server helper.ServerCmd `cmd:"" hidden:"" help:"Privileged host API."`
@@ -64,6 +65,41 @@ type sshCmd struct {
 
 func (c sshCmd) Run() error {
 	client.CmdSSH(".", c.Env)
+	return nil
+}
+
+type secretCmd struct {
+	Put  secretPutCmd  `cmd:"" help:"Read a secret value from stdin and store it on the host."`
+	List secretListCmd `cmd:"" help:"List secret keys for an environment (keys only; values are never printed)."`
+	Rm   secretRmCmd   `cmd:"rm" help:"Remove a secret key from an environment."`
+}
+
+type secretPutCmd struct {
+	Env string `arg:"" help:"Environment to write the secret into."`
+	Key string `arg:"" help:"Env-var name (e.g., DATABASE_URL)."`
+}
+
+func (c secretPutCmd) Run() error {
+	client.CmdSecretPut(".", c.Env, c.Key)
+	return nil
+}
+
+type secretListCmd struct {
+	Env string `arg:"" help:"Environment to list."`
+}
+
+func (c secretListCmd) Run() error {
+	client.CmdSecretList(".", c.Env)
+	return nil
+}
+
+type secretRmCmd struct {
+	Env string `arg:"" help:"Environment to update."`
+	Key string `arg:"" help:"Env-var name to remove."`
+}
+
+func (c secretRmCmd) Run() error {
+	client.CmdSecretRm(".", c.Env, c.Key)
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"github.com/fprl/simple-vps/internal/caddy"
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/identity"
+	"github.com/fprl/simple-vps/internal/secrets"
 	"github.com/fprl/simple-vps/internal/systemd"
 	"github.com/fprl/simple-vps/internal/utils"
 )
@@ -95,20 +97,15 @@ func (c appApplyCmd) Run() error {
 	if len(app.Services) == 0 {
 		utils.Die("manifest must declare at least one [services.<name>] block", 1)
 	}
-	// @secret:KEY refs are recognized but resolution against the
-	// per-(app, env, key) secret store hasn't landed yet. Refuse loudly
-	// rather than silently dropping the variable from the env file.
-	if len(app.SecretRefs) > 0 {
-		var keys []string
-		for k := range app.SecretRefs {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		utils.Die(fmt.Sprintf("manifest references @secret:* values (%s) but secret resolution is not implemented yet; remove the refs or wait for the follow-up PR", strings.Join(keys, ", ")), 1)
+	// 2. Resolve env. Literal values from the manifest first; then
+	// pull each @secret:KEY reference from the per-(app, env, key)
+	// store and merge into the same map. A missing secret fails the
+	// deploy before any container restarts so we never half-apply.
+	resolved, err := resolveEnv(c.App, c.Env, app.Env, app.SecretRefs)
+	if err != nil {
+		utils.Die(err.Error(), 1)
 	}
-
-	// 2. Resolve env. Literal values only for now.
-	if err := writeEnvFile(c.App, c.Env, app.Env); err != nil {
+	if err := writeEnvFile(c.App, c.Env, resolved); err != nil {
 		utils.Die(err.Error(), 1)
 	}
 
@@ -209,6 +206,47 @@ func renderEnvFile(vals map[string]string) string {
 		content += "\n"
 	}
 	return content
+}
+
+// resolveEnv merges literal manifest env values with the runtime
+// values pulled from the per-(app, env, key) secret store. A missing
+// secret fails the whole resolution — no half-applied env file
+// reaches the container, and no manifest-vs-store conflict is
+// silently chosen for the user.
+//
+// Manifest literals and secret refs are guaranteed disjoint by
+// `config.splitEnvBlock` (a value either *is* a secret ref or is a
+// literal; never both). Returning a fresh map keeps the caller's
+// `app.Env` intact for any future reuse.
+func resolveEnv(app, env string, literals map[string]string, refs map[string]string) (map[string]string, error) {
+	out := make(map[string]string, len(literals)+len(refs))
+	for k, v := range literals {
+		out[k] = v
+	}
+	// Sorted for deterministic error messages when multiple refs miss.
+	keys := make([]string, 0, len(refs))
+	for k := range refs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var missing []string
+	for _, envKey := range keys {
+		secretKey := refs[envKey]
+		val, err := secrets.Get(app, env, secretKey)
+		if errors.Is(err, secrets.ErrNotFound) {
+			missing = append(missing, fmt.Sprintf("%s (looks up @secret:%s)", envKey, secretKey))
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read secret %s: %w", secretKey, err)
+		}
+		out[envKey] = string(val)
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("unresolved @secret references: %s — run `simple-vps secret put %s <key>` for each", strings.Join(missing, ", "), env)
+	}
+	return out, nil
 }
 
 func writeEnvFile(app, env string, vals map[string]string) error {

@@ -34,6 +34,9 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "setup-env", "api", "production"},
 		{"app", "destroy-env", "api", "production"},
 		{"app", "apply", "--tarball", "/tmp/simple-vps-deploy/x.tar", "--manifest", "/tmp/simple-vps-deploy/x.toml", "--sha", "deadbeef", "api", "production"},
+		{"app", "secret", "put", "api", "production", "DATABASE_URL"},
+		{"app", "secret", "list", "api", "production"},
+		{"app", "secret", "rm", "api", "production", "DATABASE_URL"},
 	}
 
 	for _, tt := range tests {
