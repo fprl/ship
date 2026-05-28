@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/alecthomas/kong"
 	"github.com/fprl/simple-vps/cmd/client"
 	"github.com/fprl/simple-vps/cmd/helper"
 	"github.com/fprl/simple-vps/cmd/hostinstall"
+	"github.com/fprl/simple-vps/internal/version"
 )
 
 // Public CLI surface. The post-cutover lifecycle is minimal on
@@ -24,7 +27,15 @@ type cli struct {
 	Secret  secretCmd        `cmd:"" help:"Manage per-(app, env, key) secret values referenced from the manifest."`
 	SSH     sshCmd           `cmd:"ssh" help:"Open an SSH session to an app environment."`
 	Host    hostCmd          `cmd:"" help:"Install or inspect a Simple VPS host."`
+	Version versionCmd       `cmd:"" help:"Print the Simple VPS version."`
 	Server  helper.ServerCmd `cmd:"" hidden:"" help:"Privileged host API."`
+}
+
+type versionCmd struct{}
+
+func (versionCmd) Run() error {
+	fmt.Println(version.Version)
+	return nil
 }
 
 type initCmd struct{}

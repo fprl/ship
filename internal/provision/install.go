@@ -13,6 +13,7 @@ import (
 
 	"github.com/fprl/simple-vps/internal/provision/host"
 	"github.com/fprl/simple-vps/internal/store"
+	"github.com/fprl/simple-vps/internal/version"
 )
 
 const (
@@ -1058,7 +1059,7 @@ func writeApplyState(stateStore store.Store, opts InstallOptions, applyID string
 		Packages: map[string]store.ObservedPackage{},
 		Ingress:  store.HostIngressObserved{CloudflaredServiceActive: opts.CloudflareTunnel},
 	}, store.HostMeta{
-		SimpleVPSVersion: "dev",
+		SimpleVPSVersion: version.Version,
 		LastApply: &store.ApplyMeta{
 			ID:                applyID,
 			StartedAt:         startedAt.Format(time.RFC3339),

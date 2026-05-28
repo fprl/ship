@@ -2,6 +2,8 @@
 
 GO ?= go
 DIST_DIR ?= dist
+VERSION ?= $(shell git describe --tags --always --dirty)
+VERSION_LDFLAGS := -X github.com/fprl/simple-vps/internal/version.Version=$(VERSION)
 FAKE_VPS_SHELL_SCRIPTS := \
 	tests/fake-vps/fake-caddy \
 	tests/fake-vps/fake-install-apt-get \
@@ -39,17 +41,17 @@ fake-vps-install-smoke:
 
 build:
 	mkdir -p $(DIST_DIR)
-	$(GO) build -trimpath -o $(DIST_DIR)/simple-vps .
+	$(GO) build -trimpath -ldflags="$(VERSION_LDFLAGS)" -o $(DIST_DIR)/simple-vps .
 
 build-linux:
 	mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w" -o $(DIST_DIR)/simple-vps-linux-amd64 .
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w" -o $(DIST_DIR)/simple-vps-linux-arm64 .
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w $(VERSION_LDFLAGS)" -o $(DIST_DIR)/simple-vps-linux-amd64 .
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w $(VERSION_LDFLAGS)" -o $(DIST_DIR)/simple-vps-linux-arm64 .
 
 build-darwin:
 	mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w" -o $(DIST_DIR)/simple-vps-darwin-amd64 .
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w" -o $(DIST_DIR)/simple-vps-darwin-arm64 .
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w $(VERSION_LDFLAGS)" -o $(DIST_DIR)/simple-vps-darwin-amd64 .
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w $(VERSION_LDFLAGS)" -o $(DIST_DIR)/simple-vps-darwin-arm64 .
 
 build-release: build-linux build-darwin
 
