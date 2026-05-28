@@ -5,8 +5,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/fprl/simple-vps/internal/host"
 	"github.com/fprl/simple-vps/internal/store"
-	"github.com/fprl/simple-vps/internal/systemd"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -45,7 +45,7 @@ func CmdStatus() {
 	}
 	fmt.Println("services:")
 	for _, service := range []string{"tailscaled", "cloudflared", "caddy"} {
-		fmt.Printf("  %s: %s\n", service, systemd.SystemServiceStatus(service))
+		fmt.Printf("  %s: %s\n", service, host.SystemServiceStatus(service))
 	}
 	// Post-cutover host footprint per ADR-0005 §14: the helper itself
 	// (on PATH, implied), Podman, Caddy, rsync.

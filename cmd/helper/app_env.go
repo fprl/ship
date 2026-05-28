@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"regexp"
 
+	"github.com/fprl/simple-vps/internal/host"
 	"github.com/fprl/simple-vps/internal/identity"
 	"github.com/fprl/simple-vps/internal/secrets"
-	"github.com/fprl/simple-vps/internal/systemd"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -50,7 +50,7 @@ func (c appSetupEnvCmd) Run() error {
 	// time; setup-env ensures it for hosts that pre-date the
 	// provisioner change so a deploy on an upgraded box doesn't fail
 	// with "Permission denied" on the upload step.
-	deployTmp := systemd.DeployTmpDir()
+	deployTmp := host.DeployTmpDir()
 	if err := os.MkdirAll(deployTmp, 0755); err != nil {
 		utils.Die(fmt.Sprintf("mkdir %s: %v", deployTmp, err), 1)
 	}
@@ -59,7 +59,7 @@ func (c appSetupEnvCmd) Run() error {
 	}
 
 	// 1. Ensure the per-env system user exists.
-	if !systemd.CommandSucceeds("id", "-u", user) {
+	if !host.CommandSucceeds("id", "-u", user) {
 		if _, err := utils.RunChecked("useradd",
 			[]string{"--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "--user-group", user},
 			"",
@@ -71,7 +71,7 @@ func (c appSetupEnvCmd) Run() error {
 	// 2. Grant the SUDO_USER (the deploy user) group membership on the
 	// per-env user so writes to /var/apps/<app>/<env>/shared from a
 	// deploy step land with the right ownership.
-	deployUser, err := systemd.DeployUserFromSudo()
+	deployUser, err := host.DeployUserFromSudo()
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -98,7 +98,7 @@ func (c appSetupEnvCmd) Run() error {
 
 	// 4. Ensure the per-env Podman network exists. Containers join this
 	// for intra-app DNS in addition to the shared `ingress` network.
-	if !systemd.CommandSucceeds("podman", "network", "exists", network) {
+	if !host.CommandSucceeds("podman", "network", "exists", network) {
 		if _, err := utils.RunChecked("podman", []string{"network", "create", network}, ""); err != nil {
 			utils.Die(fmt.Sprintf("podman network create %s: %v", network, err), 1)
 		}
@@ -154,15 +154,15 @@ func (c appDestroyEnvCmd) Run() error {
 	}
 
 	// 4. Drop the per-env user (and its primary group).
-	if systemd.CommandSucceeds("id", "-u", user) {
+	if host.CommandSucceeds("id", "-u", user) {
 		_, _ = utils.RunChecked("userdel", []string{user}, "")
 	}
-	if systemd.CommandSucceeds("getent", "group", user) {
+	if host.CommandSucceeds("getent", "group", user) {
 		_, _ = utils.RunChecked("groupdel", []string{user}, "")
 	}
 
 	// 5. Drop the per-env Podman network.
-	if systemd.CommandSucceeds("podman", "network", "exists", network) {
+	if host.CommandSucceeds("podman", "network", "exists", network) {
 		_, _ = utils.RunChecked("podman", []string{"network", "rm", network}, "")
 	}
 
