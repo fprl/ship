@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/names"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -358,7 +359,7 @@ func CmdInit(root string) {
 		utils.Die("simple-vps.toml already exists", 1)
 	}
 
-	name := filepath.Base(root)
+	name := defaultAppName(root)
 	packageJsonPath := filepath.Join(root, "package.json")
 	if data, err := os.ReadFile(packageJsonPath); err == nil {
 		var pkg struct {
@@ -366,7 +367,7 @@ func CmdInit(root string) {
 		}
 		_ = json.Unmarshal(data, &pkg)
 		if pkg.Name != "" {
-			name = pkg.Name
+			name = normalizeAppName(pkg.Name)
 		}
 	}
 
@@ -415,6 +416,54 @@ service = "web"
 	fmt.Printf("1. edit %s and Dockerfile\n", ManifestFile)
 	fmt.Println("2. simple-vps setup production")
 	fmt.Println("3. simple-vps deploy production")
+}
+
+func defaultAppName(root string) string {
+	abs, err := filepath.Abs(root)
+	if err == nil {
+		root = abs
+	}
+	return normalizeAppName(filepath.Base(root))
+}
+
+func normalizeAppName(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	if idx := strings.LastIndex(value, "/"); idx >= 0 {
+		value = value[idx+1:]
+	}
+
+	var b strings.Builder
+	prevDash := false
+	for _, r := range value {
+		valid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if valid {
+			b.WriteRune(r)
+			prevDash = false
+			continue
+		}
+		if !prevDash {
+			b.WriteByte('-')
+			prevDash = true
+		}
+	}
+
+	candidate := strings.Trim(b.String(), "-")
+	if candidate == "" {
+		candidate = "app"
+	}
+	if candidate[0] < 'a' || candidate[0] > 'z' {
+		candidate = "app-" + candidate
+	}
+	if len(candidate) > 41 {
+		candidate = strings.Trim(candidate[:41], "-")
+	}
+	if len(candidate) < 2 {
+		candidate += "p"
+	}
+	if !names.AppRe.MatchString(candidate) {
+		return "app"
+	}
+	return candidate
 }
 
 func CmdCheck(root string, envName string) {

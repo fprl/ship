@@ -90,6 +90,32 @@ func TestParseHostFlagsAllowsJsonAroundSubcommand(t *testing.T) {
 	}
 }
 
+func TestDefaultAppNameUsesCurrentDirectoryBase(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "simple-vps-local-demo")
+	if err := os.Mkdir(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := defaultAppName(root); got != "simple-vps-local-demo" {
+		t.Fatalf("defaultAppName = %q", got)
+	}
+}
+
+func TestNormalizeAppNameReturnsValidManifestName(t *testing.T) {
+	cases := map[string]string{
+		".":                        "app",
+		"@scope/My_App":            "my-app",
+		"123-api":                  "app-123-api",
+		"a":                        "ap",
+		strings.Repeat("abc-", 20): strings.Repeat("abc-", 10) + "a",
+	}
+	for input, want := range cases {
+		if got := normalizeAppName(input); got != want {
+			t.Fatalf("normalizeAppName(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestValidateArtifactDotenvRejectsSecretsButAllowsExamples(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{".env.example", ".env.sample", ".env.defaults"} {
