@@ -91,6 +91,37 @@ func TestResolveEnvDoesNotMutateInputMaps(t *testing.T) {
 	}
 }
 
+// --- podmanBuildArgs: cache/pull policy ---
+
+func TestPodmanBuildArgsDefaultUsesCache(t *testing.T) {
+	args := podmanBuildArgs("api", "production", "simple-vps/api-production:abc123", "abc123", "/tmp/Dockerfile", "/tmp/ctx", false)
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "--no-cache") || strings.Contains(joined, "--pull=always") {
+		t.Fatalf("default build should leave Podman's cache/pull policy alone: %s", joined)
+	}
+	for _, want := range []string{
+		"build",
+		"-t simple-vps/api-production:abc123",
+		"--label app=api",
+		"--label env=production",
+		"--label simple_vps_release=abc123",
+		"-f /tmp/Dockerfile",
+		"/tmp/ctx",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("build args missing %q: %s", want, joined)
+		}
+	}
+}
+
+func TestPodmanBuildArgsRebuildBypassesCacheAndPullsBases(t *testing.T) {
+	args := podmanBuildArgs("api", "production", "simple-vps/api-production:abc123", "abc123", "/tmp/Dockerfile", "/tmp/ctx", true)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--no-cache --pull=always") {
+		t.Fatalf("rebuild should pass --no-cache and --pull=always together: %s", joined)
+	}
+}
+
 // --- buildPodmanRunArgs: container security floor + manifest tmpfs ---
 
 func TestBuildPodmanRunArgsAlwaysEmitsHardeningFloor(t *testing.T) {

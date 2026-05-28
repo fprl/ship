@@ -222,13 +222,18 @@ func serverAppSetupEnvCommand(appName string, envName string) string {
 	return serverCommand("app", "setup-env", appName, envName)
 }
 
-func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, sha string) string {
-	return serverCommand("app", "apply",
+func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, sha string, rebuild bool) string {
+	args := []string{"app", "apply"}
+	if rebuild {
+		args = append(args, "--rebuild")
+	}
+	args = append(args,
 		"--tarball", tarballPath,
 		"--manifest", manifestPath,
 		"--sha", sha,
 		appName, envName,
 	)
+	return serverCommand(args...)
 }
 
 func serverAppStatusCommand(appName, envName string, jsonFlag bool) string {
@@ -806,7 +811,7 @@ func CmdHost(args []string) {
 	}
 }
 
-func CmdDeploy(root string, envName string, dirty bool, includeDotenv bool) {
+func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDotenv bool) {
 	ctx, err := config.LoadAppContext(root, envName)
 	if err != nil {
 		utils.Die(err.Error(), 1)
@@ -882,6 +887,7 @@ func CmdDeploy(root string, envName string, dirty bool, includeDotenv bool) {
 		remoteDir+"/source.tar",
 		remoteDir+"/simple-vps.toml",
 		release,
+		rebuild,
 	)
 	runSSHChecked(runner, ctx.Server, applyCmd, "deploy failed")
 

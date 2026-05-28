@@ -67,11 +67,12 @@ func (c setupCmd) Run() error {
 type deployCmd struct {
 	Env           string `arg:"" help:"Environment to deploy."`
 	Dirty         bool   `help:"Allow deploying a dirty worktree."`
+	Rebuild       bool   `help:"Refresh base images and bypass Podman's build cache."`
 	IncludeDotenv bool   `name:"include-dotenv" help:"Allow deploying dotenv files."`
 }
 
 func (c deployCmd) Run() error {
-	client.CmdDeploy(".", c.Env, c.Dirty, c.IncludeDotenv)
+	client.CmdDeploy(".", c.Env, c.Dirty, c.Rebuild, c.IncludeDotenv)
 	return nil
 }
 

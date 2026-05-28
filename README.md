@@ -112,6 +112,7 @@ simple-vps check production
 
 simple-vps setup production
 simple-vps deploy production
+# or: simple-vps deploy production --rebuild
 simple-vps status --json production
 simple-vps app list --json
 simple-vps logs production

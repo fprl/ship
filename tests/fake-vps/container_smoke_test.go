@@ -137,6 +137,12 @@ EOF`)
 	if firstFragment != secondFragment {
 		t.Fatalf("expected stable fragment across deploys, got:\nfirst:\n%s\nsecond:\n%s", firstFragment, secondFragment)
 	}
+
+	// 9. Explicit rebuild refreshes mutable base images and bypasses
+	// Podman's build cache.
+	e.simpleVPS(t, app, nil, "deploy", "production", "--rebuild")
+	commandsLog = e.ssh(t, "cat /run/fake-podman/commands.log")
+	assertContains(t, commandsLog, "podman build --no-cache --pull=always")
 }
 
 func (e *smokeEnv) testConcurrentDeploys(t *testing.T) {

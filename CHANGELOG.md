@@ -7,6 +7,8 @@
 - `simple-vps app list [--server ...] [--json]` and the matching
   `server app list` helper command. App discovery now comes from Podman
   labels instead of the deleted legacy app/route registries.
+- `simple-vps deploy <env> --rebuild`, which passes
+  `--no-cache --pull=always` to host-side `podman build`.
 
 ### Changed
 

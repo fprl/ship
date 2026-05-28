@@ -42,6 +42,7 @@ type appApplyCmd struct {
 	Tarball  string `name:"tarball" required:"" help:"Path to the streamed source tarball."`
 	Manifest string `name:"manifest" required:"" help:"Path to the uploaded simple-vps.toml."`
 	SHA      string `name:"sha" required:"" help:"Release identifier (short git SHA or dirty-<timestamp>)."`
+	Rebuild  bool   `name:"rebuild" help:"Pass --no-cache --pull=always to podman build."`
 }
 
 func (c appApplyCmd) Run() error {
@@ -128,16 +129,8 @@ func (c appApplyCmd) runLocked() {
 
 	// 4. Build the image.
 	imageTag := identity.ImageTag(c.App, c.Env, c.SHA)
-	if _, err := utils.RunChecked("podman",
-		[]string{"build",
-			"-t", imageTag,
-			"--label", "app=" + c.App,
-			"--label", "env=" + c.Env,
-			"--label", "simple_vps_release=" + c.SHA,
-			"-f", filepath.Join(ctxDir, "Dockerfile"),
-			ctxDir,
-		}, "",
-	); err != nil {
+	buildArgs := podmanBuildArgs(c.App, c.Env, imageTag, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild)
+	if _, err := utils.RunChecked("podman", buildArgs, ""); err != nil {
 		utils.Die(fmt.Sprintf("podman build: %v", err), 1)
 	}
 
@@ -181,6 +174,22 @@ func (c appApplyCmd) runLocked() {
 	}
 
 	fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, c.SHA)
+}
+
+func podmanBuildArgs(app, env, imageTag, release, dockerfile, ctxDir string, rebuild bool) []string {
+	args := []string{"build"}
+	if rebuild {
+		args = append(args, "--no-cache", "--pull=always")
+	}
+	args = append(args,
+		"-t", imageTag,
+		"--label", "app="+app,
+		"--label", "env="+env,
+		"--label", "simple_vps_release="+release,
+		"-f", dockerfile,
+		ctxDir,
+	)
+	return args
 }
 
 // hostUserIDs looks up the uid:gid for the per-env Linux account. We

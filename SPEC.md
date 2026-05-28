@@ -61,7 +61,7 @@ implement it yet.
 simple-vps init                                       # scaffold simple-vps.toml + Dockerfile
 simple-vps check [env]                                # validate manifest
 simple-vps setup <env>                                # create per-env user, paths, Podman network
-simple-vps deploy <env> [--dirty]                     # build image on the host, run services, route via Caddy
+simple-vps deploy <env> [--dirty] [--rebuild]         # build image on the host, run services, route via Caddy
 simple-vps status <env> [--json]                      # podman ps-sourced service table
 simple-vps app list [--server <ssh-target>] [--json]  # podman labels-sourced app/env list
 simple-vps restart <env> [service] [--json]           # bounce running services in place (same image)
@@ -101,7 +101,6 @@ These are part of the durable contract above. They were removed in the
 ADR-0005 cutover and will come back wired to the container/Podman flow:
 
 ```bash
-simple-vps deploy <env> --rebuild                     # --no-cache --pull=always (planned)
 simple-vps rollback <env> [release]                   # planned
 ```
 

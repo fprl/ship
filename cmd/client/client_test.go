@@ -137,8 +137,16 @@ func TestValidateArtifactDotenvRejectsSecretsButAllowsExamples(t *testing.T) {
 }
 
 func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
-	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", "abc1234")
+	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", "abc1234", false)
 	want := "sudo simple-vps server app apply --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 api production"
+	if got != want {
+		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestServerAppApplyCommandSupportsRebuild(t *testing.T) {
+	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", "abc1234", true)
+	want := "sudo simple-vps server app apply --rebuild --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
