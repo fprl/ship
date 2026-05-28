@@ -1,5 +1,68 @@
 # Real-box smoke results
 
+## 2026-05-28 — v0.4.2 release smoke
+
+- **Host:** `178.105.101.122`
+- **Release tested:** `v0.4.2`
+- **Install path tested:** `install.sh` copied to a temp directory outside the
+  source checkout.
+- **App binary tested:** published `simple-vps-darwin-arm64` release asset.
+- **Fixture:** `/tmp/simple-vps-smoke-app-20260528T100045Z`
+- **Rebuild status:** not rebuilt in this pass. No `hcloud` CLI, Hetzner API
+  token, or local hcloud config was available from the workspace shell, so this
+  pass verified the existing VPS rather than a fresh provider rebuild.
+
+### Process and result
+
+1. Published the `v0.4.2` release assets:
+   - `simple-vps-linux-amd64`
+   - `simple-vps-linux-arm64`
+   - `simple-vps-darwin-amd64`
+   - `simple-vps-darwin-arm64`
+   - `SHA256SUMS`
+2. Copied `install.sh` to `/tmp`, set `SIMPLE_VPS_RELEASE_TOKEN`, and ran
+   remote install in check mode. Because there was no checkout beside the
+   script, the installer had to:
+   - detect `simple-vps-darwin-arm64`
+   - download the `v0.4.2` Darwin release asset
+   - download and verify `SHA256SUMS`
+   - run the downloaded binary
+   - download and verify `simple-vps-linux-amd64`
+   - copy the Linux helper to the VPS
+3. Remote install completed:
+
+   ```text
+   ==> Downloading Simple VPS binary from https://github.com/fprl/simple-vps/releases/download/v0.4.2/simple-vps-darwin-arm64
+   connected
+   ==> Downloading Simple VPS Linux helper binary from https://github.com/fprl/simple-vps/releases/download/v0.4.2/simple-vps-linux-amd64
+   --> Running Go provisioner on target
+   ==> Apply 20260528T130713Z changed 2 operations
+   ==> Provisioning complete
+   ```
+
+4. Ran the full app path with `dist/simple-vps-darwin-arm64` from the same
+   release build:
+   - `version` -> `v0.4.2`
+   - `check production` -> valid
+   - `setup production` -> complete
+   - `secret put production smoke_key`
+   - `secret list --json production` -> `["smoke_key"]`
+   - `deploy production` -> `Deployed hello (production) at 3360f173051b`
+   - `status --json production` -> one running `web` container
+   - `logs production web --tail 20` -> nginx startup and request logs
+5. Verified HTTPS through Caddy with SNI/Host `smoke.spotslice.com` to the VPS
+   IP:
+
+   ```text
+   /health -> HTTP 200, body: ok
+   /       -> HTTP 200, body: smoke-ok-nginx
+   ```
+
+6. Ran public teardown:
+   `destroy production --confirm hello --purge`
+   -> `containers: 1 removed`, `route: removed`, `secrets: purged`.
+7. Verified `status --json production` returned an empty service list.
+
 ## 2026-05-28 — v0.4.1 release-binary remote install smoke
 
 - **Host:** `178.105.101.122`
