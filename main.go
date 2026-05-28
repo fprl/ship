@@ -24,6 +24,7 @@ type cli struct {
 	Restart restartCmd       `cmd:"" help:"Restart services for an environment (bounces in place; same image)."`
 	Destroy destroyCmd       `cmd:"" help:"Destroy an app environment on the host."`
 	Logs    logsCmd          `cmd:"" help:"Tail logs for one service."`
+	App     appCmd           `cmd:"" help:"Inspect apps on a host."`
 	Secret  secretCmd        `cmd:"" help:"Manage per-(app, env, key) secret values referenced from the manifest."`
 	SSH     sshCmd           `cmd:"ssh" help:"Open an SSH session to an app environment."`
 	Host    hostCmd          `cmd:"" help:"Install or inspect a Simple VPS host."`
@@ -102,6 +103,20 @@ type logsCmd struct {
 
 func (c logsCmd) Run() error {
 	client.CmdLogs(".", c.Env, c.Service, c.Follow, c.Tail)
+	return nil
+}
+
+type appCmd struct {
+	List appListCmd `cmd:"" help:"List app environments visible on a host."`
+}
+
+type appListCmd struct {
+	Server string `help:"SSH target like deploy@example.com. If omitted, inferred from a single-env manifest."`
+	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text table."`
+}
+
+func (c appListCmd) Run() error {
+	client.CmdAppList(".", c.Server, c.JSON)
 	return nil
 }
 

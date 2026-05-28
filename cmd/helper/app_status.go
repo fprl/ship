@@ -43,6 +43,32 @@ func (c appStatusCmd) Run() error {
 	return nil
 }
 
+// appListCmd inspects all Podman containers on the host and groups the
+// simple-vps-labelled ones by app/env. It replaces the old registry-backed
+// route/app readers: runtime labels are the source of truth.
+type appListCmd struct {
+	JSON bool `name:"json" help:"Emit structured JSON instead of the text table."`
+}
+
+func (c appListCmd) Run() error {
+	out, err := podmanPSAllContainers()
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	apps := containersToAppEnvs(out)
+	if c.JSON {
+		payload := appListPayload{Apps: apps}
+		buf, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			utils.Die(err.Error(), 1)
+		}
+		fmt.Println(string(buf))
+		return nil
+	}
+	fmt.Print(renderAppListText(apps))
+	return nil
+}
+
 // appLogsCmd shells `podman logs` for the requested service's
 // container. Service argument is optional only when the (app, env)
 // has exactly one container — otherwise it's ambiguous and we
@@ -84,6 +110,16 @@ func (c appLogsCmd) Run() error {
 // --- formatting / parsing ---
 
 type statusPayload struct {
+	App      string          `json:"app"`
+	Env      string          `json:"env"`
+	Services []serviceStatus `json:"services"`
+}
+
+type appListPayload struct {
+	Apps []appEnvStatus `json:"apps"`
+}
+
+type appEnvStatus struct {
 	App      string          `json:"app"`
 	Env      string          `json:"env"`
 	Services []serviceStatus `json:"services"`
@@ -137,6 +173,45 @@ func containersToServices(entries []containerEntry) []serviceStatus {
 	return out
 }
 
+func containersToAppEnvs(entries []containerEntry) []appEnvStatus {
+	type key struct {
+		app string
+		env string
+	}
+	grouped := map[key][]containerEntry{}
+	for _, e := range entries {
+		app := e.Labels["app"]
+		env := e.Labels["env"]
+		service := e.Labels["service"]
+		if app == "" || env == "" || service == "" {
+			continue
+		}
+		k := key{app: app, env: env}
+		grouped[k] = append(grouped[k], e)
+	}
+
+	keys := make([]key, 0, len(grouped))
+	for k := range grouped {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].app != keys[j].app {
+			return keys[i].app < keys[j].app
+		}
+		return keys[i].env < keys[j].env
+	})
+
+	out := make([]appEnvStatus, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, appEnvStatus{
+			App:      k.app,
+			Env:      k.env,
+			Services: containersToServices(grouped[k]),
+		})
+	}
+	return out
+}
+
 func renderStatusText(app, env string, services []serviceStatus) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s (%s)\n", app, env)
@@ -158,6 +233,32 @@ func renderStatusText(app, env string, services []serviceStatus) string {
 	return b.String()
 }
 
+func renderAppListText(apps []appEnvStatus) string {
+	if len(apps) == 0 {
+		return "no apps found\n"
+	}
+	var b strings.Builder
+	for _, app := range apps {
+		fmt.Fprintf(&b, "%s (%s)\n", app.App, app.Env)
+		if len(app.Services) == 0 {
+			b.WriteString("  no services\n")
+			continue
+		}
+		for _, s := range app.Services {
+			release := s.Release
+			if release == "" {
+				release = "?"
+			}
+			state := s.State
+			if s.Status != "" {
+				state = s.State + " (" + s.Status + ")"
+			}
+			fmt.Fprintf(&b, "  %-12s %s  release=%s\n", s.Service, state, release)
+		}
+	}
+	return b.String()
+}
+
 // --- podman calls ---
 
 func podmanPSContainers(app, env string) ([]containerEntry, error) {
@@ -172,6 +273,19 @@ func podmanPSContainers(app, env string) ([]containerEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("podman ps: %v", err)
 	}
+	return parsePodmanPSJSON(out)
+}
+
+func podmanPSAllContainers() ([]containerEntry, error) {
+	cmd := exec.Command("podman", "ps", "-a", "--format", "json")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("podman ps: %v", err)
+	}
+	return parsePodmanPSJSON(out)
+}
+
+func parsePodmanPSJSON(out []byte) ([]containerEntry, error) {
 	out = []byte(strings.TrimSpace(string(out)))
 	if len(out) == 0 {
 		return nil, nil

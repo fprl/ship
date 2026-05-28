@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `simple-vps app list [--server ...] [--json]` and the matching
+  `server app list` helper command. App discovery now comes from Podman
+  labels instead of the deleted legacy app/route registries.
+
 ## v0.4.2 - 2026-05-28
 
 ### Fixed
@@ -75,6 +83,5 @@ that serves the public CLI, host installer, and privileged server API.
 
 - Rollback is planned but not shipped.
 - Backup/restore is planned but not shipped.
-- `app list --json` is planned but not shipped.
 - `host install --ingress ...` and `--admin ...` preset flags are planned;
   current installs use the lower-level provider flags directly.

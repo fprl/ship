@@ -162,8 +162,8 @@ These rules apply to every JSON file under `/etc/simple-vps/`:
 
 ### What this gives up
 
-- There is no durable app registry to query. `status` and the planned
-  `app list --json` must inspect Podman labels and Caddy fragments.
+- There is no durable app registry to query. `status` and
+  `app list --json` inspect Podman labels.
 - Route state is not a standalone JSON table. Cloudflare DNS state remains in
   provider state; local Caddy routing state is the fragment itself.
 - Migration discipline starts when schema version `2` exists. Until then,

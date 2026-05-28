@@ -152,6 +152,20 @@ func TestServerAppSetupEnvCommand(t *testing.T) {
 	}
 }
 
+func TestServerAppListCommandSupportsJSON(t *testing.T) {
+	got := serverAppListCommand(false)
+	want := "sudo simple-vps server app list"
+	if got != want {
+		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
+	}
+
+	got = serverAppListCommand(true)
+	want = "sudo simple-vps server app list --json"
+	if got != want {
+		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
 func TestServerAppDestroyEnvCommand(t *testing.T) {
 	got := serverAppDestroyEnvCommand("api", "production", false)
 	want := "sudo simple-vps server app destroy-env api production"

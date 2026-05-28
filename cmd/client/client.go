@@ -238,6 +238,13 @@ func serverAppStatusCommand(appName, envName string, jsonFlag bool) string {
 	return serverCommand("app", "status", appName, envName)
 }
 
+func serverAppListCommand(jsonFlag bool) string {
+	if jsonFlag {
+		return serverCommand("app", "list", "--json")
+	}
+	return serverCommand("app", "list")
+}
+
 func serverAppLogsCommand(appName, envName, service string, follow bool, tail int) string {
 	args := []string{"app", "logs"}
 	if follow {
@@ -550,6 +557,21 @@ func CmdStatus(root string, envName string, jsonFlag bool) {
 	out := runSSHChecked(runner, ctx.Server, serverAppStatusCommand(ctx.AppName, envName, jsonFlag), "status failed")
 	// Pass the helper's output through unchanged so `--json` produces
 	// pipeable JSON and the text mode keeps its line breaks.
+	fmt.Print(out)
+}
+
+func CmdAppList(root string, explicitServer string, jsonFlag bool) {
+	server, err := readTargetServer(root, explicitServer)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer runner.Close()
+
+	out := runSSHChecked(runner, server, serverAppListCommand(jsonFlag), "app list failed")
 	fmt.Print(out)
 }
 

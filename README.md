@@ -17,11 +17,11 @@ your app repo     ->  simple-vps deploy  ->  live app
 - Podman image builds on the VPS from your app's Dockerfile.
 - Per-env Linux users, directories, networks, and mutation locks.
 - Manifest env values and host-side `@secret:KEY` resolution.
-- `status`, `logs`, `restart`, `destroy`, and JSON read surfaces.
+- `status`, `app list`, `logs`, `restart`, `destroy`, and JSON read surfaces.
 - Fake-VPS smoke tests and a real Ubuntu 24.04 VPS smoke runbook.
 
-Not shipped yet: rollback, backup/restore, `app list --json`, and the planned
-`--ingress` / `--admin` preset flags. See [SPEC.md](SPEC.md).
+Not shipped yet: rollback, backup/restore, and the planned `--ingress` /
+`--admin` preset flags. See [SPEC.md](SPEC.md).
 
 ## Start Here
 
@@ -113,6 +113,7 @@ simple-vps check production
 simple-vps setup production
 simple-vps deploy production
 simple-vps status --json production
+simple-vps app list --json
 simple-vps logs production
 ```
 

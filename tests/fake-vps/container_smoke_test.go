@@ -333,6 +333,35 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 		t.Fatalf("status --json missing simple_vps_release label: %+v", payload.Services[0])
 	}
 
+	// Host-level app listing is sourced from Podman labels instead
+	// of the removed apps.json/routes.json registries.
+	rawListJSON := e.simpleVPS(t, app, nil, "app", "list", "--json")
+	var listPayload struct {
+		Apps []struct {
+			App      string `json:"app"`
+			Env      string `json:"env"`
+			Services []struct {
+				Service string `json:"service"`
+				State   string `json:"state"`
+			} `json:"services"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal([]byte(rawListJSON), &listPayload); err != nil {
+		t.Fatalf("app list --json output not parseable as JSON: %v\nraw:\n%s", err, rawListJSON)
+	}
+	if len(listPayload.Apps) == 0 {
+		t.Fatalf("app list --json returned no apps after deploy:\n%s", rawListJSON)
+	}
+	found := false
+	for _, listed := range listPayload.Apps {
+		if listed.App == "api" && listed.Env == "production" && len(listed.Services) == 1 && listed.Services[0].Service == "web" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("app list --json missing api/production/web:\n%+v", listPayload.Apps)
+	}
+
 	// Logs reaches `podman logs` on the right container and prints
 	// the deterministic stub line.
 	logs := e.simpleVPS(t, app, nil, "logs", "production", "web")

@@ -238,8 +238,8 @@ under the same discipline as the state schema.
 
 `logs` intentionally remains a stream of process output, not a JSON
 object. The old `route list` helper is gone with `apps.json` /
-`routes.json`; the planned replacement is `app list --json`, sourced from
-Podman labels and Caddy fragments.
+`routes.json`; the replacement is `app list --json`, sourced from Podman
+labels.
 
 Human-readable table/text output remains the default. JSON is
 opt-in per invocation; no environment variable, no config knob.

@@ -11,6 +11,7 @@ type appCmd struct {
 	SetupEnv   appSetupEnvCmd   `cmd:"setup-env" help:"Create the per-env Linux user, directories, and Podman network."`
 	DestroyEnv appDestroyEnvCmd `cmd:"destroy-env" help:"Tear down one env: containers, files, user, network."`
 	Apply      appApplyCmd      `cmd:"apply" help:"Build the image, start services, and apply the Caddy fragment from an uploaded manifest."`
+	List       appListCmd       `cmd:"list" help:"List app environments visible on this host."`
 	Status     appStatusCmd     `cmd:"status" help:"Show running services for one (app, env) pair."`
 	Restart    appRestartCmd    `cmd:"restart" help:"Bounce running containers for one (app, env) pair via podman restart."`
 	Logs       appLogsCmd       `cmd:"logs" help:"Tail logs for one service via podman logs."`

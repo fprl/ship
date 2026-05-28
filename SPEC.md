@@ -63,6 +63,7 @@ simple-vps check [env]                                # validate manifest
 simple-vps setup <env>                                # create per-env user, paths, Podman network
 simple-vps deploy <env> [--dirty]                     # build image on the host, run services, route via Caddy
 simple-vps status <env> [--json]                      # podman ps-sourced service table
+simple-vps app list [--server <ssh-target>] [--json]  # podman labels-sourced app/env list
 simple-vps restart <env> [service] [--json]           # bounce running services in place (same image)
 simple-vps destroy <env> --confirm <app> [--purge]    # tear down one environment; --yes for automation
 simple-vps logs <env> [service] [--follow] [--tail N] # podman logs against the labelled container
@@ -158,11 +159,11 @@ they map to the individual flags above.
 
 ### Diagnostics
 
-There is no client-side `route` verb. Route inspection on the host is
-also pending: the helper-side `route list` reader pointed at a
-registry the new deploy flow does not populate and was removed
-together with the legacy `apps.json` / `routes.json` state files. A
-podman-labels-sourced replacement is planned as `app list`.
+There is no client-side `route` verb. The helper-side `route list`
+reader pointed at a registry the new deploy flow does not populate
+and was removed together with the legacy `apps.json` / `routes.json`
+state files. Host app discovery is now `simple-vps app list`, sourced
+from Podman labels.
 
 ## Internal CLI (server-side)
 
@@ -184,6 +185,7 @@ sudo simple-vps server doctor [--json]
 sudo simple-vps server app setup-env <app> <env>
 sudo simple-vps server app destroy-env [--purge] <app> <env>
 sudo simple-vps server app apply --tarball <path> --manifest <path> --sha <sha> <app> <env>
+sudo simple-vps server app list [--json]
 sudo simple-vps server app status [--json] <app> <env>
 sudo simple-vps server app restart [--json] <app> <env> [service]
 sudo simple-vps server app logs [--follow] [--tail=N] <app> <env> [service]
@@ -195,12 +197,6 @@ sudo simple-vps server cloudflare publish --app <name> <host>
 sudo simple-vps server cloudflare remove <host>
 sudo simple-vps server cloudflare remove --app <name>
 sudo simple-vps server cloudflare setup-tunnel --name <name>
-```
-
-Planned (paired with the client-side "planned" verbs above):
-
-```bash
-sudo simple-vps server app list [--json]                            # planned; sourced from podman labels / Caddy fragments
 ```
 
 The sudoers contract is one line for the whole server binary, installed at
