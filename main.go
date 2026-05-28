@@ -13,17 +13,18 @@ import (
 // reintroduced against the new container/podman flow as that work
 // lands.
 type cli struct {
-	Init   initCmd          `cmd:"" help:"Create a simple-vps.toml manifest and Dockerfile scaffold."`
-	Check  checkCmd         `cmd:"" help:"Validate an app manifest."`
-	Setup  setupCmd         `cmd:"" help:"Create the per-env Linux user, directories, and Podman network on the host."`
-	Deploy deployCmd        `cmd:"" help:"Build the container image on the host and run the app's services."`
+	Init    initCmd          `cmd:"" help:"Create a simple-vps.toml manifest and Dockerfile scaffold."`
+	Check   checkCmd         `cmd:"" help:"Validate an app manifest."`
+	Setup   setupCmd         `cmd:"" help:"Create the per-env Linux user, directories, and Podman network on the host."`
+	Deploy  deployCmd        `cmd:"" help:"Build the container image on the host and run the app's services."`
 	Status  statusCmd        `cmd:"" help:"Show running services for an environment."`
 	Restart restartCmd       `cmd:"" help:"Restart services for an environment (bounces in place; same image)."`
+	Destroy destroyCmd       `cmd:"" help:"Destroy an app environment on the host."`
 	Logs    logsCmd          `cmd:"" help:"Tail logs for one service."`
-	Secret secretCmd        `cmd:"" help:"Manage per-(app, env, key) secret values referenced from the manifest."`
-	SSH    sshCmd           `cmd:"ssh" help:"Open an SSH session to an app environment."`
-	Host   hostCmd          `cmd:"" help:"Install or inspect a Simple VPS host."`
-	Server helper.ServerCmd `cmd:"" hidden:"" help:"Privileged host API."`
+	Secret  secretCmd        `cmd:"" help:"Manage per-(app, env, key) secret values referenced from the manifest."`
+	SSH     sshCmd           `cmd:"ssh" help:"Open an SSH session to an app environment."`
+	Host    hostCmd          `cmd:"" help:"Install or inspect a Simple VPS host."`
+	Server  helper.ServerCmd `cmd:"" hidden:"" help:"Privileged host API."`
 }
 
 type initCmd struct{}
@@ -101,6 +102,18 @@ type restartCmd struct {
 
 func (c restartCmd) Run() error {
 	client.CmdRestart(".", c.Env, c.Service, c.JSON)
+	return nil
+}
+
+type destroyCmd struct {
+	Env     string `arg:"" help:"Environment to destroy."`
+	Confirm string `name:"confirm" help:"Required app-name confirmation unless --yes is passed."`
+	Yes     bool   `name:"yes" help:"Skip confirmation. Intended for automation."`
+	Purge   bool   `name:"purge" help:"Also delete secrets for this app/env."`
+}
+
+func (c destroyCmd) Run() error {
+	client.CmdDestroy(".", c.Env, c.Confirm, c.Yes, c.Purge)
 	return nil
 }
 

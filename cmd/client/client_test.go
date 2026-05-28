@@ -109,3 +109,29 @@ func TestServerAppSetupEnvCommand(t *testing.T) {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 }
+
+func TestServerAppDestroyEnvCommand(t *testing.T) {
+	got := serverAppDestroyEnvCommand("api", "production", false)
+	want := "sudo simple-vps server app destroy-env api production"
+	if got != want {
+		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
+	}
+
+	got = serverAppDestroyEnvCommand("api", "production", true)
+	want = "sudo simple-vps server app destroy-env --purge api production"
+	if got != want {
+		t.Fatalf("unexpected purge command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestValidateDestroyConfirmation(t *testing.T) {
+	if err := validateDestroyConfirmation("api", "api", false); err != nil {
+		t.Fatalf("confirming the app name should pass: %v", err)
+	}
+	if err := validateDestroyConfirmation("api", "", true); err != nil {
+		t.Fatalf("--yes should pass without confirm: %v", err)
+	}
+	if err := validateDestroyConfirmation("api", "wrong", false); err == nil || !strings.Contains(err.Error(), "--confirm api") {
+		t.Fatalf("expected confirmation error naming the app, got %v", err)
+	}
+}

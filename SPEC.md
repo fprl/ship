@@ -64,6 +64,7 @@ simple-vps setup <env>                                # create per-env user, pat
 simple-vps deploy <env> [--dirty]                     # build image on the host, run services, route via Caddy
 simple-vps status <env> [--json]                      # podman ps-sourced service table
 simple-vps restart <env> [service] [--json]           # bounce running services in place (same image)
+simple-vps destroy <env> --confirm <app> [--purge]    # tear down one environment; --yes for automation
 simple-vps logs <env> [service] [--follow] [--tail N] # podman logs against the labelled container
 simple-vps secret put <env> <KEY>                     # stdin-only write to /etc/simple-vps/secrets/<app>/<env>/<key>
 simple-vps secret list <env>                          # keys only, never values
@@ -76,9 +77,17 @@ image, env, mounts, labels). To pick up manifest changes use
 `deploy`. Whole-env restart is rolling, one service at a time, and
 fails fast if a container doesn't come back to `running`.
 
+`destroy` removes the running containers, per-env Caddy fragment,
+per-env directory, Linux user/group, and Podman network. Secrets are
+kept by default; pass `--purge` to remove
+`/etc/simple-vps/secrets/<app>/<env>` too. To prevent accidental
+teardown, the client requires either `--confirm <app>` or `--yes`.
+
 `secret put` reads stdin only, never argv. `secret list` prints names
-only, never values. Writes are atomic via the privileged server API.
-No auto-restart on secret change — re-deploy or restart explicitly.
+only, never values. Writes are atomic via the privileged server API
+and whole-value `@secret:KEY` references resolve on the host during
+deploy. No auto-restart on secret change — re-deploy or restart
+explicitly.
 
 ### App lifecycle — planned (post-cutover backlog)
 
@@ -88,13 +97,11 @@ ADR-0005 cutover and will come back wired to the container/Podman flow:
 ```bash
 simple-vps deploy <env> --rebuild                     # --no-cache --pull=always (planned)
 simple-vps rollback <env> [release]                   # planned
-simple-vps destroy <env> [--yes] [--confirm <name>] [--purge]  # planned
 ```
 
 Non-secret env values live in `[env.<env>.env]` blocks in the manifest
 today. Secret values are referenced by whole-value `@secret:KEY`
-references that will resolve on the host before deploy execution once
-the secret store lands.
+references and resolved on the host before deploy execution.
 
 ### Backup and restore — planned
 
@@ -153,8 +160,7 @@ There is no client-side `route` verb. Route inspection on the host is
 also pending: the helper-side `route list` reader pointed at a
 registry the new deploy flow does not populate and was removed
 together with the legacy `apps.json` / `routes.json` state files. A
-podman-labels-sourced replacement lands alongside the rest of the
-post-cutover `status` / `logs` rewrite.
+podman-labels-sourced replacement is planned as `app list`.
 
 ## Internal CLI (server-side)
 
@@ -174,7 +180,7 @@ sudo simple-vps server status
 sudo simple-vps server doctor
 
 sudo simple-vps server app setup-env <app> <env>
-sudo simple-vps server app destroy-env <app> <env>
+sudo simple-vps server app destroy-env [--purge] <app> <env>
 sudo simple-vps server app apply --tarball <path> --manifest <path> --sha <sha> <app> <env>
 sudo simple-vps server app status [--json] <app> <env>
 sudo simple-vps server app restart [--json] <app> <env> [service]

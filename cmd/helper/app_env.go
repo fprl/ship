@@ -3,9 +3,11 @@ package helper
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/fprl/simple-vps/internal/identity"
+	"github.com/fprl/simple-vps/internal/secrets"
 	"github.com/fprl/simple-vps/internal/systemd"
 	"github.com/fprl/simple-vps/internal/utils"
 )
@@ -109,8 +111,9 @@ func (c appSetupEnvCmd) Run() error {
 // appDestroyEnvCmd removes one env's containers, files, user, and
 // network. Removes the parent app dir only when this was the last env.
 type appDestroyEnvCmd struct {
-	App string `arg:"" help:"App name."`
-	Env string `arg:"" help:"Env name."`
+	App   string `arg:"" help:"App name."`
+	Env   string `arg:"" help:"Env name."`
+	Purge bool   `name:"purge" help:"Also delete secrets for this app/env."`
 }
 
 func (c appDestroyEnvCmd) Run() error {
@@ -124,27 +127,33 @@ func (c appDestroyEnvCmd) Run() error {
 	envRoot := identity.AppEnvRoot(app, env)
 	appRoot := identity.AppRoot(app)
 
-	// 1. Stop and remove any containers belonging to this (app, env).
-	// `podman ps --filter label=app=... --filter label=env=...` would be
-	// the precise version; for this slice we settle for prefix-name
-	// matching since the helper hasn't yet started labelling containers.
-	prefix := identity.ContainerName(app, env, "")
-	out, _ := utils.RunChecked("podman",
-		[]string{"ps", "-a", "--format", "{{.Names}}", "--filter", "name=" + prefix},
-		"",
-	)
-	for _, name := range splitNonEmptyLines(string(out)) {
+	// 1. Remove the Caddy fragment and reload first, so traffic stops
+	// routing here before the containers disappear. Restore the
+	// fragment if validation or reload fails; otherwise a healthy route
+	// could be lost on a later reload even though destroy failed.
+	caddyRemoved, err := removeAppCaddyfile(app, env)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+
+	// 2. Stop and remove any containers belonging to this (app, env).
+	containers, err := podmanPSContainers(app, env)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	removedContainers := destroyContainerNames(containersToServices(containers))
+	for _, name := range removedContainers {
 		_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
 	}
 
-	// 2. Drop the env directory.
+	// 3. Drop the env directory.
 	if _, err := os.Stat(envRoot); err == nil {
 		if err := os.RemoveAll(envRoot); err != nil {
 			utils.Die(err.Error(), 1)
 		}
 	}
 
-	// 3. Drop the per-env user (and its primary group).
+	// 4. Drop the per-env user (and its primary group).
 	if systemd.CommandSucceeds("id", "-u", user) {
 		_, _ = utils.RunChecked("userdel", []string{user}, "")
 	}
@@ -152,32 +161,100 @@ func (c appDestroyEnvCmd) Run() error {
 		_, _ = utils.RunChecked("groupdel", []string{user}, "")
 	}
 
-	// 4. Drop the per-env Podman network.
+	// 5. Drop the per-env Podman network.
 	if systemd.CommandSucceeds("podman", "network", "exists", network) {
 		_, _ = utils.RunChecked("podman", []string{"network", "rm", network}, "")
 	}
 
-	// 5. If the parent app dir is now empty (last env destroyed), drop it.
+	secretsPurged := false
+	if c.Purge {
+		secretDir := secrets.EnvDir(app, env)
+		if err := os.RemoveAll(secretDir); err != nil {
+			utils.Die(fmt.Sprintf("remove secrets for %s (%s): %v", app, env, err), 1)
+		}
+		secretsPurged = true
+		if appSecretDir := filepath.Dir(secretDir); dirEmpty(appSecretDir) {
+			_ = os.Remove(appSecretDir)
+		}
+	}
+
+	// 6. If the parent app dir is now empty (last env destroyed), drop it.
 	if entries, err := os.ReadDir(appRoot); err == nil && len(entries) == 0 {
 		_ = os.Remove(appRoot)
 	}
 
-	fmt.Printf("Destroyed env %s of app %s\n", env, app)
+	fmt.Print(renderDestroyText(app, env, destroySummary{
+		Containers:    removedContainers,
+		CaddyFragment: caddyRemoved,
+		SecretsPurged: secretsPurged,
+	}))
 	return nil
 }
 
-func splitNonEmptyLines(s string) []string {
-	var out []string
-	start := 0
-	for i := 0; i <= len(s); i++ {
-		if i == len(s) || s[i] == '\n' {
-			line := s[start:i]
-			if line != "" {
-				out = append(out, line)
-			}
-			start = i + 1
+type destroySummary struct {
+	Containers    []string
+	CaddyFragment bool
+	SecretsPurged bool
+}
+
+func destroyContainerNames(services []serviceStatus) []string {
+	names := make([]string, 0, len(services))
+	for _, svc := range services {
+		if svc.Container != "" {
+			names = append(names, svc.Container)
 		}
+	}
+	return names
+}
+
+func removeAppCaddyfile(app, env string) (bool, error) {
+	path := caddyfilePath(app, env)
+	prevFragment, prevExisted, err := snapshotCaddyFragment(path)
+	if err != nil {
+		return false, fmt.Errorf("snapshot existing fragment: %v", err)
+	}
+	if !prevExisted {
+		return false, nil
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("remove caddy fragment %s: %v", path, err)
+	}
+	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}, ""); err != nil {
+		if restoreErr := restoreCaddyFragment(path, prevFragment, prevExisted); restoreErr != nil {
+			return false, fmt.Errorf("caddy validate after destroy failed AND restore failed (manual fix required at %s): %v (restore: %v)", path, err, restoreErr)
+		}
+		return false, fmt.Errorf("caddy validate after destroy failed, restored previous fragment: %v", err)
+	}
+	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
+		if restoreErr := restoreCaddyFragment(path, prevFragment, prevExisted); restoreErr != nil {
+			return false, fmt.Errorf("caddy reload after destroy failed AND restore failed (manual fix required at %s): %v (restore: %v)", path, err, restoreErr)
+		}
+		return false, fmt.Errorf("caddy reload after destroy failed, restored previous fragment: %v", err)
+	}
+	return true, nil
+}
+
+func renderDestroyText(app, env string, summary destroySummary) string {
+	out := fmt.Sprintf("Destroyed %s (%s)\n", app, env)
+	if len(summary.Containers) == 0 {
+		out += "  containers: none\n"
+	} else {
+		out += fmt.Sprintf("  containers: %d removed\n", len(summary.Containers))
+	}
+	if summary.CaddyFragment {
+		out += "  route: removed\n"
+	} else {
+		out += "  route: none\n"
+	}
+	if summary.SecretsPurged {
+		out += "  secrets: purged\n"
+	} else {
+		out += "  secrets: kept\n"
 	}
 	return out
 }
 
+func dirEmpty(path string) bool {
+	entries, err := os.ReadDir(path)
+	return err == nil && len(entries) == 0
+}

@@ -44,6 +44,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("@secret refs resolve through put/list/rm into the runtime env", env.testSecretLifecycle)
 	t.Run("status + logs surface deployed services without SSHing in", env.testStatusAndLogs)
 	t.Run("restart bounces containers in place via podman restart", env.testRestart)
+	t.Run("destroy tears down one app environment", env.testDestroy)
 }
 
 func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
@@ -367,6 +368,57 @@ func (e *smokeEnv) testRestart(t *testing.T) {
 	if !strings.Contains(missing.stderr+missing.stdout, "nope") {
 		t.Fatalf("error should name the missing service, got:\nstdout: %s\nstderr: %s", missing.stdout, missing.stderr)
 	}
+}
+
+// testDestroy covers the public `simple-vps destroy` wrapper and the
+// privileged `server app destroy-env` teardown path. It intentionally
+// runs after status/logs/restart because it removes the shared
+// container-api fixture from the fake VPS.
+func (e *smokeEnv) testDestroy(t *testing.T) {
+	app := filepath.Join(e.tmp, "container-api")
+
+	// Client safety gate: no accidental teardown without either
+	// --confirm <app> or --yes.
+	missingConfirm := e.runSimpleVPS(t, app, nil, "destroy", "production")
+	if missingConfirm.err == nil {
+		t.Fatal("expected destroy without confirmation to fail")
+	}
+	if !strings.Contains(missingConfirm.stderr+missingConfirm.stdout, "--confirm api") {
+		t.Fatalf("confirmation error should name the app, got:\nstdout: %s\nstderr: %s", missingConfirm.stdout, missingConfirm.stderr)
+	}
+
+	// Give --purge something observable to remove.
+	e.simpleVPS(t, app, []byte("throwaway"), "secret", "put", "production", "cleanup_key")
+
+	out := e.simpleVPS(t, app, nil, "destroy", "production", "--confirm", "api", "--purge")
+	assertContains(t, out, "Destroyed api (production)")
+	assertContains(t, out, "containers: 1 removed")
+	assertContains(t, out, "route: removed")
+	assertContains(t, out, "secrets: purged")
+
+	commandsLog := e.ssh(t, "cat /run/fake-podman/commands.log")
+	assertContains(t, commandsLog, "podman rm -f app-api-production-web")
+	assertContains(t, commandsLog, "podman network rm app-api-production")
+	assertContains(t, commandsLog, "podman exec caddy caddy reload --config /etc/caddy/Caddyfile")
+
+	e.dockerExec(t, "test ! -e /run/fake-podman/containers/app-api-production-web.labels")
+	e.dockerExec(t, "test ! -e /run/fake-podman/networks/app-api-production")
+	e.dockerExec(t, "test ! -e /etc/caddy/conf.d/simple-vps-api-production.caddy")
+	e.dockerExec(t, "test ! -e /var/apps/api/production")
+	e.dockerExec(t, "test ! -e /etc/simple-vps/secrets/api/production")
+	e.dockerExec(t, "! getent passwd app-api-production >/dev/null")
+
+	status := e.simpleVPS(t, app, nil, "status", "production")
+	assertContains(t, status, "no services running")
+
+	// Fake Caddy re-reads conf.d on every request, so route removal is
+	// visible immediately after the reload.
+	e.ssh(t, "if curl -fsS -H 'Host: api.example.com' http://127.0.0.1/health; then exit 1; fi")
+
+	// Idempotence: a second destroy should be a no-op, not an error.
+	again := e.simpleVPS(t, app, nil, "destroy", "production", "--yes")
+	assertContains(t, again, "containers: none")
+	assertContains(t, again, "route: none")
 }
 
 func writeContainerFixture(t *testing.T, app string) {

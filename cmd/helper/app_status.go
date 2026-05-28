@@ -14,7 +14,7 @@ import (
 // appStatusCmd inspects what `podman ps` currently sees for one
 // (app, env) pair and renders either a text table or a structured
 // JSON payload. Read-only — never starts, stops, or removes
-// anything; that surface lands in a separate restart/destroy PR.
+// anything.
 type appStatusCmd struct {
 	App  string `arg:"" help:"App name."`
 	Env  string `arg:"" help:"Env name."`

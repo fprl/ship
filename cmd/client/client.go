@@ -258,6 +258,15 @@ func serverAppRestartCommand(appName, envName, service string, jsonFlag bool) st
 	return serverCommand(args...)
 }
 
+func serverAppDestroyEnvCommand(appName, envName string, purge bool) string {
+	args := []string{"app", "destroy-env"}
+	if purge {
+		args = append(args, "--purge")
+	}
+	args = append(args, appName, envName)
+	return serverCommand(args...)
+}
+
 func serverAppSecretPutCommand(appName, envName, key string) string {
 	return serverCommand("app", "secret", "put", appName, envName, key)
 }
@@ -484,6 +493,34 @@ func CmdRestart(root string, envName string, service string, jsonFlag bool) {
 	// is pipeable and the text mode keeps its line breaks.
 	out := runSSHChecked(runner, ctx.Server, serverAppRestartCommand(ctx.AppName, envName, service, jsonFlag), "restart failed")
 	fmt.Print(out)
+}
+
+func CmdDestroy(root string, envName string, confirm string, yes bool, purge bool) {
+	ctx, err := config.LoadAppContext(root, envName)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	if err := validateDestroyConfirmation(ctx.AppName, confirm, yes); err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer runner.Close()
+
+	out := runSSHChecked(runner, ctx.Server, serverAppDestroyEnvCommand(ctx.AppName, envName, purge), "destroy failed")
+	fmt.Print(out)
+}
+
+func validateDestroyConfirmation(appName, confirm string, yes bool) error {
+	if yes {
+		return nil
+	}
+	if confirm == appName {
+		return nil
+	}
+	return fmt.Errorf("destroy requires --confirm %s or --yes", appName)
 }
 
 func CmdLogs(root string, envName string, service string, follow bool, tail int) {

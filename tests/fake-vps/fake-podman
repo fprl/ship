@@ -41,6 +41,10 @@ case "$verb" in
         printf '%s\n' "$name"
         exit 0
         ;;
+      rm)
+        rm -f "$state_dir/networks/$name"
+        exit 0
+        ;;
       *)
         echo "fake podman: unsupported network command: $sub" >&2
         exit 1

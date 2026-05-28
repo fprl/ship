@@ -32,6 +32,7 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"cloudflare", "remove", "--app", "api"},
 		{"app", "setup-env", "api", "production"},
 		{"app", "destroy-env", "api", "production"},
+		{"app", "destroy-env", "--purge", "api", "production"},
 		{"app", "apply", "--tarball", "/tmp/simple-vps-deploy/x.tar", "--manifest", "/tmp/simple-vps-deploy/x.toml", "--sha", "deadbeef", "api", "production"},
 		{"app", "secret", "put", "api", "production", "DATABASE_URL"},
 		{"app", "secret", "list", "api", "production"},
