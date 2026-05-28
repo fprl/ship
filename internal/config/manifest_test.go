@@ -23,13 +23,6 @@ func writeDockerfile(t *testing.T, root string) {
 	}
 }
 
-func writeStaticDir(t *testing.T, root string, name string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Join(root, name), 0755); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func checkErrors(t *testing.T, root string, env string) []string {
 	t.Helper()
 	errors, _, err := CheckManifest(root, env)
@@ -67,10 +60,9 @@ runtime = "bun"
 
 func TestReadManifestRejectsLegacyBuildBlock(t *testing.T) {
 	root := t.TempDir()
-	writeStaticDir(t, root, "dist")
+	writeDockerfile(t, root)
 	writeManifest(t, root, `
-name = "site"
-static = "dist"
+name = "api"
 
 [build]
 command = "npm run build"
@@ -154,26 +146,6 @@ service = "web"
 	}
 }
 
-func TestCheckManifestAcceptsStaticAppWithStaticField(t *testing.T) {
-	root := t.TempDir()
-	writeStaticDir(t, root, "dist")
-	writeManifest(t, root, `
-name = "site"
-static = "dist"
-
-[env.production]
-server = "deploy@100.x.y.z"
-
-[routes.app]
-host = "site.example.com"
-type = "static"
-`)
-
-	if errors := checkErrors(t, root, "production"); len(errors) != 0 {
-		t.Fatalf("expected no errors, got %v", errors)
-	}
-}
-
 func TestCheckManifestRejectsManifestWithNeitherShape(t *testing.T) {
 	root := t.TempDir()
 	writeManifest(t, root, `
@@ -188,15 +160,14 @@ healthcheck = "/health"
 `)
 
 	errors := checkErrors(t, root, "production")
-	if !slices.Contains(errors, "manifest is missing a shape: add a Dockerfile (container app) or set top-level static = \"<dir>\" (static app)") {
+	if !slices.Contains(errors, "manifest is missing a Dockerfile; container apps are the only shipped app shape") {
 		t.Fatalf("expected missing-shape error, got %v", errors)
 	}
 }
 
-func TestCheckManifestRejectsManifestWithBothShapes(t *testing.T) {
+func TestReadManifestRejectsStaticField(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root)
-	writeStaticDir(t, root, "dist")
 	writeManifest(t, root, `
 name = "api"
 static = "dist"
@@ -205,41 +176,32 @@ static = "dist"
 server = "deploy@100.x.y.z"
 `)
 
-	errors := checkErrors(t, root, "production")
-	if !slices.Contains(errors, "manifest declares both shapes: a Dockerfile is present and static = \"dist\" is set; pick one") {
-		t.Fatalf("expected both-shapes error, got %v", errors)
+	_, err := ReadManifest(root)
+	if err == nil {
+		t.Fatal("expected static field to be rejected")
+	}
+	if !strings.Contains(err.Error(), "static") {
+		t.Fatalf("expected error to mention static, got %v", err)
 	}
 }
 
-func TestCheckManifestRejectsStaticFieldPointingAtMissingDir(t *testing.T) {
+func TestCheckManifestRejectsStaticRouteType(t *testing.T) {
 	root := t.TempDir()
+	writeDockerfile(t, root)
 	writeManifest(t, root, `
-name = "site"
-static = "dist"
+name = "api"
 
 [env.production]
 server = "deploy@100.x.y.z"
+
+[routes.app]
+host = "site.example.com"
+type = "static"
 `)
 
 	errors := checkErrors(t, root, "production")
-	if !slices.Contains(errors, "static = \"dist\": directory does not exist") {
-		t.Fatalf("expected missing-static-dir error, got %v", errors)
-	}
-}
-
-func TestCheckManifestRejectsStaticFieldOutsideRoot(t *testing.T) {
-	root := t.TempDir()
-	writeManifest(t, root, `
-name = "site"
-static = "../escape"
-
-[env.production]
-server = "deploy@100.x.y.z"
-`)
-
-	errors := checkErrors(t, root, "production")
-	if !slices.Contains(errors, "static must be a relative path without '..' or globs") {
-		t.Fatalf("expected static-escape error, got %v", errors)
+	if !slices.Contains(errors, "[routes.app].type must be proxy or redirect") {
+		t.Fatalf("expected static route type error, got %v", errors)
 	}
 }
 
@@ -281,67 +243,6 @@ command = "bun run src/worker.ts"
 
 	if errors := checkErrors(t, root, "production"); len(errors) != 0 {
 		t.Fatalf("expected no errors for worker service, got %v", errors)
-	}
-}
-
-func TestCheckManifestStaticAppCannotDeclareServices(t *testing.T) {
-	root := t.TempDir()
-	writeStaticDir(t, root, "dist")
-	writeManifest(t, root, `
-name = "site"
-static = "dist"
-
-[env.production]
-server = "deploy@100.x.y.z"
-
-[services.web]
-port = 3000
-healthcheck = "/health"
-`)
-
-	errors := checkErrors(t, root, "production")
-	if !slices.Contains(errors, "static apps cannot declare services") {
-		t.Fatalf("expected static-services error, got %v", errors)
-	}
-}
-
-func TestCheckManifestStaticAppCannotDeclareEnvScopedServices(t *testing.T) {
-	root := t.TempDir()
-	writeStaticDir(t, root, "dist")
-	writeManifest(t, root, `
-name = "site"
-static = "dist"
-
-[env.production]
-server = "deploy@100.x.y.z"
-
-[env.production.services.web]
-port = 3000
-healthcheck = "/health"
-`)
-
-	errors := checkErrors(t, root, "production")
-	if !slices.Contains(errors, "static apps cannot declare services") {
-		t.Fatalf("expected static-services error for env-scoped services, got %v", errors)
-	}
-}
-
-func TestCheckManifestRejectsStaticFieldPointingAtFile(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "dist"), []byte("not a dir"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	writeManifest(t, root, `
-name = "site"
-static = "dist"
-
-[env.production]
-server = "deploy@100.x.y.z"
-`)
-
-	errors := checkErrors(t, root, "production")
-	if !slices.Contains(errors, "static = \"dist\": must be a directory") {
-		t.Fatalf("expected static-not-directory error, got %v", errors)
 	}
 }
 
@@ -1071,32 +972,5 @@ healthcheck = "/health"
 	}
 	if _, present := ctx.Env["DATABASE_URL"]; present {
 		t.Fatalf("DATABASE_URL should not appear in Env when it is a secret ref")
-	}
-}
-
-func TestLoadAppContextReturnsStaticShape(t *testing.T) {
-	root := t.TempDir()
-	writeStaticDir(t, root, "dist")
-	writeManifest(t, root, `
-name = "site"
-static = "dist"
-
-[env.production]
-server = "deploy@100.x.y.z"
-
-[routes.app]
-host = "site.example.com"
-type = "static"
-`)
-
-	ctx, err := LoadAppContext(root, "production")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctx.Shape != ShapeStatic {
-		t.Fatalf("expected shape %q, got %q", ShapeStatic, ctx.Shape)
-	}
-	if ctx.StaticDir != "dist" {
-		t.Fatalf("expected StaticDir %q, got %q", "dist", ctx.StaticDir)
 	}
 }

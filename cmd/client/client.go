@@ -937,7 +937,7 @@ func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDot
 	}
 
 	if ctx.Shape != config.ShapeContainer {
-		utils.Die(fmt.Sprintf("deploy currently supports container apps only (got shape %q); static apps land in a follow-up", ctx.Shape), 1)
+		utils.Die(fmt.Sprintf("deploy supports container apps only (got shape %q)", ctx.Shape), 1)
 	}
 
 	shaOut, _, code, _ := runCommand("git", []string{"rev-parse", "--short=12", "HEAD"}, root)

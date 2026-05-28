@@ -85,8 +85,6 @@ What simple-vps does that Kamal doesn't:
   deploy user, Caddy, TLS — configured by us, not by the user. Kamal's
   host hardening (`kamal setup`) is opt-in and minimal; simple-vps's
   is default and comprehensive.
-- **Static apps as a first-class shape.** No container required for
-  static output; Caddy serves files directly.
 - **Per-env first-class** in the manifest, not grafted on.
 - **Backup and restore as a primitive.** "Fresh VPS, restore app to
   running" is a product bar, not a recipe (per ADR-0007).

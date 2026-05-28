@@ -14,10 +14,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-const (
-	ShapeContainer = "container"
-	ShapeStatic    = "static"
-)
+const ShapeContainer = "container"
 
 var (
 	AppRe        = names.AppRe
@@ -58,7 +55,6 @@ type Route struct {
 	Host    string `toml:"host"`
 	Type    string `toml:"type"`
 	Service string `toml:"service"`
-	Root    string `toml:"root"`
 	To      string `toml:"to"`
 	// TLS controls Caddy's automatic-HTTPS behavior for this route:
 	//   - ""        — same as "auto"
@@ -82,7 +78,6 @@ type EnvBlock struct {
 
 type Manifest struct {
 	Name     string              `toml:"name"`
-	Static   string              `toml:"static"`
 	Services map[string]Service  `toml:"services"`
 	Routes   map[string]Route    `toml:"routes"`
 	Env      map[string]EnvBlock `toml:"env"`
@@ -95,7 +90,6 @@ type AppContext struct {
 	AppRoot    string
 	Shape      string
 	Dockerfile string
-	StaticDir  string
 	Services   map[string]Service
 	Routes     map[string]Route
 	// Env holds resolved non-secret env values for this env.
@@ -183,30 +177,11 @@ func strictErrorMessage(err error) string {
 	return strings.Join(msgs, "; ")
 }
 
-// detectShape returns the inferred app shape ("container" or "static") plus
-// any validation error. The rules from ADR-0005 Section 1:
-//
-//   - Dockerfile present, no static = "..." → container
-//   - static = "..." present, no Dockerfile → static
-//   - both present → error (ambiguous)
-//   - neither present → error (nothing to deploy)
-func detectShape(root string, staticField string) (string, string) {
-	hasDockerfile := false
+func detectShape(root string) (string, string) {
 	if _, err := os.Stat(filepath.Join(root, "Dockerfile")); err == nil {
-		hasDockerfile = true
-	}
-	hasStatic := staticField != ""
-
-	switch {
-	case hasDockerfile && hasStatic:
-		return "", fmt.Sprintf("manifest declares both shapes: a Dockerfile is present and static = %q is set; pick one", staticField)
-	case hasDockerfile:
 		return ShapeContainer, ""
-	case hasStatic:
-		return ShapeStatic, ""
-	default:
-		return "", `manifest is missing a shape: add a Dockerfile (container app) or set top-level static = "<dir>" (static app)`
 	}
+	return "", "manifest is missing a Dockerfile; container apps are the only shipped app shape"
 }
 
 func CheckManifest(root string, envName string) ([]string, []string, error) {
@@ -224,21 +199,7 @@ func CheckManifest(root string, envName string) ([]string, []string, error) {
 		errors = append(errors, "name must match "+names.AppPattern)
 	}
 
-	if manifest.Static != "" {
-		if strings.HasPrefix(manifest.Static, "/") || strings.Contains(manifest.Static, "..") || strings.ContainsAny(manifest.Static, "*?[]{}") {
-			errors = append(errors, "static must be a relative path without '..' or globs")
-		} else {
-			info, err := os.Stat(filepath.Join(root, manifest.Static))
-			switch {
-			case err != nil:
-				errors = append(errors, fmt.Sprintf("static = %q: directory does not exist", manifest.Static))
-			case !info.IsDir():
-				errors = append(errors, fmt.Sprintf("static = %q: must be a directory", manifest.Static))
-			}
-		}
-	}
-
-	shape, shapeErr := detectShape(root, manifest.Static)
+	_, shapeErr := detectShape(root)
 	if shapeErr != "" {
 		errors = append(errors, shapeErr)
 	}
@@ -280,10 +241,7 @@ func CheckManifest(root string, envName string) ([]string, []string, error) {
 		validateEnvBlock(envBlock.Env, selected, &errors)
 
 		mergedServices := mergeServices(manifest.Services, envBlock.Services)
-		if shape == ShapeStatic && len(mergedServices) > 0 {
-			errors = append(errors, "static apps cannot declare services")
-		}
-		validateServices(mergedServices, shape, selected, &errors)
+		validateServices(mergedServices, selected, &errors)
 
 		mergedRoutes := mergeRoutes(manifest.Routes, envBlock.Routes)
 		validateRoutes(mergedRoutes, mergedServices, selected, &errors)
@@ -310,11 +268,8 @@ func LoadAppContext(root string, envName string) (*AppContext, error) {
 		return nil, fmt.Errorf("env not found: %s", envName)
 	}
 
-	shape, _ := detectShape(root, manifest.Static)
-	dockerfile := ""
-	if shape == ShapeContainer {
-		dockerfile = filepath.Join(root, "Dockerfile")
-	}
+	shape, _ := detectShape(root)
+	dockerfile := filepath.Join(root, "Dockerfile")
 
 	appRoot := fmt.Sprintf("/var/apps/%s/%s", manifest.Name, envName)
 
@@ -327,7 +282,6 @@ func LoadAppContext(root string, envName string) (*AppContext, error) {
 		AppRoot:    appRoot,
 		Shape:      shape,
 		Dockerfile: dockerfile,
-		StaticDir:  manifest.Static,
 		Services:   mergeServices(manifest.Services, envBlock.Services),
 		Routes:     mergeRoutes(manifest.Routes, envBlock.Routes),
 		Env:        envVals,
@@ -463,9 +417,6 @@ func mergeRoutes(base map[string]Route, override map[string]Route) map[string]Ro
 		if v.Service != "" {
 			existing.Service = v.Service
 		}
-		if v.Root != "" {
-			existing.Root = v.Root
-		}
 		if v.To != "" {
 			existing.To = v.To
 		}
@@ -477,7 +428,7 @@ func mergeRoutes(base map[string]Route, override map[string]Route) map[string]Ro
 	return res
 }
 
-func validateServices(services map[string]Service, shape string, env string, errors *[]string) {
+func validateServices(services map[string]Service, env string, errors *[]string) {
 	ports := make(map[int]string)
 
 	reserved := map[string]bool{"current": true, "releases": true, "shared": true}
@@ -491,9 +442,6 @@ func validateServices(services map[string]Service, shape string, env string, err
 		}
 		// Command is optional for container apps (Dockerfile CMD covers it);
 		// per-service command overrides the image CMD (ADR-0005 Section 13).
-		// For other shapes, command is also optional in this revision; the
-		// runtime check (and any required-command rule) will land with the
-		// per-shape deploy lifecycle work.
 		_ = svc.Command
 		if svc.Port != nil {
 			port := *svc.Port
@@ -596,8 +544,8 @@ func validateRoutes(routes map[string]Route, services map[string]Service, env st
 
 		if route.Type == "" {
 			*errors = append(*errors, fmt.Sprintf("[routes.%s].type is required", name))
-		} else if route.Type != "proxy" && route.Type != "static" && route.Type != "redirect" {
-			*errors = append(*errors, fmt.Sprintf("[routes.%s].type must be proxy, static, or redirect", name))
+		} else if route.Type != "proxy" && route.Type != "redirect" {
+			*errors = append(*errors, fmt.Sprintf("[routes.%s].type must be proxy or redirect", name))
 		}
 
 		if route.Type == "proxy" {
@@ -608,10 +556,6 @@ func validateRoutes(routes map[string]Route, services map[string]Service, env st
 			} else if svc.Port == nil {
 				*errors = append(*errors, fmt.Sprintf("[routes.%s].service must reference a service with a port", name))
 			}
-		}
-
-		if route.Type == "static" && route.Root != "" {
-			*errors = append(*errors, fmt.Sprintf("[routes.%s].root is not configurable in v1", name))
 		}
 
 		if route.Type == "redirect" {

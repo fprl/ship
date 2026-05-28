@@ -101,7 +101,7 @@ func (c appApplyCmd) runLocked() {
 		utils.Die(err.Error(), 1)
 	}
 	if app.Shape != config.ShapeContainer {
-		utils.Die(fmt.Sprintf("apply currently supports container apps only (got shape %q); static apps land in a follow-up", app.Shape), 1)
+		utils.Die(fmt.Sprintf("apply supports container apps only (got shape %q)", app.Shape), 1)
 	}
 	if len(app.Services) == 0 {
 		utils.Die("manifest must declare at least one [services.<name>] block", 1)
@@ -466,9 +466,6 @@ func renderAppCaddyfile(app, env string, ctx *config.AppContext) (string, error)
 				return "", fmt.Errorf("route %q: %v", name, err)
 			}
 			body = fmt.Sprintf("\tredir %s permanent\n", quotedTo)
-		case "static":
-			// Static apps not in scope for this verb; skip.
-			continue
 		default:
 			return "", fmt.Errorf("route %q: unsupported type %q", name, route.Type)
 		}

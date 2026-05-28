@@ -23,6 +23,9 @@
   instead of the unprovisioned `simple-vps.dev/install.sh` placeholder.
 - Host install defaults now use public ingress and public SSH admin access;
   Cloudflare Tunnel and Tailscale are enabled through the new presets.
+- Removed the half-shipped static app manifest surface. `static = "..."`
+  and `type = "static"` are now rejected until static deploys have an actual
+  implementation.
 
 ### Fixed
 

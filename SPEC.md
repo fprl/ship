@@ -196,20 +196,13 @@ The sudoers contract is one line for the whole server binary, installed at
 
 The manifest is `simple-vps.toml` at the app repo root.
 
-Schema, validation rules, app shape detection, env blocks, command rules,
-secret references, and backup config are owned by the Go config package
-and covered by the Go test suite.
+Schema, validation rules, env blocks, command rules, secret references, and
+backup config are owned by the Go config package and covered by the Go test
+suite.
 
-The manifest describes one app. App shape is inferred from the repo:
-
-- `Dockerfile` present, no `static = "..."`: container app.
-- `static = "..."` present, no `Dockerfile`: static app.
-- Both present or both absent: validation error.
-
-Container apps build on the VPS with Podman. The Dockerfile is the runtime
-contract; Node, Bun, Python, Ruby, Go, and other runtimes belong inside the
-image, not on the host. Static apps upload a pre-built directory and Caddy
-serves it directly.
+The manifest describes one container app. A `Dockerfile` must be present at
+the app repo root. The Dockerfile is the runtime contract; Node, Bun, Python,
+Ruby, Go, and other runtimes belong inside the image, not on the host.
 
 Services are long-running containers from the app image. Service commands
 accept string form and array form; array form is recommended for commands

@@ -376,26 +376,6 @@ func TestRenderAppCaddyfileRedirectRoute(t *testing.T) {
 	}
 }
 
-func TestRenderAppCaddyfileSkipsStaticRoutes(t *testing.T) {
-	// Static apps land in a follow-up verb; the container deploy verb
-	// shouldn't emit Caddy directives for them.
-	ctx := &config.AppContext{
-		Routes: map[string]config.Route{
-			"site": {
-				Host: "site.example.com",
-				Type: "static",
-			},
-		},
-	}
-	got, err := renderAppCaddyfile("site", "production", ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(got, "site.example.com") {
-		t.Fatalf("static route should be skipped, got:\n%s", got)
-	}
-}
-
 func TestRenderAppCaddyfileRejectsProxyWithoutServicePort(t *testing.T) {
 	ctx := &config.AppContext{
 		Services: map[string]config.Service{
