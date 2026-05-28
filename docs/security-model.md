@@ -121,10 +121,10 @@ deploy user      identity used by the app CLI and CI
 The operator user keeps the root path host convergence needs. The deploy user
 gets only the `/usr/local/bin/simple-vps` grant.
 
-The server-side helper owns privileged app operations such as systemd unit
-installation, env writes, Caddy route generation, and app cleanup. Keep that
-API narrow and auditable instead of adding ad hoc sudo commands to the public
-CLI.
+The server-side helper owns privileged app operations such as per-env user and
+network setup, resolved env-file writes, Podman container lifecycle, Caddy
+fragment generation, and app cleanup. Keep that API narrow and auditable
+instead of adding ad hoc sudo commands to the public CLI.
 
 ## State and Drift
 

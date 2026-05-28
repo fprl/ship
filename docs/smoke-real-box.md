@@ -72,6 +72,18 @@ cat /etc/simple-vps/host.json \
   | jq '.meta.last_apply.status'     # → "ok"
 ```
 
+Verify the public host read surface from the laptop:
+
+```sh
+SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
+SIMPLE_VPS_KNOWN_HOSTS="$(ssh-keyscan -t ed25519 -H <IP> 2>/dev/null)" \
+  ./dist/simple-vps host status --json --server deploy@<IP> | jq .
+
+SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
+SIMPLE_VPS_KNOWN_HOSTS="$(ssh-keyscan -t ed25519 -H <IP> 2>/dev/null)" \
+  ./dist/simple-vps host doctor --json --server deploy@<IP> | jq .
+```
+
 ## 2. Build the test app
 
 ```sh
@@ -88,6 +100,9 @@ name = "hello"
 
 [env.production]
 server = "deploy@<IP>"
+
+[env.production.env]
+SMOKE_SECRET = "@secret:smoke_key"
 
 [services.web]
 port = 3000
@@ -143,6 +158,15 @@ SIMPLE_VPS_KNOWN_HOSTS="$(ssh-keyscan -t ed25519 -H <IP> 2>/dev/null)" \
 #   ls /var/apps/hello/production/             # → shared/
 #   podman network ls                           # → app-hello-production
 
+printf 'smoke-secret-value' | \
+SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
+SIMPLE_VPS_KNOWN_HOSTS="$(ssh-keyscan -t ed25519 -H <IP> 2>/dev/null)" \
+  /path/to/simple-vps/dist/simple-vps secret put production smoke_key
+
+SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
+SIMPLE_VPS_KNOWN_HOSTS="$(ssh-keyscan -t ed25519 -H <IP> 2>/dev/null)" \
+  /path/to/simple-vps/dist/simple-vps secret list --json production | jq .
+
 SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
 SIMPLE_VPS_KNOWN_HOSTS="$(ssh-keyscan -t ed25519 -H <IP> 2>/dev/null)" \
   /path/to/simple-vps/dist/simple-vps deploy production
@@ -152,6 +176,18 @@ Expected last line: `Deployed hello (production) at <sha>`. If the
 deploy errors with `wget: bad address`, the host installer didn't
 write the UFW podman bridge rules — re-install with a build that
 includes PR #33 (`addPodmanHostBaseline`).
+
+Verify the app read surface:
+
+```sh
+SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
+SIMPLE_VPS_KNOWN_HOSTS="$(ssh-keyscan -t ed25519 -H <IP> 2>/dev/null)" \
+  /path/to/simple-vps/dist/simple-vps status --json production | jq .
+
+SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
+SIMPLE_VPS_KNOWN_HOSTS="$(ssh-keyscan -t ed25519 -H <IP> 2>/dev/null)" \
+  /path/to/simple-vps/dist/simple-vps logs production web | tail -20
+```
 
 The fixture sets `tls = "internal"`, so the Caddy fragment lands as:
 
@@ -184,7 +220,7 @@ curl -k -sS \
   https://smoke.<your-domain>/
 ```
 
-Expected: `HTTP 200` + body `smoke-ok`.
+Expected: `HTTP 200` + body `smoke-ok-nginx`.
 
 These two responses prove the full path:
 
@@ -194,24 +230,25 @@ your curl
        └→ Caddy container (on `ingress`, self-signed via `tls internal`)
             └→ aardvark-dns resolves `app-hello-production-web`
                  └→ Podman bridge → app container
-                      └→ python3 -m http.server serves /health → 200 ok
+                      └→ nginx serves /health → 200 ok
 ```
 
 ## 5. Teardown
 
 If the VPS is single-use for this smoke, just delete it from the
-provider console. Don't bother running `destroy` — it's not
-implemented against the new lifecycle yet.
+provider console.
 
-If you're reusing the box: at minimum, stop and remove the app
-container so a future smoke starts clean.
+If you're reusing the box, use the public teardown path:
 
 ```sh
-# As root on the VPS:
-podman rm -f app-hello-production-web
-podman network rm app-hello-production
-userdel app-hello-production
-rm -rf /var/apps/hello
-rm -f /etc/caddy/conf.d/simple-vps-hello-production.caddy
-podman exec caddy caddy reload --config /etc/caddy/Caddyfile
+SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
+SIMPLE_VPS_KNOWN_HOSTS="$(ssh-keyscan -t ed25519 -H <IP> 2>/dev/null)" \
+  /path/to/simple-vps/dist/simple-vps destroy production --confirm hello --purge
+
+SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
+SIMPLE_VPS_KNOWN_HOSTS="$(ssh-keyscan -t ed25519 -H <IP> 2>/dev/null)" \
+  /path/to/simple-vps/dist/simple-vps status --json production | jq .
 ```
+
+Expected destroy output names the removed container, removed route, and
+purged secrets. Expected status after destroy has an empty `services` array.

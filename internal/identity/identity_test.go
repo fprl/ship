@@ -20,12 +20,6 @@ func TestContainerNameIncludesService(t *testing.T) {
 	}
 }
 
-func TestContainerNameNewSuffix(t *testing.T) {
-	if got := ContainerNameNew("api", "production", "web"); got != "app-api-production-web-new" {
-		t.Fatalf("ContainerNameNew = %q, want app-api-production-web-new", got)
-	}
-}
-
 func TestImageTagUsesPerEnvScope(t *testing.T) {
 	if got := ImageTag("api", "production", "abc1234"); got != "simple-vps/api-production:abc1234" {
 		t.Fatalf("ImageTag = %q, want simple-vps/api-production:abc1234", got)
@@ -63,12 +57,36 @@ func TestEnvFileIsUnderSharedDir(t *testing.T) {
 }
 
 func TestSystemUserFitsLinuxLimitForReasonableNames(t *testing.T) {
-	// Worst case from ADR-0005 Section 1: app=16, env=8 → app-<16>-<8> = 29 chars.
 	got := SystemUser("aaaaaaaaaaaaaaaa", "bbbbbbbb")
 	if len(got) != 29 {
-		t.Fatalf("expected len 29 for worst-case 16+8 names, got %d (%q)", len(got), got)
+		t.Fatalf("expected len 29 for 16+8 names, got %d (%q)", len(got), got)
 	}
 	if len(got) > 31 {
 		t.Fatalf("SystemUser %q exceeds 31-char Linux limit", got)
+	}
+}
+
+func TestSystemUserHashesLongNamesToLinuxLimit(t *testing.T) {
+	got := SystemUser("very-long-application-name", "production-environment")
+	if len(got) > 31 {
+		t.Fatalf("SystemUser %q exceeds 31-char Linux limit", got)
+	}
+	again := SystemUser("very-long-application-name", "production-environment")
+	if got != again {
+		t.Fatalf("SystemUser should be stable, got %q then %q", got, again)
+	}
+	other := SystemUser("very-long-application-name", "staging-environment")
+	if got == other {
+		t.Fatalf("different app/env pairs should not collapse to %q", got)
+	}
+}
+
+func TestContainerNameHashesLongNamesToDNSLabelLimit(t *testing.T) {
+	got := ContainerName("very-long-application-name", "production-environment", "background-worker-service")
+	if len(got) > 63 {
+		t.Fatalf("ContainerName %q exceeds DNS label limit", got)
+	}
+	if got != ContainerName("very-long-application-name", "production-environment", "background-worker-service") {
+		t.Fatalf("ContainerName should be stable")
 	}
 }

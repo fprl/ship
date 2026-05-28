@@ -2,26 +2,22 @@
 
 - **Status**: Accepted
 - **Date**: 2026-05-20
-- **Depends on**: ADR-0001 (bounded Go provisioner). This ADR describes the
-  files that provisioner reads and writes.
-- **Related**: ADR-0001.
+- **Updated**: 2026-05-28
+- **Depends on**: ADR-0001 (bounded Go provisioner).
+- **Amended by**: ADR-0005, ADR-0006.
 
 ## Context
 
-Three commands mutate persistent state on the host:
+The first state layout split host intent, app registry, route table, and
+provider IDs into separate JSON files. ADR-0005 and ADR-0006 removed the
+host-side app registry and route table:
 
-- `simple-vps host install` writes host-level configuration.
-- `simple-vps setup` / `deploy` / `destroy` writes app registry state.
-- `simple-vps route publish` / `remove` writes the ingress route table.
-- Cloudflare commands write provider-specific external IDs.
+- App inventory is now live state from labelled Podman containers.
+- Routes are now per-app Caddy fragments under `/etc/caddy/conf.d/`.
+- Cloudflare still needs provider state because DNS records and tunnel IDs
+  live outside the VPS.
 
-These four concerns have different owners, different write cadences, and
-different rollback semantics. Putting them in one file couples unrelated
-commands and makes the audit signal (what intent changed when?) noisy.
-
-A previous draft proposed a single `config.json`. Review converged on a
-multi-file layout, with one base file split into clearly-named top-level
-sections to preserve the audit signal.
+This ADR records the current state contract, not the pre-cutover draft.
 
 ## Decision
 
@@ -29,20 +25,31 @@ sections to preserve the audit signal.
 
 ```text
 /etc/simple-vps/
-  host.json                    host-scope configuration
-  apps.json                    registry of apps on this host
-  routes.json                  ingress route table
+  host.json                    host-scope desired/observed/meta state
   providers/
     cloudflare.json            Cloudflare account / tunnel / DNS state
-  secrets/                     per-app/env secret value files
+  secrets/
+    <app>/<env>/<KEY>          one secret value per file, mode 0600
 ```
 
-Filename convention: `{scope}.json`. `host.json` is host-scoped. `apps.json` is
-the host's registry of apps. `routes.json` is the host's route table. Provider
-state nests under `providers/` so adding `providers/tailscale.json` later is
-not a layout change.
+Non-JSON runtime artifacts deliberately live outside this state directory:
 
-### 2. `host.json` Schema - Three Top-Level Sections
+```text
+/etc/caddy/conf.d/
+  simple-vps-<app>-<env>.caddy per-(app, env) route fragment
+
+/var/apps/<app>/<env>/
+  shared/.env                  resolved runtime env file
+
+/run/simple-vps/locks/
+  <app>-<env>.lock             host-side mutation lock
+```
+
+`apps.json` and `routes.json` no longer exist. Reintroducing durable app or
+route registry state requires a new ADR, because it changes the public state
+contract and the backup/restore surface.
+
+### 2. `host.json` schema
 
 ```json
 {
@@ -61,19 +68,18 @@ not a layout change.
       "litestream": true
     },
     "packages": {
-      "podman":     { "source": "ubuntu",         "track": "noble" },
+      "podman": { "source": "ubuntu", "track": "noble" },
       "litestream": { "source": "github-release", "version": "0.5.8" }
     }
   },
   "observed": {
     "packages": {
-      "podman":     { "version": "4.9.3" },
+      "podman": { "version": "4.9.3" },
       "litestream": { "version": "0.5.8" }
     },
     "ingress": {
       "ufw_80_443_allowed": false,
-      "cloudflared_service_active": true,
-      "caddy_container_active": true
+      "cloudflared_service_active": true
     }
   },
   "meta": {
@@ -90,7 +96,10 @@ not a layout change.
 }
 ```
 
-### 3. Ingress as two internal fields, modes as CLI sugar
+`desired` is host intent. `observed` and `meta` are host facts written by the
+provisioner. App deploy state does not live in `host.json`.
+
+### 3. Ingress fields
 
 `desired.ingress` carries two orthogonal fields:
 
@@ -98,85 +107,13 @@ not a layout change.
 - **`tunnel`** - `"none"` | `"cloudflare"` | `"tailscale-funnel"`. Is a tunnel
   terminating traffic?
 
-The CLI accepts `--ingress cloudflare|public|private` as a convenience preset
-that expands to:
+The current CLI exposes provider-specific flags directly. Preset flags such
+as `--ingress cloudflare|public|private` can be added later without changing
+the state model.
 
-| `--ingress` | `expose` | `tunnel` |
-|---|---|---|
-| `cloudflare` | `private` | `cloudflare` |
-| `public` | `public` | `none` |
-| `private` | `private` | `none` |
-
-Future ingress shapes (Cloudflare-DNS-only, Tailscale Funnel) become new
-presets without changing the underlying two-field model.
-
-### 4. Invariants
-
-These rules apply to every file under `/etc/simple-vps/`:
-
-1. **`desired` is never mutated by `apply`.** Only `host install`, `host
-   configure`, or hand-editing changes the desired section. If apply needs to
-   record something it observed, that goes in `observed:`, not `desired:`.
-2. **Writes are atomic.** Tempfile in the same directory + `rename(2)`. No
-   partial-write corruption windows.
-3. **Keys are written in stable sorted order at each level.** `git diff` on
-   any of these files is meaningful: key reordering never appears in diffs.
-4. **`version` is always present at the top level.** A provisioner that
-   reads a file with a `version` higher than it understands refuses to write
-   the file rather than silently truncating fields it doesn't recognize.
-5. **Files have explicit owners:**
-   - `host.json` - root:root 0644
-   - `apps.json`, `routes.json` - root:root 0644
-   - `providers/cloudflare.json` - root:root 0600 (contains external IDs)
-   - `secrets/<app>/<env>.env` - root:root 0600 (per-app/env secret values)
-
-### 5. `apps.json` and `routes.json` stay separate
-
-These are conceptually orthogonal:
-
-- An app can exist in `apps.json` with zero routes.
-- A route can outlive its app momentarily during a destroy that interleaves
-  service teardown and route removal.
-- They are written by different command paths: `apps.json` by the deploy
-  lifecycle, `routes.json` by the privileged helper's route commands.
+### 4. Provider state
 
 ```json
-// apps.json
-{
-  "version": 1,
-  "apps": {
-    "api": {
-      "path": "/var/apps/api",
-      "services": ["web"],
-      "current_release": "20260520T150000Z"
-    }
-  }
-}
-```
-
-```json
-// routes.json
-{
-  "version": 1,
-  "routes": [
-    {
-      "app": "api",
-      "host": "api.example.com",
-      "type": "proxy",
-      "service": "web",
-      "port": 3000
-    }
-  ]
-}
-```
-
-App paths remain `/var/apps/<name>` (unchanged from current SPEC). Migrating
-to `/srv/simple-vps/apps/<name>` is out of scope for this ADR.
-
-### 6. Provider State - One File Per Provider
-
-```json
-// providers/cloudflare.json
 {
   "version": 1,
   "account_id": "...",
@@ -192,60 +129,48 @@ to `/srv/simple-vps/apps/<name>` is out of scope for this ADR.
 }
 ```
 
-Future providers (`providers/tailscale.json`, etc.) follow the same shape:
-one JSON file per external system, holding the IDs and state Simple VPS needs
-to converge with that system.
+Future providers (`providers/tailscale.json`, etc.) follow the same pattern:
+one JSON file per external system, holding only the IDs and state simple-vps
+needs to converge with that system.
+
+### 5. Invariants
+
+These rules apply to every JSON file under `/etc/simple-vps/`:
+
+1. **Writes are atomic.** Tempfile in the same directory + `rename(2)`.
+2. **Keys are stable.** Generated JSON uses deterministic formatting so diffs
+   are meaningful.
+3. **`version` is always present.** A binary that sees a future version refuses
+   to write rather than truncating fields it does not understand.
+4. **Owners are explicit.**
+   - `host.json` - root:root 0644
+   - `providers/cloudflare.json` - root:root 0600
+   - `secrets/<app>/<env>/<KEY>` - root:root 0600
+5. **No compatibility ballast before the first schema bump.** Version is still
+   `1`; migration code lands with the first real state schema bump, not before.
 
 ## Consequences
 
 ### What this enables
 
-- The `desired:` section of `host.json` continues to reflect intent changes
-  after the file is rewritten by apply, because `desired:` is invariant under
-  apply and key ordering is stable. The full file can still change when
-  `observed:` or `meta:` is refreshed.
-- Each command owns one file. `host install` writes `host.json`. `deploy`
-  writes `apps.json`. `route publish` writes `routes.json`. Cloudflare
-  commands write `providers/cloudflare.json`. Write contention is per-file,
-  not global.
-- Provider integrations slot in under `providers/` without renaming or
-  restructuring existing files.
-- The ingress two-field model survives future modes that don't fit today's
-  three-preset enum.
+- Host install state stays small and auditable.
+- Provider integrations slot in under `providers/` without changing host state.
+- App/route inspection is sourced from the runtime truth: Podman labels and
+  Caddy fragments, not a second registry that can drift.
+- Backup/restore has a clear split: `/etc/simple-vps/` for control state,
+  `/etc/caddy/conf.d/` for route fragments, `/var/apps/` for app data.
 
 ### What this gives up
 
-- One-file simplicity. Four files plus a directory is more to enumerate in
-  `host doctor` output and in backup/restore tooling. Mitigation: a
-  `host backup` command that tars the whole `/etc/simple-vps/` directory.
-- Schema-version coupling across files. Bumping `host.json`'s `version` does
-  not bump `apps.json`'s `version`. Per-file versions handle this, but the
-  product must remember to bump only the file whose schema changed.
-
-### What becomes harder
-
-- Atomic writes across files. Adding an app simultaneously to `apps.json` and
-  `routes.json` is not transactional. Mitigation: command sequences are
-  ordered such that a partial failure leaves the system in a state
-  `host doctor` can describe (e.g. "route for `api.example.com` references
-  unknown app `api`"). Apps without routes and routes without apps are both
-  valid intermediate states.
+- There is no durable app registry to query. `status` and the planned
+  `app list --json` must inspect Podman labels and Caddy fragments.
+- Route state is not a standalone JSON table. Cloudflare DNS state remains in
+  provider state; local Caddy routing state is the fragment itself.
+- Migration discipline starts when schema version `2` exists. Until then,
+  adding migration code would create compatibility surface for no users.
 
 ## Out of scope
 
-- Moving the app root from `/var/apps/<name>` to `/srv/simple-vps/apps/<name>`.
-- A daemon that watches these files for change. Files are read on command
-  invocation; nothing observes them between invocations.
-- Cross-command file locking. Each file write is atomic, but commands do not
-  take a global lock across multiple store files.
-
-## Notes
-
-- The `desired` / `observed` / `meta` split was the central trade-off in
-  this ADR. The audit-signal benefit of "diff on `host.json` means intent
-  changed" is preserved by the invariant in section 4.1, which depends on the
-  provisioner respecting the rule. A future test should assert that
-  `apply` never writes a key outside `observed:` and `meta:`.
-- Per-provider state files are the extensibility seam. Anything specific to
-  Cloudflare, Tailscale, or a future provider lives under `providers/`, not
-  inside `host.json`.
+- A daemon that watches state files.
+- Cross-provider transactionality.
+- Reintroducing `apps.json` or `routes.json`.

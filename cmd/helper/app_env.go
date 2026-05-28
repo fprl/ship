@@ -4,24 +4,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/fprl/simple-vps/internal/host"
 	"github.com/fprl/simple-vps/internal/identity"
+	"github.com/fprl/simple-vps/internal/names"
 	"github.com/fprl/simple-vps/internal/secrets"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
-// nameRe is a conservative regex for app and env names accepted by the
-// per-env helper verbs. Matches the manifest validator's AppRe/ServiceRe
-// shape: lowercase, hyphen-allowed, must start with a letter.
-var nameRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,40}$`)
-
 func validateAppEnv(app, env string) error {
-	if !nameRe.MatchString(app) {
+	if !names.AppRe.MatchString(app) {
 		return fmt.Errorf("invalid app name: %q", app)
 	}
-	if !nameRe.MatchString(env) {
+	if !names.EnvRe.MatchString(env) {
 		return fmt.Errorf("invalid env name: %q", env)
 	}
 	return nil

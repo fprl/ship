@@ -3,8 +3,9 @@ package store
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
+
+	"github.com/fprl/simple-vps/internal/names"
 )
 
 // Exported regexes used outside the package:
@@ -17,8 +18,8 @@ import (
 // normalizers; both went away with the apps.json/routes.json gut in
 // PR #39 and the regexes followed.
 var (
-	AppRe        = regexp.MustCompile(`^[a-z][a-z0-9-]{1,40}$`)
-	SystemUserRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}\$?$`)
+	AppRe        = names.AppRe
+	SystemUserRe = names.SystemUserRe
 )
 
 func newHostFile() *HostFile {

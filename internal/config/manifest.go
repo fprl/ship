@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/fprl/simple-vps/internal/names"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -19,10 +20,11 @@ const (
 )
 
 var (
-	AppRe        = regexp.MustCompile(`^[a-z][a-z0-9-]{1,40}$`)
-	ServiceRe    = regexp.MustCompile(`^[a-z][a-z0-9-]{0,30}$`)
-	SystemUserRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}\$?$`)
-	EnvKeyRe     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	AppRe        = names.AppRe
+	EnvRe        = names.EnvRe
+	ServiceRe    = names.ServiceRe
+	SystemUserRe = names.SystemUserRe
+	EnvKeyRe     = names.EnvKeyRe
 )
 
 const secretPrefix = "@secret:"
@@ -219,7 +221,7 @@ func CheckManifest(root string, envName string) ([]string, []string, error) {
 	if manifest.Name == "" {
 		errors = append(errors, "name is required")
 	} else if !AppRe.MatchString(manifest.Name) {
-		errors = append(errors, "name must match ^[a-z][a-z0-9-]{1,40}$")
+		errors = append(errors, "name must match "+names.AppPattern)
 	}
 
 	if manifest.Static != "" {
@@ -265,7 +267,7 @@ func CheckManifest(root string, envName string) ([]string, []string, error) {
 
 	for _, selected := range selectedEnvNames {
 		envBlock := manifest.Env[selected]
-		if !ServiceRe.MatchString(selected) {
+		if !EnvRe.MatchString(selected) {
 			errors = append(errors, fmt.Sprintf("invalid env name: %s", selected))
 		}
 

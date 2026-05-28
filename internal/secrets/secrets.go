@@ -28,16 +28,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/fprl/simple-vps/internal/names"
 )
 
-// SecretKeyRe matches the env-var grammar — same shape as
-// `config.EnvKeyRe`, repeated here so the store package doesn't take
-// a dep on `internal/config`. Callers must validate before reaching
-// the filesystem.
-var SecretKeyRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+// SecretKeyRe matches the env-var grammar. Callers must validate
+// before reaching the filesystem.
+var SecretKeyRe = names.EnvKeyRe
 
 // Default location. Override with SIMPLE_VPS_SECRETS_DIR for tests so
 // they don't need root to exercise the real path layout.

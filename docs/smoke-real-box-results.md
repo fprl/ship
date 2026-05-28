@@ -88,11 +88,10 @@ Two interleaved bugs in `internal/provision/install.go:addCaddy`:
   `EnsureFile` BEFORE starting `caddy.service`. The file is just
   `import conf.d/*.caddy` (per-app fragments land there via
   `server app apply`).
-- Drop the `generate-caddy` op call from `addCaddy`. The verb still
-  exists in `cmd/helper/route.go` (calling host `caddy validate`)
-  but is no longer invoked by the installer. Cleaning it up — along
-  with the now-orphan code in `internal/caddy` — is a follow-up
-  scoped to the apps.json / routes.json deletion pass.
+- Drop the `generate-caddy` op call from `addCaddy`. The old route
+  helper and `apps.json` / `routes.json` render path were later
+  removed; `internal/caddy` now only holds the Caddyfile quoting helper
+  used by `server app apply`.
 - Drop the `/etc/caddy/simple-vps` subdir creation (used only by the
   legacy `RenderRoutesCaddyfile`).
 - Tighten `ensureServiceStarted`: after `systemctl start`, poll

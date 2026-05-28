@@ -65,17 +65,19 @@ apps regardless of how "static-looking" the source tree appears: Astro
 SvelteKit `adapter-node`. The shape is determined by what the build
 produces, not by which framework was used.
 
-**Identity constraints** (so derived system names fit Linux limits):
+**Identity constraints**:
 
-| Field | Regex max | Rationale |
+| Field | Pattern | Rationale |
 |---|---|---|
-| App name | 16 chars | system user `app-<app>-<env>` must fit in 32 chars |
-| Env name | 8 chars | `prod`, `staging`, `dev`, `preview` all fit |
-| Service name | 10 chars | only appears in container / systemd names, not users |
+| App name | `^[a-z][a-z0-9-]{1,40}$` | readable app handle, lowercase and shell-safe |
+| Env name | `^[a-z][a-z0-9-]{0,30}$` | readable deployment target, lowercase and shell-safe |
+| Service name | `^[a-z][a-z0-9-]{0,30}$` | readable container service name, lowercase and DNS-safe |
 
-Worst-case system user `app-<app>-<env>` = 4 + 16 + 1 + 8 = 29 chars,
-safely under the effective Linux username limit of 31. Manifests with
-longer names fail `simple-vps check` with a clear error.
+Generated host/container identifiers are bounded internally. For names that
+would exceed host limits, `internal/identity` keeps a readable prefix and adds
+a short stable hash: Unix usernames stay under the 31-character Linux limit,
+and container DNS names stay under the 63-character DNS label limit. Human
+surfaces (`status`, `logs`, validation errors) keep the manifest names.
 
 ### 2. Container engine: Podman
 
@@ -554,21 +556,21 @@ Rules for `[env.<env>.env]` values:
 (`@secret:db_url`); the server resolves to the per-env stored value.
 Users do not encode env into key names like `db_url_staging`.
 
-**Client commands after the pivot:**
+**Client commands after the pivot (as amended by ADR-0006 and SPEC):**
 
 | Verb | Purpose |
 |---|---|
 | `init` | scaffold `simple-vps.toml` + `Dockerfile` (container) or `simple-vps.toml` (static) |
 | `check` | validate manifest (including identity-length and env-value rules) |
 | `setup <env>` | create app/env on host (per-env, one-time) |
-| `deploy <env>` | content-addressed reconcile (Section 9) |
+| `deploy <env>` | stream source tarball, build on the host, run services |
 | `deploy <env> --dirty` | tar working tree, skip clean-worktree check |
 | `deploy <env> --rebuild` | force build path, refresh upstream bases |
-| `status <env>` | release, services, routes, last deploy timestamp |
-| `logs <env> [service]` | tail journal |
+| `status <env>` | Podman-label-sourced service status |
+| `logs <env> [service]` | `podman logs` for the labelled container |
 | `ssh <env>` | SSH into VPS |
 | `restart <env> <service>` | restart a service (no rebuild) |
-| `rollback <env> [release]` | activate prior release |
+| `rollback <env> [release]` | planned |
 | `destroy <env>` | tear down one env of the app (scoped per Section 12) |
 | `secret put/list/rm <env> <key>` | manage secret values scoped to (app, env, key) |
 | `host status/doctor` | host-level checks |
@@ -578,13 +580,10 @@ Users do not encode env into key names like `db_url_staging`.
 - `env push` (use `secret put` per key; bulk import was a
   deploy-state hazard, and non-secret env now lives in the manifest).
 
-**Helper-side route surface collapses** from four CRUD verbs
-(`proxy/static/redirect/remove`) to one reconcile verb:
-
-- `route apply --from-manifest <app> <env>` — diff manifest routes
-  against state, apply additions/removals atomically. Called by
-  `deploy`.
-- `route list` — stays as a read-only inspection helper.
+**Helper-side route surface is removed.** `server app apply` writes the
+per-(app, env) Caddy fragment directly from the validated manifest. The
+old route registry and helper route CRUD/list verbs went away with
+`apps.json` / `routes.json`.
 
 ### 14. Provisioner changes
 
@@ -832,9 +831,10 @@ Cutover is complete when:
 
 1. `runtime` field is removed; app shape inferred from
    Dockerfile/`static` presence per Section 1.
-2. Manifest identity regexes tightened: app max 16 chars, env max 8
-   chars, service max 10 chars. `simple-vps check` fails fast on
-   overruns with a clear error.
+2. Manifest identity regexes use the current widened policy: app names match
+   `^[a-z][a-z0-9-]{1,40}$`; env and service names match
+   `^[a-z][a-z0-9-]{0,30}$`. Generated host/container identifiers are bounded
+   inside `internal/identity`.
 3. `[env.<env>.env]` blocks accept string values only; bool/int/
    array/inline-table rejected at check time.
 4. `@secret:KEY` values are whole-value references only; partial
@@ -918,9 +918,8 @@ Cutover is complete when:
     lockfile detection, or package-manager install commands.
 26. Client `route` command removed; route info surfaced in
     `status`.
-27. Helper route CRUD verbs (`proxy/static/redirect/remove`) removed;
-    `route apply --from-manifest <app> <env>` reconcile verb and
-    `route list` (read-only) remain.
+27. Helper route CRUD/list verbs removed; `server app apply` writes
+    the per-(app, env) Caddy fragment directly from the manifest.
 
 **Coverage**
 

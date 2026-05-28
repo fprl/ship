@@ -95,9 +95,9 @@ Users name things with the regex they would naturally use.
 
 Internally, simple-vps derives a short stable hash from
 `(app, env, service)` when constructing system identifiers that hit
-Linux limits (Unix usernames, systemd unit names). Display surfaces
-(`status`, `logs`, error messages, helper state file) use the human
-names; the hash is implementation detail.
+host/container limits (Unix usernames, container DNS names). Display surfaces
+(`status`, `logs`, error messages) use the human names; the hash is
+implementation detail.
 
 The user never has to budget characters across nested identifiers
 to fit Linux's 31-char username limit. That limit becomes
@@ -144,46 +144,46 @@ format.
 
 **Commitments (additions to ADR-0002):**
 
-- **Additive-only schema changes within a major version.** New
-  fields, new top-level keys, new nested structures are fine.
-  Removals and renames require a major bump.
-- **`simple-vps migrate-state` ships with the binary.** Runs on
-  first invocation of a new version, detects the on-disk schema
-  version, applies a sequence of forward-only migrations, and
-  writes a snapshot of the pre-migration state next to the new
-  one. Idempotent. The pre-migration snapshot is retained for
-  one major version so manual rollback is possible by restoring
-  the snapshot — there is no reverse-migration path.
-- **Deprecation window: one full major version.** Removed fields
-  remain readable by the helper for one major version after their
-  removal from writes, with a warning logged on every read. Users
-  have one major-version cycle to migrate downstream tooling that
-  reads simple-vps state.
+- **Versioned writes.** Every JSON state file carries `version`.
+  A binary that sees a future version refuses to write.
+- **Migrations land with the first real schema bump.** The current
+  product is pre-user and state is still version `1`; shipping
+  `migrate-state` before a version `2` exists would create
+  compatibility ballast, not leverage.
+- **Additive-only after the first released version.** Once users
+  exist, new fields are normal evolution; removals and renames
+  require an explicit migration and an ADR.
 
-Without these, "state is a public contract" is marketing.
+Without these, "state is a public contract" is marketing. Before
+users exist, the same principle means deleting stale state surfaces
+instead of preserving them.
 
 ### 7. Per-service rolling failure semantics
 
 Per-service rolling (Cut 1) needs explicit failure semantics:
 
-- **Each service has its own verification and rollback.** Service A
-  failing rolls back service A only. Service B that succeeded
-  earlier in the deploy stays at the new version.
+- **Each service has its own verification.** Service A failing does not
+  hide Service B's result. Service B that succeeded earlier in the deploy
+  stays at the new version.
 - **Partial-deploy state is a valid state.** `web v2, worker v1`
-  after `worker` failed to deploy is not an error — it is the
-  honest state. `status` displays it explicitly:
+  after `worker` failed to deploy is not an error — it is the honest
+  state. `status --json` displays the running containers it can see:
 
   ```
-  app    env   service  state    version                         since
-  myapp  prod  web      running  v2 (deployed)                   14:32
-  myapp  prod  worker   running  v1 (rolled back from v2)        14:33
+  {
+    "app": "myapp",
+    "env": "prod",
+    "services": [
+      {"service": "web", "state": "running", "release": "v2"},
+      {"service": "worker", "state": "running", "release": "v1"}
+    ]
+  }
   ```
 
   No single "deploy succeeded" or "deploy failed" verdict hides
   this.
 - **No automatic healing loop.** Next `deploy` retries the failed
-  service. The user may also explicitly `rollback web` to bring the
-  working service back to v1 if they want full coordination.
+  service. Explicit rollback is a future verb, not hidden behavior.
 - **Deploy exit code** is non-zero if any service failed verification,
   even when other services succeeded. Scripted callers can detect
   partial deploys reliably.
@@ -197,9 +197,8 @@ Adding `[services.cron]` to a manifest that already runs
   has no old container to swap from; the helper starts the new
   container, verifies, joins it to the `ingress` and per-`(app,
   env)` networks. No special first-run path.
-- Per-service state is keyed by service name in the helper state
-  file. The new service appears in `status` with no
-  previous-version row.
+- Per-service state is read from Podman labels. The new service appears
+  in `status` after its container exists.
 - Removing a service from the manifest stops and removes the
   container on the next `deploy`. No `--purge` required; the
   manifest is the source of truth.
@@ -230,13 +229,17 @@ discipline of Clarification 6 (additive-only, migrations,
 deprecation window) applies. State files are not internal
 implementation detail.
 
-### 11. `--json` output on every read-only command
+### 11. `--json` output on automation-facing read commands
 
-Every read-only verb (`status`, `logs --tail`, `secret list`,
-`route list`, `host status`, `host doctor`) accepts `--json` and
-emits structured output suitable for piping into another tool.
-The JSON shape is part of the public contract under the same
-discipline as the state schema.
+Automation-facing read verbs (`status`, `secret list`, `host status`,
+`host doctor`) accept `--json` and emit structured output suitable for
+piping into another tool. The JSON shape is part of the public contract
+under the same discipline as the state schema.
+
+`logs` intentionally remains a stream of process output, not a JSON
+object. The old `route list` helper is gone with `apps.json` /
+`routes.json`; the planned replacement is `app list --json`, sourced from
+Podman labels and Caddy fragments.
 
 Human-readable table/text output remains the default. JSON is
 opt-in per invocation; no environment variable, no config knob.
@@ -244,15 +247,16 @@ opt-in per invocation; no environment variable, no config knob.
 ### 12. Per-`(app, env)` locking on the host
 
 The helper takes an exclusive file lock on
-`/var/lib/simple-vps/locks/<app>-<env>.lock` before any state
-mutation (`deploy`, `secret put`, `destroy`, `restore`).
+`/run/simple-vps/locks/<app>-<env>.lock` before any same-env mutation
+(`setup-env`, `app apply`, `restart`, `destroy-env`, `secret put`,
+`secret rm`).
 Concurrent operations on the same `(app, env)` — whether two
 terminals, a human plus a scheduler, or CI plus a dashboard —
 serialize cleanly.
 
 Read-only operations do not take the lock. Lock acquisition uses
-`flock(2)` with no timeout by default; `--lock-timeout=<seconds>`
-is available for scripted callers that prefer to fail fast.
+`flock(2)` with no timeout; scripted callers that prefer to fail fast
+should enforce their own process timeout.
 
 ## Consequences
 
@@ -305,17 +309,17 @@ This ADR modifies ADR-0005's cutover plan as follows.
 
 **Added:**
 
-- **Item 29:** Implement `simple-vps migrate-state` and ship in the
-  binary. Coverage: round-trip a state file across a schema-version
-  bump.
-- **Item 30:** Implement `--json` output on every read-only
-  command. Coverage: golden-file tests for each verb's JSON shape.
-- **Item 31:** Implement per-`(app, env)` file locking. Coverage:
-  fake-VPS test exercising two concurrent deploys of the same
+- **Item 29:** Add migration tooling when the first real state
+  schema bump exists. No pre-user compatibility shim.
+- **Item 30:** Implement `--json` output on automation-facing read
+  commands. Landed for `status`, `secret list`, `host status`, and
+  `host doctor`.
+- **Item 31:** Implement per-`(app, env)` file locking. Landed with
+  fake-VPS coverage exercising two concurrent deploys of the same
   `(app, env)`.
 - **Item 32:** Enforce the closed-set policy at manifest-validation
-  time. Coverage: `simple-vps check` rejects each disallowed flag
-  with a clear error citing the closed-set policy.
+  time. Landed through strict TOML decoding plus explicit validation
+  for supported knobs.
 
 ## Notes
 
@@ -331,8 +335,6 @@ This ADR modifies ADR-0005's cutover plan as follows.
   the host installer (ADR-0001 work) before any app deploy can
   succeed. This is a one-time setup step, not a per-deploy
   concern.
-- ADR-0007 Section 3 commits to tracking per-`(app, env, service)`
-  running image tag in helper state. That field joins the
+- ADR-0007 may introduce backup/restore state. That state joins the
   documented state schema under Commitment 10 and inherits the
-  discipline of Clarification 6 (additive-only, snapshot-backed
-  rollback, deprecation window).
+  discipline of Clarification 6.

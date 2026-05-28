@@ -24,8 +24,8 @@ import (
 //
 //  1. Validates the manifest against the new shape rules.
 //  2. Writes the resolved env file to <shared>/.env (literal values only
-//     in this slice; @secret:KEY resolution against the per-(app, env,
-//     key) store lands in a follow-up).
+//     plus @secret:KEY values resolved against the per-(app, env, key)
+//     store).
 //  3. Extracts the tarball and runs `podman build` to tag a new image.
 //  4. For each service: stops the running container, starts a fresh
 //     one joined to the per-env network plus the shared `ingress`
@@ -33,9 +33,9 @@ import (
 //  5. Synthesizes a Caddyfile fragment for the manifest's routes and
 //     reloads Caddy.
 //
-// Atomicity in this slice is per-service (ADR-0006 Cut 1), but the
-// blue/green rolling lifecycle is simplified to stop-old → start-new.
-// Full -new/-old rename choreography lands in a follow-up.
+// Atomicity is per-service (ADR-0006 Cut 1). The current lifecycle is
+// deliberately simple: stop the old container, start the replacement,
+// verify it, then reload Caddy.
 type appApplyCmd struct {
 	App      string `arg:"" help:"App name."`
 	Env      string `arg:"" help:"Env name."`

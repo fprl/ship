@@ -8,18 +8,24 @@
 //
 // ADR-0006 Cut 4 says simple-vps may internally hash identifiers when
 // they would exceed Linux limits (31-char usernames in particular).
-// Hashing is not yet implemented — current naming fits well within
-// limits for the audience this tool targets (app ≤16, env ≤8 yields a
-// 29-char system user). When real users hit the ceiling, a hash-based
-// fallback lands here without touching call sites.
 package identity
 
-import "fmt"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strings"
+)
+
+const (
+	linuxUserNameLimit = 31
+	dnsLabelLimit      = 63
+)
 
 // SystemUser is the Linux account that owns the per-env app data and
 // runs the container processes (via --user). Format: `app-<app>-<env>`.
 func SystemUser(app, env string) string {
-	return fmt.Sprintf("app-%s-%s", app, env)
+	return boundedIdentityName("app", linuxUserNameLimit, app, env)
 }
 
 // Network is the per-(app, env) Podman network used for intra-app
@@ -32,14 +38,35 @@ func Network(app, env string) string {
 
 // ContainerName names the live container for a service.
 func ContainerName(app, env, service string) string {
-	return fmt.Sprintf("app-%s-%s-%s", app, env, service)
+	return boundedIdentityName("app", dnsLabelLimit, app, env, service)
 }
 
-// ContainerNameNew is the holding name used during a per-service
-// rolling deploy (ADR-0006 Cut 1): the new container starts as
-// `<name>-new`, is verified, then renamed to drop the suffix.
-func ContainerNameNew(app, env, service string) string {
-	return ContainerName(app, env, service) + "-new"
+func boundedIdentityName(prefix string, limit int, parts ...string) string {
+	full := prefix + "-" + strings.Join(parts, "-")
+	if len(full) <= limit {
+		return full
+	}
+
+	hash := shortHash(strings.Join(parts, "\x00"), 8)
+	segmentBudget := limit - len(prefix) - len(hash) - 2
+	if segmentBudget < 1 {
+		return prefix + "-" + hash
+	}
+	base := strings.Join(parts, "-")
+	if len(base) > segmentBudget {
+		base = base[:segmentBudget]
+	}
+	base = strings.Trim(base, "-")
+	if base == "" {
+		base = "x"
+	}
+	return fmt.Sprintf("%s-%s-%s", prefix, base, hash)
+}
+
+func shortHash(value string, chars int) string {
+	sum := sha256.Sum256([]byte(value))
+	encoded := hex.EncodeToString(sum[:])
+	return encoded[:chars]
 }
 
 // ImageRepo is the local Podman image repo (without tag) for one
