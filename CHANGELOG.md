@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Manifest v2 static-only deploys with `serve = "dist"` routes, host-side
+  static releases, Caddy file serving, `app list` visibility, backup, destroy,
+  and restore coverage.
+- `[deploy].release` for deploy-time migration commands in container apps.
+- Flat env roots at `/var/apps/<app>.<env>/` with `data/`, `runtime/`, and
+  `static/` directories plus a durable `simple-vps.json` identity anchor.
+
+### Changed
+
+- Public manifest shape now uses `[processes.*]`, `[vars]`,
+  `[env.<name>.vars]`, route `process = "web"`, and `health = "/health"`.
+- Runtime identity now uses deterministic derived infra IDs for Linux users,
+  Podman networks, containers, and locks while keeping host paths readable.
+- Web process deploys start versioned containers, verify health, reload Caddy
+  to the next container, then remove the old container.
+- Secrets are written with `simple-vps secret set`; runtime env files now live
+  under `runtime/.env` instead of app data.
+- Backups now snapshot `data/` and active static release assets rather than
+  generated runtime files.
+
+### Removed
+
+- Removed the old public manifest surface: `[services.*]`, route `service`,
+  route `type`, `[env.<name>.env]`, `healthcheck`, `healthcheck_status`,
+  public `tmpfs`, and `net_bind_service`.
+- Removed the nested `/var/apps/<app>/<env>/shared` runtime/data layout.
+
 ## v0.4.3 - 2026-05-28
 
 ### Added

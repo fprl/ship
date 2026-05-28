@@ -1,5 +1,11 @@
 # Real-box smoke results
 
+This file is historical smoke evidence. Current commands and manifest shape
+live in [SPEC.md](../SPEC.md), [README.md](../README.md), and
+[smoke-real-box.md](smoke-real-box.md). Older entries intentionally preserve
+the exact commands tested at the time, including names that ADR-0008 later
+removed.
+
 ## 2026-05-28 — v0.4.3 fresh Hetzner rebuild + real DNS/TLS smoke
 
 - **Host:** `178.105.101.122`
