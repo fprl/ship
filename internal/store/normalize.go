@@ -11,7 +11,7 @@ import (
 // Exported regexes used outside the package:
 //   - AppRe and NormalizeApp are consumed by `internal/cloudflare` for
 //     per-route app-name validation.
-//   - SystemUserRe is consumed by `internal/systemd` (the host-side
+//   - SystemUserRe is consumed by `internal/host` (the host-side
 //     primitives package) for SUDO_USER validation.
 //
 // ServiceRe and HeaderNameRe used to back the legacy route/service

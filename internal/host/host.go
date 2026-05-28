@@ -1,11 +1,5 @@
-// Package systemd is misnamed at this point — post-cutover the helper
-// no longer renders or installs systemd units. What remains is the small
-// pile of host-side primitives the new container-deploy lifecycle still
-// needs: the shared deploy tmp dir, the validator for uploaded paths
-// under it, and a couple of generic command helpers. A future rename
-// to `internal/hostprim` (or split across more focused packages) is a
-// reasonable follow-up.
-package systemd
+// Package host holds host-side primitives shared by the privileged helper.
+package host
 
 import (
 	"fmt"

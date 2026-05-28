@@ -13,9 +13,9 @@ import (
 
 	"github.com/fprl/simple-vps/internal/caddy"
 	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/host"
 	"github.com/fprl/simple-vps/internal/identity"
 	"github.com/fprl/simple-vps/internal/secrets"
-	"github.com/fprl/simple-vps/internal/systemd"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -48,16 +48,16 @@ func (c appApplyCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	// systemd.ValidateDeployTmpSource resolves symlinks, ensures the
+	// host.ValidateDeployTmpSource resolves symlinks, ensures the
 	// path is a regular file under the deploy tmp root, and (if invoked
 	// via sudo) verifies the file is owned by the deploying user — so a
 	// malicious local user can't leave a file behind for the helper to
 	// pick up.
-	tarball, err := systemd.ValidateDeployTmpSource(c.Tarball)
+	tarball, err := host.ValidateDeployTmpSource(c.Tarball)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	manifestPath, err := systemd.ValidateDeployTmpSource(c.Manifest)
+	manifestPath, err := host.ValidateDeployTmpSource(c.Manifest)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -66,7 +66,7 @@ func (c appApplyCmd) Run() error {
 	// reads the rest of the working tree it expects (Dockerfile) from
 	// the SAME directory. So we extract the tarball alongside the
 	// uploaded manifest into a context dir and run the validator there.
-	ctxDir, err := os.MkdirTemp(systemd.DeployTmpDir(), "ctx-")
+	ctxDir, err := os.MkdirTemp(host.DeployTmpDir(), "ctx-")
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
