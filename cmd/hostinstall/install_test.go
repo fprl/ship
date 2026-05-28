@@ -1,6 +1,7 @@
 package hostinstall
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -130,6 +131,42 @@ func TestAutoModeChoosesLocalOnlyOnRootHost(t *testing.T) {
 	_, err = BuildPlan(opts, false, false)
 	if err == nil || !strings.Contains(err.Error(), "TARGET_HOST is required") {
 		t.Fatalf("expected missing remote host error, got %v", err)
+	}
+}
+
+func TestPreflightSSHRequiresConnectedSentinel(t *testing.T) {
+	installer := NewInstaller()
+	installer.remoteOut = func(plan Plan, command string) (string, error) {
+		return "", nil
+	}
+
+	err := installer.preflightSSH(Plan{BootstrapUser: "root", TargetHost: "203.0.113.10"})
+	if err == nil {
+		t.Fatal("expected empty SSH preflight output to fail")
+	}
+	if !strings.Contains(err.Error(), "expected connected sentinel") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPreflightSSHIncludesSSHError(t *testing.T) {
+	installer := NewInstaller()
+	installer.remoteOut = func(plan Plan, command string) (string, error) {
+		return "", errors.New("ssh command failed: Host key verification failed")
+	}
+
+	err := installer.preflightSSH(Plan{BootstrapUser: "root", TargetHost: "203.0.113.10"})
+	if err == nil {
+		t.Fatal("expected SSH preflight error")
+	}
+	for _, want := range []string{
+		"SSH preflight failed for root@203.0.113.10",
+		"Check host, credentials, and key access.",
+		"Host key verification failed",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to contain %q, got %v", want, err)
+		}
 	}
 }
 

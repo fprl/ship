@@ -42,6 +42,14 @@ blocking Podman bridge DNS) were both invisible to it.
   ssh-keygen -q -t ed25519 -N '' -f /tmp/simple-vps-smoke-keys/deploy
   ```
 
+- If the VPS was rebuilt at the same IP, refresh the laptop's SSH host key
+  entry before running remote install:
+
+  ```sh
+  ssh-keygen -R <IP>
+  ssh-keyscan -T 10 -t ed25519,rsa,ecdsa <IP> >> ~/.ssh/known_hosts
+  ```
+
 ## 1. Host install
 
 ```sh

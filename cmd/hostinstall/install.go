@@ -76,9 +76,10 @@ type Installer struct {
 	Stdin  io.Reader
 	Env    map[string]string
 
-	geteuid func() int
-	run     func(name string, args []string, cwd string) error
-	look    func(file string) (string, error)
+	geteuid   func() int
+	run       func(name string, args []string, cwd string) error
+	look      func(file string) (string, error)
+	remoteOut func(plan Plan, command string) (string, error)
 }
 
 func NewInstaller() *Installer {
@@ -438,12 +439,8 @@ func (i *Installer) prepareGoHelperBinaries(repoRoot string) (string, func(), er
 }
 
 func (i *Installer) preflightSSH(plan Plan) error {
-	args := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=7"}
-	if plan.SSHKey != "" {
-		args = append(args, "-i", plan.SSHKey)
-	}
-	args = append(args, plan.BootstrapUser+"@"+plan.TargetHost, "echo connected")
-	if err := i.run("ssh", args, ""); err != nil {
+	output, err := i.remoteOutput(plan, "echo connected")
+	if err != nil {
 		var msg bytes.Buffer
 		fmt.Fprintf(&msg, "SSH preflight failed for %s@%s.", plan.BootstrapUser, plan.TargetHost)
 		if plan.SSHKey == "" {
@@ -451,8 +448,12 @@ func (i *Installer) preflightSSH(plan Plan) error {
 			msg.WriteString("\nIf you only have password credentials, SSH to the VPS first and use --mode local.")
 		}
 		msg.WriteString("\nCheck host, credentials, and key access.")
-		return errors.New(msg.String())
+		return fmt.Errorf("%s\n%s", msg.String(), err)
 	}
+	if strings.TrimSpace(output) != "connected" {
+		return fmt.Errorf("SSH preflight failed for %s@%s: expected connected sentinel, got %q", plan.BootstrapUser, plan.TargetHost, strings.TrimSpace(output))
+	}
+	fmt.Fprintln(i.Stdout, "connected")
 	return nil
 }
 
@@ -472,6 +473,9 @@ func (i *Installer) remoteArch(plan Plan) (string, error) {
 }
 
 func (i *Installer) remoteOutput(plan Plan, command string) (string, error) {
+	if i.remoteOut != nil {
+		return i.remoteOut(plan, command)
+	}
 	args := sshArgs(plan, command)
 	cmd := exec.Command("ssh", args...)
 	var stdout, stderr bytes.Buffer
