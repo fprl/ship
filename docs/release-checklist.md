@@ -3,7 +3,7 @@
 Use this before cutting preview releases.
 
 ```bash
-VERSION=v0.5.0-rc2
+VERSION=v0.5.0-rc3
 ```
 
 ## Local Checks

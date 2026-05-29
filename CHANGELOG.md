@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.5.0-rc3 - 2026-05-29
+
 ### Added
 
 - `simple-vps init` now scaffolds deployable `container`, `static`, `php`, and
