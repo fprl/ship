@@ -234,10 +234,7 @@ func TestRunInitGeneratedContainerTemplatesBuildWhenRequested(t *testing.T) {
 	if os.Getenv("SIMPLE_VPS_TEST_INIT_BUILDS") != "1" {
 		t.Skip("set SIMPLE_VPS_TEST_INIT_BUILDS=1 to build generated container templates")
 	}
-	podman, err := exec.LookPath("podman")
-	if err != nil {
-		t.Skip("podman not available")
-	}
+	builder := initTemplateBuilder(t)
 	for _, template := range []string{"container", "php", "hono"} {
 		t.Run(template, func(t *testing.T) {
 			root := t.TempDir()
@@ -249,15 +246,39 @@ func TestRunInitGeneratedContainerTemplatesBuildWhenRequested(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			cmd := exec.Command(podman, "build", "-t", "simple-vps-init-test-"+template, root)
+			image := "simple-vps-init-test-" + template + "-" + strings.ToLower(t.Name())
+			image = strings.NewReplacer("/", "-", "_", "-").Replace(image)
+			t.Cleanup(func() {
+				_ = exec.Command(builder, "rmi", "-f", image).Run()
+			})
+			cmd := exec.Command(builder, "build", "-t", image, root)
 			var output bytes.Buffer
-			cmd.Stdout = &output
-			cmd.Stderr = &output
+			cmd.Stdout = io.MultiWriter(os.Stdout, &output)
+			cmd.Stderr = io.MultiWriter(os.Stderr, &output)
 			if err := cmd.Run(); err != nil {
-				t.Fatalf("podman build failed: %v\n%s", err, output.String())
+				t.Fatalf("%s build failed: %v\n%s", builder, err, output.String())
 			}
 		})
 	}
+}
+
+func initTemplateBuilder(t *testing.T) string {
+	t.Helper()
+	if requested := os.Getenv("SIMPLE_VPS_TEST_INIT_BUILDER"); requested != "" {
+		path, err := exec.LookPath(requested)
+		if err != nil {
+			t.Fatalf("SIMPLE_VPS_TEST_INIT_BUILDER=%s not found", requested)
+		}
+		return path
+	}
+	for _, candidate := range []string{"podman", "docker"} {
+		path, err := exec.LookPath(candidate)
+		if err == nil {
+			return path
+		}
+	}
+	t.Skip("podman or docker not available")
+	return ""
 }
 
 func contains(items []string, needle string) bool {

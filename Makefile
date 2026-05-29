@@ -1,4 +1,4 @@
-.PHONY: test go-test go-build go-vet shell-test fake-vps-smoke fake-vps-install-smoke build build-linux build-darwin checksum build-release release-smoke clean
+.PHONY: test go-test go-build go-vet shell-test fake-vps-smoke fake-vps-install-smoke init-template-builds build build-linux build-darwin checksum build-release release-smoke clean
 
 GO ?= go
 DIST_DIR ?= dist
@@ -41,6 +41,9 @@ fake-vps-smoke:
 fake-vps-install-smoke:
 	rm -rf $(DIST_DIR) # ensure host install smoke builds fresh helper binaries
 	SIMPLE_VPS_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestFreshHostInstall -count=1 -timeout 20m
+
+init-template-builds:
+	SIMPLE_VPS_TEST_INIT_BUILDS=1 $(GO) test ./cmd/client -run TestRunInitGeneratedContainerTemplatesBuildWhenRequested -count=1 -timeout 20m
 
 build:
 	mkdir -p $(DIST_DIR)
