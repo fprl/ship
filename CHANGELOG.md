@@ -7,6 +7,8 @@
 - Documented the `v0.5.0-rc1` release installer smoke and private-repo
   installer fetch path.
 - Added a primitive-freeze review brief for external feedback before DX work.
+- Added the current public CLI surface and app-vs-env command model question to
+  the primitive-freeze review brief.
 
 ## v0.5.0-rc1 - 2026-05-29
 

@@ -101,6 +101,112 @@ Container DNS:  svps-a8f9b2-web-f927362
 Runtime discovery should come from labels and identity files, not reverse
 parsing generated names.
 
+## Current Public CLI Surface
+
+The public CLI currently treats the app as the current repo/manifest and asks
+for the env as the required positional argument on mutating app commands:
+
+```text
+simple-vps init
+simple-vps check [env]
+simple-vps setup <env>
+simple-vps deploy <env> [--dirty] [--rebuild] [--include-dotenv]
+simple-vps status <env> [--json]
+simple-vps restart <env> [process] [--json]
+simple-vps rollback <env> [release] [--json]
+simple-vps backup <env> [--to path]
+simple-vps backup list <env> [--json]
+simple-vps backup rm <env> <backup-id>
+simple-vps restore --from <backup-id|path> <env> [--dry-run]
+simple-vps destroy <env> [--app app] [--server target] [--confirm app] [--yes] [--purge]
+simple-vps logs <env> [process] [--follow|-f] [--tail 100]
+simple-vps app list [--server target] [--json]
+simple-vps secret set <env> <key>
+simple-vps secret list <env> [--json]
+simple-vps secret rm <env> <key>
+simple-vps ssh <env>
+simple-vps host status [--server target] [--json]
+simple-vps host doctor [--server target] [--json]
+simple-vps host install [flags]
+simple-vps version
+```
+
+`host install` flags:
+
+```text
+--mode auto|local|remote
+--host
+--bootstrap-user
+--ssh-key
+--ssh-public-key-file
+--operator-ssh-public-key-file
+--deploy-ssh-public-key-file
+--shared-key
+--operator-user
+--deploy-user
+--timezone
+--locale
+--ingress public|cloudflare|private
+--admin public-ssh|tailscale
+--[no-]tailscale
+--tailscale-auth-key
+--tailscale-hostname
+--[no-]cloudflare-tunnel
+--cloudflare-api-token
+--cloudflare-account-id
+--cloudflare-tunnel-token
+--cloudflare-tunnel-config
+--[no-]docker
+--[no-]litestream
+--check
+--yes
+```
+
+Open naming question: should app commands continue to be env-positioned and
+manifest-inferred, or should they become app-centric with `--env`?
+
+Current style:
+
+```bash
+simple-vps deploy production
+simple-vps backup production
+simple-vps secret set production DATABASE_URL
+```
+
+Possible app-centric style:
+
+```bash
+simple-vps deploy api --env production
+simple-vps backup create api --env production
+simple-vps secret set api DATABASE_URL --env production
+```
+
+Why the current style exists:
+
+- Most app commands are intended to run from inside the app repo.
+- `name = "api"` already identifies the app in `simple-vps.toml`.
+- The thing the user changes most often from that repo is the env:
+  `production`, `staging`, `preview`, etc.
+- Requiring both app and env everywhere repeats information already in the
+  manifest.
+
+Why app-centric may be clearer:
+
+- The host state is actually scoped to `(app, env)`, not env alone.
+- Backups, secrets, destroy, and app list feel app-owned as a user concept.
+- Commands can run outside the app repo more naturally.
+- It makes the operational target explicit: app plus env.
+
+Possible compromise:
+
+```bash
+simple-vps deploy production                    # from app repo
+simple-vps deploy api --env production --server deploy@example.com
+```
+
+Review question: which command model is the right primitive for v1? If both are
+supported, is that useful flexibility or unnecessary surface area?
+
 ## Plain-English Explanations Of Open Primitive Areas
 
 ### 1. Command Contract Consistency
