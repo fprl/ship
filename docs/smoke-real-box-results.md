@@ -146,6 +146,12 @@ The final release URL was:
    Final `app list --json --server deploy@128.140.3.159` returned
    `{"apps":[]}`.
 
+10. Removed the smoke backup artifact directly from the disposable host:
+
+    ```text
+    apps=0 backups=0 containers=caddy
+    ```
+
 **Outcome:** pass. The published `v0.5.0-rc1` installer path works from outside
 the checkout, and the release binary deploys, rolls back, backs up, restores,
 and destroys a mixed container/static app on the real VPS.
