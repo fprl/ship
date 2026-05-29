@@ -129,16 +129,18 @@ instead of adding ad hoc sudo commands to the public CLI.
 ## State and Drift
 
 The host should be checkable from the host itself. `simple-vps host status`
-should report current state; `simple-vps host doctor` should compare that state
-against this model and report drift.
+reports install state, supervised service state, and required host tools.
+`simple-vps host doctor` currently checks host state, required service health,
+and the sudoers identity split.
 
-Initial doctor checks should cover:
+Future doctor hardening checks should cover:
 
 - SSH password login disabled.
 - Root login disabled after bootstrap.
 - Public SSH closed when Tailscale admin mode is desired and ready.
 - Public `80` and `443` match the desired ingress mode.
-- Tailscale, cloudflared, Caddy, fail2ban, and unattended upgrades state.
+- Tailscale, cloudflared, Caddy, fail2ban, and unattended upgrades state in
+  more detail than simple active/inactive reporting.
 - The deploy sudoers grant points at `/usr/local/bin/simple-vps`.
 - The operator/deploy split is healthy.
 - Generated Caddy config validates.

@@ -46,6 +46,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
 	t.Run("container rollback runs an older image release", env.testRollback)
 	t.Run("backup and restore round-trip app state", env.testBackupRestore)
+	t.Run("deploy removes processes dropped from the manifest", env.testRemovedProcessReconciliation)
 	t.Run("concurrent deploys of the same app env serialize", env.testConcurrentDeploys)
 	t.Run("static-only app deploys and restores without containers", env.testStaticOnlyAppLifecycle)
 	t.Run("@secret refs resolve through put/list/rm into the runtime env", env.testSecretLifecycle)
@@ -81,13 +82,20 @@ EOF`)
 
 	e.ssh(t, "getent passwd "+identity.SystemUser("api", "production")+" >/dev/null")
 	e.ssh(t, "test -d "+identity.DataDir("api", "production"))
+	e.ssh(t, "test -d "+identity.ReleaseDir("api", "production"))
 	e.ssh(t, "test -f "+identity.IdentityFile("api", "production"))
 	e.ssh(t, "test -f /run/fake-podman/networks/"+identity.Network("api", "production"))
+	releaseDirStat := strings.TrimSpace(e.dockerExec(t, "stat -c '%a %U' "+identity.ReleaseDir("api", "production")))
+	if releaseDirStat != "755 root" {
+		t.Fatalf("release dir ownership = %q, want `755 root`", releaseDirStat)
+	}
 
 	// 2. Deploy on a clean tree.
 	e.simpleVPS(t, app, nil, "deploy", "production")
 	release := gitRelease(t, e, app)
 	webContainer := identity.ContainerName("api", "production", "web", release)
+	releaseManifest := e.ssh(t, "cat "+identity.ReleaseManifestFile("api", "production", release))
+	assertContains(t, releaseManifest, "port = 3000")
 
 	// 3. fake-podman should have logged build + run for the web process.
 	commandsLog := e.ssh(t, "cat /run/fake-podman/commands.log")
@@ -169,6 +177,22 @@ func (e *smokeEnv) testBackupRestore(t *testing.T) {
 		t.Fatalf("expected at least one backup, got %+v", list.Backups)
 	}
 	backupID := list.Backups[0].ID
+	backupRelease := list.Backups[0].Release
+
+	mustWrite(t, filepath.Join(app, "README.md"), "post-backup release\n")
+	e.commitFixture(t, app)
+	newRelease := gitRelease(t, e, app)
+	if newRelease == backupRelease {
+		t.Fatal("expected fixture commit to produce a new release")
+	}
+	e.simpleVPS(t, app, nil, "deploy", "production")
+	newContainer := identity.ContainerName("api", "production", "web", newRelease)
+	e.dockerExec(t, "test -f /run/fake-podman/containers/"+newContainer+".labels")
+
+	e.simpleVPS(t, app, nil, "restore", "--from", backupID, "production")
+	e.dockerExec(t, "test ! -f /run/fake-podman/containers/"+newContainer+".labels")
+	statusJSON := e.simpleVPS(t, app, nil, "status", "--json", "production")
+	assertContains(t, statusJSON, `"release": "`+backupRelease+`"`)
 
 	e.simpleVPS(t, app, nil, "destroy", "production", "--yes")
 	if exists := e.run(t, e.repoRoot, nil, "docker", "exec", e.container, "bash", "-c", "test -e "+identity.DataDir("api", "production")+"/data.txt"); exists.err == nil {
@@ -198,6 +222,16 @@ func (e *smokeEnv) testRollback(t *testing.T) {
 	app := filepath.Join(e.tmp, "container-api")
 	oldRelease := strings.TrimSpace(e.mustRun(t, app, nil, "git", "rev-parse", "--short=12", "HEAD"))
 
+	manifestPath := filepath.Join(app, "simple-vps.toml")
+	manifestBytes, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextManifest := strings.Replace(string(manifestBytes), "port = 3000", "port = 3333", 1)
+	if nextManifest == string(manifestBytes) {
+		t.Fatal("test fixture did not contain port = 3000")
+	}
+	mustWrite(t, manifestPath, nextManifest)
 	mustWrite(t, filepath.Join(app, "README.md"), "second release\n")
 	e.commitFixture(t, app)
 	newRelease := strings.TrimSpace(e.mustRun(t, app, nil, "git", "rev-parse", "--short=12", "HEAD"))
@@ -205,6 +239,8 @@ func (e *smokeEnv) testRollback(t *testing.T) {
 		t.Fatal("expected fixture commit to produce a new release")
 	}
 	e.simpleVPS(t, app, nil, "deploy", "production")
+	newFragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("api", "production"))
+	assertContains(t, newFragment, ":"+"3333")
 
 	rawJSON := e.simpleVPS(t, app, nil, "rollback", "--json", "production")
 	var payload struct {
@@ -237,6 +273,13 @@ func (e *smokeEnv) testRollback(t *testing.T) {
 	if len(status.Processes) != 1 || status.Processes[0].Process != "web" || status.Processes[0].Release != oldRelease {
 		t.Fatalf("status did not report rolled-back release %s: %+v", oldRelease, status.Processes)
 	}
+	rolledBackFragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("api", "production"))
+	assertContains(t, rolledBackFragment, identity.ContainerName("api", "production", "web", oldRelease)+":3000")
+	if strings.Contains(rolledBackFragment, ":3333") {
+		t.Fatalf("rollback should restore the old manifest route shape, got:\n%s", rolledBackFragment)
+	}
+	appliedManifest := e.ssh(t, "cat "+identity.ManifestFile("api", "production"))
+	assertContains(t, appliedManifest, "port = 3000")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: api.example.com' http://127.0.0.1/health", "ok")
 }
 
@@ -270,6 +313,42 @@ func (e *smokeEnv) testConcurrentDeploys(t *testing.T) {
 	assertContains(t, status, "running")
 }
 
+func (e *smokeEnv) testRemovedProcessReconciliation(t *testing.T) {
+	app := filepath.Join(e.tmp, "prune-api")
+	mustMkdir(t, app)
+	writePruneFixture(t, app)
+	e.commitFixture(t, app)
+
+	e.simpleVPS(t, app, nil, "setup", "production")
+	e.simpleVPS(t, app, nil, "deploy", "production")
+	oldRelease := gitRelease(t, e, app)
+	oldWorker := identity.ContainerName("prune", "production", "worker", oldRelease)
+	e.dockerExec(t, "test -f /run/fake-podman/containers/"+oldWorker+".labels")
+
+	manifestPath := filepath.Join(app, "simple-vps.toml")
+	manifestBytes, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextManifest := strings.Replace(string(manifestBytes), `
+[processes.worker]
+command = "sleep 3600"
+`, "", 1)
+	if nextManifest == string(manifestBytes) {
+		t.Fatal("test fixture did not contain worker process")
+	}
+	mustWrite(t, manifestPath, nextManifest)
+	mustWrite(t, filepath.Join(app, "README.md"), "worker removed\n")
+	e.commitFixture(t, app)
+	e.simpleVPS(t, app, nil, "deploy", "production")
+
+	e.dockerExec(t, "test ! -f /run/fake-podman/containers/"+oldWorker+".labels")
+	statusJSON := e.simpleVPS(t, app, nil, "status", "--json", "production")
+	if strings.Contains(statusJSON, `"process": "worker"`) {
+		t.Fatalf("removed worker still appears in status:\n%s", statusJSON)
+	}
+}
+
 func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	app := filepath.Join(e.tmp, "static-site")
 	mustMkdir(t, app)
@@ -279,6 +358,8 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 
 	e.simpleVPS(t, app, nil, "setup", "production")
 	e.simpleVPS(t, app, nil, "deploy", "production")
+	staticReleaseManifest := e.ssh(t, "cat "+identity.ReleaseManifestFile("site", "production", oldRelease))
+	assertContains(t, staticReleaseManifest, `serve = "dist"`)
 
 	status := e.simpleVPS(t, app, nil, "status", "production")
 	assertContains(t, status, "site (production)")
@@ -703,6 +784,29 @@ resources = { memory = "512m", cpus = 0.5 }
 
 [routes.app]
 host = "api.example.com"
+process = "web"
+`)
+}
+
+func writePruneFixture(t *testing.T, app string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "prune"
+
+[env.production]
+server = "fake-vps"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[processes.worker]
+command = "sleep 3600"
+
+[routes.app]
+host = "prune.example.com"
 process = "web"
 `)
 }

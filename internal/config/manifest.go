@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/fprl/simple-vps/internal/names"
@@ -499,7 +500,10 @@ func validateProcessResources(processName string, res Resources, errors *[]strin
 }
 
 func validateRoutes(root string, routes map[string]Route, processes map[string]Process, errors *[]string) {
-	for name, route := range routes {
+	seenHostPaths := map[string]string{}
+	hostTLS := map[string]string{}
+	for _, name := range sortedRouteNames(routes) {
+		route := routes[name]
 		if !ProcessRe.MatchString(name) {
 			*errors = append(*errors, fmt.Sprintf("invalid route name: %s", name))
 		}
@@ -507,6 +511,22 @@ func validateRoutes(root string, routes map[string]Route, processes map[string]P
 			*errors = append(*errors, fmt.Sprintf("[routes.%s].host is required", name))
 		} else if !ValidateHost(route.Host) {
 			*errors = append(*errors, fmt.Sprintf("[routes.%s].host is invalid", name))
+		} else {
+			hostPathKey := route.Host + "\x00" + route.Path
+			if existing := seenHostPaths[hostPathKey]; existing != "" {
+				*errors = append(*errors, fmt.Sprintf("[routes.%s] conflicts with [routes.%s]: host/path already used", name, existing))
+			} else {
+				seenHostPaths[hostPathKey] = name
+			}
+			tlsMode := route.TLS
+			if tlsMode == "" {
+				tlsMode = "auto"
+			}
+			if existing := hostTLS[route.Host]; existing != "" && existing != tlsMode {
+				*errors = append(*errors, fmt.Sprintf("[routes.%s].tls conflicts with another route for host %s", name, route.Host))
+			} else {
+				hostTLS[route.Host] = tlsMode
+			}
 		}
 		validateRoutePath(name, route.Path, errors)
 
@@ -549,6 +569,15 @@ func validateRoutes(root string, routes map[string]Route, processes map[string]P
 			*errors = append(*errors, fmt.Sprintf(`[routes.%s].tls must be "auto" or "internal"`, name))
 		}
 	}
+}
+
+func sortedRouteNames(routes map[string]Route) []string {
+	names := make([]string, 0, len(routes))
+	for name := range routes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func validateRoutePath(routeName, path string, errors *[]string) {

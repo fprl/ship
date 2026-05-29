@@ -34,12 +34,15 @@ type appApplyCmd struct {
 }
 
 type applyReleaseResult struct {
-	oldWebContainers []string
-	staticSnapshot   *staticCurrentSnapshot
+	containersToRemove []string
+	staticSnapshot     *staticCurrentSnapshot
 }
 
 func (c appApplyCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	if err := validateRelease(c.SHA); err != nil {
 		utils.Die(err.Error(), 1)
 	}
 	withAppEnvLock(c.App, c.Env, func() {
@@ -74,10 +77,10 @@ func (c appApplyCmd) runLockedE() error {
 	if err := c.switchTraffic(app, result); err != nil {
 		return err
 	}
-	if err := persistAppliedManifest(c.App, c.Env, filepath.Join(ctxDir, "simple-vps.toml")); err != nil {
+	if err := persistAppliedManifest(c.App, c.Env, c.SHA, filepath.Join(ctxDir, "simple-vps.toml")); err != nil {
 		return err
 	}
-	removeContainers(result.oldWebContainers)
+	removeContainers(result.containersToRemove)
 
 	fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, c.SHA)
 	return nil
@@ -141,20 +144,27 @@ func (c appApplyCmd) loadApplyContext(ctxDir string) (*config.AppContext, error)
 func (c appApplyCmd) applyRelease(ctxDir string, app *config.AppContext) (applyReleaseResult, error) {
 	switch app.Shape {
 	case config.ShapeContainer:
-		oldWeb, err := c.applyContainer(ctxDir, app)
+		containersToRemove, err := c.applyContainer(ctxDir, app)
 		if err != nil {
 			return applyReleaseResult{}, err
 		}
-		return applyReleaseResult{oldWebContainers: oldWeb}, nil
+		return applyReleaseResult{containersToRemove: containersToRemove}, nil
 	case config.ShapeStatic:
 		snapshot, err := snapshotStaticCurrent(c.App, c.Env)
 		if err != nil {
 			return applyReleaseResult{}, fmt.Errorf("snapshot static current: %v", err)
 		}
+		existing, err := podmanPSContainers(c.App, c.Env)
+		if err != nil {
+			return applyReleaseResult{}, err
+		}
 		if err := c.applyStatic(ctxDir, app); err != nil {
 			return applyReleaseResult{}, err
 		}
-		return applyReleaseResult{staticSnapshot: &snapshot}, nil
+		return applyReleaseResult{
+			containersToRemove: appContainerNames(existing),
+			staticSnapshot:     &snapshot,
+		}, nil
 	default:
 		return applyReleaseResult{}, fmt.Errorf("unsupported app shape %q", app.Shape)
 	}
@@ -208,17 +218,40 @@ func removeContainers(names []string) {
 	}
 }
 
-func persistAppliedManifest(app, env, manifestPath string) error {
-	dst := identity.ManifestFile(app, env)
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return fmt.Errorf("mkdir applied manifest dir: %v", err)
-	}
+func persistAppliedManifest(app, env, release, manifestPath string) error {
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return fmt.Errorf("read applied manifest: %v", err)
 	}
-	if err := os.WriteFile(dst, data, 0644); err != nil {
+	if err := writeManifestSnapshot(app, env, release, data); err != nil {
+		return err
+	}
+	current := identity.ManifestFile(app, env)
+	if err := os.MkdirAll(filepath.Dir(current), 0755); err != nil {
+		return fmt.Errorf("mkdir applied manifest dir: %v", err)
+	}
+	if err := os.WriteFile(current, data, 0644); err != nil {
 		return fmt.Errorf("write applied manifest: %v", err)
+	}
+	if _, err := utils.RunChecked("chown", []string{"root:root", current}, ""); err != nil {
+		return fmt.Errorf("chown applied manifest: %v", err)
+	}
+	return nil
+}
+
+func writeManifestSnapshot(app, env, release string, data []byte) error {
+	if err := validateRelease(release); err != nil {
+		return err
+	}
+	dst := identity.ReleaseManifestFile(app, env, release)
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return fmt.Errorf("mkdir release manifest dir: %v", err)
+	}
+	if err := os.WriteFile(dst, data, 0644); err != nil {
+		return fmt.Errorf("write release manifest: %v", err)
+	}
+	if _, err := utils.RunChecked("chown", []string{"root:root", dst}, ""); err != nil {
+		return fmt.Errorf("chown release manifest: %v", err)
 	}
 	return nil
 }
@@ -256,7 +289,7 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext) ([]st
 	if err != nil {
 		return nil, err
 	}
-	var oldWeb []string
+	containersToRemove := containersForRemovedProcesses(existing, app.Processes)
 	for _, processName := range sortedKeys(app.Processes) {
 		proc := app.Processes[processName]
 		if proc.Port == nil {
@@ -268,10 +301,55 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext) ([]st
 			return nil, err
 		}
 		if proc.Port != nil {
-			oldWeb = append(oldWeb, processContainers(existing, processName, c.SHA)...)
+			containersToRemove = append(containersToRemove, processContainers(existing, processName, c.SHA)...)
 		}
 	}
-	return oldWeb, nil
+	return uniqueContainerNames(containersToRemove), nil
+}
+
+func containersForRemovedProcesses(entries []containerEntry, next map[string]config.Process) []string {
+	var names []string
+	for _, e := range entries {
+		process := e.Labels["simple-vps.process"]
+		if process == "" || process == "release" {
+			continue
+		}
+		if _, ok := next[process]; ok {
+			continue
+		}
+		if len(e.Names) > 0 {
+			names = append(names, e.Names[0])
+		}
+	}
+	return uniqueContainerNames(names)
+}
+
+func appContainerNames(entries []containerEntry) []string {
+	var names []string
+	for _, e := range entries {
+		process := e.Labels["simple-vps.process"]
+		if process == "" || process == "release" {
+			continue
+		}
+		if len(e.Names) > 0 {
+			names = append(names, e.Names[0])
+		}
+	}
+	return uniqueContainerNames(names)
+}
+
+func uniqueContainerNames(names []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, name := range names {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (c appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) error {

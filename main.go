@@ -193,13 +193,15 @@ func (c restoreCmd) Run() error {
 
 type destroyCmd struct {
 	Env     string `arg:"" help:"Environment to destroy."`
+	App     string `name:"app" help:"App name. Required with --server when the env is no longer in simple-vps.toml."`
+	Server  string `name:"server" help:"SSH target like deploy@example.com. Required with --app when the env is no longer in simple-vps.toml."`
 	Confirm string `name:"confirm" help:"Required app-name confirmation unless --yes is passed."`
 	Yes     bool   `name:"yes" help:"Skip confirmation. Intended for automation."`
 	Purge   bool   `name:"purge" help:"Also delete secrets for this app/env."`
 }
 
 func (c destroyCmd) Run() error {
-	client.CmdDestroy(".", c.Env, c.Confirm, c.Yes, c.Purge)
+	client.CmdDestroy(".", c.Env, c.Confirm, c.Yes, c.Purge, c.App, c.Server)
 	return nil
 }
 

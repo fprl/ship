@@ -408,6 +408,57 @@ func TestEnsureSudoersFileRejectsUnsafeName(t *testing.T) {
 	}
 }
 
+func TestEnsureDirectoryRejectsExistingNonDirectory(t *testing.T) {
+	runner := newFakeRunner()
+	runner.commandResults = map[string]CommandResult{
+		"stat -c %U\t%G\t%a\t%F /var/apps": {
+			ExitCode: 0,
+			Stdout:   []byte("root\troot\t777\tsymbolic link\n"),
+		},
+	}
+	apply := Apply{Context: context.Background(), Runner: runner}
+
+	changed, err := EnsureDirectory(apply, Directory{
+		Path:  "/var/apps",
+		Owner: "root",
+		Group: "root",
+		Mode:  0755,
+	})
+	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("expected non-directory error, got changed=%v err=%v", changed, err)
+	}
+	if runner.ranCommand("install", "-d -o root -g root -m 755 /var/apps") {
+		t.Fatal("install -d should not run for an existing non-directory")
+	}
+}
+
+func TestEnsureDirectoryNormalizesExistingDirectoryWithoutTouchingChildren(t *testing.T) {
+	runner := newFakeRunner()
+	runner.commandResults = map[string]CommandResult{
+		"stat -c %U\t%G\t%a\t%F /var/apps": {
+			ExitCode: 0,
+			Stdout:   []byte("root\troot\t700\tdirectory\n"),
+		},
+	}
+	apply := Apply{Context: context.Background(), Runner: runner}
+
+	changed, err := EnsureDirectory(apply, Directory{
+		Path:  "/var/apps",
+		Owner: "root",
+		Group: "root",
+		Mode:  0755,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected mode drift to be changed")
+	}
+	if !runner.ranCommand("install", "-d -o root -g root -m 755 /var/apps") {
+		t.Fatalf("expected non-recursive install -d, commands: %+v", runner.commands)
+	}
+}
+
 func TestEnsureSystemdUnitWritesUnitReloadsDaemonThenRunsRequestedAction(t *testing.T) {
 	runner := newFakeRunner()
 	apply := Apply{Context: context.Background(), Runner: runner}

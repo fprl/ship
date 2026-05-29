@@ -315,3 +315,20 @@ func TestValidateDestroyConfirmation(t *testing.T) {
 		t.Fatalf("expected confirmation error naming the app, got %v", err)
 	}
 }
+
+func TestDestroyTargetSupportsManifestFreeTargeting(t *testing.T) {
+	app, server, err := destroyTarget(t.TempDir(), "production", "api", "deploy@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app != "api" || server != "deploy@example.com" {
+		t.Fatalf("unexpected target: app=%s server=%s", app, server)
+	}
+
+	if _, _, err := destroyTarget(t.TempDir(), "production", "api", ""); err == nil || !strings.Contains(err.Error(), "both --app and --server") {
+		t.Fatalf("expected paired flag error, got %v", err)
+	}
+	if _, _, err := destroyTarget(t.TempDir(), "production", "Api", "deploy@example.com"); err == nil || !strings.Contains(err.Error(), "invalid app name") {
+		t.Fatalf("expected app validation error, got %v", err)
+	}
+}

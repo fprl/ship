@@ -24,6 +24,12 @@ func TestDataRuntimeStaticAndManifestPaths(t *testing.T) {
 	if got := StaticDir("api", "production"); got != "/var/apps/api.production/static" {
 		t.Fatalf("StaticDir = %q", got)
 	}
+	if got := ReleaseDir("api", "production"); got != "/var/apps/api.production/releases" {
+		t.Fatalf("ReleaseDir = %q", got)
+	}
+	if got := ReleaseManifestFile("api", "production", "abc123"); got != "/var/apps/api.production/releases/abc123/simple-vps.toml" {
+		t.Fatalf("ReleaseManifestFile = %q", got)
+	}
 	if got := ManifestFile("api", "production"); got != "/var/apps/api.production/simple-vps.toml" {
 		t.Fatalf("ManifestFile = %q", got)
 	}

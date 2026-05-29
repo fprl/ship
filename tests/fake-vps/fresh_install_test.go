@@ -40,10 +40,13 @@ func TestFreshHostInstall(t *testing.T) {
 	env.assertFreshHostInstalled(t)
 	env.assertHostDoctorHealthy(t)
 
+	env.ssh(t, "mkdir -p /var/apps/api.production/data && printf sentinel > /var/apps/api.production/data/sentinel && chmod 600 /var/apps/api.production/data/sentinel")
 	second := env.installHost(t, keyPath)
 	if second != 0 {
 		t.Fatalf("second install changed %d operations, want 0", second)
 	}
+	assertEqual(t, strings.TrimSpace(env.ssh(t, "cat /var/apps/api.production/data/sentinel")), "sentinel")
+	assertEqual(t, strings.TrimSpace(env.ssh(t, "stat -c '%a' /var/apps/api.production/data/sentinel")), "600")
 }
 
 func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {

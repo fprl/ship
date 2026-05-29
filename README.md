@@ -78,9 +78,11 @@ and verifies the matching Linux helper binary for the target VPS.
   --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub \
   --ingress public \
   --admin public-ssh \
-  --no-litestream \
   --yes
 ```
+
+Litestream is opt-in host tooling, not part of the v1 app contract. Pass
+`--litestream` only if you want the pinned binary installed on the VPS.
 
 If the release assets are private, set `SIMPLE_VPS_RELEASE_TOKEN`, `GH_TOKEN`,
 or `GITHUB_TOKEN` before running the installer.
@@ -120,7 +122,13 @@ simple-vps backup production
 simple-vps restore --from <backup-id> production
 simple-vps app list --json
 simple-vps logs production
+# if production was removed from local simple-vps.toml:
+simple-vps destroy production --app my-app --server deploy@example.com --confirm my-app
 ```
+
+Each deploy stores a release manifest snapshot on the host. Rollback uses that
+snapshot, so old images/static assets come back with the route and process
+shape that produced them.
 
 Secrets are stored on the host and referenced from the manifest:
 

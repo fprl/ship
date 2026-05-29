@@ -55,6 +55,19 @@ func TestResolveEnvDoesNotMutateInputMaps(t *testing.T) {
 	}
 }
 
+func TestValidateReleaseRejectsPathTraversal(t *testing.T) {
+	for _, release := range []string{"abc123", "dirty-20260529083043"} {
+		if err := validateRelease(release); err != nil {
+			t.Fatalf("expected %q to be valid: %v", release, err)
+		}
+	}
+	for _, release := range []string{"", "../abc", "abc/def", "ABC123", "abc_def", "abc.def"} {
+		if err := validateRelease(release); err == nil {
+			t.Fatalf("expected %q to be invalid", release)
+		}
+	}
+}
+
 func TestPodmanBuildArgsLabelsWithDerivedIdentity(t *testing.T) {
 	args := podmanBuildArgs("api", "production", identity.ImageTag("api", "production", "abc123"), "abc123", "/tmp/Dockerfile", "/tmp/ctx", false)
 	joined := strings.Join(args, " ")
@@ -71,6 +84,31 @@ func TestPodmanBuildArgsLabelsWithDerivedIdentity(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("build args missing %q: %s", want, joined)
 		}
+	}
+}
+
+func TestContainersForRemovedProcesses(t *testing.T) {
+	entries := []containerEntry{
+		{Names: []string{"web-old"}, Labels: map[string]string{"simple-vps.process": "web"}},
+		{Names: []string{"worker-old"}, Labels: map[string]string{"simple-vps.process": "worker"}},
+		{Names: []string{"release-job"}, Labels: map[string]string{"simple-vps.process": "release"}},
+	}
+	got := containersForRemovedProcesses(entries, map[string]config.Process{"web": {}})
+	if len(got) != 1 || got[0] != "worker-old" {
+		t.Fatalf("unexpected stale containers: %+v", got)
+	}
+}
+
+func TestContainersOutsideDesiredRelease(t *testing.T) {
+	desired := identity.ContainerName("api", "production", "web", "abc123")
+	entries := []containerEntry{
+		{Names: []string{desired}, Labels: map[string]string{"simple-vps.process": "web"}},
+		{Names: []string{"stale-web"}, Labels: map[string]string{"simple-vps.process": "web"}},
+		{Names: []string{"stale-worker"}, Labels: map[string]string{"simple-vps.process": "worker"}},
+	}
+	got := containersOutsideDesiredRelease(entries, "api", "production", map[string]config.Process{"web": {}}, "abc123")
+	if len(got) != 2 || got[0] != "stale-web" || got[1] != "stale-worker" {
+		t.Fatalf("unexpected restore cleanup set: %+v", got)
 	}
 }
 

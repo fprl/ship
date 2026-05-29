@@ -4,7 +4,12 @@
 - **Date**: 2026-05-20
 - **Updated**: 2026-05-28
 - **Depends on**: ADR-0001 (bounded Go provisioner).
-- **Amended by**: ADR-0005, ADR-0006.
+- **Amended by**: ADR-0005, ADR-0006, ADR-0008.
+
+> ADR-0008 supersedes this ADR's app/env host-path examples and runtime
+> identity details. Current env roots are `/var/apps/<app>.<env>/`; runtime
+> env files live under `runtime/.env`; app data lives under `data/`; Caddy
+> fragments are keyed by the derived infra ID.
 
 ## Context
 
@@ -36,13 +41,15 @@ Non-JSON runtime artifacts deliberately live outside this state directory:
 
 ```text
 /etc/caddy/conf.d/
-  simple-vps-<app>-<env>.caddy per-(app, env) route fragment
+  simple-vps-<infra-id>.caddy  per-(app, env) route fragment
 
-/var/apps/<app>/<env>/
-  shared/.env                  resolved runtime env file
+/var/apps/<app>.<env>/
+  data/                        app-owned persistent data mounted as /data
+  runtime/.env                 resolved runtime env file, not user data
+  releases/<release>/          root-owned release metadata snapshots
 
 /run/simple-vps/locks/
-  <app>-<env>.lock             host-side mutation lock
+  <infra-id>.lock              host-side mutation lock
 ```
 
 `apps.json` and `routes.json` no longer exist. Reintroducing durable app or
@@ -65,17 +72,15 @@ contract and the backup/restore surface.
     },
     "features": {
       "docker": false,
-      "litestream": true
+      "litestream": false
     },
     "packages": {
-      "podman": { "source": "ubuntu", "track": "noble" },
-      "litestream": { "source": "github-release", "version": "0.5.8" }
+      "podman": { "source": "ubuntu", "track": "noble" }
     }
   },
   "observed": {
     "packages": {
-      "podman": { "version": "4.9.3" },
-      "litestream": { "version": "0.5.8" }
+      "podman": { "version": "4.9.3" }
     },
     "ingress": {
       "ufw_80_443_allowed": false,

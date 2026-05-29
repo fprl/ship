@@ -49,7 +49,8 @@ design, not feature creep into the current shape. See
   multiple processes can run from that image.
 - No first-class database provisioning or Litestream orchestration. SQLite
   and uploads belong under `/data`; managed external services remain outside
-  the v1 surface.
+  the v1 surface. Host install does not install Litestream unless
+  `--litestream` is explicitly passed.
 - No sanctioned plugin system. Extension happens through the
   composable primitive.
 
@@ -76,6 +77,7 @@ simple-vps backup [--json] list <env>                 # list local backups
 simple-vps backup rm <env> <backup-id>                # remove one local backup
 simple-vps restore --from=<backup-id> [--dry-run] <env> # restore local backup and run saved image
 simple-vps destroy <env> --confirm <app> [--purge]    # tear down one environment; --yes for automation
+simple-vps destroy <env> --app <app> --server <ssh-target> --confirm <app> [--purge] # destroy env removed from local TOML
 simple-vps logs <env> [process] [--follow] [--tail N] # podman logs against the labelled container
 simple-vps secret set <env> <KEY>                     # stdin-only write to /etc/simple-vps/secrets/<app>/<env>/<key>
 simple-vps secret list <env> [--json]                 # keys only, never values
@@ -93,6 +95,9 @@ per-env directory, Linux user/group, and Podman network. Secrets are
 kept by default; pass `--purge` to remove
 `/etc/simple-vps/secrets/<app>/<env>` too. To prevent accidental
 teardown, the client requires either `--confirm <app>` or `--yes`.
+If the env was already removed from `simple-vps.toml`, pass both
+`--app` and `--server` so destroy can target the remote env without
+reintroducing dead local config.
 
 `secret set` reads stdin only, never argv. `secret list` prints names
 only, never values. Writes are atomic via the privileged server API
@@ -279,9 +284,16 @@ the env root is flat and scoped to `(app, env)`:
   data/             # mounted as /data, included in backup/restore
   runtime/.env      # generated runtime config, not user data
   static/           # static assets/releases when used
+  releases/<sha>/   # release metadata, including manifest snapshots
   simple-vps.toml   # applied manifest snapshot
   simple-vps.json   # env identity anchor
 ```
+
+Every successful deploy stores the manifest that produced that release at
+`releases/<sha>/simple-vps.toml`, then updates `simple-vps.toml` to the active
+manifest. Rollback uses the selected release's manifest snapshot for process
+ports, routes, static paths, and runtime var references; it does not infer the
+old shape from the latest local checkout.
 
 See [ADR-0008](docs/adr/0008-manifest-v2-env-root-and-runtime-identity.md)
 for the manifest v2, env-root, and derived infra ID contract.

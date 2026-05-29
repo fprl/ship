@@ -23,6 +23,13 @@ func validateAppEnv(app, env string) error {
 	return nil
 }
 
+func validateRelease(release string) error {
+	if !names.ReleaseRe.MatchString(release) {
+		return fmt.Errorf("invalid release id: %q", release)
+	}
+	return nil
+}
+
 // appSetupEnvCmd creates the per-env Linux user, on-disk layout, and
 // Podman network for one (app, env) pair. Idempotent.
 type appSetupEnvCmd struct {
@@ -47,6 +54,7 @@ func (c appSetupEnvCmd) runLocked() {
 	dataDir := identity.DataDir(c.App, c.Env)
 	runtimeDir := identity.RuntimeDir(c.App, c.Env)
 	staticDir := identity.StaticDir(c.App, c.Env)
+	releaseDir := identity.ReleaseDir(c.App, c.Env)
 
 	// 0. Make sure the deploy tmp dir exists with sticky +
 	// world-writable perms. The client uploads tarballs and manifests
@@ -83,7 +91,7 @@ func (c appSetupEnvCmd) runLocked() {
 	}
 
 	// 3. Create the on-disk layout.
-	for _, dir := range []string{envRoot, dataDir, runtimeDir, staticDir} {
+	for _, dir := range []string{envRoot, dataDir, runtimeDir, staticDir, releaseDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			utils.Die(err.Error(), 1)
 		}
@@ -101,6 +109,12 @@ func (c appSetupEnvCmd) runLocked() {
 		if _, err := utils.RunChecked("chmod", []string{"2775", dir}, ""); err != nil {
 			utils.Die(fmt.Sprintf("chmod 2775 %s: %v", dir, err), 1)
 		}
+	}
+	if _, err := utils.RunChecked("chown", []string{"-R", "root:root", releaseDir}, ""); err != nil {
+		utils.Die(fmt.Sprintf("chown %s: %v", releaseDir, err), 1)
+	}
+	if _, err := utils.RunChecked("chmod", []string{"0755", releaseDir}, ""); err != nil {
+		utils.Die(fmt.Sprintf("chmod 0755 %s: %v", releaseDir, err), 1)
 	}
 	if _, err := utils.RunChecked("chown", []string{"root:" + user, runtimeDir}, ""); err != nil {
 		utils.Die(fmt.Sprintf("chown %s: %v", runtimeDir, err), 1)

@@ -95,6 +95,7 @@ Each `(app, env)` has a flat, human-readable env root:
   data/             # mounted into containers as /data; included in backup/restore
   runtime/.env      # generated runtime config; not user data
   static/           # static releases/assets when static routes are deployed
+  releases/<sha>/   # release metadata, including manifest snapshots
   simple-vps.toml   # applied manifest snapshot
   simple-vps.json   # env identity anchor
 ```
@@ -110,6 +111,17 @@ Containers mount only the data directory:
 
 The generated env file is passed through Podman's `--env-file`; it is
 not mounted as user data.
+
+Every successful deploy stores the manifest that produced that release:
+
+```text
+/var/apps/<app>.<env>/releases/<sha>/simple-vps.toml
+```
+
+Rollback loads the selected release snapshot to recover the old process,
+route, port, static path, and var-reference shape. Secrets remain current in
+the host secret store and are resolved again when a container release is
+rolled back.
 
 ### Derived infra ID
 
@@ -205,6 +217,8 @@ namespace.
 - Backups snapshot `data/`, not generated runtime config.
 - Static-only apps can exist without containers, so `simple-vps.json` is
   required for host-side env identity.
+- Rollback is a release operation: it restores the older artifact together
+  with the manifest shape that produced that artifact.
 - App-wide operations scan metadata/labels instead of relying on a
   parent `/var/apps/<app>` directory.
 - Old manifest names intentionally break before v1 users exist.

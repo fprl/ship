@@ -157,11 +157,12 @@ func createBackup(app, env, dest string, now time.Time) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		release, err = currentRelease(containersToProcesses(containers))
+		running := runningProcesses(containersToProcesses(containers))
+		release, err = currentRelease(running)
 		if err != nil {
 			return "", err
 		}
-		processes = processNamesFromStatuses(containersToProcesses(containers))
+		processes = processNamesFromStatuses(running)
 	case config.ShapeStatic:
 		release, err = currentStaticRelease(app, env)
 		if err != nil {
@@ -217,6 +218,9 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 	if meta.App != app || meta.Env != env {
 		return backupMetadata{}, fmt.Errorf("backup is for %s (%s), not %s (%s)", meta.App, meta.Env, app, env)
 	}
+	if err := validateRelease(meta.Release); err != nil {
+		return backupMetadata{}, err
+	}
 	if dryRun {
 		return meta, nil
 	}
@@ -234,8 +238,19 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 	if _, err := utils.RunChecked("chmod", []string{"2775", dataDir}, ""); err != nil {
 		return backupMetadata{}, fmt.Errorf("chmod %s: %v", dataDir, err)
 	}
-	if err := copyFilePath(filepath.Join(tmp, "simple-vps.toml"), identity.ManifestFile(app, env), 0644); err != nil {
+	currentManifest := identity.ManifestFile(app, env)
+	if err := copyFilePath(filepath.Join(tmp, "simple-vps.toml"), currentManifest, 0644); err != nil {
 		return backupMetadata{}, err
+	}
+	if _, err := utils.RunChecked("chown", []string{"root:root", currentManifest}, ""); err != nil {
+		return backupMetadata{}, fmt.Errorf("chown applied manifest: %v", err)
+	}
+	releaseManifest := identity.ReleaseManifestFile(app, env, meta.Release)
+	if err := copyFilePath(filepath.Join(tmp, "simple-vps.toml"), releaseManifest, 0644); err != nil {
+		return backupMetadata{}, err
+	}
+	if _, err := utils.RunChecked("chown", []string{"root:root", releaseManifest}, ""); err != nil {
+		return backupMetadata{}, fmt.Errorf("chown release manifest: %v", err)
 	}
 	if err := writeEnvIdentity(app, env); err != nil {
 		return backupMetadata{}, err
@@ -251,6 +266,11 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 	}
 	defer cleanup()
 
+	existing, err := podmanPSContainers(app, env)
+	if err != nil {
+		return backupMetadata{}, err
+	}
+	var containersToRemove []string
 	switch appCtx.Shape {
 	case config.ShapeContainer:
 		resolved, err := resolveEnv(app, env, appCtx.Vars, appCtx.SecretRefs)
@@ -270,10 +290,12 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 				return backupMetadata{}, err
 			}
 		}
+		containersToRemove = containersOutsideDesiredRelease(existing, app, env, appCtx.Processes, meta.Release)
 	case config.ShapeStatic:
 		if err := restoreStaticRelease(app, env, tmp, meta.Release); err != nil {
 			return backupMetadata{}, err
 		}
+		containersToRemove = appContainerNames(existing)
 	default:
 		return backupMetadata{}, fmt.Errorf("unsupported app shape %q", appCtx.Shape)
 	}
@@ -287,7 +309,31 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
 		return backupMetadata{}, fmt.Errorf("caddy reload after restore: %v", err)
 	}
+	removeContainers(containersToRemove)
 	return meta, nil
+}
+
+func containersOutsideDesiredRelease(entries []containerEntry, app, env string, processes map[string]config.Process, release string) []string {
+	desired := map[string]bool{}
+	for name := range processes {
+		desired[identity.ContainerName(app, env, name, release)] = true
+	}
+	var names []string
+	for _, e := range entries {
+		process := e.Labels["simple-vps.process"]
+		if process == "" || process == "release" {
+			continue
+		}
+		if len(e.Names) == 0 {
+			continue
+		}
+		name := e.Names[0]
+		if desired[name] {
+			continue
+		}
+		names = append(names, name)
+	}
+	return uniqueContainerNames(names)
 }
 
 func writeBackupTar(path, app, env, manifestPath string, payload backupPayload) error {
@@ -561,7 +607,8 @@ func ensureRestoreLayout(app, env string) error {
 	dataDir := identity.DataDir(app, env)
 	runtimeDir := identity.RuntimeDir(app, env)
 	staticDir := identity.StaticDir(app, env)
-	for _, dir := range []string{envRoot, dataDir, runtimeDir, staticDir} {
+	releaseDir := identity.ReleaseDir(app, env)
+	for _, dir := range []string{envRoot, dataDir, runtimeDir, staticDir, releaseDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return err
 		}
@@ -580,6 +627,12 @@ func ensureRestoreLayout(app, env string) error {
 			return fmt.Errorf("chmod %s: %v", dir, err)
 		}
 	}
+	if _, err := utils.RunChecked("chown", []string{"-R", "root:root", releaseDir}, ""); err != nil {
+		return fmt.Errorf("chown %s: %v", releaseDir, err)
+	}
+	if _, err := utils.RunChecked("chmod", []string{"0755", releaseDir}, ""); err != nil {
+		return fmt.Errorf("chmod %s: %v", releaseDir, err)
+	}
 	if _, err := utils.RunChecked("chown", []string{"root:" + user, runtimeDir}, ""); err != nil {
 		return fmt.Errorf("chown %s: %v", runtimeDir, err)
 	}
@@ -590,6 +643,9 @@ func ensureRestoreLayout(app, env string) error {
 }
 
 func restoreStaticRelease(app, env, extractedRoot, release string) error {
+	if err := validateRelease(release); err != nil {
+		return err
+	}
 	staticDir := identity.StaticDir(app, env)
 	src := filepath.Join(extractedRoot, "static", "releases", release)
 	dst := filepath.Join(staticDir, "releases", release)

@@ -83,9 +83,13 @@ func EnsureDirectory(apply Apply, dir Directory) (bool, error) {
 	}
 	wantMode := fmt.Sprintf("%o", dir.Mode.Perm())
 	fields := strings.Split(strings.TrimSpace(string(result.Stdout)), "\t")
-	if result.ExitCode == 0 && len(fields) == 4 &&
-		fields[0] == dir.Owner && fields[1] == dir.Group && fields[2] == wantMode && fields[3] == "directory" {
-		return false, nil
+	if result.ExitCode == 0 && len(fields) == 4 {
+		if fields[3] != "directory" {
+			return false, fmt.Errorf("%s exists and is %s, expected directory", dir.Path, fields[3])
+		}
+		if fields[0] == dir.Owner && fields[1] == dir.Group && fields[2] == wantMode {
+			return false, nil
+		}
 	}
 	if apply.CheckMode {
 		return true, nil

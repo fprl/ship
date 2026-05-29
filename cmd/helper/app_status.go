@@ -180,6 +180,16 @@ func containersToProcesses(entries []containerEntry) []processStatus {
 	return out
 }
 
+func runningProcesses(processes []processStatus) []processStatus {
+	out := make([]processStatus, 0, len(processes))
+	for _, p := range processes {
+		if p.State == "running" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func containersToAppEnvs(entries []containerEntry) []appEnvStatus {
 	type key struct {
 		app string

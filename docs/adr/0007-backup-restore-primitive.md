@@ -1,10 +1,17 @@
 # ADR-0007: Backup and Restore as Paired Primitive
 
-- **Status**: Accepted (skeleton; implementation deferred)
+- **Status**: Accepted; amended by ADR-0008
 - **Date**: 2026-05-25
 - **Related**: ADR-0002 (state file layout), ADR-0005 (container
   runtime via required Dockerfile), ADR-0006 (cuts and composability),
+  ADR-0008 (manifest v2/env root/runtime identity),
   [docs/positioning.md](../positioning.md).
+
+> ADR-0008 supersedes this ADR's `shared/`, `[services.*]`, and nested
+> `/var/apps/<app>/<env>/` examples. Current backups snapshot `data/`, the
+> applied `simple-vps.toml`, secrets, and static release assets when present;
+> restore writes the release manifest snapshot under
+> `/var/apps/<app>.<env>/releases/<release>/simple-vps.toml`.
 
 ## Context
 
@@ -76,10 +83,10 @@ layer, not part of the first shipped primitive.
 A backup contains everything needed to restore one `(app, env)`
 to running state:
 
-- **Data:** snapshot of `/var/apps/<app>/<env>/shared/` (the
-  bind-mounted directory from ADR-0005 Section 4).
+- **Data:** snapshot of `/var/apps/<app>.<env>/data/`, mounted into
+  containers as `/data`.
 - **Manifest:** the `simple-vps.toml` as it stood at backup time,
-  so route definitions, service shape, and env values are
+  so route definitions, process shape, and env values are
   preserved.
 - **Secret values:** the resolved secret values for `(app, env)`
   from the secret store. The first shipped format stores them in the local tar
@@ -125,7 +132,7 @@ The on-the-wire format is intentionally generic so simple-vps's
 restore does not depend on the destination driver:
 
 ```
-<backup-id>.tar        # metadata.json, simple-vps.toml, secrets.json, shared/
+<backup-id>.tar        # metadata.json, simple-vps.toml, secrets.json, data/
 ```
 
 `secrets.json` is plaintext inside the local backup archive. That is acceptable
@@ -143,8 +150,8 @@ in a worse state than before.
 
 Concretely:
 
-- Restore replaces `/var/apps/<app>/<env>/shared/` with the backup's
-  `shared/` tree.
+- Restore replaces `/var/apps/<app>.<env>/data/` with the backup's
+  `data/` tree.
 - Restore writes the backed-up secret values into the env secret store.
 - If the container is already running on the expected image,
   restore reconciles routes and exits.
@@ -160,7 +167,7 @@ same machinery.
 - "VPS died, I have a backup" is a survivable event by design.
 - One backup format covers SQLite-via-Litestream,
   Postgres-via-pg_dump, Redis dumps, and plain file data — they all
-  live under `/var/apps/<app>/<env>/shared/` and snapshot as one.
+  live under `/var/apps/<app>.<env>/data/` and snapshot as one.
 - Indie hackers have a real disaster-recovery story without
   learning restic, cron, and shell scripts on day one.
 
@@ -177,7 +184,7 @@ same machinery.
 ### What becomes harder
 
 - Adding a manifest knob now has to consider restore semantics. A
-  new `[services.*]` flag that changes the container's on-disk
+  new `[processes.*]` flag that changes the container's on-disk
   layout needs a corresponding migration in restore.
 
 ## Out of scope

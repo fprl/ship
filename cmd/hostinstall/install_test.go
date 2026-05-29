@@ -72,6 +72,36 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 	}
 }
 
+func TestDefaultOptionsDoNotInstallLitestream(t *testing.T) {
+	opts := DefaultOptions(nil)
+	if opts.InstallLitestream {
+		t.Fatal("Litestream should be opt-in for v1")
+	}
+}
+
+func TestRemoteLocalInstallCommandEnablesLitestreamExplicitly(t *testing.T) {
+	opts := DefaultOptions(nil)
+	opts.Mode = "remote"
+	opts.TargetHost = "203.0.113.12"
+	opts.OperatorSSHPublicKeyFile = writeKeyFile(t, "ssh-ed25519 AAAAoperator test-operator\n")
+	opts.DeploySSHPublicKeyFile = writeKeyFile(t, "ssh-ed25519 AAAAdeploy test-deploy\n")
+	opts.Ingress = "public"
+	opts.Admin = "public-ssh"
+	opts.InstallLitestream = true
+
+	plan, err := BuildPlan(opts, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := remoteLocalInstallCommand("/tmp/simple-vps-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub")
+	if !strings.Contains(command, "--litestream") {
+		t.Fatalf("expected command to explicitly enable litestream:\n%s", command)
+	}
+	if strings.Contains(command, "--no-litestream") {
+		t.Fatalf("did not expect conflicting --no-litestream:\n%s", command)
+	}
+}
+
 func TestSharedKeyRendersForOperatorAndDeploy(t *testing.T) {
 	operatorKeyFile := writeKeyFile(t, "ssh-ed25519 AAAAoperator test-operator\n")
 

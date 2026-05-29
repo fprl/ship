@@ -61,7 +61,7 @@ blocking Podman bridge DNS) were both invisible to it.
   --operator-ssh-public-key-file /tmp/simple-vps-smoke-keys/operator.pub \
   --deploy-ssh-public-key-file /tmp/simple-vps-smoke-keys/deploy.pub \
   --timezone UTC --locale en_US.UTF-8 \
-  --no-tailscale --no-cloudflare-tunnel --no-litestream
+  --no-tailscale --no-cloudflare-tunnel
 ```
 
 Expected output ends with `==> Provisioning complete` and `Apply

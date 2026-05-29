@@ -309,6 +309,45 @@ redirect = "https://example.com"
 	}
 }
 
+func TestCheckManifestRejectsDuplicateRoutesAndTLSConflicts(t *testing.T) {
+	root := t.TempDir()
+	writeDockerfile(t, root)
+	writeManifest(t, root, `name = "api"
+
+[env.production]
+server = "deploy@example.com"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "api.example.com"
+process = "web"
+
+[routes.dup]
+host = "api.example.com"
+process = "web"
+
+[routes.docs]
+host = "api.example.com"
+path = "/docs"
+tls = "internal"
+process = "web"
+`)
+
+	errors, _, err := CheckManifest(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(errors, "[routes.dup] conflicts with [routes.app]: host/path already used") {
+		t.Fatalf("missing duplicate route error: %v", errors)
+	}
+	if !slices.Contains(errors, "[routes.docs].tls conflicts with another route for host api.example.com") {
+		t.Fatalf("missing TLS conflict error: %v", errors)
+	}
+}
+
 func TestCheckManifestRejectsBadVars(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root)

@@ -55,6 +55,9 @@ func currentStaticRelease(app, env string) (string, error) {
 	if release == "." || release == string(os.PathSeparator) || release == "" {
 		return "", fmt.Errorf("static current release target is invalid: %s", target)
 	}
+	if err := validateRelease(release); err != nil {
+		return "", err
+	}
 	if _, err := os.Stat(filepath.Join(identity.StaticDir(app, env), "releases", release)); err != nil {
 		return "", fmt.Errorf("static release %s not found: %v", release, err)
 	}
@@ -79,6 +82,9 @@ func staticReleasesAt(releasesDir string) ([]imageRelease, error) {
 		if !entry.IsDir() {
 			continue
 		}
+		if err := validateRelease(entry.Name()); err != nil {
+			return nil, err
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return nil, err
@@ -99,6 +105,9 @@ func staticReleasesAt(releasesDir string) ([]imageRelease, error) {
 }
 
 func activateStaticRelease(app, env, release string) error {
+	if err := validateRelease(release); err != nil {
+		return err
+	}
 	staticDir := identity.StaticDir(app, env)
 	releaseDir := filepath.Join(staticDir, "releases", release)
 	if info, err := os.Stat(releaseDir); err != nil {

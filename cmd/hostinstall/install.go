@@ -175,7 +175,7 @@ func DefaultOptions(env map[string]string) Options {
 		CloudflareTunnelToken:    env["SIMPLE_VPS_CLOUDFLARE_TUNNEL_TOKEN"],
 		CloudflareTunnelConfig:   env["SIMPLE_VPS_CLOUDFLARE_TUNNEL_CONFIG"],
 		InstallDocker:            envBool(env, "SIMPLE_VPS_INSTALL_DOCKER", false),
-		InstallLitestream:        envBool(env, "SIMPLE_VPS_INSTALL_LITESTREAM", true),
+		InstallLitestream:        envBool(env, "SIMPLE_VPS_INSTALL_LITESTREAM", false),
 	}
 }
 
@@ -635,7 +635,9 @@ func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string,
 	if plan.InstallDocker {
 		args = append(args, "--docker")
 	}
-	if !plan.InstallLitestream {
+	if plan.InstallLitestream {
+		args = append(args, "--litestream")
+	} else {
 		args = append(args, "--no-litestream")
 	}
 	if plan.CheckMode {

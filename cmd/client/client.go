@@ -716,12 +716,12 @@ func CmdRestore(root string, envName string, from string, dryRun bool) {
 	fmt.Print(out)
 }
 
-func CmdDestroy(root string, envName string, confirm string, yes bool, purge bool) {
-	ctx, err := config.LoadAppContext(root, envName)
+func CmdDestroy(root string, envName string, confirm string, yes bool, purge bool, appOverride string, serverOverride string) {
+	appName, server, err := destroyTarget(root, envName, appOverride, serverOverride)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	if err := validateDestroyConfirmation(ctx.AppName, confirm, yes); err != nil {
+	if err := validateDestroyConfirmation(appName, confirm, yes); err != nil {
 		utils.Die(err.Error(), 1)
 	}
 	runner, err := NewCommandRunner()
@@ -730,8 +730,31 @@ func CmdDestroy(root string, envName string, confirm string, yes bool, purge boo
 	}
 	defer runner.Close()
 
-	out := runSSHChecked(runner, ctx.Server, serverAppDestroyEnvCommand(ctx.AppName, envName, purge), "destroy failed")
+	out := runSSHChecked(runner, server, serverAppDestroyEnvCommand(appName, envName, purge), "destroy failed")
 	fmt.Print(out)
+}
+
+func destroyTarget(root, envName, appOverride, serverOverride string) (string, string, error) {
+	if appOverride == "" && serverOverride == "" {
+		ctx, err := config.LoadAppContext(root, envName)
+		if err != nil {
+			return "", "", err
+		}
+		return ctx.AppName, ctx.Server, nil
+	}
+	if appOverride == "" || serverOverride == "" {
+		return "", "", errors.New("destroy with manifest-free targeting requires both --app and --server")
+	}
+	if !names.AppRe.MatchString(appOverride) {
+		return "", "", fmt.Errorf("invalid app name: %q", appOverride)
+	}
+	if !names.EnvRe.MatchString(envName) {
+		return "", "", fmt.Errorf("invalid env name: %q", envName)
+	}
+	if !config.ValidateSshTarget(serverOverride) {
+		return "", "", errors.New("--server must be an SSH target like deploy@example.com")
+	}
+	return appOverride, serverOverride, nil
 }
 
 func validateDestroyConfirmation(appName, confirm string, yes bool) error {

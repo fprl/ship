@@ -100,6 +100,16 @@ func StaticDir(app, env string) string {
 	return EnvRoot(app, env) + "/static"
 }
 
+// ReleaseDir stores per-release metadata such as manifest snapshots.
+func ReleaseDir(app, env string) string {
+	return EnvRoot(app, env) + "/releases"
+}
+
+// ReleaseManifestFile is the manifest snapshot that produced one release.
+func ReleaseManifestFile(app, env, release string) string {
+	return ReleaseDir(app, env) + "/" + release + "/simple-vps.toml"
+}
+
 // ManifestFile is the last manifest successfully applied for one `(app, env)`.
 func ManifestFile(app, env string) string {
 	return EnvRoot(app, env) + "/simple-vps.toml"
