@@ -6,7 +6,7 @@ rollback without bringing Kubernetes or a hosted PaaS into the picture.
 
 ## Current Shape
 
-- Ubuntu 24.04 host install/converge with one Go binary.
+- Ubuntu 24.04/26.04 host install/converge with one Go binary.
 - Podman container deploys from a required `Dockerfile`.
 - Static-only deploys with route-level `serve = "dist"`.
 - Mixed container/static deploys: a Dockerfile-backed process can share one
@@ -161,7 +161,7 @@ Build all release binaries:
 
 ```bash
 make clean
-make build-release VERSION=v0.5.0-rc1
+make build-release VERSION=v0.5.0-rc2
 ```
 
 Artifacts land in `dist/`:

@@ -1,6 +1,10 @@
 # Release Checklist
 
-Use this before cutting `v0.5.0-rc1` and later preview releases.
+Use this before cutting preview releases.
+
+```bash
+VERSION=v0.5.0-rc2
+```
 
 ## Local Checks
 
@@ -10,20 +14,21 @@ make clean
 make test
 make fake-vps-smoke
 make fake-vps-install-smoke
-make build-release VERSION=v0.5.0-rc1
+make build-release VERSION="$VERSION"
 ```
 
 ## Example Manifest Checks
 
 ```bash
 (cd examples/hono-bun-api && ../../dist/simple-vps check --env production)
+(cd examples/php-plain && ../../dist/simple-vps check --env production)
 (cd examples/astro-static && ../../dist/simple-vps check --env production)
 (cd examples/mixed-api-docs && ../../dist/simple-vps check --env production)
 ```
 
 ## Real VPS Smoke
 
-Run against a freshly rebuilt Ubuntu 24.04 VPS.
+Run against a freshly rebuilt Ubuntu 24.04 or 26.04 VPS.
 
 1. Install from the release artifact, not the source checkout:
 
@@ -32,7 +37,7 @@ Run against a freshly rebuilt Ubuntu 24.04 VPS.
    cd "$tmp"
    curl -fsSL https://raw.githubusercontent.com/fprl/simple-vps/main/install.sh -o install.sh
    chmod 0755 install.sh
-   SIMPLE_VPS_VERSION=v0.5.0-rc1 ./install.sh \
+   SIMPLE_VPS_VERSION="$VERSION" ./install.sh \
      --mode remote \
      --host <ip> \
      --bootstrap-user root \
@@ -71,8 +76,12 @@ Run against a freshly rebuilt Ubuntu 24.04 VPS.
 3. Deploy and verify one app of each shape:
 
    - `examples/hono-bun-api`
+   - `examples/php-plain`
    - `examples/astro-static`
    - `examples/mixed-api-docs`
+
+   `hono-bun-api` and `php-plain` are both container apps, but smoke both
+   before a preview release so the examples cover more than one runtime.
 
 4. For the mixed app, verify:
 
@@ -90,8 +99,8 @@ Run against a freshly rebuilt Ubuntu 24.04 VPS.
 ## Publish
 
 ```bash
-git tag -a v0.5.0-rc1 -m "v0.5.0-rc1"
-git push origin v0.5.0-rc1
+git tag -a "$VERSION" -m "$VERSION"
+git push origin "$VERSION"
 ```
 
 The `Release` GitHub Actions workflow builds the release assets, generates
@@ -99,4 +108,4 @@ The `Release` GitHub Actions workflow builds the release assets, generates
 `--clobber`.
 
 After publishing, run the real VPS smoke again from a temp directory with
-`SIMPLE_VPS_VERSION=v0.5.0-rc1`.
+`SIMPLE_VPS_VERSION="$VERSION"`.

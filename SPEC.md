@@ -35,8 +35,9 @@ design, not feature creep into the current shape. See
 
 - Not Kubernetes-shaped.
 - Not multi-host fleet management.
-- No managed services tier (Postgres, Redis, object storage) — those
-  run as containers like everything else.
+- No first-class Postgres, Redis, or object-storage provisioning. Use
+  external/managed services, or operate those containers outside the v1
+  simple-vps app primitive and pass connection URLs as secrets.
 - No multi-provider abstraction.
 - No git-push deploy.
 - No dashboard UI shipped by us. The state-in-files + JSON-CLI surface
@@ -48,8 +49,8 @@ design, not feature creep into the current shape. See
 - No multiple Dockerfiles/images per app. One app config builds one image;
   multiple processes can run from that image.
 - No first-class database provisioning or Litestream orchestration. SQLite
-  and uploads belong under `/data`; managed external services remain outside
-  the v1 surface. Host install does not install Litestream unless
+  and uploads belong under `/data`; external Postgres/Redis-style services
+  are referenced through secrets. Host install does not install Litestream unless
   `--litestream` is explicitly passed.
 - No sanctioned plugin system. Extension happens through the
   composable primitive.
@@ -320,8 +321,9 @@ for the manifest v2, env-root, and derived infra ID contract.
 
 ## Installation
 
-Bootstrapping a fresh Ubuntu 24.04 host starts with `install.sh`. The script
-finds, downloads, or builds a Go binary, then execs `simple-vps host install`.
+Bootstrapping a fresh Ubuntu 24.04/26.04 host starts with `install.sh`.
+The script finds, downloads, or builds a Go binary, then execs
+`simple-vps host install`.
 
 ```text
 # on a fresh box, ssh'd as root:

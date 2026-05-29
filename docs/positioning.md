@@ -56,9 +56,10 @@ feature creep into the current shape.
   would be an *optional layer* built on the composable primitive — by
   the community, by a future paid offering, or by us if it ever
   earns its way in — not the answer to bare-CLI UX gaps.
-- **Managed services tier** (managed Postgres, managed Redis, managed
-  object storage). Those run as containers like everything else; the
-  user owns the data and the lifecycle.
+- **Database/add-on provisioning** (Postgres, Redis, object storage).
+  simple-vps v1 does not own their containers, volumes, upgrades, or
+  backup order. Use external/managed services, or operate them separately
+  and pass connection URLs as secrets.
 - **Built-in recurring scheduler / jobs primitive.** Framework
   schedulers (Sidekiq, Oban, Celery beat, BullMQ, Laravel scheduler)
   cover recurring work inside app stacks. System cron, systemd timers,

@@ -3,7 +3,7 @@
 The fake-VPS smoke (`make fake-vps-smoke`, `make fake-vps-install-smoke`)
 proves simple-vps's internal shape is consistent against fake Podman
 and fake Caddy. This runbook drives the same path against a real
-Ubuntu 24.04 VPS with real Podman and real Caddy. Authored from a
+Ubuntu 24.04/26.04 VPS with real Podman and real Caddy. Authored from a
 live smoke session — every command below was actually run, and every
 surprise was filed in [smoke-real-box-results.md](smoke-real-box-results.md).
 
@@ -15,7 +15,7 @@ blocking Podman bridge DNS) were both invisible to it.
 
 ## 0. Prereqs
 
-- Fresh Ubuntu 24.04 VPS, public IPv4, root SSH from the laptop with
+- Fresh Ubuntu 24.04 or 26.04 VPS, public IPv4, root SSH from the laptop with
   a known key. Hetzner CX22 (4 GiB RAM, 80 GB disk) is the smallest
   thing that comfortably runs Caddy + a real app container.
 - DNS hostname `smoke.<your-domain>` pointing at the VPS IP if you
@@ -91,6 +91,11 @@ SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
 SIMPLE_VPS_KNOWN_HOSTS="$(ssh-keyscan -t ed25519 -H <IP> 2>/dev/null)" \
   ./dist/simple-vps host doctor --json --server deploy@<IP> | jq .
 ```
+
+For release-candidate validation, also run the example matrix in
+[release-checklist.md](release-checklist.md): Hono/Bun, plain PHP,
+static-only, and mixed API/static routes. The single Python fixture below is
+the smallest low-level repro when debugging a deploy-path failure.
 
 ## 2. Build the test app
 
