@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-No unreleased changes.
+### Changed
+
+- Documented the `v0.5.0-rc1` release installer smoke and private-repo
+  installer fetch path.
 
 ## v0.5.0-rc1 - 2026-05-29
 

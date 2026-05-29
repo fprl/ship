@@ -44,6 +44,18 @@ Run against a freshly rebuilt Ubuntu 24.04 VPS.
      --yes
    ```
 
+   For private release assets, export `SIMPLE_VPS_RELEASE_TOKEN`, `GH_TOKEN`, or
+   `GITHUB_TOKEN`. If the repository itself is private, fetch the installer
+   through the GitHub Contents API instead of `raw.githubusercontent.com`:
+
+   ```bash
+   curl -fsSL \
+     -H "Authorization: Bearer $SIMPLE_VPS_RELEASE_TOKEN" \
+     -H "Accept: application/vnd.github.raw" \
+     "https://api.github.com/repos/fprl/simple-vps/contents/install.sh?ref=main" \
+     -o install.sh
+   ```
+
 2. Verify host health:
 
    ```bash

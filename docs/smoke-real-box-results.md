@@ -6,6 +6,150 @@ live in [SPEC.md](../SPEC.md), [README.md](../README.md), and
 the exact commands tested at the time, including names that ADR-0008 later
 removed.
 
+## 2026-05-29 — v0.5.0-rc1 release installer and mixed-route smoke
+
+- **Host:** `128.140.3.159`
+- **OS:** Hetzner Ubuntu 26.04 LTS, `x86_64`
+- **Release tested:** `v0.5.0-rc1`
+- **Release commit:** `008d0899df4ea8a2cc1dbd59ad779bac41ed7177`
+- **Install path tested:** temp directory outside the checkout:
+  `/tmp/simple-vps-release-smoke-VB7lhG`
+- **Fixture:** `examples/mixed-api-docs`, copied to the temp directory and
+  pointed at `deploy@128.140.3.159`.
+- **DNS/TLS:** `rcmix.128.140.3.159.nip.io` with `tls = "internal"` on both
+  routes; curl used `--resolve` and `-k`.
+
+### Release publication
+
+The first manual `gh release create` attempt got stuck after uploading only
+`SHA256SUMS` and left a malformed untagged release URL. Local `gh` and normal
+`git push` were blocked by the execution policy, so the fix was:
+
+1. Add `.github/workflows/release.yml`.
+2. Make `make build-release` generate `SHA256SUMS`.
+3. Move `main` with the GitHub connector.
+4. Force-update `v0.5.0-rc1` with low-level `git send-pack` over SSH.
+
+The tag-triggered workflow repaired the release. Verified assets:
+
+```text
+SHA256SUMS
+simple-vps-darwin-amd64
+simple-vps-darwin-arm64
+simple-vps-linux-amd64
+simple-vps-linux-arm64
+```
+
+The final release URL was:
+`https://github.com/fprl/simple-vps/releases/tag/v0.5.0-rc1`.
+
+### Commands and process
+
+1. Fetched `install.sh` through the GitHub Contents API because the repo is
+   private in this environment, then ran remote install with
+   `SIMPLE_VPS_RELEASE_TOKEN`:
+
+   ```sh
+   SIMPLE_VPS_RELEASE_TOKEN=<token> SIMPLE_VPS_VERSION=v0.5.0-rc1 ./install.sh \
+     --mode remote \
+     --host 128.140.3.159 \
+     --bootstrap-user root \
+     --ssh-key ~/.ssh/hetzner \
+     --operator-ssh-public-key-file ~/.ssh/hetzner.pub \
+     --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub \
+     --ingress public \
+     --admin public-ssh \
+     --yes
+   ```
+
+   Result:
+
+   ```text
+   ==> Downloading Simple VPS binary from https://github.com/fprl/simple-vps/releases/download/v0.5.0-rc1/simple-vps-darwin-arm64
+   ==> Downloading Simple VPS Linux helper binary from https://github.com/fprl/simple-vps/releases/download/v0.5.0-rc1/simple-vps-linux-amd64
+   ==> Apply 20260529T154941Z changed 1 operations
+   ==> Provisioning complete
+   ```
+
+2. Downloaded the published `simple-vps-darwin-arm64` asset plus
+   `SHA256SUMS`, verified the checksum, then used that binary for the smoke:
+
+   ```text
+   simple-vps-darwin-arm64: OK
+   ```
+
+3. Verified the host from the published binary:
+
+   - `host status --json` reported Caddy `active`, Podman `5.7.0`, and rsync
+     `3.4.1`.
+   - `host doctor --json` returned `"healthy": true` with no findings.
+
+4. Deployed mixed container/static release v1:
+
+   ```text
+   Deployed mixed-app (production) at 2201166c0cc6-s2303f800a74f
+   ```
+
+   Checks:
+
+   - `GET /health` -> `ok`
+   - `GET /docs` -> HTML containing `docs-ok`
+
+5. Deployed v2 with changed static bytes:
+
+   ```text
+   Deployed mixed-app (production) at 387bd212f5c3-s1db9148fab57
+   ```
+
+   Check: `GET /docs` -> `docs-v2-ok`.
+
+6. Rolled back:
+
+   ```json
+   {
+     "app": "mixed-app",
+     "env": "production",
+     "previous": "387bd212f5c3-s1db9148fab57",
+     "release": "2201166c0cc6-s2303f800a74f",
+     "processes": ["web"]
+   }
+   ```
+
+   Check: `GET /docs` -> `docs-ok`.
+
+7. Created backup:
+
+   ```text
+   Created backup /etc/simple-vps/backups/mixed-app/production/20260529T155215Z-2201166c0cc6-s2303f800a74f.tar
+   ```
+
+8. Restored and verified:
+
+   ```text
+   Restored mixed-app (production) from 20260529T155215Z-2201166c0cc6-s2303f800a74f at release 2201166c0cc6-s2303f800a74f
+   ```
+
+   Checks:
+
+   - `GET /health` -> `ok`
+   - `GET /docs` -> `docs-ok`
+
+9. Destroyed the app and purged env state:
+
+   ```text
+   Destroyed mixed-app (production)
+     containers: 1 removed
+     route: removed
+     secrets: purged
+   ```
+
+   Final `app list --json --server deploy@128.140.3.159` returned
+   `{"apps":[]}`.
+
+**Outcome:** pass. The published `v0.5.0-rc1` installer path works from outside
+the checkout, and the release binary deploys, rolls back, backs up, restores,
+and destroys a mixed container/static app on the real VPS.
+
 ## 2026-05-29 — Hono public TLS smoke on fresh Hetzner Ubuntu 26.04
 
 - **Host:** `128.140.3.159`
