@@ -24,7 +24,8 @@ func renderAppCaddyfile(app, env string, ctx *config.AppContext, release string)
 	grouped := map[hostKey][]string{}
 	for _, name := range sortedKeys(ctx.Routes) {
 		route := ctx.Routes[name]
-		grouped[hostKey{host: route.Host, tls: route.TLS}] = append(grouped[hostKey{host: route.Host, tls: route.TLS}], name)
+		key := hostKey{host: route.Host, tls: normalizeTLS(route.TLS)}
+		grouped[key] = append(grouped[key], name)
 	}
 
 	keys := make([]hostKey, 0, len(grouped))
@@ -109,7 +110,7 @@ func renderRouteDirectives(app, env string, ctx *config.AppContext, routeName st
 		upstream := identity.ContainerName(app, env, route.Process, release)
 		return fmt.Sprintf("reverse_proxy http://%s:%d\n", upstream, *proc.Port), nil
 	case route.Serve != "":
-		root := filepath.Join(identity.StaticDir(app, env), "current", routeName)
+		root := filepath.Join(identity.StaticDir(app, env), "releases", release, routeName)
 		quotedRoot, err := caddy.CaddyQuote(root)
 		if err != nil {
 			return "", fmt.Errorf("route %q: %v", routeName, err)
@@ -124,6 +125,13 @@ func renderRouteDirectives(app, env string, ctx *config.AppContext, routeName st
 	default:
 		return "", fmt.Errorf("route %q has no target", routeName)
 	}
+}
+
+func normalizeTLS(tls string) string {
+	if tls == "" {
+		return "auto"
+	}
+	return tls
 }
 
 func indent(s string, levels int) string {

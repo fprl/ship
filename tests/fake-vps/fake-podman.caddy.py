@@ -6,8 +6,8 @@ on argv[1] (the --publish host port) and on every request:
   1. Reads /etc/caddy/conf.d/*.caddy fragments.
   2. Looks for a site block whose label matches the request's Host
      header.
-  3. Pulls the `reverse_proxy http://<container_name>:<container_port>`
-     directive out of that block.
+  3. Pulls `handle`, `handle_path`, `reverse_proxy`, `root`, and `redir`
+     directives out of that block.
   4. Resolves <container_name> to a localhost port via
      <state_dir>/containers/<container_name>.port (written by
      fake-podman when it started the app container).
@@ -35,8 +35,13 @@ ROOT_RE = re.compile(r'^\s*root\s+\*\s+"(?P<root>[^"]+)"\s*$')
 CONF_DIR = "/etc/caddy/conf.d"
 
 
+HANDLE_RE = re.compile(r'^\s*handle(?:\s+(?P<path>/[^\s{]+))?\s*\{\s*$')
+HANDLE_PATH_RE = re.compile(r'^\s*handle_path\s+(?P<path>/[^\s{]+)\s*\{\s*$')
+REWRITE_ROOT_RE = re.compile(r'^\s*rewrite\s+\*\s+/\s*$')
+
+
 def load_routes():
-    """Return {host: {"proxy": ...} | {"redir": ...} | {"static": ...}}."""
+    """Return {host: [route, ...]} preserving generated Caddy order."""
     routes = {}
     if not os.path.isdir(CONF_DIR):
         return routes
@@ -51,6 +56,8 @@ def load_routes():
             continue
 
         current_host = None
+        current_route = None
+        direct_route = None
         for raw in lines:
             line = raw.rstrip("\n")
             stripped = line.strip()
@@ -60,23 +67,52 @@ def load_routes():
                 m = SITE_RE.match(line)
                 if m:
                     current_host = m.group("host")
+                    routes.setdefault(current_host, [])
+                    direct_route = None
+                continue
+            if current_route is not None and stripped == "}":
+                routes[current_host].append(current_route)
+                current_route = None
                 continue
             if stripped == "}":
                 current_host = None
+                direct_route = None
                 continue
+            m = HANDLE_PATH_RE.match(line)
+            if m:
+                current_route = {"match": "prefix-strip", "path": m.group("path").removesuffix("/*")}
+                continue
+            m = HANDLE_RE.match(line)
+            if m:
+                path = m.group("path") or ""
+                match = "fallback"
+                if path.endswith("/*"):
+                    path = path.removesuffix("/*")
+                    match = "prefix"
+                elif path:
+                    match = "exact"
+                current_route = {"match": match, "path": path}
+                continue
+            target_route = current_route
+            if target_route is None:
+                if direct_route is None:
+                    direct_route = {"match": "fallback", "path": ""}
+                    routes[current_host].append(direct_route)
+                target_route = direct_route
             m = PROXY_RE.match(line)
             if m:
-                routes[current_host] = {
-                    "proxy": (m.group("upstream"), int(m.group("port"))),
-                }
+                target_route["proxy"] = (m.group("upstream"), int(m.group("port")))
                 continue
             m = REDIR_RE.match(line)
             if m:
-                routes[current_host] = {"redir": m.group("to")}
+                target_route["redir"] = m.group("to")
                 continue
             m = ROOT_RE.match(line)
             if m:
-                routes[current_host] = {"static": m.group("root")}
+                target_route["static"] = m.group("root")
+                continue
+            if REWRITE_ROOT_RE.match(line):
+                target_route["rewrite_root"] = True
                 continue
     return routes
 
@@ -160,8 +196,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    def static(self, root):
-        rel = self.path.split("?", 1)[0].split("#", 1)[0]
+    def static(self, root, rel=None):
+        if rel is None:
+            rel = self.path.split("?", 1)[0].split("#", 1)[0]
         if rel in ("", "/"):
             rel = "/index.html"
         rel = os.path.normpath(rel.lstrip("/"))
@@ -191,7 +228,7 @@ class Handler(BaseHTTPRequestHandler):
     def serve(self):
         routes = load_routes()
         host = self.host_header()
-        route = routes.get(host)
+        route = self.match_route(routes.get(host, []))
         if route is None:
             self.not_found()
             return
@@ -202,9 +239,32 @@ class Handler(BaseHTTPRequestHandler):
             self.redir(route["redir"])
             return
         if "static" in route:
-            self.static(route["static"])
+            self.static(route["static"], route.get("request_path"))
             return
         self.not_found()
+
+    def match_route(self, routes):
+        path = self.path.split("?", 1)[0].split("#", 1)[0]
+        fallback = None
+        for route in routes:
+            match = route.get("match")
+            route_path = route.get("path", "")
+            if match == "fallback":
+                fallback = route
+                continue
+            if match == "exact" and path == route_path:
+                matched = dict(route)
+                if matched.get("rewrite_root"):
+                    matched["request_path"] = "/"
+                return matched
+            if match == "prefix" and (path == route_path or path.startswith(route_path + "/")):
+                return route
+            if match == "prefix-strip" and path.startswith(route_path + "/"):
+                matched = dict(route)
+                stripped = path[len(route_path):]
+                matched["request_path"] = stripped or "/"
+                return matched
+        return fallback
 
     def do_GET(self):
         self.serve()

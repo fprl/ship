@@ -81,14 +81,16 @@ type Manifest struct {
 }
 
 type AppContext struct {
-	AppName    string
-	EnvName    string
-	Server     string
-	Shape      string
-	Dockerfile string
-	Processes  map[string]Process
-	Routes     map[string]Route
-	Deploy     DeployConfig
+	AppName         string
+	EnvName         string
+	Server          string
+	Shape           string
+	NeedsImage      bool
+	HasStaticRoutes bool
+	Dockerfile      string
+	Processes       map[string]Process
+	Routes          map[string]Route
+	Deploy          DeployConfig
 	// Vars holds resolved non-secret env values for this env.
 	Vars map[string]string
 	// SecretRefs maps env-var key -> secret key name. The helper resolves
@@ -175,33 +177,19 @@ func detectShape(root string, processes map[string]Process, routes map[string]Ro
 		hasDockerfile = true
 	}
 
-	hasProcessRoute := false
-	hasServeRoute := false
-	for _, route := range routes {
-		if route.Process != "" {
-			hasProcessRoute = true
-		}
-		if route.Serve != "" {
-			hasServeRoute = true
-		}
-	}
-
 	hasProcesses := len(processes) > 0
 	if !hasProcesses && len(routes) == 0 {
 		return "", "manifest must declare at least one [processes.<name>] block or route"
 	}
 
-	if hasProcesses || hasProcessRoute {
+	if hasProcesses || hasProcessRoutes(routes) {
 		if !hasDockerfile {
 			return "", "manifest declares processes but is missing a Dockerfile"
-		}
-		if hasServeRoute {
-			return "", "mixed process and serve routes are not supported yet"
 		}
 		return ShapeContainer, ""
 	}
 
-	if hasServeRoute || len(routes) > 0 {
+	if hasServeRoutes(routes) || len(routes) > 0 {
 		return ShapeStatic, ""
 	}
 
@@ -311,17 +299,37 @@ func LoadAppContext(root string, envName string) (*AppContext, error) {
 	vars, secretRefs := splitVarsBlock(mergeVars(manifest.Vars, envBlock.Vars))
 
 	return &AppContext{
-		AppName:    manifest.Name,
-		EnvName:    envName,
-		Server:     envBlock.Server,
-		Shape:      shape,
-		Dockerfile: dockerfile,
-		Processes:  processes,
-		Routes:     routes,
-		Deploy:     mergeDeploy(manifest.Deploy, envBlock.Deploy),
-		Vars:       vars,
-		SecretRefs: secretRefs,
+		AppName:         manifest.Name,
+		EnvName:         envName,
+		Server:          envBlock.Server,
+		Shape:           shape,
+		NeedsImage:      shape == ShapeContainer,
+		HasStaticRoutes: hasServeRoutes(routes),
+		Dockerfile:      dockerfile,
+		Processes:       processes,
+		Routes:          routes,
+		Deploy:          mergeDeploy(manifest.Deploy, envBlock.Deploy),
+		Vars:            vars,
+		SecretRefs:      secretRefs,
 	}, nil
+}
+
+func hasProcessRoutes(routes map[string]Route) bool {
+	for _, route := range routes {
+		if route.Process != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasServeRoutes(routes map[string]Route) bool {
+	for _, route := range routes {
+		if route.Serve != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func splitVarsBlock(vars map[string]any) (map[string]string, map[string]string) {
@@ -587,6 +595,10 @@ func validateRoutePath(routeName, path string, errors *[]string) {
 	label := fmt.Sprintf("[routes.%s].path", routeName)
 	if !strings.HasPrefix(path, "/") {
 		*errors = append(*errors, label+" must start with /")
+		return
+	}
+	if path == "/" {
+		*errors = append(*errors, label+" must be omitted for the host root")
 		return
 	}
 	if strings.Contains(path, "..") {

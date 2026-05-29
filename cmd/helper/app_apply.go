@@ -35,7 +35,10 @@ type appApplyCmd struct {
 
 type applyReleaseResult struct {
 	containersToRemove []string
+	startedContainers  []string
 	staticSnapshot     *staticCurrentSnapshot
+	staticReleaseDir   string
+	staticReleaseNew   bool
 }
 
 func (c appApplyCmd) Run() error {
@@ -75,6 +78,7 @@ func (c appApplyCmd) runLockedE() error {
 	}
 
 	if err := c.switchTraffic(app, result); err != nil {
+		result.cleanupFailed(c.App, c.Env)
 		return err
 	}
 	if err := persistAppliedManifest(c.App, c.Env, c.SHA, filepath.Join(ctxDir, "simple-vps.toml")); err != nil {
@@ -142,32 +146,52 @@ func (c appApplyCmd) loadApplyContext(ctxDir string) (*config.AppContext, error)
 }
 
 func (c appApplyCmd) applyRelease(ctxDir string, app *config.AppContext) (applyReleaseResult, error) {
-	switch app.Shape {
-	case config.ShapeContainer:
-		containersToRemove, err := c.applyContainer(ctxDir, app)
-		if err != nil {
-			return applyReleaseResult{}, err
+	var result applyReleaseResult
+	success := false
+	defer func() {
+		if !success {
+			result.cleanupFailed(c.App, c.Env)
 		}
-		return applyReleaseResult{containersToRemove: containersToRemove}, nil
-	case config.ShapeStatic:
+	}()
+
+	if app.HasStaticRoutes {
 		snapshot, err := snapshotStaticCurrent(c.App, c.Env)
 		if err != nil {
 			return applyReleaseResult{}, fmt.Errorf("snapshot static current: %v", err)
 		}
-		existing, err := podmanPSContainers(c.App, c.Env)
+		result.staticSnapshot = &snapshot
+		releaseDir, isNew, err := c.applyStatic(ctxDir, app)
+		result.staticReleaseDir = releaseDir
+		result.staticReleaseNew = isNew
 		if err != nil {
 			return applyReleaseResult{}, err
 		}
-		if err := c.applyStatic(ctxDir, app); err != nil {
+	} else if snapshot, err := snapshotStaticCurrent(c.App, c.Env); err == nil && snapshot.Existed {
+		result.staticSnapshot = &snapshot
+		if err := clearStaticCurrent(c.App, c.Env); err != nil {
 			return applyReleaseResult{}, err
 		}
-		return applyReleaseResult{
-			containersToRemove: appContainerNames(existing),
-			staticSnapshot:     &snapshot,
-		}, nil
-	default:
-		return applyReleaseResult{}, fmt.Errorf("unsupported app shape %q", app.Shape)
+	} else if err != nil {
+		return applyReleaseResult{}, fmt.Errorf("snapshot static current: %v", err)
 	}
+
+	existing, err := podmanPSContainers(c.App, c.Env)
+	if err != nil {
+		return applyReleaseResult{}, err
+	}
+	if app.NeedsImage {
+		containerResult, err := c.applyContainer(ctxDir, app, existing)
+		if err != nil {
+			return applyReleaseResult{}, err
+		}
+		result.containersToRemove = containerResult.containersToRemove
+		result.startedContainers = containerResult.startedContainers
+	} else {
+		result.containersToRemove = appContainerNames(existing)
+	}
+
+	success = true
+	return result, nil
 }
 
 func (c appApplyCmd) switchTraffic(app *config.AppContext, result applyReleaseResult) error {
@@ -218,6 +242,16 @@ func removeContainers(names []string) {
 	}
 }
 
+func (r applyReleaseResult) cleanupFailed(app, env string) {
+	removeContainers(r.startedContainers)
+	if r.staticSnapshot != nil {
+		_ = restoreStaticCurrent(app, env, *r.staticSnapshot)
+	}
+	if r.staticReleaseNew && r.staticReleaseDir != "" {
+		_ = os.RemoveAll(r.staticReleaseDir)
+	}
+}
+
 func persistAppliedManifest(app, env, release, manifestPath string) error {
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
@@ -256,39 +290,41 @@ func writeManifestSnapshot(app, env, release string, data []byte) error {
 	return nil
 }
 
-func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext) ([]string, error) {
+type containerApplyResult struct {
+	containersToRemove []string
+	startedContainers  []string
+}
+
+func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, existing []containerEntry) (containerApplyResult, error) {
 	if len(app.Processes) == 0 {
-		return nil, fmt.Errorf("manifest must declare at least one [processes.<name>] block")
+		return containerApplyResult{}, fmt.Errorf("manifest must declare at least one [processes.<name>] block")
 	}
 	resolved, err := resolveEnv(c.App, c.Env, app.Vars, app.SecretRefs)
 	if err != nil {
-		return nil, err
+		return containerApplyResult{}, err
 	}
 	if err := writeEnvFile(c.App, c.Env, resolved); err != nil {
-		return nil, err
+		return containerApplyResult{}, err
 	}
 
 	userID, groupID, err := hostUserIDs(identity.SystemUser(c.App, c.Env))
 	if err != nil {
-		return nil, err
+		return containerApplyResult{}, err
 	}
 
 	imageTag := identity.ImageTag(c.App, c.Env, c.SHA)
 	buildArgs := podmanBuildArgs(c.App, c.Env, imageTag, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild)
 	if _, err := utils.RunChecked("podman", buildArgs, ""); err != nil {
-		return nil, fmt.Errorf("podman build: %v", err)
+		return containerApplyResult{}, fmt.Errorf("podman build: %v", err)
 	}
 
 	if app.Deploy.Release != "" {
 		if err := runReleaseCommand(c.App, c.Env, app.Deploy.Release, imageTag, userID, groupID, c.SHA); err != nil {
-			return nil, err
+			return containerApplyResult{}, err
 		}
 	}
 
-	existing, err := podmanPSContainers(c.App, c.Env)
-	if err != nil {
-		return nil, err
-	}
+	var started []string
 	containersToRemove := containersForRemovedProcesses(existing, app.Processes)
 	for _, processName := range sortedKeys(app.Processes) {
 		proc := app.Processes[processName]
@@ -297,14 +333,20 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext) ([]st
 				_, _ = utils.RunChecked("podman", []string{"rm", "-f", old}, "")
 			}
 		}
+		containerName := identity.ContainerName(c.App, c.Env, processName, c.SHA)
+		started = append(started, containerName)
 		if err := startProcess(c.App, c.Env, processName, proc, imageTag, userID, groupID, c.SHA); err != nil {
-			return nil, err
+			removeContainers(started)
+			return containerApplyResult{}, err
 		}
 		if proc.Port != nil {
 			containersToRemove = append(containersToRemove, processContainers(existing, processName, c.SHA)...)
 		}
 	}
-	return uniqueContainerNames(containersToRemove), nil
+	return containerApplyResult{
+		containersToRemove: uniqueContainerNames(containersToRemove),
+		startedContainers:  uniqueContainerNames(started),
+	}, nil
 }
 
 func containersForRemovedProcesses(entries []containerEntry, next map[string]config.Process) []string {
@@ -352,34 +394,66 @@ func uniqueContainerNames(names []string) []string {
 	return out
 }
 
-func (c appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) error {
+func (c appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string, bool, error) {
+	if err := validateRelease(c.SHA); err != nil {
+		return "", false, err
+	}
+	staticDir := identity.StaticDir(c.App, c.Env)
 	releaseDir := filepath.Join(identity.StaticDir(c.App, c.Env), "releases", c.SHA)
-	if err := os.RemoveAll(releaseDir); err != nil {
-		return err
+	if err := os.MkdirAll(filepath.Dir(releaseDir), 0755); err != nil {
+		return "", false, err
 	}
-	if err := os.MkdirAll(releaseDir, 0755); err != nil {
-		return err
+	if _, err := os.Stat(releaseDir); err == nil {
+		if _, manifestErr := os.Stat(identity.ReleaseManifestFile(c.App, c.Env, c.SHA)); manifestErr == nil {
+			if err := verifyStaticRelease(c.App, c.Env, c.SHA, app.Routes); err != nil {
+				return "", false, err
+			}
+			if err := activateStaticRelease(c.App, c.Env, c.SHA); err != nil {
+				return "", false, err
+			}
+			return releaseDir, false, nil
+		}
+		if err := os.RemoveAll(releaseDir); err != nil {
+			return "", false, err
+		}
+	} else if !os.IsNotExist(err) {
+		return "", false, err
 	}
+	stageDir := filepath.Join(staticDir, ".staging-"+c.SHA)
+	if err := os.RemoveAll(stageDir); err != nil {
+		return "", false, err
+	}
+	if err := os.MkdirAll(stageDir, 0755); err != nil {
+		return "", false, err
+	}
+	staged := false
+	defer func() {
+		if !staged {
+			_ = os.RemoveAll(stageDir)
+		}
+	}()
 	for _, routeName := range sortedKeys(app.Routes) {
 		route := app.Routes[routeName]
 		if route.Serve == "" {
 			continue
 		}
 		src := filepath.Join(ctxDir, route.Serve)
-		dst := filepath.Join(releaseDir, routeName)
+		dst := filepath.Join(stageDir, routeName)
 		if err := os.MkdirAll(dst, 0755); err != nil {
-			return err
+			return "", false, err
 		}
 		if _, err := utils.RunChecked("cp", []string{"-a", src + "/.", dst + "/"}, ""); err != nil {
-			return fmt.Errorf("copy static route %s: %v", routeName, err)
+			return "", false, fmt.Errorf("copy static route %s: %v", routeName, err)
 		}
 	}
-	current := filepath.Join(identity.StaticDir(c.App, c.Env), "current")
-	_ = os.Remove(current)
-	if err := os.Symlink(releaseDir, current); err != nil {
-		return fmt.Errorf("update static current symlink: %v", err)
+	if err := os.Rename(stageDir, releaseDir); err != nil {
+		return "", false, fmt.Errorf("publish static release: %v", err)
 	}
-	return nil
+	staged = true
+	if err := activateStaticRelease(c.App, c.Env, c.SHA); err != nil {
+		return releaseDir, true, err
+	}
+	return releaseDir, true, nil
 }
 
 func renderEnvFile(vals map[string]string) string {

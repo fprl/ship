@@ -123,6 +123,7 @@ type backupMetadata struct {
 	Release       string   `json:"release"`
 	Shape         string   `json:"shape"`
 	Processes     []string `json:"processes"`
+	StaticRoutes  []string `json:"static_routes"`
 }
 
 type backupInfo struct {
@@ -151,8 +152,7 @@ func createBackup(app, env, dest string, now time.Time) (string, error) {
 
 	var release string
 	var processes []string
-	switch appCtx.Shape {
-	case config.ShapeContainer:
+	if appCtx.NeedsImage {
 		containers, err := podmanPSContainers(app, env)
 		if err != nil {
 			return "", err
@@ -163,13 +163,18 @@ func createBackup(app, env, dest string, now time.Time) (string, error) {
 			return "", err
 		}
 		processes = processNamesFromStatuses(running)
-	case config.ShapeStatic:
+	} else if appCtx.HasStaticRoutes {
 		release, err = currentStaticRelease(app, env)
 		if err != nil {
 			return "", err
 		}
-	default:
-		return "", fmt.Errorf("unsupported app shape %q", appCtx.Shape)
+	} else {
+		return "", fmt.Errorf("no active release found")
+	}
+	if appCtx.HasStaticRoutes {
+		if err := verifyStaticRelease(app, env, release, appCtx.Routes); err != nil {
+			return "", err
+		}
 	}
 
 	dir, err := backupDir(app, env, dest)
@@ -191,10 +196,11 @@ func createBackup(app, env, dest string, now time.Time) (string, error) {
 			Release:       release,
 			Shape:         appCtx.Shape,
 			Processes:     processes,
+			StaticRoutes:  staticRouteNames(appCtx.Routes),
 		},
 		Secrets: readSecrets(app, env),
 	}
-	if err := writeBackupTar(path, app, env, manifestPath, payload); err != nil {
+	if err := writeBackupTar(path, app, env, manifestPath, payload, appCtx.HasStaticRoutes); err != nil {
 		return "", err
 	}
 	return path, nil
@@ -270,43 +276,82 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 	if err != nil {
 		return backupMetadata{}, err
 	}
+	envSnapshot, err := snapshotEnvFile(app, env)
+	if err != nil {
+		return backupMetadata{}, err
+	}
+	staticSnapshot, err := snapshotStaticCurrent(app, env)
+	if err != nil {
+		return backupMetadata{}, err
+	}
+	caddyPath := caddyfilePath(app, env)
+	prevFragment, prevExisted, err := snapshotCaddyFragment(caddyPath)
+	if err != nil {
+		return backupMetadata{}, fmt.Errorf("snapshot existing fragment: %v", err)
+	}
 	var containersToRemove []string
-	switch appCtx.Shape {
-	case config.ShapeContainer:
+	var startedContainers []string
+	if appCtx.HasStaticRoutes {
+		if err := restoreStaticRelease(app, env, tmp, meta.Release); err != nil {
+			return backupMetadata{}, err
+		}
+	} else if staticSnapshot.Existed {
+		if err := clearStaticCurrent(app, env); err != nil {
+			return backupMetadata{}, err
+		}
+	}
+	if appCtx.NeedsImage {
 		resolved, err := resolveEnv(app, env, appCtx.Vars, appCtx.SecretRefs)
 		if err != nil {
+			_ = restoreStaticCurrent(app, env, staticSnapshot)
 			return backupMetadata{}, err
 		}
 		if err := writeEnvFile(app, env, resolved); err != nil {
+			_ = restoreStaticCurrent(app, env, staticSnapshot)
 			return backupMetadata{}, err
 		}
 		userID, groupID, err := hostUserIDs(identity.SystemUser(app, env))
 		if err != nil {
+			_ = restoreEnvFile(app, env, envSnapshot)
+			_ = restoreStaticCurrent(app, env, staticSnapshot)
 			return backupMetadata{}, err
 		}
 		imageTag := identity.ImageTag(app, env, meta.Release)
 		for _, procName := range sortedKeys(appCtx.Processes) {
+			startedContainers = append(startedContainers, identity.ContainerName(app, env, procName, meta.Release))
 			if err := startProcess(app, env, procName, appCtx.Processes[procName], imageTag, userID, groupID, meta.Release); err != nil {
+				removeContainers(startedContainers)
+				_ = restoreEnvFile(app, env, envSnapshot)
+				_ = restoreStaticCurrent(app, env, staticSnapshot)
 				return backupMetadata{}, err
 			}
 		}
 		containersToRemove = containersOutsideDesiredRelease(existing, app, env, appCtx.Processes, meta.Release)
-	case config.ShapeStatic:
-		if err := restoreStaticRelease(app, env, tmp, meta.Release); err != nil {
-			return backupMetadata{}, err
-		}
+	} else {
 		containersToRemove = appContainerNames(existing)
-	default:
-		return backupMetadata{}, fmt.Errorf("unsupported app shape %q", appCtx.Shape)
 	}
 
 	if err := writeAppCaddyfile(app, env, appCtx, meta.Release); err != nil {
+		removeContainers(startedContainers)
+		_ = restoreEnvFile(app, env, envSnapshot)
+		_ = restoreStaticCurrent(app, env, staticSnapshot)
+		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
 		return backupMetadata{}, err
 	}
 	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}, ""); err != nil {
+		removeContainers(startedContainers)
+		_ = restoreEnvFile(app, env, envSnapshot)
+		_ = restoreStaticCurrent(app, env, staticSnapshot)
+		if restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted); restoreErr != nil {
+			return backupMetadata{}, fmt.Errorf("caddy validate after restore failed AND fragment restore failed (manual fix required at %s): %v (restore: %v)", caddyPath, err, restoreErr)
+		}
 		return backupMetadata{}, fmt.Errorf("caddy validate after restore: %v", err)
 	}
 	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
+		removeContainers(startedContainers)
+		_ = restoreEnvFile(app, env, envSnapshot)
+		_ = restoreStaticCurrent(app, env, staticSnapshot)
+		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
 		return backupMetadata{}, fmt.Errorf("caddy reload after restore: %v", err)
 	}
 	removeContainers(containersToRemove)
@@ -336,7 +381,7 @@ func containersOutsideDesiredRelease(entries []containerEntry, app, env string, 
 	return uniqueContainerNames(names)
 }
 
-func writeBackupTar(path, app, env, manifestPath string, payload backupPayload) error {
+func writeBackupTar(path, app, env, manifestPath string, payload backupPayload, includeStatic bool) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
@@ -356,7 +401,7 @@ func writeBackupTar(path, app, env, manifestPath string, payload backupPayload) 
 	if err := addDir(tw, identity.DataDir(app, env), "data"); err != nil {
 		return err
 	}
-	if payload.Metadata.Shape == config.ShapeStatic {
+	if includeStatic {
 		staticReleaseDir := filepath.Join(identity.StaticDir(app, env), "releases", payload.Metadata.Release)
 		return addDir(tw, staticReleaseDir, filepath.ToSlash(filepath.Join("static", "releases", payload.Metadata.Release)))
 	}
@@ -596,6 +641,17 @@ func processNamesFromStatuses(processes []processStatus) []string {
 	out := make([]string, 0, len(processes))
 	for _, proc := range processes {
 		out = append(out, proc.Process)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func staticRouteNames(routes map[string]config.Route) []string {
+	var out []string
+	for name, route := range routes {
+		if route.Serve != "" {
+			out = append(out, name)
+		}
 	}
 	sort.Strings(out)
 	return out

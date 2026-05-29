@@ -47,7 +47,15 @@ one target:
 
 `path` is optional and means prefix routing. The omitted path owns the
 whole host. Static `path = "/docs"` strips the `/docs` prefix before
-file lookup.
+file lookup. `path = "/"` is rejected; the host root is expressed by
+omitting `path`.
+
+Container apps may mix `process` routes and `serve` routes. Mixed apps are
+still container apps: one Dockerfile builds one image, while each `serve`
+directory is uploaded and snapshotted as host-side static assets for the
+same release ID. The client folds a static-tree hash into the release ID
+when `serve` routes are present, so generated static output does not need to
+be tracked by Git to create a distinct deploy release.
 
 Runtime limits are product-level resources:
 
@@ -183,11 +191,13 @@ Routed web processes use versioned containers:
 
 1. Build the image.
 2. Run `[deploy].release`, if present.
-3. Start the next versioned container.
-4. Probe it from the Caddy/ingress network.
-5. Render Caddy to the next container name.
-6. Validate and reload Caddy.
-7. Remove old containers for that process after reload succeeds.
+3. Snapshot any `serve` route directories under
+   `static/releases/<release>/<route-name>/`.
+4. Start the next versioned container.
+5. Probe it from the Caddy/ingress network.
+6. Render Caddy to the next container name and the next static release path.
+7. Validate and reload Caddy.
+8. Remove old containers for that process after reload succeeds.
 
 Workers are stop-start by default. Overlapping workers are dangerous
 without an explicit policy, so v1 does not try to make workers
@@ -195,19 +205,27 @@ zero-downtime.
 
 ### Static routes
 
-Static-only apps are part of v1. Caddy serves uploaded static directories
-directly; nginx is not involved. Static backups include the active static
-release assets so restore can bring a static-only app back without
-containers.
+Static-only apps and mixed container/static apps are part of v1. Caddy serves
+uploaded static directories directly from the host; nginx is not involved.
+For a route named `docs` on release `f927362`, the copied tree lives at:
 
-Static rollback moves `static/current` back to a previous static release,
-validates Caddy, and reloads ingress.
+```text
+/var/apps/<app>.<env>/static/releases/f927362/docs/
+```
 
-Mixed container plus static routes are useful, but are explicitly out of
-v1. A manifest with both process routes and `serve` routes is rejected
-until deploy can snapshot image and static assets as one coherent release.
-The public shape already reserves `serve = "dist"` in the unified route
-namespace.
+Caddy points at the release path. `static/current` remains a bookkeeping
+symlink for active-release discovery, backups, and rollback selection.
+
+When a manifest has `serve` routes, clean Git deploys still append those
+directories from the working tree. This keeps generated or ignored `dist/`
+output deployable without switching the whole artifact away from `git archive`.
+The release ID includes a static-tree hash suffix so static byte changes
+produce a distinct release.
+
+Backups include the active static release assets whenever the applied
+manifest has `serve` routes, whether the app is static-only or mixed.
+Rollback and restore move process containers, static assets, Caddy, and the
+manifest snapshot as one release operation.
 
 ## Consequences
 

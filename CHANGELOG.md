@@ -7,6 +7,8 @@
 - Manifest v2 static-only deploys with `serve = "dist"` routes, host-side
   static releases, Caddy file serving, `app list` visibility, backup, destroy,
   restore, and rollback coverage.
+- Mixed container/static apps: one release can now include the app image plus
+  route-level static snapshots, with rollback and restore moving both together.
 - `[deploy].release` for deploy-time migration commands in container apps.
 - Flat env roots at `/var/apps/<app>.<env>/` with `data/`, `runtime/`, and
   `static/` directories plus a durable `simple-vps.json` identity anchor.
@@ -24,6 +26,8 @@
   under `runtime/.env` instead of app data.
 - Backups now snapshot `data/` and active static release assets rather than
   generated runtime files.
+- Static route deploys include ignored/generated `serve` directories in the
+  uploaded artifact, and static bytes participate in release IDs.
 
 ### Removed
 

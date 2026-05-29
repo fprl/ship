@@ -49,6 +49,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("deploy removes processes dropped from the manifest", env.testRemovedProcessReconciliation)
 	t.Run("concurrent deploys of the same app env serialize", env.testConcurrentDeploys)
 	t.Run("static-only app deploys and restores without containers", env.testStaticOnlyAppLifecycle)
+	t.Run("mixed container and static routes deploy as one release", env.testMixedContainerStaticLifecycle)
 	t.Run("@secret refs resolve through put/list/rm into the runtime env", env.testSecretLifecycle)
 	t.Run("status + logs surface deployed processes without SSHing in", env.testStatusAndLogs)
 	t.Run("restart bounces containers in place via podman restart", env.testRestart)
@@ -354,10 +355,10 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	mustMkdir(t, app)
 	writeStaticFixture(t, app)
 	e.commitFixture(t, app)
-	oldRelease := gitRelease(t, e, app)
 
 	e.simpleVPS(t, app, nil, "setup", "production")
 	e.simpleVPS(t, app, nil, "deploy", "production")
+	oldRelease := currentStaticReleaseFor(t, e, "site", "production")
 	staticReleaseManifest := e.ssh(t, "cat "+identity.ReleaseManifestFile("site", "production", oldRelease))
 	assertContains(t, staticReleaseManifest, `serve = "dist"`)
 
@@ -392,11 +393,11 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 
 	mustWrite(t, filepath.Join(app, "dist", "index.html"), "static-v2")
 	e.commitFixture(t, app)
-	newRelease := gitRelease(t, e, app)
-	if newRelease == oldRelease {
-		t.Fatal("expected static fixture commit to produce a new release")
-	}
 	e.simpleVPS(t, app, nil, "deploy", "production")
+	newRelease := currentStaticReleaseFor(t, e, "site", "production")
+	if newRelease == oldRelease {
+		t.Fatal("expected static fixture deploy to produce a new release")
+	}
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: static.example.com' http://127.0.0.1/", "static-v2")
 
 	rawRollback := e.simpleVPS(t, app, nil, "rollback", "--json", "production")
@@ -433,6 +434,95 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	e.simpleVPS(t, app, nil, "destroy", "production", "--confirm", "site")
 	e.simpleVPS(t, app, nil, "restore", "--from", backupID, "production")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: static.example.com' http://127.0.0.1/", "static-ok")
+}
+
+func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
+	app := filepath.Join(e.tmp, "mixed-api")
+	mustMkdir(t, app)
+	writeMixedFixture(t, app)
+	e.commitFixture(t, app)
+
+	e.simpleVPS(t, app, nil, "setup", "production")
+	e.simpleVPS(t, app, nil, "deploy", "production")
+	oldRelease := currentStaticReleaseFor(t, e, "mix", "production")
+	oldWeb := identity.ContainerName("mix", "production", "web", oldRelease)
+	fragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", "production"))
+	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
+	assertContains(t, fragment, `root * "`+filepath.Join(identity.StaticDir("mix", "production"), "releases", oldRelease, "docs")+`"`)
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/health", "ok")
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
+
+	mustWrite(t, filepath.Join(app, "docs-dist", "index.html"), "docs-v2")
+	mustWrite(t, filepath.Join(app, "README.md"), "docs v2\n")
+	e.commitFixture(t, app)
+	e.simpleVPS(t, app, nil, "deploy", "production")
+	newRelease := currentStaticReleaseFor(t, e, "mix", "production")
+	if newRelease == oldRelease {
+		t.Fatal("expected mixed fixture deploy to produce a new release")
+	}
+	newWeb := identity.ContainerName("mix", "production", "web", newRelease)
+	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", "production"))
+	assertContains(t, fragment, "reverse_proxy http://"+newWeb+":3000")
+	assertContains(t, fragment, `root * "`+filepath.Join(identity.StaticDir("mix", "production"), "releases", newRelease, "docs")+`"`)
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/health", "ok")
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v2")
+
+	e.simpleVPS(t, app, nil, "rollback", "production")
+	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", "production"))
+	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
+	assertContains(t, fragment, `root * "`+filepath.Join(identity.StaticDir("mix", "production"), "releases", oldRelease, "docs")+`"`)
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
+
+	e.simpleVPS(t, app, nil, "backup", "production")
+	rawBackups := e.simpleVPS(t, app, nil, "backup", "--json", "list", "production")
+	var backups struct {
+		Backups []struct {
+			ID string `json:"id"`
+		} `json:"backups"`
+	}
+	if err := json.Unmarshal([]byte(rawBackups), &backups); err != nil {
+		t.Fatalf("mixed backup list --json output not parseable as JSON: %v\nraw:\n%s", err, rawBackups)
+	}
+	if len(backups.Backups) == 0 || backups.Backups[0].ID == "" {
+		t.Fatalf("expected mixed backup, got %+v", backups.Backups)
+	}
+	backupID := backups.Backups[0].ID
+	e.simpleVPS(t, app, nil, "deploy", "production")
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v2")
+	e.simpleVPS(t, app, nil, "restore", "--from", backupID, "production")
+	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", "production"))
+	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
+	assertContains(t, fragment, `root * "`+filepath.Join(identity.StaticDir("mix", "production"), "releases", oldRelease, "docs")+`"`)
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
+
+	e.simpleVPS(t, app, nil, "destroy", "production", "--confirm", "mix")
+	e.simpleVPS(t, app, nil, "restore", "--from", backupID, "production")
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/health", "ok")
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
+
+	manifestPath := filepath.Join(app, "simple-vps.toml")
+	manifestBytes, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextManifest := strings.Replace(string(manifestBytes), `
+[routes.docs]
+host = "mixed.example.com"
+path = "/docs"
+serve = "docs-dist"
+`, "", 1)
+	if nextManifest == string(manifestBytes) {
+		t.Fatal("test fixture did not contain docs route")
+	}
+	mustWrite(t, manifestPath, nextManifest)
+	mustWrite(t, filepath.Join(app, "README.md"), "docs route removed\n")
+	e.commitFixture(t, app)
+	e.simpleVPS(t, app, nil, "deploy", "production")
+	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", "production"))
+	if strings.Contains(fragment, "docs-dist") || strings.Contains(fragment, "/docs") {
+		t.Fatalf("removed static route still appears in Caddy fragment:\n%s", fragment)
+	}
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "ok")
 }
 
 // testSecretLifecycle covers the @secret:KEY resolution path end-to-end
@@ -826,9 +916,41 @@ serve = "dist"
 `)
 }
 
+func writeMixedFixture(t *testing.T, app string) {
+	t.Helper()
+	mustMkdir(t, filepath.Join(app, "docs-dist"))
+	mustWrite(t, filepath.Join(app, "docs-dist", "index.html"), "docs-v1")
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "mix"
+
+[env.production]
+server = "fake-vps"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.docs]
+host = "mixed.example.com"
+path = "/docs"
+serve = "docs-dist"
+
+[routes.app]
+host = "mixed.example.com"
+process = "web"
+`)
+}
+
 func gitRelease(t *testing.T, e *smokeEnv, app string) string {
 	t.Helper()
 	return strings.TrimSpace(e.mustRun(t, app, nil, "git", "rev-parse", "--short=12", "HEAD"))
+}
+
+func currentStaticReleaseFor(t *testing.T, e *smokeEnv, app, env string) string {
+	t.Helper()
+	return strings.TrimSpace(e.ssh(t, "basename $(readlink "+identity.StaticDir(app, env)+"/current)"))
 }
 
 func currentWebContainer(t *testing.T, e *smokeEnv, app string) string {

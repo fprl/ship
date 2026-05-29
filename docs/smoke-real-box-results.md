@@ -1328,3 +1328,82 @@ all worth follow-ups, none of them invalidating the architecture.
   `/var/run` and serves traffic end-to-end under `--read-only`.
 
 All six real-box smoke findings are now closed.
+
+## 2026-05-29 — Mixed Container + Static Route Smoke
+
+VPS: Hetzner Ubuntu 24.04 at `128.140.3.159`.
+
+Purpose: verify the new v1 behavior where one container app can also ship
+host-side static route assets in the same release. This supersedes the earlier
+ADR-0008 note that deferred mixed routes.
+
+Steps run:
+
+1. Rebuilt the local binary with `make build`.
+2. Re-ran host install against the rebuilt VPS because the deploy user key was
+   not installed after rebuild:
+
+   ```sh
+   ./dist/simple-vps host install \
+     --mode remote \
+     --host 128.140.3.159 \
+     --bootstrap-user root \
+     --ssh-key ~/.ssh/hetzner \
+     --operator-ssh-public-key-file ~/.ssh/hetzner.pub \
+     --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub \
+     --ingress public \
+     --admin public-ssh \
+     --yes
+   ```
+
+3. Created a throwaway app `mixreal` with:
+   - one Dockerfile-backed process: `[processes.web]`, `port = 3000`,
+     `health = "/health"`
+   - one proxy route at `mixed.128.140.3.159.nip.io`
+   - one static route at `path = "/docs"`, `serve = "docs-dist"`
+   - `tls = "internal"` on both routes
+4. Ran:
+
+   ```sh
+   simple-vps check production
+   simple-vps setup production
+   simple-vps deploy production
+   curl -k --resolve mixed.128.140.3.159.nip.io:443:128.140.3.159 \
+     https://mixed.128.140.3.159.nip.io/health
+   curl -k --resolve mixed.128.140.3.159.nip.io:443:128.140.3.159 \
+     https://mixed.128.140.3.159.nip.io/docs
+   ```
+
+Initial deploy result:
+
+```text
+Deployed mixreal (production) at b411def91dad-s8c255e56d090
+/health -> ok
+/docs   -> docs-v1
+```
+
+5. Changed `docs-dist/index.html` to `docs-v2`, committed, deployed,
+   rolled back, backed up, restored, and destroyed:
+
+```text
+Deployed mixreal (production) at 4a54e81fe1c7-s9a3f283ba929
+/docs -> docs-v2
+
+Rolled back mixreal (production) from 4a54e81fe1c7-s9a3f283ba929 to b411def91dad-s8c255e56d090
+/docs -> docs-v1
+
+Created backup /etc/simple-vps/backups/mixreal/production/20260529T102754Z-b411def91dad-s8c255e56d090.tar
+Deployed mixreal (production) at 4a54e81fe1c7-s9a3f283ba929
+/docs -> docs-v2
+
+Restored mixreal (production) from 20260529T102754Z-b411def91dad-s8c255e56d090 at release b411def91dad-s8c255e56d090
+/docs -> docs-v1
+
+Destroyed mixreal (production)
+app list --json -> {"apps":[]}
+```
+
+Issue encountered: the rebuilt VPS accepted root SSH with `~/.ssh/hetzner`,
+but `deploy@128.140.3.159` initially rejected the local deploy key. Re-running
+`host install` with the current binary and `~/.ssh/simple-vps-deploy.pub`
+fixed the host state. No mixed-route runtime issue surfaced.

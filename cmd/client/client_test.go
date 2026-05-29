@@ -2,6 +2,7 @@ package client
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -133,6 +134,72 @@ func TestValidateArtifactDotenvRejectsSecretsButAllowsExamples(t *testing.T) {
 	err := validateArtifactDotenv(root)
 	if err == nil || !strings.Contains(err.Error(), ".env.production") {
 		t.Fatalf("expected dotenv rejection, got %v", err)
+	}
+}
+
+func TestStaticTreeHashChangesWhenServeBytesChange(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(root, "dist", "index.html")
+	if err := os.WriteFile(index, []byte("v1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	v1, err := staticTreeHash(root, []string{"dist"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, []byte("v2"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	v2, err := staticTreeHash(root, []string{"dist"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v1 == v2 {
+		t.Fatalf("static hash did not change: %s", v1)
+	}
+}
+
+func TestWriteSourceTarAppendsIgnoredStaticDirsForCleanArchive(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("dist/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("tracked"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dist", "index.html"), []byte("static"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init")
+	runGit(t, root, "add", ".gitignore", "README.md")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+
+	tarPath := filepath.Join(t.TempDir(), "source.tar")
+	if err := writeSourceTar(root, tarPath, false, []string{"dist"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("tar", "-tf", tarPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("tar list failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "dist/index.html") {
+		t.Fatalf("ignored static dir missing from archive:\n%s", out)
+	}
+}
+
+func runGit(t *testing.T, root string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }
 

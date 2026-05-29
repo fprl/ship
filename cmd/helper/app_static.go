@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/identity"
 )
 
@@ -41,6 +42,14 @@ func restoreStaticCurrentAt(path string, snapshot staticCurrentSnapshot) error {
 	}
 	if snapshot.Existed {
 		return os.Symlink(snapshot.Target, path)
+	}
+	return nil
+}
+
+func clearStaticCurrent(app, env string) error {
+	path := filepath.Join(identity.StaticDir(app, env), "current")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }
@@ -121,6 +130,27 @@ func activateStaticRelease(app, env, release string) error {
 	}
 	if err := os.Symlink(releaseDir, current); err != nil {
 		return fmt.Errorf("update static current symlink: %v", err)
+	}
+	return nil
+}
+
+func verifyStaticRelease(app, env, release string, routes map[string]config.Route) error {
+	if err := validateRelease(release); err != nil {
+		return err
+	}
+	for _, routeName := range sortedKeys(routes) {
+		route := routes[routeName]
+		if route.Serve == "" {
+			continue
+		}
+		path := filepath.Join(identity.StaticDir(app, env), "releases", release, routeName)
+		info, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("static release %s missing route %s: %v", release, routeName, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("static release %s route %s is not a directory", release, routeName)
+		}
 	}
 	return nil
 }

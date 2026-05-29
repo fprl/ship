@@ -44,15 +44,7 @@ func (c appRollbackCmd) runLocked() {
 		utils.Die(err.Error(), 1)
 	}
 	defer cleanup()
-	var result rollbackPayload
-	switch currentApp.Shape {
-	case config.ShapeContainer:
-		result, err = c.rollbackContainer()
-	case config.ShapeStatic:
-		result, err = c.rollbackStatic()
-	default:
-		err = fmt.Errorf("unsupported app shape %q", currentApp.Shape)
-	}
+	result, err := c.rollbackRelease(currentApp)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -67,117 +59,15 @@ func (c appRollbackCmd) runLocked() {
 	fmt.Print(renderRollbackText(result))
 }
 
-func (c appRollbackCmd) rollbackContainer() (rollbackPayload, error) {
-	containers, err := podmanPSContainers(c.App, c.Env)
-	if err != nil {
-		return rollbackPayload{}, err
-	}
-	current, err := currentRelease(runningProcesses(containersToProcesses(containers)))
+func (c appRollbackCmd) rollbackRelease(currentApp *config.AppContext) (rollbackPayload, error) {
+	current, err := activeRelease(c.App, c.Env, currentApp)
 	if err != nil && c.Release == "" {
 		return rollbackPayload{}, err
 	}
-	images, err := podmanImages(c.App, c.Env)
+	releases, err := availableRollbackReleases(c.App, c.Env)
 	if err != nil {
 		return rollbackPayload{}, err
 	}
-	images = releasesWithManifestSnapshots(c.App, c.Env, images)
-	target, err := selectRollbackRelease(images, current, c.Release)
-	if err != nil {
-		return rollbackPayload{}, err
-	}
-	app, cleanup, err := loadReleaseAppContext(c.App, c.Env, target.Release)
-	if err != nil {
-		return rollbackPayload{}, err
-	}
-	defer cleanup()
-	if app.Shape != config.ShapeContainer {
-		return rollbackPayload{}, fmt.Errorf("release %s is %s, not container", target.Release, app.Shape)
-	}
-	envSnapshot, err := snapshotEnvFile(c.App, c.Env)
-	if err != nil {
-		return rollbackPayload{}, err
-	}
-	resolved, err := resolveEnv(c.App, c.Env, app.Vars, app.SecretRefs)
-	if err != nil {
-		return rollbackPayload{}, err
-	}
-	if err := writeEnvFile(c.App, c.Env, resolved); err != nil {
-		return rollbackPayload{}, err
-	}
-	userID, groupID, err := hostUserIDs(identity.SystemUser(c.App, c.Env))
-	if err != nil {
-		return rollbackPayload{}, err
-	}
-	imageTag := identity.ImageTag(c.App, c.Env, target.Release)
-	var started []string
-	cleanupStarted := func() {
-		removeContainers(started)
-	}
-	for _, procName := range sortedKeys(app.Processes) {
-		proc := app.Processes[procName]
-		if proc.Port == nil {
-			for _, old := range processContainers(containers, procName, target.Release) {
-				_, _ = utils.RunChecked("podman", []string{"rm", "-f", old}, "")
-			}
-		}
-		if err := startProcess(c.App, c.Env, procName, proc, imageTag, userID, groupID, target.Release); err != nil {
-			cleanupStarted()
-			_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-			return rollbackPayload{}, err
-		}
-		started = append(started, identity.ContainerName(c.App, c.Env, procName, target.Release))
-	}
-	caddyPath := caddyfilePath(c.App, c.Env)
-	prevFragment, prevExisted, err := snapshotCaddyFragment(caddyPath)
-	if err != nil {
-		cleanupStarted()
-		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-		return rollbackPayload{}, fmt.Errorf("snapshot existing fragment: %v", err)
-	}
-	if err := writeAppCaddyfile(c.App, c.Env, app, target.Release); err != nil {
-		cleanupStarted()
-		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
-		return rollbackPayload{}, err
-	}
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}, ""); err != nil {
-		cleanupStarted()
-		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-		if restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted); restoreErr != nil {
-			return rollbackPayload{}, fmt.Errorf("caddy validate rejected the rollback fragment AND restore failed (manual fix required at %s): %v (restore: %v)", caddyPath, err, restoreErr)
-		}
-		return rollbackPayload{}, fmt.Errorf("caddy validate after rollback: %v", err)
-	}
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
-		cleanupStarted()
-		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
-		return rollbackPayload{}, fmt.Errorf("caddy reload after rollback: %v", err)
-	}
-	if err := persistCurrentManifestFromRelease(c.App, c.Env, target.Release); err != nil {
-		return rollbackPayload{}, err
-	}
-	removeContainers(containerNamesExceptRelease(containers, target.Release))
-
-	return rollbackPayload{
-		App:       c.App,
-		Env:       c.Env,
-		Previous:  current,
-		Release:   target.Release,
-		Processes: processNames(app.Processes),
-	}, nil
-}
-
-func (c appRollbackCmd) rollbackStatic() (rollbackPayload, error) {
-	current, err := currentStaticRelease(c.App, c.Env)
-	if err != nil {
-		return rollbackPayload{}, err
-	}
-	releases, err := staticReleases(c.App, c.Env)
-	if err != nil {
-		return rollbackPayload{}, err
-	}
-	releases = releasesWithManifestSnapshots(c.App, c.Env, releases)
 	target, err := selectRollbackRelease(releases, current, c.Release)
 	if err != nil {
 		return rollbackPayload{}, err
@@ -187,28 +77,106 @@ func (c appRollbackCmd) rollbackStatic() (rollbackPayload, error) {
 		return rollbackPayload{}, err
 	}
 	defer cleanup()
-	if app.Shape != config.ShapeStatic {
-		return rollbackPayload{}, fmt.Errorf("release %s is %s, not static", target.Release, app.Shape)
+	if err := verifyReleaseArtifacts(c.App, c.Env, target.Release, app); err != nil {
+		return rollbackPayload{}, err
 	}
+	return c.rollbackToTarget(current, target.Release, app)
+}
 
+func activeRelease(app, env string, ctx *config.AppContext) (string, error) {
+	if ctx.NeedsImage {
+		containers, err := podmanPSContainers(app, env)
+		if err != nil {
+			return "", err
+		}
+		return currentRelease(runningProcesses(containersToProcesses(containers)))
+	}
+	if ctx.HasStaticRoutes {
+		return currentStaticRelease(app, env)
+	}
+	return "", fmt.Errorf("no active release found")
+}
+
+func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *config.AppContext) (rollbackPayload, error) {
+	containers, err := podmanPSContainers(c.App, c.Env)
+	if err != nil {
+		return rollbackPayload{}, err
+	}
+	envSnapshot, err := snapshotEnvFile(c.App, c.Env)
+	if err != nil {
+		return rollbackPayload{}, err
+	}
 	staticSnapshot, err := snapshotStaticCurrent(c.App, c.Env)
 	if err != nil {
 		return rollbackPayload{}, err
 	}
+	var started []string
+	cleanupStarted := func() {
+		removeContainers(started)
+	}
+
+	if app.HasStaticRoutes {
+		if err := activateStaticRelease(c.App, c.Env, targetRelease); err != nil {
+			return rollbackPayload{}, err
+		}
+	} else if staticSnapshot.Existed {
+		if err := clearStaticCurrent(c.App, c.Env); err != nil {
+			return rollbackPayload{}, err
+		}
+	}
+
+	if app.NeedsImage {
+		resolved, err := resolveEnv(c.App, c.Env, app.Vars, app.SecretRefs)
+		if err != nil {
+			_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
+			return rollbackPayload{}, err
+		}
+		if err := writeEnvFile(c.App, c.Env, resolved); err != nil {
+			_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
+			return rollbackPayload{}, err
+		}
+		userID, groupID, err := hostUserIDs(identity.SystemUser(c.App, c.Env))
+		if err != nil {
+			_ = restoreEnvFile(c.App, c.Env, envSnapshot)
+			_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
+			return rollbackPayload{}, err
+		}
+		imageTag := identity.ImageTag(c.App, c.Env, targetRelease)
+		for _, procName := range sortedKeys(app.Processes) {
+			proc := app.Processes[procName]
+			if proc.Port == nil {
+				for _, old := range processContainers(containers, procName, targetRelease) {
+					_, _ = utils.RunChecked("podman", []string{"rm", "-f", old}, "")
+				}
+			}
+			containerName := identity.ContainerName(c.App, c.Env, procName, targetRelease)
+			started = append(started, containerName)
+			if err := startProcess(c.App, c.Env, procName, proc, imageTag, userID, groupID, targetRelease); err != nil {
+				cleanupStarted()
+				_ = restoreEnvFile(c.App, c.Env, envSnapshot)
+				_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
+				return rollbackPayload{}, err
+			}
+		}
+	}
 	caddyPath := caddyfilePath(c.App, c.Env)
 	prevFragment, prevExisted, err := snapshotCaddyFragment(caddyPath)
 	if err != nil {
+		cleanupStarted()
+		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
+		_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
 		return rollbackPayload{}, fmt.Errorf("snapshot existing fragment: %v", err)
 	}
-	if err := activateStaticRelease(c.App, c.Env, target.Release); err != nil {
-		return rollbackPayload{}, err
-	}
-	if err := writeAppCaddyfile(c.App, c.Env, app, target.Release); err != nil {
+	if err := writeAppCaddyfile(c.App, c.Env, app, targetRelease); err != nil {
+		cleanupStarted()
+		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
 		_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
 		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
 		return rollbackPayload{}, err
 	}
 	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}, ""); err != nil {
+		cleanupStarted()
+		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
 		_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
 		if restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted); restoreErr != nil {
 			return rollbackPayload{}, fmt.Errorf("caddy validate rejected the rollback fragment AND restore failed (manual fix required at %s): %v (restore: %v)", caddyPath, err, restoreErr)
@@ -216,15 +184,28 @@ func (c appRollbackCmd) rollbackStatic() (rollbackPayload, error) {
 		return rollbackPayload{}, fmt.Errorf("caddy validate after rollback: %v", err)
 	}
 	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
+		cleanupStarted()
+		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
 		_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
 		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
 		return rollbackPayload{}, fmt.Errorf("caddy reload after rollback: %v", err)
 	}
-	if err := persistCurrentManifestFromRelease(c.App, c.Env, target.Release); err != nil {
+	if err := persistCurrentManifestFromRelease(c.App, c.Env, targetRelease); err != nil {
 		return rollbackPayload{}, err
 	}
+	if app.NeedsImage {
+		removeContainers(containerNamesExceptRelease(containers, targetRelease))
+	} else {
+		removeContainers(appContainerNames(containers))
+	}
 
-	return rollbackPayload{App: c.App, Env: c.Env, Previous: current, Release: target.Release, Processes: []string{}}, nil
+	return rollbackPayload{
+		App:       c.App,
+		Env:       c.Env,
+		Previous:  current,
+		Release:   targetRelease,
+		Processes: processNames(app.Processes),
+	}, nil
 }
 
 type rollbackPayload struct {
@@ -325,36 +306,98 @@ func selectRollbackRelease(images []imageRelease, current, requested string) (im
 	return imageRelease{}, fmt.Errorf("no previous release available locally")
 }
 
-func releasesWithManifestSnapshots(app, env string, releases []imageRelease) []imageRelease {
+func availableRollbackReleases(app, env string) ([]imageRelease, error) {
+	releases, err := releaseSnapshots(app, env)
+	if err != nil {
+		return nil, err
+	}
+	images, err := podmanImages(app, env)
+	if err != nil {
+		return nil, err
+	}
+	imageByRelease := map[string]bool{}
+	for _, image := range images {
+		imageByRelease[image.Release] = true
+	}
+	var available []imageRelease
+	for _, release := range releases {
+		ctx, cleanup, err := loadReleaseAppContext(app, env, release.Release)
+		if err != nil {
+			continue
+		}
+		err = verifyReleaseArtifactsWithImages(app, env, release.Release, ctx, imageByRelease)
+		cleanup()
+		if err != nil {
+			continue
+		}
+		available = append(available, release)
+	}
+	return available, nil
+}
+
+func releaseSnapshots(app, env string) ([]imageRelease, error) {
+	releaseDir := identity.ReleaseDir(app, env)
+	entries, err := os.ReadDir(releaseDir)
+	if err != nil {
+		return nil, fmt.Errorf("release manifest snapshots not found; deploy before rollback")
+	}
 	type releaseWithSnapshot struct {
-		imageRelease
+		release string
 		modTime int64
 	}
 	var withSnapshots []releaseWithSnapshot
-	for _, release := range releases {
-		if err := validateRelease(release.Release); err != nil {
+	for _, entry := range entries {
+		if !entry.IsDir() {
 			continue
 		}
-		info, err := os.Stat(identity.ReleaseManifestFile(app, env, release.Release))
+		release := entry.Name()
+		if err := validateRelease(release); err != nil {
+			continue
+		}
+		info, err := os.Stat(identity.ReleaseManifestFile(app, env, release))
 		if err != nil || info.IsDir() {
 			continue
 		}
 		withSnapshots = append(withSnapshots, releaseWithSnapshot{
-			imageRelease: release,
-			modTime:      info.ModTime().UnixNano(),
+			release: release,
+			modTime: info.ModTime().UnixNano(),
 		})
 	}
 	sort.Slice(withSnapshots, func(i, j int) bool {
 		if withSnapshots[i].modTime != withSnapshots[j].modTime {
 			return withSnapshots[i].modTime > withSnapshots[j].modTime
 		}
-		return withSnapshots[i].Release > withSnapshots[j].Release
+		return withSnapshots[i].release > withSnapshots[j].release
 	})
 	out := make([]imageRelease, 0, len(withSnapshots))
 	for _, release := range withSnapshots {
-		out = append(out, release.imageRelease)
+		out = append(out, imageRelease{Release: release.release, Image: identity.ImageTag(app, env, release.release)})
 	}
-	return out
+	return out, nil
+}
+
+func verifyReleaseArtifacts(app, env, release string, ctx *config.AppContext) error {
+	images, err := podmanImages(app, env)
+	if err != nil {
+		return err
+	}
+	imageByRelease := map[string]bool{}
+	for _, image := range images {
+		imageByRelease[image.Release] = true
+	}
+	return verifyReleaseArtifactsWithImages(app, env, release, ctx, imageByRelease)
+}
+
+func verifyReleaseArtifactsWithImages(app, env, release string, ctx *config.AppContext, imageByRelease map[string]bool) error {
+	if ctx.NeedsImage && !imageByRelease[release] {
+		return fmt.Errorf("release %s image is not available locally", release)
+	}
+	if ctx.HasStaticRoutes {
+		if err := verifyStaticRelease(app, env, release, ctx.Routes); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func loadAppliedAppContext(app, env string) (*config.AppContext, func(), error) {

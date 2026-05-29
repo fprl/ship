@@ -211,11 +211,50 @@ func TestRenderAppCaddyfileStaticPathUsesHandlePath(t *testing.T) {
 	if !strings.Contains(got, "handle_path /docs/*") {
 		t.Fatalf("expected handle_path for static prefix, got:\n%s", got)
 	}
-	if !strings.Contains(got, `root * "/var/apps/site.production/static/current/docs"`) {
+	if !strings.Contains(got, `root * "/var/apps/site.production/static/releases/abc123/docs"`) {
 		t.Fatalf("expected static route root, got:\n%s", got)
 	}
 	if !strings.Contains(got, "file_server") {
 		t.Fatalf("expected file_server, got:\n%s", got)
+	}
+}
+
+func TestRenderAppCaddyfileMixedRoutesUseOneRelease(t *testing.T) {
+	port := 3000
+	ctx := &config.AppContext{
+		Processes: map[string]config.Process{"web": {Port: &port}},
+		Routes: map[string]config.Route{
+			"app":  {Host: "example.com", Process: "web"},
+			"docs": {Host: "example.com", Path: "/docs", Serve: "docs-dist"},
+		},
+	}
+	got, err := renderAppCaddyfile("api", "production", ctx, "abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "reverse_proxy http://"+identity.ContainerName("api", "production", "web", "abc123")+":3000") {
+		t.Fatalf("expected process route to use release container:\n%s", got)
+	}
+	if !strings.Contains(got, `root * "/var/apps/api.production/static/releases/abc123/docs"`) {
+		t.Fatalf("expected static route to use release-pinned root:\n%s", got)
+	}
+}
+
+func TestRenderAppCaddyfileGroupsEmptyTLSWithAuto(t *testing.T) {
+	port := 3000
+	ctx := &config.AppContext{
+		Processes: map[string]config.Process{"web": {Port: &port}},
+		Routes: map[string]config.Route{
+			"app":  {Host: "example.com", Process: "web"},
+			"docs": {Host: "example.com", Path: "/docs", Serve: "docs-dist", TLS: "auto"},
+		},
+	}
+	got, err := renderAppCaddyfile("api", "production", ctx, "abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(got, `"example.com" {`) != 1 {
+		t.Fatalf("expected one host block for empty/auto TLS routes:\n%s", got)
 	}
 }
 

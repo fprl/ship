@@ -2,6 +2,8 @@ package client
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -978,6 +981,14 @@ func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDot
 	if worktreeDirty {
 		release = fmt.Sprintf("dirty-%s", time.Now().UTC().Format("20060102150405"))
 	}
+	serveDirs := staticServeDirs(ctx.Routes)
+	if len(serveDirs) > 0 {
+		hash, err := staticTreeHash(root, serveDirs)
+		if err != nil {
+			utils.Die(fmt.Sprintf("hash static assets: %v", err), 1)
+		}
+		release = release + "-s" + hash[:12]
+	}
 
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -994,7 +1005,7 @@ func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDot
 
 	localTar := filepath.Join(tarDir, "source.tar")
 	localManifest := filepath.Join(tarDir, "simple-vps.toml")
-	if err := writeSourceTar(root, localTar, worktreeDirty); err != nil {
+	if err := writeSourceTar(root, localTar, worktreeDirty, serveDirs); err != nil {
 		utils.Die(err.Error(), 1)
 	}
 	if err := copyFile(filepath.Join(root, ManifestFile), localManifest); err != nil {
@@ -1034,7 +1045,7 @@ func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDot
 	fmt.Printf("Deployed %s (%s) at %s\n", ctx.AppName, envName, release)
 }
 
-func writeSourceTar(root string, dest string, dirty bool) error {
+func writeSourceTar(root string, dest string, dirty bool, staticDirs []string) error {
 	var cmd *exec.Cmd
 	if dirty {
 		cmd = exec.Command("sh", "-c", fmt.Sprintf(
@@ -1048,7 +1059,86 @@ func writeSourceTar(root string, dest string, dirty bool) error {
 		))
 	}
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	if !dirty && len(staticDirs) > 0 {
+		return appendStaticDirsToTar(root, dest, staticDirs)
+	}
+	return nil
+}
+
+func staticServeDirs(routes map[string]config.Route) []string {
+	seen := map[string]bool{}
+	var dirs []string
+	for _, route := range routes {
+		if route.Serve == "" || seen[route.Serve] {
+			continue
+		}
+		seen[route.Serve] = true
+		dirs = append(dirs, route.Serve)
+	}
+	sort.Strings(dirs)
+	return dirs
+}
+
+func appendStaticDirsToTar(root, dest string, dirs []string) error {
+	for _, dir := range dirs {
+		cmd := exec.Command("tar", "-C", root, "-rf", dest, dir)
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("append static dir %s: %v", dir, err)
+		}
+	}
+	return nil
+}
+
+func staticTreeHash(root string, dirs []string) (string, error) {
+	sum := sha256.New()
+	for _, dir := range dirs {
+		base := filepath.Join(root, dir)
+		if err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			info, err := os.Lstat(path)
+			if err != nil {
+				return err
+			}
+			switch {
+			case info.Mode().IsDir():
+				_, _ = fmt.Fprintf(sum, "dir\x00%s\x00", rel)
+			case info.Mode().IsRegular():
+				_, _ = fmt.Fprintf(sum, "file\x00%s\x00%d\x00", rel, info.Size())
+				f, err := os.Open(path)
+				if err != nil {
+					return err
+				}
+				if _, err := io.Copy(sum, f); err != nil {
+					_ = f.Close()
+					return err
+				}
+				if err := f.Close(); err != nil {
+					return err
+				}
+			case info.Mode()&os.ModeSymlink != 0:
+				target, err := os.Readlink(path)
+				if err != nil {
+					return err
+				}
+				_, _ = fmt.Fprintf(sum, "symlink\x00%s\x00%s\x00", rel, target)
+			}
+			return nil
+		}); err != nil {
+			return "", err
+		}
+	}
+	return hex.EncodeToString(sum.Sum(nil)), nil
 }
 
 func copyFile(src, dst string) error {

@@ -70,6 +70,9 @@ func TestCheckManifestAcceptsContainerV2(t *testing.T) {
 	if ctx.Shape != ShapeContainer {
 		t.Fatalf("shape = %q, want container", ctx.Shape)
 	}
+	if !ctx.NeedsImage || ctx.HasStaticRoutes {
+		t.Fatalf("unexpected capabilities: needsImage=%v hasStaticRoutes=%v", ctx.NeedsImage, ctx.HasStaticRoutes)
+	}
 	web := ctx.Processes["web"]
 	if web.Port == nil || *web.Port != 3000 || web.Health != "/health" {
 		t.Fatalf("unexpected web process: %+v", web)
@@ -127,6 +130,9 @@ serve = "docs-dist"
 	}
 	if ctx.Shape != ShapeStatic {
 		t.Fatalf("shape = %q, want static", ctx.Shape)
+	}
+	if ctx.NeedsImage || !ctx.HasStaticRoutes {
+		t.Fatalf("unexpected capabilities: needsImage=%v hasStaticRoutes=%v", ctx.NeedsImage, ctx.HasStaticRoutes)
 	}
 }
 
@@ -240,7 +246,7 @@ process = "web"
 	}
 }
 
-func TestCheckManifestRejectsMixedProcessAndServeRoutes(t *testing.T) {
+func TestCheckManifestAcceptsMixedProcessAndServeRoutes(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root)
 	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
@@ -269,8 +275,15 @@ serve = "dist"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(errors, "mixed process and serve routes are not supported yet") {
-		t.Fatalf("expected mixed-mode error, got %v", errors)
+	if len(errors) != 0 {
+		t.Fatalf("expected no errors, got %v", errors)
+	}
+	ctx, err := LoadAppContext(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx.Shape != ShapeContainer || !ctx.NeedsImage || !ctx.HasStaticRoutes {
+		t.Fatalf("unexpected mixed context: shape=%q needsImage=%v hasStaticRoutes=%v", ctx.Shape, ctx.NeedsImage, ctx.HasStaticRoutes)
 	}
 }
 
@@ -306,6 +319,33 @@ redirect = "https://example.com"
 		if !slices.Contains(errors, want) {
 			t.Fatalf("expected %q in %v", want, errors)
 		}
+	}
+}
+
+func TestCheckManifestRejectsRootPath(t *testing.T) {
+	root := t.TempDir()
+	writeDockerfile(t, root)
+	writeManifest(t, root, `name = "api"
+
+[env.production]
+server = "deploy@example.com"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "api.example.com"
+path = "/"
+process = "web"
+`)
+
+	errors, _, err := CheckManifest(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(errors, "[routes.app].path must be omitted for the host root") {
+		t.Fatalf("missing root path error: %v", errors)
 	}
 }
 

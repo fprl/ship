@@ -15,6 +15,8 @@ your app repo     ->  simple-vps deploy  ->  live app
 - Host install/converge for Ubuntu 24.04.
 - Caddy running in a container, with per-app route fragments.
 - Podman image builds on the VPS from your app's Dockerfile.
+- Static route assets served directly by Caddy, including mixed
+  container + static apps.
 - Per-env Linux users, directories, networks, and mutation locks.
 - Manifest env values and host-side `@secret:KEY` resolution.
 - `status`, `app list`, `logs`, `restart`, `rollback`, `backup/restore`,
@@ -129,6 +131,25 @@ simple-vps destroy production --app my-app --server deploy@example.com --confirm
 Each deploy stores a release manifest snapshot on the host. Rollback uses that
 snapshot, so old images/static assets come back with the route and process
 shape that produced them.
+
+Static routes use the same manifest:
+
+```toml
+[routes.app]
+host = "api.example.com"
+process = "web"
+
+[routes.docs]
+host = "api.example.com"
+path = "/docs"
+serve = "docs-dist"
+```
+
+The `serve` directory is uploaded into the same release as the container image,
+so rollback and restore move the web process and static files together.
+
+That works for static-only apps and for container apps that also proxy a
+process route.
 
 Secrets are stored on the host and referenced from the manifest:
 

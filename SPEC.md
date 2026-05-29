@@ -216,11 +216,11 @@ The manifest describes one app env shape. A container app has a `Dockerfile`
 at the app repo root. The Dockerfile is the build contract; Node, Bun,
 Python, Ruby, Go, and other runtimes belong inside the image, not on the
 host. A static-only app can omit the Dockerfile and use route-level
-`serve = "dist"` entries.
-
-Mixed container plus static routes are intentionally out of v1. A manifest
-with both process routes and `serve` routes fails validation until deploy can
-snapshot image and static assets as one coherent release.
+`serve = "dist"` entries. A container app may also declare `serve` routes;
+those static directories are snapshotted beside the image as part of the
+same release ID. For clean Git deploys, the release ID includes a static-tree
+hash suffix when `serve` routes are present, so generated or ignored static
+output still participates in deploy diffing.
 
 Processes are long-running containers from the app image. Each process can
 override the Dockerfile `CMD` with `command`, expose one internal `port`,
@@ -251,6 +251,12 @@ serve = "docs-dist"
 host = "old.example.com"
 redirect = "https://api.example.com"
 ```
+
+`path` is a prefix route. Omit it for the host root; `path = "/"` is
+invalid because it is the same route expressed two ways. Static
+`path = "/docs"` serves `/docs` from the static root index and serves
+`/docs/*` with `/docs` stripped before file lookup. Longest path wins
+within a host.
 
 Container runtime values are declared once in `[vars]` and overridden per
 env with `[env.<env>.vars]`. Whole-value `@secret:KEY` references resolve
@@ -283,7 +289,7 @@ the env root is flat and scoped to `(app, env)`:
 /var/apps/<app>.<env>/
   data/             # mounted as /data, included in backup/restore
   runtime/.env      # generated runtime config, not user data
-  static/           # static assets/releases when used
+  static/           # static release assets when used
   releases/<sha>/   # release metadata, including manifest snapshots
   simple-vps.toml   # applied manifest snapshot
   simple-vps.json   # env identity anchor
@@ -294,6 +300,17 @@ Every successful deploy stores the manifest that produced that release at
 manifest. Rollback uses the selected release's manifest snapshot for process
 ports, routes, static paths, and runtime var references; it does not infer the
 old shape from the latest local checkout.
+
+Static route assets are copied to:
+
+```text
+/var/apps/<app>.<env>/static/releases/<release>/<route-name>/
+```
+
+Caddy fragments point at the active release path, not at the source checkout
+or the app container. `static/current` is a bookkeeping symlink for active
+static-release discovery; rollback and restore move it together with the
+Caddy fragment.
 
 See [ADR-0008](docs/adr/0008-manifest-v2-env-root-and-runtime-identity.md)
 for the manifest v2, env-root, and derived infra ID contract.
