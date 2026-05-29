@@ -1,7 +1,6 @@
 package helper
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -29,7 +28,6 @@ type appRestartCmd struct {
 	App     string `arg:"" help:"App name."`
 	Env     string `arg:"" help:"Env name."`
 	Process string `arg:"" optional:"" help:"Process to bounce. Omitted = all processes."`
-	JSON    bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
 }
 
 func (c appRestartCmd) Run() error {
@@ -74,22 +72,7 @@ func (c appRestartCmd) runLocked() {
 		})
 	}
 
-	if c.JSON {
-		payload := restartPayload{App: c.App, Env: c.Env, Restarted: results}
-		buf, err := json.MarshalIndent(payload, "", "  ")
-		if err != nil {
-			utils.Die(err.Error(), 1)
-		}
-		fmt.Println(string(buf))
-		return
-	}
 	fmt.Print(renderRestartText(c.App, c.Env, results))
-}
-
-type restartPayload struct {
-	App       string          `json:"app"`
-	Env       string          `json:"env"`
-	Restarted []processStatus `json:"restarted"`
 }
 
 // resolveRestartTargets finds the labelled (app, env) processes and

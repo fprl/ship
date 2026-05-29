@@ -22,13 +22,6 @@ func writeClientDockerfile(t *testing.T, root string) {
 	}
 }
 
-func TestParseServerFlagRejectsSshOptions(t *testing.T) {
-	_, _, err := parseServerFlag([]string{"--server", "-oProxyCommand=sh"})
-	if err == nil || !strings.Contains(err.Error(), "SSH target") {
-		t.Fatalf("expected SSH target validation error, got %v", err)
-	}
-}
-
 func TestParseHostFlagsAllowsJsonAroundSubcommand(t *testing.T) {
 	flags, err := parseHostFlags([]string{"--json", "doctor", "--server", "deploy@example.com"})
 	if err != nil {
@@ -195,17 +188,17 @@ func TestServerAppListCommandSupportsJSON(t *testing.T) {
 	}
 }
 
-func TestServerAppRollbackCommandSupportsReleaseAndJSON(t *testing.T) {
-	got := serverAppRollbackCommand("api", "production", "", false)
+func TestServerAppRollbackCommandSupportsRelease(t *testing.T) {
+	got := serverAppRollbackCommand("api", "production", "")
 	want := "sudo simple-vps server app rollback api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
-	got = serverAppRollbackCommand("api", "production", "abc1234", true)
-	want = "sudo simple-vps server app rollback --json api production abc1234"
+	got = serverAppRollbackCommand("api", "production", "abc1234")
+	want = "sudo simple-vps server app rollback api production abc1234"
 	if got != want {
-		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
+		t.Fatalf("unexpected release command:\nwant: %s\n got: %s", want, got)
 	}
 }
 
@@ -218,17 +211,17 @@ func TestServerAppBackupCommands(t *testing.T) {
 		{
 			name: "create",
 			got:  serverAppBackupCommand("api", "production", "", false),
-			want: "sudo simple-vps server app backup api production",
+			want: "sudo simple-vps server app backup create api production",
 		},
 		{
 			name: "create json",
 			got:  serverAppBackupCommand("api", "production", "", true),
-			want: "sudo simple-vps server app backup --json api production",
+			want: "sudo simple-vps server app backup create --json api production",
 		},
 		{
 			name: "create to",
 			got:  serverAppBackupCommand("api", "production", "/tmp/backups", false),
-			want: "sudo simple-vps server app backup --to /tmp/backups api production",
+			want: "sudo simple-vps server app backup create --to /tmp/backups api production",
 		},
 		{
 			name: "list",
@@ -238,7 +231,7 @@ func TestServerAppBackupCommands(t *testing.T) {
 		{
 			name: "list json",
 			got:  serverAppBackupListCommand("api", "production", true),
-			want: "sudo simple-vps server app backup --json list api production",
+			want: "sudo simple-vps server app backup list --json api production",
 		},
 		{
 			name: "rm",
@@ -248,12 +241,12 @@ func TestServerAppBackupCommands(t *testing.T) {
 		{
 			name: "restore",
 			got:  serverAppRestoreCommand("api", "production", "backup-id", false),
-			want: "sudo simple-vps server app backup --from backup-id restore api production",
+			want: "sudo simple-vps server app backup restore --from backup-id api production",
 		},
 		{
 			name: "restore dry run",
 			got:  serverAppRestoreCommand("api", "production", "backup-id", true),
-			want: "sudo simple-vps server app backup --from backup-id --dry-run restore api production",
+			want: "sudo simple-vps server app backup restore --from backup-id --dry-run api production",
 		},
 	}
 	for _, tt := range tests {

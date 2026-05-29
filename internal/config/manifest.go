@@ -613,6 +613,10 @@ func validateRoutePath(routeName, path string, errors *[]string) {
 		*errors = append(*errors, label+" must not contain whitespace")
 		return
 	}
+	if strings.ContainsAny(path, "*?[]{}#") {
+		*errors = append(*errors, label+" must not contain Caddy matcher syntax")
+		return
+	}
 }
 
 func validateServeDir(root, routeName, dir string, errors *[]string) {

@@ -182,12 +182,12 @@ sudo simple-vps server app destroy-env [--purge] <app> <env>
 sudo simple-vps server app apply --tarball <path> --manifest <path> --sha <sha> <app> <env>
 sudo simple-vps server app list [--json]
 sudo simple-vps server app status [--json] <app> <env>
-sudo simple-vps server app restart [--json] <app> <env> [process]
-sudo simple-vps server app rollback [--json] <app> <env> [release]
-sudo simple-vps server app backup [--json] [--to=<destination>] <app> <env>
-sudo simple-vps server app backup [--json] list <app> <env>
+sudo simple-vps server app restart <app> <env> [process]
+sudo simple-vps server app rollback <app> <env> [release]
+sudo simple-vps server app backup create [--json] [--to=<destination>] <app> <env>
+sudo simple-vps server app backup list [--json] <app> <env>
 sudo simple-vps server app backup rm <app> <env> <backup-id>
-sudo simple-vps server app backup --from=<backup-id> [--dry-run] restore <app> <env>
+sudo simple-vps server app backup restore --from=<backup-id> [--dry-run] <app> <env>
 sudo simple-vps server app logs [--follow] [--tail=N] <app> <env> [process]
 sudo simple-vps server app secret set <app> <env> <key>
 sudo simple-vps server app secret list [--json] <app> <env>

@@ -20,7 +20,6 @@ type appRollbackCmd struct {
 	App     string `arg:"" help:"App name."`
 	Env     string `arg:"" help:"Env name."`
 	Release string `arg:"" optional:"" help:"Release to run. Omitted = previous local release."`
-	JSON    bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
 }
 
 func (c appRollbackCmd) Run() error {
@@ -47,14 +46,6 @@ func (c appRollbackCmd) runLocked() {
 	result, err := c.rollbackRelease(currentApp)
 	if err != nil {
 		utils.Die(err.Error(), 1)
-	}
-	if c.JSON {
-		buf, err := json.MarshalIndent(result, "", "  ")
-		if err != nil {
-			utils.Die(err.Error(), 1)
-		}
-		fmt.Println(string(buf))
-		return
 	}
 	fmt.Print(renderRollbackText(result))
 }

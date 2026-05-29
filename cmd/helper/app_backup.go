@@ -18,109 +18,120 @@ import (
 )
 
 type appBackupCmd struct {
-	Args   []string `arg:"" optional:"" help:"Either <app> <env>, list <app> <env>, rm <app> <env> <id>, or restore <app> <env>."`
-	To     string   `name:"to" help:"Destination directory. Supports plain paths and file:// URLs."`
-	From   string   `name:"from" help:"Backup ID or path for restore. Supports plain paths and file:// URLs."`
-	Dir    string   `name:"dir" help:"Backup directory for ID lookup. Supports plain paths and file:// URLs."`
-	JSON   bool     `name:"json" help:"Emit structured JSON for create and list."`
-	DryRun bool     `name:"dry-run" help:"Show what would be restored without writing."`
+	Create  appBackupCreateCmd  `cmd:"" help:"Create an app backup."`
+	List    appBackupListCmd    `cmd:"" help:"List app backups."`
+	Rm      appBackupRmCmd      `cmd:"rm" help:"Remove one app backup."`
+	Restore appBackupRestoreCmd `cmd:"" help:"Restore an app backup."`
 }
 
-func (c appBackupCmd) Run() error {
-	sub := "create"
-	args := c.Args
-	if len(args) > 0 {
-		switch args[0] {
-		case "list", "rm", "restore":
-			sub = args[0]
-			args = args[1:]
-		}
-	}
-	switch sub {
-	case "create":
-		app, env := parseBackupAppEnv(args)
-		withAppEnvLock(app, env, func() {
-			path, err := createBackup(app, env, c.To, time.Now().UTC())
-			if err != nil {
-				utils.Die(err.Error(), 1)
-			}
-			if c.JSON {
-				item, err := backupInfoForPath(path)
-				if err != nil {
-					utils.Die(err.Error(), 1)
-				}
-				buf, err := json.MarshalIndent(struct {
-					App    string     `json:"app"`
-					Env    string     `json:"env"`
-					Backup backupInfo `json:"backup"`
-				}{App: app, Env: env, Backup: item}, "", "  ")
-				if err != nil {
-					utils.Die(err.Error(), 1)
-				}
-				fmt.Println(string(buf))
-				return
-			}
-			fmt.Printf("Created backup %s\n", path)
-		})
-	case "list":
-		app, env := parseBackupAppEnv(args)
-		backups, err := listBackups(app, env, c.Dir)
+type appBackupCreateCmd struct {
+	App  string `arg:"" help:"App name."`
+	Env  string `arg:"" help:"Env name."`
+	To   string `name:"to" help:"Destination directory. Supports plain paths and file:// URLs."`
+	JSON bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
+}
+
+func (c appBackupCreateCmd) Run() error {
+	app, env := validateBackupAppEnv(c.App, c.Env)
+	withAppEnvLock(app, env, func() {
+		path, err := createBackup(app, env, c.To, time.Now().UTC())
 		if err != nil {
 			utils.Die(err.Error(), 1)
 		}
 		if c.JSON {
+			item, err := backupInfoForPath(path)
+			if err != nil {
+				utils.Die(err.Error(), 1)
+			}
 			buf, err := json.MarshalIndent(struct {
-				App     string       `json:"app"`
-				Env     string       `json:"env"`
-				Backups []backupInfo `json:"backups"`
-			}{App: app, Env: env, Backups: backups}, "", "  ")
+				App    string     `json:"app"`
+				Env    string     `json:"env"`
+				Backup backupInfo `json:"backup"`
+			}{App: app, Env: env, Backup: item}, "", "  ")
 			if err != nil {
 				utils.Die(err.Error(), 1)
 			}
 			fmt.Println(string(buf))
-			return nil
+			return
 		}
-		for _, b := range backups {
-			fmt.Println(b.ID)
-		}
-	case "rm":
-		if len(args) != 3 {
-			utils.Die("backup rm requires <app> <env> <backup-id>", 1)
-		}
-		app, env := validateBackupAppEnv(args[0], args[1])
-		path, err := resolveBackupPath(app, env, args[2], c.Dir)
+		fmt.Printf("Created backup %s\n", path)
+	})
+	return nil
+}
+
+type appBackupListCmd struct {
+	App  string `arg:"" help:"App name."`
+	Env  string `arg:"" help:"Env name."`
+	Dir  string `name:"dir" help:"Backup directory for ID lookup. Supports plain paths and file:// URLs."`
+	JSON bool   `name:"json" help:"Emit structured JSON instead of plain backup IDs."`
+}
+
+func (c appBackupListCmd) Run() error {
+	app, env := validateBackupAppEnv(c.App, c.Env)
+	backups, err := listBackups(app, env, c.Dir)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	if c.JSON {
+		buf, err := json.MarshalIndent(struct {
+			App     string       `json:"app"`
+			Env     string       `json:"env"`
+			Backups []backupInfo `json:"backups"`
+		}{App: app, Env: env, Backups: backups}, "", "  ")
 		if err != nil {
 			utils.Die(err.Error(), 1)
 		}
-		if err := os.Remove(path); err != nil {
-			utils.Die(fmt.Sprintf("remove backup %s: %v", path, err), 1)
-		}
-		fmt.Printf("Removed backup %s\n", filepath.Base(path))
-	case "restore":
-		app, env := parseBackupAppEnv(args)
-		if c.From == "" {
-			utils.Die("backup restore requires --from", 1)
-		}
-		withAppEnvLock(app, env, func() {
-			result, err := restoreBackup(app, env, c.From, c.Dir, c.DryRun)
-			if err != nil {
-				utils.Die(err.Error(), 1)
-			}
-			if c.DryRun {
-				fmt.Printf("Would restore %s (%s) from %s at release %s\n", result.App, result.Env, result.ID, result.Release)
-				return
-			}
-			fmt.Printf("Restored %s (%s) from %s at release %s\n", result.App, result.Env, result.ID, result.Release)
-		})
+		fmt.Println(string(buf))
+		return nil
+	}
+	for _, b := range backups {
+		fmt.Println(b.ID)
 	}
 	return nil
 }
 
-func parseBackupAppEnv(args []string) (string, string) {
-	if len(args) != 2 {
-		utils.Die("backup requires <app> <env>", 1)
+type appBackupRmCmd struct {
+	App string `arg:"" help:"App name."`
+	Env string `arg:"" help:"Env name."`
+	ID  string `arg:"" help:"Backup ID to remove."`
+	Dir string `name:"dir" help:"Backup directory for ID lookup. Supports plain paths and file:// URLs."`
+}
+
+func (c appBackupRmCmd) Run() error {
+	app, env := validateBackupAppEnv(c.App, c.Env)
+	path, err := resolveBackupPath(app, env, c.ID, c.Dir)
+	if err != nil {
+		utils.Die(err.Error(), 1)
 	}
-	return validateBackupAppEnv(args[0], args[1])
+	if err := os.Remove(path); err != nil {
+		utils.Die(fmt.Sprintf("remove backup %s: %v", path, err), 1)
+	}
+	fmt.Printf("Removed backup %s\n", filepath.Base(path))
+	return nil
+}
+
+type appBackupRestoreCmd struct {
+	App    string `arg:"" help:"App name."`
+	Env    string `arg:"" help:"Env name."`
+	From   string `name:"from" required:"" help:"Backup ID or path for restore. Supports plain paths and file:// URLs."`
+	Dir    string `name:"dir" help:"Backup directory for ID lookup. Supports plain paths and file:// URLs."`
+	DryRun bool   `name:"dry-run" help:"Show what would be restored without writing."`
+}
+
+func (c appBackupRestoreCmd) Run() error {
+	app, env := validateBackupAppEnv(c.App, c.Env)
+	withAppEnvLock(app, env, func() {
+		result, err := restoreBackup(app, env, c.From, c.Dir, c.DryRun)
+		if err != nil {
+			utils.Die(err.Error(), 1)
+		}
+		if c.DryRun {
+			fmt.Printf("Would restore %s (%s) from %s at release %s\n", result.App, result.Env, result.ID, result.Release)
+			return
+		}
+		fmt.Printf("Restored %s (%s) from %s at release %s\n", result.App, result.Env, result.ID, result.Release)
+	})
+	return nil
 }
 
 func validateBackupAppEnv(app, env string) (string, string) {

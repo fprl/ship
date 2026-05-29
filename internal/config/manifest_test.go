@@ -349,6 +349,33 @@ process = "web"
 	}
 }
 
+func TestCheckManifestRejectsRouteMatcherSyntax(t *testing.T) {
+	root := t.TempDir()
+	writeDockerfile(t, root)
+	writeManifest(t, root, `name = "api"
+
+[env.production]
+server = "deploy@example.com"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "api.example.com"
+path = "/docs*"
+process = "web"
+`)
+
+	errors, _, err := CheckManifest(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(errors, "[routes.app].path must not contain Caddy matcher syntax") {
+		t.Fatalf("missing matcher syntax error: %v", errors)
+	}
+}
+
 func TestCheckManifestRejectsDuplicateRoutesAndTLSConflicts(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root)

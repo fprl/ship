@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/alecthomas/kong"
@@ -48,16 +49,15 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "logs", "--tail=50", "api", "production"},
 		{"app", "restart", "api", "production"},
 		{"app", "restart", "api", "production", "web"},
-		{"app", "restart", "--json", "api", "production"},
 		{"app", "rollback", "api", "production"},
-		{"app", "backup", "api", "production"},
-		{"app", "backup", "--json", "api", "production"},
-		{"app", "backup", "--to", "/tmp/backups", "api", "production"},
+		{"app", "backup", "create", "api", "production"},
+		{"app", "backup", "create", "--json", "api", "production"},
+		{"app", "backup", "create", "--to", "/tmp/backups", "api", "production"},
 		{"app", "backup", "list", "api", "production"},
-		{"app", "backup", "--json", "list", "api", "production"},
+		{"app", "backup", "list", "--json", "api", "production"},
 		{"app", "backup", "rm", "api", "production", "backup-id"},
-		{"app", "backup", "--from", "backup-id", "restore", "api", "production"},
-		{"app", "backup", "--from", "backup-id", "--dry-run", "restore", "api", "production"},
+		{"app", "backup", "restore", "--from", "backup-id", "api", "production"},
+		{"app", "backup", "restore", "--from", "backup-id", "--dry-run", "api", "production"},
 	}
 
 	for _, tt := range tests {
@@ -67,6 +67,33 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			parseServerCommand(t, tt...)
+		})
+	}
+}
+
+func TestServerCLIRejectsRemovedCompatibilityCommands(t *testing.T) {
+	tests := [][]string{
+		{"app", "restart", "--json", "api", "production"},
+		{"app", "rollback", "--json", "api", "production"},
+		{"app", "backup", "api", "production"},
+		{"app", "backup", "--json", "api", "production"},
+		{"app", "backup", "--json", "list", "api", "production"},
+		{"app", "backup", "--from", "backup-id", "restore", "api", "production"},
+	}
+	for _, tt := range tests {
+		t.Run(strings.Join(tt, "_"), func(t *testing.T) {
+			previousRequireRoot := requireRoot
+			requireRoot = func() error { return nil }
+			t.Cleanup(func() { requireRoot = previousRequireRoot })
+
+			cli := &ServerCmd{}
+			parser, err := kong.New(cli, kong.Name("simple-vps"))
+			if err != nil {
+				t.Fatalf("parser setup failed: %v", err)
+			}
+			if _, err := parser.Parse(tt); err == nil {
+				t.Fatalf("parse %v unexpectedly succeeded", tt)
+			}
 		})
 	}
 }

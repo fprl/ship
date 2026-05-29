@@ -268,11 +268,8 @@ func serverAppLogsCommand(appName, envName, process string, follow bool, tail in
 	return serverCommand(args...)
 }
 
-func serverAppRestartCommand(appName, envName, process string, jsonFlag bool) string {
+func serverAppRestartCommand(appName, envName, process string) string {
 	args := []string{"app", "restart"}
-	if jsonFlag {
-		args = append(args, "--json")
-	}
 	args = append(args, appName, envName)
 	if process != "" {
 		args = append(args, process)
@@ -280,11 +277,8 @@ func serverAppRestartCommand(appName, envName, process string, jsonFlag bool) st
 	return serverCommand(args...)
 }
 
-func serverAppRollbackCommand(appName, envName, release string, jsonFlag bool) string {
+func serverAppRollbackCommand(appName, envName, release string) string {
 	args := []string{"app", "rollback"}
-	if jsonFlag {
-		args = append(args, "--json")
-	}
 	args = append(args, appName, envName)
 	if release != "" {
 		args = append(args, release)
@@ -293,7 +287,7 @@ func serverAppRollbackCommand(appName, envName, release string, jsonFlag bool) s
 }
 
 func serverAppBackupCommand(appName, envName, dest string, jsonFlag bool) string {
-	args := []string{"app", "backup"}
+	args := []string{"app", "backup", "create"}
 	if jsonFlag {
 		args = append(args, "--json")
 	}
@@ -305,11 +299,11 @@ func serverAppBackupCommand(appName, envName, dest string, jsonFlag bool) string
 }
 
 func serverAppBackupListCommand(appName, envName string, jsonFlag bool) string {
-	args := []string{"app", "backup"}
+	args := []string{"app", "backup", "list"}
 	if jsonFlag {
 		args = append(args, "--json")
 	}
-	args = append(args, "list", appName, envName)
+	args = append(args, appName, envName)
 	return serverCommand(args...)
 }
 
@@ -318,11 +312,11 @@ func serverAppBackupRmCommand(appName, envName, id string) string {
 }
 
 func serverAppRestoreCommand(appName, envName, from string, dryRun bool) string {
-	args := []string{"app", "backup", "--from", from}
+	args := []string{"app", "backup", "restore", "--from", from}
 	if dryRun {
 		args = append(args, "--dry-run")
 	}
-	args = append(args, "restore", appName, envName)
+	args = append(args, appName, envName)
 	return serverCommand(args...)
 }
 
@@ -348,14 +342,6 @@ func serverAppSecretListCommand(appName, envName string, jsonFlag bool) string {
 
 func serverAppSecretRmCommand(appName, envName, key string) string {
 	return serverCommand("app", "secret", "rm", appName, envName, key)
-}
-
-func parseServerFlag(args []string) (string, []string, error) {
-	flags, err := parseHostFlags(args)
-	if err != nil {
-		return "", nil, err
-	}
-	return flags.server, flags.rest, nil
 }
 
 type hostFlags struct {
@@ -619,7 +605,7 @@ func CmdRestart(root string, envName string, process string) {
 
 	// Restart shares status's plumbing: helper does the work and prints
 	// the summary, so pass its text output through unchanged.
-	out := runSSHChecked(runner, ctx.Server, serverAppRestartCommand(ctx.AppName, envName, process, false), "restart failed")
+	out := runSSHChecked(runner, ctx.Server, serverAppRestartCommand(ctx.AppName, envName, process), "restart failed")
 	fmt.Print(out)
 }
 
@@ -634,7 +620,7 @@ func CmdRollback(root string, envName string, release string) {
 	}
 	defer runner.Close()
 
-	out := runSSHChecked(runner, ctx.Server, serverAppRollbackCommand(ctx.AppName, envName, release, false), "rollback failed")
+	out := runSSHChecked(runner, ctx.Server, serverAppRollbackCommand(ctx.AppName, envName, release), "rollback failed")
 	fmt.Print(out)
 }
 

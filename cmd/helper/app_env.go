@@ -295,6 +295,7 @@ type envIdentityFile struct {
 
 func writeEnvIdentity(app, env string) error {
 	path := identity.IdentityFile(app, env)
+	dir := filepath.Dir(path)
 	file := envIdentityFile{
 		Version: 1,
 		App:     app,
@@ -306,11 +307,36 @@ func writeEnvIdentity(app, env string) error {
 		return err
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("write env identity %s: %v", path, err)
+
+	tmp, err := os.CreateTemp(dir, ".simple-vps.json-*")
+	if err != nil {
+		return fmt.Errorf("create env identity temp file: %v", err)
 	}
-	if _, err := utils.RunChecked("chown", []string{"root:root", path}, ""); err != nil {
+	tmpPath := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write env identity temp file: %v", err)
+	}
+	if err := tmp.Chmod(0644); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod env identity temp file: %v", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close env identity temp file: %v", err)
+	}
+	if _, err := utils.RunChecked("chown", []string{"root:root", tmpPath}, ""); err != nil {
 		return fmt.Errorf("chown env identity: %v", err)
 	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace env identity %s: %v", path, err)
+	}
+	cleanup = false
 	return nil
 }
