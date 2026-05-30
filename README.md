@@ -67,8 +67,13 @@ Download the installer from the same release you are installing:
 
 ```bash
 VERSION=v0.5.0-rc3
-curl -fsSL "https://raw.githubusercontent.com/fprl/simple-vps/$VERSION/install.sh" \
-  -o install.sh
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  gh api -H 'Accept: application/vnd.github.raw' \
+    "/repos/fprl/simple-vps/contents/install.sh?ref=$VERSION" > install.sh
+else
+  curl -fsSL "https://raw.githubusercontent.com/fprl/simple-vps/$VERSION/install.sh" \
+    -o install.sh
+fi
 chmod 0755 install.sh
 ```
 
@@ -90,8 +95,9 @@ SIMPLE_VPS_VERSION="$VERSION" ./install.sh \
   --yes
 ```
 
-If the release assets are private, set `SIMPLE_VPS_RELEASE_TOKEN`, `GH_TOKEN`,
-or `GITHUB_TOKEN`. For local development, run `make build` first and the
+If the release assets are private, authenticate `gh` before downloading the
+installer and set `SIMPLE_VPS_RELEASE_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`
+before running it. For local development, run `make build` first and the
 installer will use `dist/simple-vps` instead of downloading a release.
 
 To install from a source checkout instead of a release, run `make build`, pin a

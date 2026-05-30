@@ -6,6 +6,95 @@ live in [SPEC.md](../SPEC.md), [README.md](../README.md), and
 the exact commands tested at the time, including names that ADR-0008 later
 removed.
 
+## 2026-05-30 — v0.5.0-rc3 rebuilt VPS release smoke and guide proof
+
+- **Host:** `128.140.3.159`
+- **OS:** freshly rebuilt Hetzner Ubuntu VPS, `x86_64`
+- **Release tested:** `v0.5.0-rc3`
+- **Scripted smoke root:** `/tmp/simple-vps-release-smoke-hV1bHv`
+- **Manual guide root:** `/tmp/simple-vps-getting-started-L6HtUV`
+- **DNS/TLS:** `nip.io` hostnames with `tls = "internal"` and curl
+  `--resolve ... -k`
+
+### Scripted release smoke
+
+First unauthenticated attempt failed immediately fetching the tagged installer:
+
+```text
+curl: (56) The requested URL returned error: 404
+```
+
+The repo/release assets are private, so the smoke was rerun with `GH_TOKEN`
+from the local Git credential helper. The next attempt reached remote install
+but failed SSH preflight because the VPS had been rebuilt and the local
+`known_hosts` entry was missing:
+
+```text
+simple-vps: error: SSH preflight failed for root@128.140.3.159.
+                   Check host, credentials, and key access.
+                   ssh command failed: Host key verification failed.: exit status 255
+```
+
+After refreshing `known_hosts`, the scripted smoke passed:
+
+```text
+==> Apply 20260530T065050Z changed 41 operations
+==> Provisioning complete
+v0.5.0-rc3
+Manifest simple-vps.toml is valid for env production.
+Setup complete for svps-smoke-064945 (production)
+Deployed svps-smoke-064945 (production) at fe2e6d5112ec
+/health -> ok
+/       -> {"app":"svps-smoke-064945","status":"running","database_path":"/data/app.sqlite"}
+Destroyed svps-smoke-064945 (production)
+app list --json -> {  "apps": []}
+release smoke passed
+```
+
+Follow-up fixes:
+
+- `scripts/release-smoke.sh` now refreshes `~/.ssh/known_hosts` by default for
+  disposable smoke VPSes before remote host install.
+- README, SPEC, and getting-started docs now show a `gh api` path for fetching
+  tagged `install.sh` from private repos.
+
+### Getting-started guide proof
+
+The guide flow was run manually with a temp local CLI instead of overwriting
+`~/.local/bin/simple-vps`.
+
+Host install was idempotent after the scripted smoke:
+
+```text
+==> Apply 20260530T065837Z changed 0 operations
+==> Provisioning complete
+```
+
+Then a fresh PHP app was scaffolded, committed, deployed, curled, and destroyed:
+
+```text
+Created simple-vps.toml
+Created Dockerfile
+Created public/index.php
+Manifest simple-vps.toml is valid for env production.
+Setup complete for api-manual (production)
+Deployed api-manual (production) at 04c1abc913b2
+api-manual (production)
+  web          running (Up 22 seconds)  release=04c1abc913b2
+ok
+{"app":"api-manual","status":"running","database_path":"/data/app.sqlite"}
+Destroyed api-manual (production)
+{
+  "apps": []
+}
+manual getting-started passed
+```
+
+**Outcome:** pass. The release artifact smoke and the first-user PHP guide flow
+both work on a freshly rebuilt VPS. The only issues found were local
+bootstrap/documentation issues around private GitHub access and rebuilt-host
+SSH known-hosts handling.
+
 ## 2026-05-29 — init-generated PHP real VPS smoke
 
 - **Host:** `128.140.3.159`

@@ -69,8 +69,13 @@ Run this from your laptop against a fresh Ubuntu 24.04/26.04 VPS:
 
 ```bash
 VERSION=v0.5.0-rc3
-curl -fsSL "https://raw.githubusercontent.com/fprl/simple-vps/$VERSION/install.sh" \
-  -o install.sh
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  gh api -H 'Accept: application/vnd.github.raw' \
+    "/repos/fprl/simple-vps/contents/install.sh?ref=$VERSION" > install.sh
+else
+  curl -fsSL "https://raw.githubusercontent.com/fprl/simple-vps/$VERSION/install.sh" \
+    -o install.sh
+fi
 chmod 0755 install.sh
 
 SIMPLE_VPS_VERSION="$VERSION" ./install.sh \
@@ -85,8 +90,9 @@ SIMPLE_VPS_VERSION="$VERSION" ./install.sh \
   --yes
 ```
 
-If release assets are private, export `SIMPLE_VPS_RELEASE_TOKEN`, `GH_TOKEN`,
-or `GITHUB_TOKEN` before running the installer.
+If release assets are private, authenticate `gh` before downloading the
+installer and export `SIMPLE_VPS_RELEASE_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`
+before running it.
 
 The installer converges the host. Running it again is safe; unchanged hosts
 report `changed 0 operations`.

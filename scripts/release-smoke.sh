@@ -33,6 +33,8 @@ Environment:
       defaults to <app>.<host>.nip.io
   SIMPLE_VPS_SMOKE_SKIP_INSTALL=1
       skip host install and only run the app smoke
+  SIMPLE_VPS_SMOKE_REFRESH_KNOWN_HOSTS=0
+      do not refresh ~/.ssh/known_hosts for the disposable VPS
 USAGE
 }
 
@@ -95,6 +97,7 @@ verify_client_checksum() {
 version="${VERSION:-}"
 host="${SIMPLE_VPS_SMOKE_HOST:-}"
 skip_install="${SIMPLE_VPS_SMOKE_SKIP_INSTALL:-0}"
+refresh_known_hosts="${SIMPLE_VPS_SMOKE_REFRESH_KNOWN_HOSTS:-1}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -128,6 +131,7 @@ done
 require_cmd curl
 require_cmd git
 require_cmd jq
+require_cmd ssh-keygen
 require_cmd ssh-keyscan
 
 token="${SIMPLE_VPS_RELEASE_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
@@ -175,6 +179,10 @@ run_smoke() {
   download_installer
 
   if [[ "$skip_install" != "1" ]]; then
+    if [[ "$refresh_known_hosts" == "1" ]]; then
+      ssh-keygen -R "$host" >/dev/null 2>&1 || true
+      ssh-keyscan -T 10 -t ed25519,rsa,ecdsa "$host" >>"$HOME/.ssh/known_hosts"
+    fi
     SIMPLE_VPS_VERSION="$version" SIMPLE_VPS_RELEASE_TOKEN="$token" ./install.sh \
       --mode remote \
       --host "$host" \
