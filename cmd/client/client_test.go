@@ -1,11 +1,15 @@
 package client
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/fprl/simple-vps/internal/config"
 )
 
 func writeClientManifest(t *testing.T, root string, body string) {
@@ -68,6 +72,268 @@ func TestValidateArtifactDotenvRejectsSecretsButAllowsExamples(t *testing.T) {
 	}
 }
 
+func TestValidateArtifactDotenvIgnoresUndeployedDirs(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{".git", "node_modules"} {
+		path := filepath.Join(root, dir)
+		if err := os.Mkdir(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, ".env"), []byte("SECRET=ignored\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := validateArtifactDotenv(root); err != nil {
+		t.Fatalf("dotenv scan should ignore undeployed dirs, got %v", err)
+	}
+}
+
+func TestDirtyReleaseIDIncludesBaseCommit(t *testing.T) {
+	at := time.Date(2026, 5, 30, 14, 30, 12, 0, time.UTC)
+	got := dirtyReleaseID("a1b2c3d4e5f6", at)
+	want := "a1b2c3d4e5f6-dirty-20260530t143012z"
+	if got != want {
+		t.Fatalf("dirtyReleaseID = %q, want %q", got, want)
+	}
+}
+
+func TestCheckAndDeployShareDirtyWorktreeDiagnostic(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, `name = "api"
+
+[env.production]
+server = "deploy@example.com"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "api.example.com"
+process = "web"
+`)
+	runGit(t, root, "init")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+	if err := os.WriteFile(filepath.Join(root, "dirty.txt"), []byte("dirty"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	checkDiags, err := checkDiagnostics(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, deployDiags, err := buildLocalDeployPlan(root, "production", localDeployOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkErrors := checkDiags.errorMessages()
+	deployErrors := deployDiags.errorMessages()
+	if len(checkErrors) != 1 || len(deployErrors) != 1 || checkErrors[0] != deployErrors[0] || checkErrors[0] != "working tree is dirty" {
+		t.Fatalf("check/deploy diagnostics diverged:\ncheck=%v\ndeploy=%v", checkErrors, deployErrors)
+	}
+}
+
+func TestCheckDiagnosticsExplainsMissingGitRepo(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, `name = "api"
+
+[env.production]
+server = "deploy@example.com"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "api.example.com"
+process = "web"
+`)
+
+	diags, err := checkDiagnostics(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	errors := diags.errorMessages()
+	if len(errors) != 1 || errors[0] != "git repository not found" {
+		t.Fatalf("unexpected diagnostics: %+v", diags)
+	}
+	if !strings.Contains(diags[0].Hint, "git init") {
+		t.Fatalf("expected git init hint, got %q", diags[0].Hint)
+	}
+}
+
+func TestGitWorktreeDirtyIsScopedToAppRoot(t *testing.T) {
+	repo := t.TempDir()
+	appRoot := filepath.Join(repo, "apps", "api")
+	if err := os.MkdirAll(appRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeClientDockerfile(t, appRoot)
+	writeClientManifest(t, appRoot, `name = "api"
+
+[env.production]
+server = "deploy@example.com"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "api.example.com"
+process = "web"
+`)
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("root"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "init")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+	if err := os.WriteFile(filepath.Join(repo, "root-dirty.txt"), []byte("dirty outside app"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	dirty, err := gitWorktreeDirty(appRoot, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dirty {
+		t.Fatal("app root should not be dirty when only a sibling/root file changed")
+	}
+
+	if err := os.WriteFile(filepath.Join(appRoot, "dirty.txt"), []byte("dirty inside app"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dirty, err = gitWorktreeDirty(appRoot, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dirty {
+		t.Fatal("app root should be dirty when a file inside the app root changed")
+	}
+}
+
+func TestBuildLocalDeployPlanAllowsIgnoredDotenvOutsideCleanArtifact(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, `name = "api"
+
+[env.production]
+server = "deploy@example.com"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "api.example.com"
+process = "web"
+`)
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".env\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("SECRET=local\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+
+	_, diags, err := buildLocalDeployPlan(root, "production", localDeployOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diags.hasErrors() {
+		t.Fatalf("ignored local dotenv should not block clean deploy artifact, got %+v", diags)
+	}
+}
+
+func TestBuildLocalDeployPlanAllowsUntrackedServeDir(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, `name = "api"
+
+[env.production]
+server = "deploy@example.com"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "api.example.com"
+process = "web"
+
+[routes.docs]
+host = "api.example.com"
+path = "/docs"
+serve = "dist"
+`)
+	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dist", "index.html"), []byte("generated"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init")
+	runGit(t, root, "add", "Dockerfile", "simple-vps.toml")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+
+	plan, diags, err := buildLocalDeployPlan(root, "production", localDeployOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diags.hasErrors() {
+		t.Fatalf("untracked serve dir should not require --dirty, got %+v", diags)
+	}
+	if !strings.Contains(plan.Release, "-s") {
+		t.Fatalf("release should include static hash suffix, got %q", plan.Release)
+	}
+}
+
+func TestBuildLocalDeployPlanRejectsDotenvInsideServeDir(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, `name = "api"
+
+[env.production]
+server = "deploy@example.com"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "api.example.com"
+process = "web"
+
+[routes.docs]
+host = "api.example.com"
+path = "/docs"
+serve = "dist"
+`)
+	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dist", ".env"), []byte("SECRET=bad"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init")
+	runGit(t, root, "add", "Dockerfile", "simple-vps.toml")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+
+	_, diags, err := buildLocalDeployPlan(root, "production", localDeployOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	errors := diags.errorMessages()
+	if len(errors) != 1 || !strings.Contains(errors[0], "dist/.env") {
+		t.Fatalf("expected serve dotenv rejection, got %+v", diags)
+	}
+}
+
 func TestStaticTreeHashChangesWhenServeBytesChange(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
@@ -90,6 +356,52 @@ func TestStaticTreeHashChangesWhenServeBytesChange(t *testing.T) {
 	}
 	if v1 == v2 {
 		t.Fatalf("static hash did not change: %s", v1)
+	}
+}
+
+func TestWriteSourceTarUsesAppRootInMonorepo(t *testing.T) {
+	repo := t.TempDir()
+	appRoot := filepath.Join(repo, "apps", "api")
+	if err := os.MkdirAll(appRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeClientDockerfile(t, appRoot)
+	writeClientManifest(t, appRoot, `name = "api"
+
+[env.production]
+server = "deploy@example.com"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "api.example.com"
+process = "web"
+`)
+	if err := os.WriteFile(filepath.Join(repo, "root-only.txt"), []byte("should not deploy"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "init")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+
+	tarPath := filepath.Join(t.TempDir(), "source.tar")
+	if err := writeSourceTar(appRoot, tarPath, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("tar", "-tf", tarPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("tar list failed: %v\n%s", err, out)
+	}
+	list := string(out)
+	for _, want := range []string{"Dockerfile", "simple-vps.toml"} {
+		if !strings.Contains(list, want) {
+			t.Fatalf("archive missing %s:\n%s", want, list)
+		}
+	}
+	if strings.Contains(list, "root-only.txt") || strings.Contains(list, "apps/api/") {
+		t.Fatalf("archive should contain app-root contents only:\n%s", list)
 	}
 }
 
@@ -135,24 +447,43 @@ func runGit(t *testing.T, root string, args ...string) {
 }
 
 func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
-	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", "abc1234", false)
-	want := "sudo simple-vps server app apply --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 api production"
+	plan := testLocalDeployPlan("abc1234", false)
+	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, false)
+	want := "sudo simple-vps server app apply --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 }
 
 func TestServerAppApplyCommandSupportsRebuild(t *testing.T) {
-	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", "abc1234", true)
-	want := "sudo simple-vps server app apply --rebuild --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 api production"
+	plan := testLocalDeployPlan("abc1234", true)
+	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, true)
+	want := "sudo simple-vps server app apply --rebuild --dirty --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func testLocalDeployPlan(release string, dirty bool) localDeployPlan {
+	return localDeployPlan{
+		Release:    release,
+		BaseCommit: "abc1234abc1234abc1234abc1234abc1234abc1234",
+		Dirty:      dirty,
+		CreatedAt:  time.Date(2026, 5, 30, 14, 30, 12, 0, time.UTC),
 	}
 }
 
 func TestServerAppSetupEnvCommand(t *testing.T) {
 	got := serverAppSetupEnvCommand("api", "production")
 	want := "sudo simple-vps server app setup-env api production"
+	if got != want {
+		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestServerAppPreflightCommandIncludesRequiredSecrets(t *testing.T) {
+	got := serverAppPreflightCommand("api", "production", []string{"DATABASE_URL", "API_KEY"})
+	want := "sudo simple-vps server app preflight --secret DATABASE_URL --secret API_KEY api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -304,6 +635,67 @@ func TestServerAppSecretListCommandSupportsJSON(t *testing.T) {
 	want = "sudo simple-vps server app secret list --json api production"
 	if got != want {
 		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
+type fakeSSHRunner struct {
+	responses map[string]string
+	failures  map[string]string
+	commands  []string
+}
+
+func (f *fakeSSHRunner) RunSSH(_ string, command string) (string, string, int, error) {
+	f.commands = append(f.commands, command)
+	if out, ok := f.failures[command]; ok {
+		return out, "", 1, nil
+	}
+	if out, ok := f.responses[command]; ok {
+		return out, "", 0, nil
+	}
+	return "", fmt.Sprintf("unexpected command: %s", command), 1, nil
+}
+
+func TestDeployRemotePreflightIsReadOnlyAndChecksSecrets(t *testing.T) {
+	ctx := &config.AppContext{
+		AppName:    "api",
+		EnvName:    "production",
+		Server:     "deploy@example.com",
+		SecretRefs: map[string]string{"DATABASE_URL": "DATABASE_URL"},
+	}
+	runner := &fakeSSHRunner{responses: map[string]string{
+		"true":                        `ok`,
+		"command -v rsync >/dev/null": "",
+		serverAppPreflightCommand("api", "production", []string{"DATABASE_URL"}): "Preflight passed for api (production)\n",
+	}}
+
+	if err := deployRemotePreflight(runner, ctx); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(runner.commands, "\n")
+	for _, mutating := range []string{"mkdir", "setup-env", "apply", "podman run", "podman rm"} {
+		if strings.Contains(joined, mutating) {
+			t.Fatalf("preflight ran mutating command %q:\n%s", mutating, joined)
+		}
+	}
+}
+
+func TestDeployRemotePreflightFailsMissingSecrets(t *testing.T) {
+	ctx := &config.AppContext{
+		AppName:    "api",
+		EnvName:    "production",
+		Server:     "deploy@example.com",
+		SecretRefs: map[string]string{"DATABASE_URL": "DATABASE_URL"},
+	}
+	runner := &fakeSSHRunner{responses: map[string]string{
+		"true":                        `ok`,
+		"command -v rsync >/dev/null": "",
+	}, failures: map[string]string{
+		serverAppPreflightCommand("api", "production", []string{"DATABASE_URL"}): "Preflight failed for api (production)\n  - missing secret DATABASE_URL; run `simple-vps secret set DATABASE_URL --env production`\n",
+	}}
+
+	err := deployRemotePreflight(runner, ctx)
+	if err == nil || !strings.Contains(err.Error(), "missing secret DATABASE_URL") || !strings.Contains(err.Error(), "simple-vps secret set DATABASE_URL --env production") {
+		t.Fatalf("expected missing secret hint, got %v", err)
 	}
 }
 

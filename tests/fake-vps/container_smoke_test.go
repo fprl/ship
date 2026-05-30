@@ -44,6 +44,7 @@ func TestContainerSmoke(t *testing.T) {
 	env.waitForSSH(t)
 
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
+	t.Run("dirty deploy records base commit and status", env.testDirtyDeployStatus)
 	t.Run("container rollback runs an older image release", env.testRollback)
 	t.Run("backup and restore round-trip app state", env.testBackupRestore)
 	t.Run("deploy removes processes dropped from the manifest", env.testRemovedProcessReconciliation)
@@ -70,6 +71,9 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	// the provisioner does. These need root and the deploy user only
 	// has passwordless sudo for /usr/local/bin/simple-vps — use
 	// docker exec instead.
+	e.dockerExec(t, `cat > /etc/simple-vps/host.json <<'EOF'
+{"version":1,"desired":{"users":{"operator":"operator","deploy":"deploy"},"ingress":{"expose":"public","tunnel":"none"},"features":{},"packages":{"podman":{"source":"apt"},"rsync":{"source":"apt"},"caddy":{"source":"container"}}},"observed":{"packages":{},"ingress":{}},"meta":{}}
+EOF`)
 	e.dockerExec(t, "mkdir -p /etc/caddy/simple-vps /etc/caddy/conf.d /var/lib/caddy")
 	e.dockerExec(t, `cat > /etc/caddy/Caddyfile <<'EOF'
 import simple-vps/*.caddy
@@ -97,6 +101,10 @@ EOF`)
 	webContainer := identity.ContainerName("api", "production", "web", release)
 	releaseManifest := e.ssh(t, "cat "+identity.ReleaseManifestFile("api", "production", release))
 	assertContains(t, releaseManifest, "port = 3000")
+	releaseMetadata := e.ssh(t, "cat "+identity.ReleaseMetadataFile("api", "production", release))
+	assertContains(t, releaseMetadata, `"release": "`+release+`"`)
+	assertContains(t, releaseMetadata, `"dirty": false`)
+	assertContains(t, releaseMetadata, `"base_commit":`)
 
 	// 3. fake-podman should have logged build + run for the web process.
 	commandsLog := e.ssh(t, "cat /run/fake-podman/commands.log")
@@ -157,6 +165,50 @@ EOF`)
 	e.simpleVPS(t, app, nil, "deploy", "--env", "production", "--rebuild")
 	commandsLog = e.ssh(t, "cat /run/fake-podman/commands.log")
 	assertContains(t, commandsLog, "podman build --no-cache --pull=always")
+}
+
+func (e *smokeEnv) testDirtyDeployStatus(t *testing.T) {
+	app := filepath.Join(e.tmp, "dirty-api")
+	mustMkdir(t, app)
+	writeDirtyFixture(t, app)
+	e.commitFixture(t, app)
+	baseCommit := strings.TrimSpace(e.mustRun(t, app, nil, "git", "rev-parse", "HEAD"))
+	baseShort := gitRelease(t, e, app)
+
+	e.simpleVPS(t, app, nil, "setup", "--env", "production")
+	mustWrite(t, filepath.Join(app, "dirty.txt"), "dirty deploy payload")
+	rejected := e.runSimpleVPS(t, app, nil, "deploy", "--env", "production")
+	if rejected.err == nil {
+		t.Fatal("deploy without --dirty should reject a dirty worktree")
+	}
+	assertContains(t, rejected.stdout+rejected.stderr, "working tree is dirty")
+
+	e.simpleVPS(t, app, nil, "deploy", "--env", "production", "--dirty")
+	rawStatus := e.simpleVPS(t, app, nil, "status", "--json", "--env", "production")
+	var status struct {
+		Release struct {
+			Release    string `json:"release"`
+			Dirty      bool   `json:"dirty"`
+			BaseCommit string `json:"base_commit"`
+		} `json:"release"`
+	}
+	if err := json.Unmarshal([]byte(rawStatus), &status); err != nil {
+		t.Fatalf("status --json output not parseable as JSON: %v\nraw:\n%s", err, rawStatus)
+	}
+	if !status.Release.Dirty {
+		t.Fatalf("expected dirty release in status: %+v", status.Release)
+	}
+	if status.Release.BaseCommit != baseCommit {
+		t.Fatalf("dirty base commit = %q, want %q", status.Release.BaseCommit, baseCommit)
+	}
+	if !strings.HasPrefix(status.Release.Release, baseShort+"-dirty-") {
+		t.Fatalf("dirty release id %q should start with %s-dirty-", status.Release.Release, baseShort)
+	}
+	releaseMetadata := e.ssh(t, "cat "+identity.ReleaseMetadataFile("dirtyapi", "production", status.Release.Release))
+	assertContains(t, releaseMetadata, `"dirty": true`)
+	assertContains(t, releaseMetadata, `"base_commit": "`+baseCommit+`"`)
+	textStatus := e.simpleVPS(t, app, nil, "status", "--env", "production")
+	assertContains(t, textStatus, "(dirty")
 }
 
 func (e *smokeEnv) testBackupRestore(t *testing.T) {
@@ -362,7 +414,8 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 
 	status := e.simpleVPS(t, app, nil, "status", "--env", "production")
 	assertContains(t, status, "site (production)")
-	assertContains(t, status, "no processes running")
+	assertContains(t, status, "static")
+	assertContains(t, status, "release="+oldRelease)
 
 	rawListJSON := e.simpleVPS(t, app, nil, "app", "list", "--server", "fake-vps", "--json")
 	var listPayload struct {
@@ -625,8 +678,9 @@ process = "web"
 	if result.err == nil {
 		t.Fatal("expected deploy to fail with unresolved @secret reference")
 	}
-	if !strings.Contains(result.stderr+result.stdout, "DATABASE_URL") || !strings.Contains(result.stderr+result.stdout, "db_url") {
-		t.Fatalf("unresolved-ref error must name the env var and the secret key, got:\nstdout: %s\nstderr: %s", result.stdout, result.stderr)
+	if !strings.Contains(result.stderr+result.stdout, "missing secret db_url") ||
+		!strings.Contains(result.stderr+result.stdout, "simple-vps secret set db_url --env production") {
+		t.Fatalf("preflight error must name the missing secret and set command, got:\nstdout: %s\nstderr: %s", result.stdout, result.stderr)
 	}
 }
 
@@ -837,6 +891,26 @@ resources = { memory = "512m", cpus = 0.5 }
 
 [routes.app]
 host = "api.example.com"
+process = "web"
+	`)
+}
+
+func writeDirtyFixture(t *testing.T, app string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "dirtyapi"
+
+[env.production]
+server = "fake-vps"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "dirty.example.com"
 process = "web"
 `)
 }

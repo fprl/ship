@@ -92,7 +92,7 @@ func TestContainersToAppEnvsGroupsAndSorts(t *testing.T) {
 }
 
 func TestRenderStatusTextEmpty(t *testing.T) {
-	out := renderStatusText("api", "production", nil, false)
+	out := renderStatusText("api", "production", nil, false, nil, nil)
 	if !strings.Contains(out, "api (production)") {
 		t.Fatalf("missing header:\n%s", out)
 	}
@@ -105,7 +105,7 @@ func TestRenderStatusTextEmpty(t *testing.T) {
 }
 
 func TestRenderStatusTextKnownEnvWithoutProcesses(t *testing.T) {
-	out := renderStatusText("site", "production", nil, true)
+	out := renderStatusText("site", "production", nil, true, nil, nil)
 	if !strings.Contains(out, "no processes running") {
 		t.Fatalf("missing empty process state:\n%s", out)
 	}
@@ -119,7 +119,7 @@ func TestRenderStatusTextWithProcesses(t *testing.T) {
 		{Process: "web", Container: "svps-a8f9b2-web-abc1234", State: "running", Status: "Up 4 minutes", Release: "abc1234"},
 		{Process: "worker", Container: "svps-a8f9b2-worker-abc1234", State: "exited", Status: "Exited (1) 2 minutes ago", Release: "abc1234"},
 	}
-	out := renderStatusText("api", "production", processes, true)
+	out := renderStatusText("api", "production", processes, true, &statusRelease{Release: "abc1234", Source: "process"}, nil)
 	if !strings.Contains(out, "api (production)") {
 		t.Fatalf("missing header:\n%s", out)
 	}
@@ -161,9 +161,47 @@ func TestRenderStatusTextHandlesMissingReleaseLabel(t *testing.T) {
 	processes := []processStatus{
 		{Process: "web", Container: "x", State: "running"},
 	}
-	out := renderStatusText("api", "production", processes, true)
+	out := renderStatusText("api", "production", processes, true, nil, nil)
 	if !strings.Contains(out, "release=?") {
 		t.Fatalf("expected `release=?` fallback for missing label:\n%s", out)
+	}
+}
+
+func TestRenderStatusTextMarksDirtyReleaseAndStatic(t *testing.T) {
+	release := &statusRelease{
+		Release:    "abc1234-dirty-20260530t143012z",
+		Source:     "mixed",
+		Dirty:      true,
+		BaseCommit: "abc1234abc1234abc1234abc1234abc1234abc1234",
+	}
+	static := &staticStatus{
+		Release: "abc1234-dirty-20260530t143012z",
+		Routes:  []string{"docs"},
+		Dirty:   true,
+	}
+	processes := []processStatus{
+		{Process: "web", State: "running", Release: "abc1234-dirty-20260530t143012z", Dirty: true},
+	}
+	out := renderStatusText("api", "production", processes, true, release, static)
+	if !strings.Contains(out, "release: abc1234-dirty-20260530t143012z (dirty, base abc1234abc12)") {
+		t.Fatalf("missing dirty release summary:\n%s", out)
+	}
+	if !strings.Contains(out, "static") || !strings.Contains(out, "routes=docs") {
+		t.Fatalf("missing static row:\n%s", out)
+	}
+}
+
+func TestActiveStatusReleaseUsesRunningProcessesOnly(t *testing.T) {
+	processes := []processStatus{
+		{Process: "web", State: "running", Release: "new1234"},
+		{Process: "web", State: "exited", Release: "old1234"},
+	}
+	release := activeStatusRelease("api", "production", runningProcesses(processes), nil)
+	if release == nil {
+		t.Fatal("expected active release")
+	}
+	if release.Mixed || release.Release != "new1234" {
+		t.Fatalf("expected running release only, got %+v", release)
 	}
 }
 

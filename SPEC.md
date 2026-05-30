@@ -68,7 +68,7 @@ relative to that manifest's directory.
 
 ```bash
 simple-vps init [--config <path>] [--template container|static|php|hono] [--name <app>] [--env <env>] [--server <ssh-target>] [--host <host>] [--tls auto|internal] [--port <port>] # scaffold simple-vps.toml plus starter files
-simple-vps check [--env <env>]                        # validate manifest, all envs by default
+simple-vps check [--env <env>]                        # validate manifest; with --env also checks local deploy blockers
 simple-vps setup --env <env>                          # create per-env user, paths, Podman network
 simple-vps deploy --env <env> [--dirty] [--rebuild]   # build image or publish static assets, route via Caddy
 simple-vps status --env <env> [--json]                # runtime process table
@@ -179,8 +179,9 @@ sudo simple-vps server status [--json]
 sudo simple-vps server doctor [--json]
 
 sudo simple-vps server app setup-env <app> <env>
+sudo simple-vps server app preflight [--secret <key> ...] [--json] <app> <env>
 sudo simple-vps server app destroy-env [--purge] <app> <env>
-sudo simple-vps server app apply --tarball <path> --manifest <path> --sha <sha> <app> <env>
+sudo simple-vps server app apply --tarball <path> --manifest <path> --sha <release> --base-commit <sha> --created-at <rfc3339> [--dirty] <app> <env>
 sudo simple-vps server app list [--json]
 sudo simple-vps server app status [--json] <app> <env>
 sudo simple-vps server app restart <app> <env> [process]
@@ -262,6 +263,10 @@ invalid because it is the same route expressed two ways. Static
 `/docs/*` with `/docs` stripped before file lookup. Longest path wins
 within a host.
 
+`serve` directories must be real directory trees under the app root. Symlinks
+inside static assets are rejected so a release cannot point Caddy outside the
+snapshotted tree.
+
 Container runtime values are declared once in `[vars]` and overridden per
 env with `[env.<env>.vars]`. Whole-value `@secret:KEY` references resolve
 from the host secret store during deploy.
@@ -300,10 +305,14 @@ the env root is flat and scoped to `(app, env)`:
 ```
 
 Every successful deploy stores the manifest that produced that release at
-`releases/<sha>/simple-vps.toml`, then updates `simple-vps.toml` to the active
-manifest. Rollback uses the selected release's manifest snapshot for process
-ports, routes, static paths, and runtime var references; it does not infer the
-old shape from the latest local checkout.
+`releases/<release>/simple-vps.toml` and release metadata at
+`releases/<release>/release.json`, then updates `simple-vps.toml` to the active
+manifest. Dirty deploy IDs are shaped like
+`<short-sha>-dirty-<yyyymmdd>t<hhmmss>z`, optionally followed by the static
+tree suffix. Clean release IDs are the base commit short SHA, optionally
+followed by that same static-tree suffix. Rollback uses the selected release's
+manifest snapshot for process ports, routes, static paths, and runtime var
+references; it does not infer the old shape from the latest local checkout.
 
 Static route assets are copied to:
 
@@ -315,6 +324,15 @@ Caddy fragments point at the active release path, not at the source checkout
 or the app container. `static/current` is a bookkeeping symlink for active
 static-release discovery; rollback and restore move it together with the
 Caddy fragment.
+
+In monorepos, Git dirtiness and clean archives are scoped to the directory that
+contains the selected `simple-vps.toml`; sibling apps and repository-root files
+do not enter that app's deploy artifact.
+
+Before deploy uploads anything, the client runs a read-only remote preflight:
+SSH reachability, deploy-user `rsync`, helper availability, host state validity,
+setup-env layout, running ingress Caddy container, app network, and required
+secret presence. Setup and repair stay explicit in `setup` and `host install`.
 
 See [ADR-0008](docs/adr/0008-manifest-v2-env-root-and-runtime-identity.md)
 for the manifest v2, env-root, and derived infra ID contract.

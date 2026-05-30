@@ -30,6 +30,7 @@ real static site before validating `serve = "dist"`.
 (cd examples/mixed-api-docs && ../../dist/simple-vps check --env production)
 tmp=$(mktemp -d /tmp/simple-vps-init-check-XXXXXX)
 ./dist/simple-vps init --config "$tmp/simple-vps.toml" --template php --name init-php --server deploy@example.com --host init-php.example.com
+(cd "$tmp" && git init && git add . && git -c user.email=test@example.com -c user.name=Test commit -m init)
 ./dist/simple-vps check --config "$tmp/simple-vps.toml" --env production
 
 # Optional local container build coverage when Podman or Docker is available.
@@ -76,3 +77,17 @@ After publishing, run the real VPS smoke again:
 ```bash
 scripts/release-smoke.sh --version "$VERSION" --host <ip>
 ```
+
+## Example Matrix Smoke
+
+After the host is installed, this deploys the checked-in PHP, Hono/Bun, mixed
+API+static, and Astro static examples with the current local client binary:
+
+```bash
+make build VERSION="$VERSION"
+scripts/example-matrix-smoke.sh --host <ip> --client ./dist/simple-vps
+```
+
+The Astro example runs `npm install --no-package-lock && npm run build` locally
+before deploy. The script destroys each example env unless
+`SIMPLE_VPS_EXAMPLE_MATRIX_SKIP_DESTROY=1` is set.

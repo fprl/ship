@@ -23,37 +23,37 @@ func TestCurrentReleaseRejectsEmptyOrMixedProcesses(t *testing.T) {
 
 func TestSelectRollbackRelease(t *testing.T) {
 	images := []imageRelease{
-		{Release: "new"},
-		{Release: "old"},
-		{Release: "older"},
+		{Release: "3333333"},
+		{Release: "2222222"},
+		{Release: "1111111"},
 	}
-	got, err := selectRollbackRelease(images, "new", "")
+	got, err := selectRollbackRelease(images, "3333333", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Release != "old" {
-		t.Fatalf("expected previous release old, got %+v", got)
+	if got.Release != "2222222" {
+		t.Fatalf("expected previous release 2222222, got %+v", got)
 	}
 
-	got, err = selectRollbackRelease(images, "new", "older")
+	got, err = selectRollbackRelease(images, "3333333", "1111111")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Release != "older" {
-		t.Fatalf("expected requested release older, got %+v", got)
+	if got.Release != "1111111" {
+		t.Fatalf("expected requested release 1111111, got %+v", got)
 	}
 }
 
 func TestSelectRollbackReleaseErrors(t *testing.T) {
-	_, err := selectRollbackRelease([]imageRelease{{Release: "new"}}, "new", "")
+	_, err := selectRollbackRelease([]imageRelease{{Release: "3333333"}}, "3333333", "")
 	if err == nil || !strings.Contains(err.Error(), "no previous release") {
 		t.Fatalf("expected no previous release error, got %v", err)
 	}
-	_, err = selectRollbackRelease([]imageRelease{{Release: "new"}}, "new", "missing")
+	_, err = selectRollbackRelease([]imageRelease{{Release: "3333333"}}, "3333333", "2222222")
 	if err == nil || !strings.Contains(err.Error(), "not available") {
 		t.Fatalf("expected missing release error, got %v", err)
 	}
-	_, err = selectRollbackRelease([]imageRelease{{Release: "new"}}, "new", "new")
+	_, err = selectRollbackRelease([]imageRelease{{Release: "3333333"}}, "3333333", "3333333")
 	if err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("expected already running error, got %v", err)
 	}
@@ -62,21 +62,21 @@ func TestSelectRollbackReleaseErrors(t *testing.T) {
 func TestImageReleasesFromEntriesUsesPodmanLabels(t *testing.T) {
 	entries := []imageEntry{
 		{
-			Names: []string{"localhost/simple-vps/svps-de70a215abfd:new"},
+			Names: []string{"localhost/simple-vps/svps-de70a215abfd:3333333"},
 			Labels: map[string]string{
 				"simple-vps.app":      "hello",
 				"simple-vps.env":      "production",
 				"simple-vps.infra_id": "svps-de70a215abfd",
-				"simple-vps.release":  "new",
+				"simple-vps.release":  "3333333",
 			},
 		},
 		{
-			Names: []string{"localhost/simple-vps/svps-de70a215abfd:old"},
+			Names: []string{"localhost/simple-vps/svps-de70a215abfd:2222222"},
 			Labels: map[string]string{
 				"simple-vps.app":      "hello",
 				"simple-vps.env":      "production",
 				"simple-vps.infra_id": "svps-de70a215abfd",
-				"simple-vps.release":  "old",
+				"simple-vps.release":  "2222222",
 			},
 		},
 		{
@@ -91,15 +91,15 @@ func TestImageReleasesFromEntriesUsesPodmanLabels(t *testing.T) {
 	}
 
 	got := imageReleasesFromEntries("hello", "production", entries)
-	if len(got) != 2 || got[0].Release != "new" || got[1].Release != "old" {
+	if len(got) != 2 || got[0].Release != "3333333" || got[1].Release != "2222222" {
 		t.Fatalf("unexpected releases: %+v", got)
 	}
 }
 
 func TestStaticReleasesAtOrdersNewestFirst(t *testing.T) {
 	root := t.TempDir()
-	old := filepath.Join(root, "old")
-	new := filepath.Join(root, "new")
+	old := filepath.Join(root, "2222222")
+	new := filepath.Join(root, "3333333")
 	if err := os.Mkdir(old, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestStaticReleasesAtOrdersNewestFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Release != "new" || got[1].Release != "old" {
+	if len(got) != 2 || got[0].Release != "3333333" || got[1].Release != "2222222" {
 		t.Fatalf("unexpected static release order: %+v", got)
 	}
 }
@@ -125,11 +125,11 @@ func TestRenderRollbackText(t *testing.T) {
 	out := renderRollbackText(rollbackPayload{
 		App:       "api",
 		Env:       "production",
-		Previous:  "new",
-		Release:   "old",
+		Previous:  "3333333",
+		Release:   "2222222",
 		Processes: []string{"web"},
 	})
-	if !strings.Contains(out, "Rolled back api (production) from new to old") {
+	if !strings.Contains(out, "Rolled back api (production) from 3333333 to 2222222") {
 		t.Fatalf("missing rollback summary:\n%s", out)
 	}
 	if !strings.Contains(out, "web") || !strings.Contains(out, "running") {

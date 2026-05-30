@@ -33,8 +33,13 @@ func (c appStatusCmd) Run() error {
 	}
 	processes := containersToProcesses(out)
 	envKnown := envIdentityExists(c.App, c.Env)
+	static, err := activeStaticStatus(c.App, c.Env)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	release := activeStatusRelease(c.App, c.Env, runningProcesses(processes), static)
 	if c.JSON {
-		payload := statusPayload{App: c.App, Env: c.Env, Processes: processes}
+		payload := statusPayload{App: c.App, Env: c.Env, Release: release, Static: static, Processes: processes}
 		buf, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
 			utils.Die(err.Error(), 1)
@@ -42,7 +47,7 @@ func (c appStatusCmd) Run() error {
 		fmt.Println(string(buf))
 		return nil
 	}
-	fmt.Print(renderStatusText(c.App, c.Env, processes, envKnown))
+	fmt.Print(renderStatusText(c.App, c.Env, processes, envKnown, release, static))
 	return nil
 }
 
@@ -63,6 +68,9 @@ func (c appListCmd) Run() error {
 		utils.Die(err.Error(), 1)
 	}
 	apps := mergeAppEnvs(identityApps, containersToAppEnvs(out))
+	if err := attachStaticStatuses(apps); err != nil {
+		utils.Die(err.Error(), 1)
+	}
 	if c.JSON {
 		payload := appListPayload{Apps: apps}
 		buf, err := json.MarshalIndent(payload, "", "  ")
@@ -119,6 +127,8 @@ func (c appLogsCmd) Run() error {
 type statusPayload struct {
 	App       string          `json:"app"`
 	Env       string          `json:"env"`
+	Release   *statusRelease  `json:"release,omitempty"`
+	Static    *staticStatus   `json:"static,omitempty"`
 	Processes []processStatus `json:"processes"`
 }
 
@@ -130,15 +140,38 @@ type appEnvStatus struct {
 	App       string          `json:"app"`
 	Env       string          `json:"env"`
 	Processes []processStatus `json:"processes"`
+	Static    *staticStatus   `json:"static,omitempty"`
 }
 
 type processStatus struct {
-	Process   string `json:"process"`
-	Container string `json:"container"`
-	State     string `json:"state"`
-	Image     string `json:"image,omitempty"`
-	Release   string `json:"release,omitempty"`
-	Status    string `json:"status,omitempty"` // e.g. "Up 4 minutes"
+	Process    string `json:"process"`
+	Container  string `json:"container"`
+	State      string `json:"state"`
+	Image      string `json:"image,omitempty"`
+	Release    string `json:"release,omitempty"`
+	Dirty      bool   `json:"dirty,omitempty"`
+	BaseCommit string `json:"base_commit,omitempty"`
+	CreatedAt  string `json:"created_at,omitempty"`
+	Status     string `json:"status,omitempty"` // e.g. "Up 4 minutes"
+}
+
+type staticStatus struct {
+	Release    string   `json:"release"`
+	Routes     []string `json:"routes"`
+	Dirty      bool     `json:"dirty,omitempty"`
+	BaseCommit string   `json:"base_commit,omitempty"`
+	CreatedAt  string   `json:"created_at,omitempty"`
+}
+
+type statusRelease struct {
+	Release        string `json:"release,omitempty"`
+	Dirty          bool   `json:"dirty,omitempty"`
+	BaseCommit     string `json:"base_commit,omitempty"`
+	CreatedAt      string `json:"created_at,omitempty"`
+	Source         string `json:"source"`
+	Mixed          bool   `json:"mixed,omitempty"`
+	ProcessRelease string `json:"process_release,omitempty"`
+	StaticRelease  string `json:"static_release,omitempty"`
 }
 
 // containerEntry is the slice of `podman ps --format json` we care
@@ -167,14 +200,23 @@ func containersToProcesses(entries []containerEntry) []processStatus {
 		if len(e.Names) > 0 {
 			name = e.Names[0]
 		}
-		out = append(out, processStatus{
+		release := e.Labels["simple-vps.release"]
+		status := processStatus{
 			Process:   proc,
 			Container: name,
 			State:     e.State,
 			Image:     e.Image,
-			Release:   e.Labels["simple-vps.release"],
+			Release:   release,
 			Status:    e.Status,
-		})
+		}
+		if release != "" {
+			if meta, ok, err := readReleaseMetadata(e.Labels["simple-vps.app"], e.Labels["simple-vps.env"], release); err == nil && ok {
+				status.Dirty = meta.Dirty
+				status.BaseCommit = meta.BaseCommit
+				status.CreatedAt = meta.CreatedAt
+			}
+		}
+		out = append(out, status)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Process < out[j].Process })
 	return out
@@ -258,10 +300,13 @@ func mergeAppEnvs(identityApps, processApps []appEnvStatus) []appEnvStatus {
 	return out
 }
 
-func renderStatusText(app, env string, processes []processStatus, envKnown bool) string {
+func renderStatusText(app, env string, processes []processStatus, envKnown bool, release *statusRelease, static *staticStatus) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s (%s)\n", app, env)
-	if len(processes) == 0 {
+	if release != nil {
+		fmt.Fprintf(&b, "  release: %s\n", renderStatusReleaseText(release))
+	}
+	if len(processes) == 0 && static == nil {
 		if envKnown {
 			b.WriteString("  no processes running\n")
 		} else {
@@ -278,7 +323,21 @@ func renderStatusText(app, env string, processes []processStatus, envKnown bool)
 		if s.Status != "" {
 			state = s.State + " (" + s.Status + ")"
 		}
+		if s.Dirty {
+			release += " (dirty)"
+		}
 		fmt.Fprintf(&b, "  %-12s %s  release=%s\n", s.Process, state, release)
+	}
+	if static != nil {
+		staticRelease := static.Release
+		if static.Dirty {
+			staticRelease += " (dirty)"
+		}
+		routes := "-"
+		if len(static.Routes) > 0 {
+			routes = strings.Join(static.Routes, ",")
+		}
+		fmt.Fprintf(&b, "  %-12s active  release=%s routes=%s\n", "static", staticRelease, routes)
 	}
 	return b.String()
 }
@@ -291,8 +350,21 @@ func renderAppListText(apps []appEnvStatus) string {
 	for _, app := range apps {
 		fmt.Fprintf(&b, "%s (%s)\n", app.App, app.Env)
 		if len(app.Processes) == 0 {
-			b.WriteString("  no processes\n")
-			continue
+			if app.Static == nil {
+				b.WriteString("  no processes\n")
+				continue
+			}
+		}
+		if app.Static != nil {
+			staticRelease := app.Static.Release
+			if app.Static.Dirty {
+				staticRelease += " (dirty)"
+			}
+			routes := "-"
+			if len(app.Static.Routes) > 0 {
+				routes = strings.Join(app.Static.Routes, ",")
+			}
+			fmt.Fprintf(&b, "  %-12s active  release=%s routes=%s\n", "static", staticRelease, routes)
 		}
 		for _, s := range app.Processes {
 			release := s.Release
@@ -303,10 +375,149 @@ func renderAppListText(apps []appEnvStatus) string {
 			if s.Status != "" {
 				state = s.State + " (" + s.Status + ")"
 			}
+			if s.Dirty {
+				release += " (dirty)"
+			}
 			fmt.Fprintf(&b, "  %-12s %s  release=%s\n", s.Process, state, release)
 		}
 	}
 	return b.String()
+}
+
+func attachStaticStatuses(apps []appEnvStatus) error {
+	for i := range apps {
+		static, err := activeStaticStatus(apps[i].App, apps[i].Env)
+		if err != nil {
+			return err
+		}
+		apps[i].Static = static
+	}
+	return nil
+}
+
+func renderStatusReleaseText(release *statusRelease) string {
+	if release.Mixed {
+		return fmt.Sprintf("mixed (processes=%s static=%s)", release.ProcessRelease, release.StaticRelease)
+	}
+	out := release.Release
+	if out == "" {
+		out = "?"
+	}
+	if release.Dirty {
+		base := release.BaseCommit
+		if len(base) > 12 {
+			base = base[:12]
+		}
+		if base != "" {
+			out += " (dirty, base " + base + ")"
+		} else {
+			out += " (dirty)"
+		}
+	}
+	return out
+}
+
+func activeStatusRelease(app, env string, processes []processStatus, static *staticStatus) *statusRelease {
+	processRelease, processMixed := commonProcessRelease(processes)
+	staticRelease := ""
+	if static != nil {
+		staticRelease = static.Release
+	}
+	switch {
+	case processMixed:
+		release := statusRelease{Source: "mixed", Mixed: true, ProcessRelease: "mixed", StaticRelease: staticRelease}
+		return &release
+	case processRelease != "" && staticRelease != "" && processRelease != staticRelease:
+		return &statusRelease{
+			Source:         "mixed",
+			Mixed:          true,
+			ProcessRelease: processRelease,
+			StaticRelease:  staticRelease,
+		}
+	case processRelease != "":
+		release := statusRelease{Release: processRelease, Source: "process"}
+		applyReleaseMetadata(app, env, processRelease, &release)
+		if staticRelease == processRelease {
+			release.Source = "mixed"
+			release.StaticRelease = staticRelease
+			release.ProcessRelease = processRelease
+		}
+		return &release
+	case staticRelease != "":
+		release := statusRelease{Release: staticRelease, Source: "static"}
+		applyReleaseMetadata(app, env, staticRelease, &release)
+		return &release
+	default:
+		return nil
+	}
+}
+
+func commonProcessRelease(processes []processStatus) (string, bool) {
+	release := ""
+	for _, proc := range processes {
+		if proc.Release == "" {
+			continue
+		}
+		if release == "" {
+			release = proc.Release
+			continue
+		}
+		if proc.Release != release {
+			return "", true
+		}
+	}
+	return release, false
+}
+
+func applyReleaseMetadata(app, env, release string, target *statusRelease) {
+	meta, ok, err := readReleaseMetadata(app, env, release)
+	if err != nil || !ok {
+		return
+	}
+	target.Dirty = meta.Dirty
+	target.BaseCommit = meta.BaseCommit
+	target.CreatedAt = meta.CreatedAt
+}
+
+func activeStaticStatus(app, env string) (*staticStatus, error) {
+	current := filepath.Join(identity.StaticDir(app, env), "current")
+	target, err := os.Readlink(current)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	release := filepath.Base(target)
+	if err := validateRelease(release); err != nil {
+		return nil, err
+	}
+	routes, err := staticCurrentRoutes(target)
+	if err != nil {
+		return nil, err
+	}
+	status := &staticStatus{Release: release, Routes: routes}
+	if meta, ok, err := readReleaseMetadata(app, env, release); err == nil && ok {
+		status.Dirty = meta.Dirty
+		status.BaseCommit = meta.BaseCommit
+		status.CreatedAt = meta.CreatedAt
+	}
+	return status, nil
+}
+
+func staticCurrentRoutes(currentTarget string) ([]string, error) {
+	entries, err := os.ReadDir(currentTarget)
+	if err != nil {
+		return nil, err
+	}
+	var routes []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			routes = append(routes, entry.Name())
+		}
+	}
+	sort.Strings(routes)
+	return routes, nil
 }
 
 // --- podman calls ---

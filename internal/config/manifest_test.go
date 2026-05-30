@@ -287,6 +287,36 @@ serve = "dist"
 	}
 }
 
+func TestCheckManifestRejectsServeSymlinks(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "target.html"), []byte("target"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../target.html", filepath.Join(root, "dist", "index.html")); err != nil {
+		t.Fatal(err)
+	}
+	writeManifest(t, root, `name = "site"
+
+[env.production]
+server = "deploy@example.com"
+
+[routes.app]
+host = "site.example.com"
+serve = "dist"
+`)
+
+	errors, _, err := CheckManifest(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(errors, `[routes.app].serve must not contain symlink "dist/index.html"`) {
+		t.Fatalf("missing serve symlink error: %v", errors)
+	}
+}
+
 func TestCheckManifestRejectsBadResourcesAndRouteTargets(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root)

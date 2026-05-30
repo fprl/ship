@@ -185,6 +185,10 @@ simple-vps deploy --env production
 simple-vps status --env production
 ```
 
+`check --env` uses the same local deploy diagnostics as `deploy`: the app
+directory must be a committed Git worktree, and dirty deploys must be explicit
+with `deploy --dirty`.
+
 The `serve` directory is uploaded into the same release as the container image,
 so rollback and restore move the web process and static files together.
 

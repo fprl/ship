@@ -56,15 +56,75 @@ func TestResolveEnvDoesNotMutateInputMaps(t *testing.T) {
 }
 
 func TestValidateReleaseRejectsPathTraversal(t *testing.T) {
-	for _, release := range []string{"abc123", "dirty-20260529083043"} {
+	for _, release := range []string{"abc1234", "abc1234-s012345abcdef", "abc1234-dirty-20260530t143012z", "abc1234-dirty-20260530t143012z-s012345abcdef"} {
 		if err := validateRelease(release); err != nil {
 			t.Fatalf("expected %q to be valid: %v", release, err)
 		}
 	}
-	for _, release := range []string{"", "../abc", "abc/def", "ABC123", "abc_def", "abc.def"} {
+	for _, release := range []string{"", "abc123", "../abc", "abc/def", "ABC123", "abc_def", "abc.def", "dirty-20260528123456", "abc1234-dirty-20260530T143012Z"} {
 		if err := validateRelease(release); err == nil {
 			t.Fatalf("expected %q to be invalid", release)
 		}
+	}
+}
+
+func TestReleaseMetadataValidation(t *testing.T) {
+	meta, err := newReleaseMetadata("abc1234-dirty-20260530t143012z", true, "abc1234abc1234abc1234abc1234abc1234abc1234", "2026-05-30T14:30:12Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !meta.Dirty || meta.Release != "abc1234-dirty-20260530t143012z" {
+		t.Fatalf("unexpected metadata: %+v", meta)
+	}
+	if _, err := newReleaseMetadata("abc1234-s012345abcdef", false, "abc1234abc1234abc1234abc1234abc1234abc1234", "2026-05-30T14:30:12Z"); err != nil {
+		t.Fatalf("expected clean static release metadata to pass: %v", err)
+	}
+	if _, err := newReleaseMetadata("abc1234-dirty-20260530t143012z-s012345abcdef", true, "abc1234abc1234abc1234abc1234abc1234abc1234", "2026-05-30T14:30:12Z"); err != nil {
+		t.Fatalf("expected dirty static release metadata to pass: %v", err)
+	}
+	if _, err := newReleaseMetadata("ABC", false, "abc1234", "2026-05-30T14:30:12Z"); err == nil {
+		t.Fatal("expected invalid release metadata to fail")
+	}
+	if _, err := newReleaseMetadata("abc1234", false, "not-a-sha", "2026-05-30T14:30:12Z"); err == nil {
+		t.Fatal("expected invalid base commit to fail")
+	}
+	if _, err := newReleaseMetadata("abc1234-dirty-20260530t143012z", false, "abc1234", "2026-05-30T14:30:12Z"); err == nil {
+		t.Fatal("expected dirty metadata mismatch to fail")
+	}
+	if _, err := newReleaseMetadata("abc1234-dirty-20260530t143013z", true, "abc1234abc1234abc1234abc1234abc1234abc1234", "2026-05-30T14:30:12Z"); err == nil {
+		t.Fatal("expected dirty timestamp mismatch to fail")
+	}
+	if _, err := newReleaseMetadata("def1234-dirty-20260530t143012z", true, "abc1234abc1234abc1234abc1234abc1234abc1234", "2026-05-30T14:30:12Z"); err == nil {
+		t.Fatal("expected dirty base commit mismatch to fail")
+	}
+	if _, err := newReleaseMetadata("abc1234", false, "abc1234", "not-a-time"); err == nil {
+		t.Fatal("expected invalid created_at to fail")
+	}
+}
+
+func TestApplyRejectsManifestForDifferentApp(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Dockerfile"), []byte("FROM scratch\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "simple-vps.toml"), []byte(`name = "other"
+
+[env.production]
+server = "deploy@example.com"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "api.example.com"
+process = "web"
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (appApplyCmd{App: "api", Env: "production"}).loadApplyContext(root)
+	if err == nil || !strings.Contains(err.Error(), "uploaded manifest names app other, expected api") {
+		t.Fatalf("expected app mismatch error, got %v", err)
 	}
 }
 

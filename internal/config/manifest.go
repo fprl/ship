@@ -637,5 +637,30 @@ func validateServeDir(root, routeName, dir string, errors *[]string) {
 	}
 	if !info.IsDir() {
 		*errors = append(*errors, fmt.Sprintf("%s %q must be a directory", label, dir))
+		return
+	}
+	rooted := filepath.Join(root, dir)
+	if err := filepath.WalkDir(rooted, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			rel = path
+		}
+		*errors = append(*errors, fmt.Sprintf("%s must not contain symlink %q", label, filepath.ToSlash(rel)))
+		if d.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
+	}); err != nil {
+		*errors = append(*errors, fmt.Sprintf("%s scan failed: %v", label, err))
 	}
 }

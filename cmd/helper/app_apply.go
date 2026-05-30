@@ -25,12 +25,15 @@ import (
 //  5. Synthesizes a Caddyfile fragment, validates, reloads, and only
 //     then removes old routed containers.
 type appApplyCmd struct {
-	App      string `arg:"" help:"App name."`
-	Env      string `arg:"" help:"Env name."`
-	Tarball  string `name:"tarball" required:"" help:"Path to the streamed source tarball."`
-	Manifest string `name:"manifest" required:"" help:"Path to the uploaded simple-vps.toml."`
-	SHA      string `name:"sha" required:"" help:"Release identifier (short git SHA or dirty-<timestamp>)."`
-	Rebuild  bool   `name:"rebuild" help:"Pass --no-cache --pull=always to podman build."`
+	App        string `arg:"" help:"App name."`
+	Env        string `arg:"" help:"Env name."`
+	Tarball    string `name:"tarball" required:"" help:"Path to the streamed source tarball."`
+	Manifest   string `name:"manifest" required:"" help:"Path to the uploaded simple-vps.toml."`
+	SHA        string `name:"sha" required:"" help:"Release identifier."`
+	Dirty      bool   `name:"dirty" help:"Mark this release as built from a dirty worktree snapshot."`
+	BaseCommit string `name:"base-commit" required:"" help:"Git commit the release is based on."`
+	CreatedAt  string `name:"created-at" required:"" help:"Release creation time in RFC3339."`
+	Rebuild    bool   `name:"rebuild" help:"Pass --no-cache --pull=always to podman build."`
 }
 
 type applyReleaseResult struct {
@@ -46,6 +49,9 @@ func (c appApplyCmd) Run() error {
 		utils.Die(err.Error(), 1)
 	}
 	if err := validateRelease(c.SHA); err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	if _, err := c.releaseMetadata(); err != nil {
 		utils.Die(err.Error(), 1)
 	}
 	withAppEnvLock(c.App, c.Env, func() {
@@ -72,6 +78,20 @@ func (c appApplyCmd) runLockedE() error {
 		return err
 	}
 
+	meta, err := c.releaseMetadata()
+	if err != nil {
+		return err
+	}
+	if err := persistReleaseSnapshot(c.App, c.Env, c.SHA, filepath.Join(ctxDir, "simple-vps.toml"), meta); err != nil {
+		return err
+	}
+	releaseSnapshotActive := false
+	defer func() {
+		if !releaseSnapshotActive {
+			_ = removeReleaseSnapshot(c.App, c.Env, c.SHA)
+		}
+	}()
+
 	result, err := c.applyRelease(ctxDir, app)
 	if err != nil {
 		return err
@@ -81,13 +101,18 @@ func (c appApplyCmd) runLockedE() error {
 		result.cleanupFailed(c.App, c.Env)
 		return err
 	}
-	if err := persistAppliedManifest(c.App, c.Env, c.SHA, filepath.Join(ctxDir, "simple-vps.toml")); err != nil {
+	releaseSnapshotActive = true
+	if err := persistCurrentManifestFromRelease(c.App, c.Env, c.SHA); err != nil {
 		return err
 	}
 	removeContainers(result.containersToRemove)
 
 	fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, c.SHA)
 	return nil
+}
+
+func (c appApplyCmd) releaseMetadata() (releaseMetadata, error) {
+	return newReleaseMetadata(c.SHA, c.Dirty, c.BaseCommit, c.CreatedAt)
 }
 
 func (c appApplyCmd) prepareApplyContext() (string, error) {
@@ -138,6 +163,9 @@ func (c appApplyCmd) loadApplyContext(ctxDir string) (*config.AppContext, error)
 	app, err := config.LoadAppContext(ctxDir, c.Env)
 	if err != nil {
 		return nil, err
+	}
+	if app.AppName != c.App {
+		return nil, fmt.Errorf("uploaded manifest names app %s, expected %s", app.AppName, c.App)
 	}
 	if err := writeEnvIdentity(c.App, c.Env); err != nil {
 		return nil, err
@@ -252,7 +280,7 @@ func (r applyReleaseResult) cleanupFailed(app, env string) {
 	}
 }
 
-func persistAppliedManifest(app, env, release, manifestPath string) error {
+func persistReleaseSnapshot(app, env, release, manifestPath string, meta releaseMetadata) error {
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return fmt.Errorf("read applied manifest: %v", err)
@@ -260,17 +288,17 @@ func persistAppliedManifest(app, env, release, manifestPath string) error {
 	if err := writeManifestSnapshot(app, env, release, data); err != nil {
 		return err
 	}
-	current := identity.ManifestFile(app, env)
-	if err := os.MkdirAll(filepath.Dir(current), 0755); err != nil {
-		return fmt.Errorf("mkdir applied manifest dir: %v", err)
-	}
-	if err := os.WriteFile(current, data, 0644); err != nil {
-		return fmt.Errorf("write applied manifest: %v", err)
-	}
-	if _, err := utils.RunChecked("chown", []string{"root:root", current}, ""); err != nil {
-		return fmt.Errorf("chown applied manifest: %v", err)
+	if err := writeReleaseMetadata(app, env, meta); err != nil {
+		return err
 	}
 	return nil
+}
+
+func removeReleaseSnapshot(app, env, release string) error {
+	if err := validateRelease(release); err != nil {
+		return err
+	}
+	return os.RemoveAll(filepath.Join(identity.ReleaseDir(app, env), release))
 }
 
 func writeManifestSnapshot(app, env, release string, data []byte) error {

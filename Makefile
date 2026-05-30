@@ -1,4 +1,4 @@
-.PHONY: test go-test go-build go-vet shell-test fake-vps-smoke fake-vps-install-smoke init-template-builds build build-linux build-darwin checksum build-release release-smoke clean
+.PHONY: test go-test go-build go-vet shell-test fake-vps-smoke fake-vps-install-smoke init-template-builds build build-linux build-darwin checksum build-release release-smoke example-matrix-smoke clean
 
 GO ?= go
 DIST_DIR ?= dist
@@ -6,6 +6,7 @@ VERSION ?= $(shell git describe --tags --always --dirty)
 VERSION_LDFLAGS := -X github.com/fprl/simple-vps/internal/version.Version=$(VERSION)
 SHELL_SCRIPTS := \
 	install.sh \
+	scripts/example-matrix-smoke.sh \
 	scripts/release-smoke.sh
 FAKE_VPS_SHELL_SCRIPTS := \
 	tests/fake-vps/fake-caddy \
@@ -66,6 +67,9 @@ build-release: build-linux build-darwin checksum
 
 release-smoke:
 	scripts/release-smoke.sh --version $(VERSION) --host $(HOST)
+
+example-matrix-smoke:
+	scripts/example-matrix-smoke.sh --host $(HOST)
 
 clean:
 	rm -rf $(DIST_DIR)

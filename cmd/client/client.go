@@ -14,7 +14,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/names"
@@ -184,7 +183,11 @@ func runCommandPassthrough(name string, args []string) error {
 	return cmd.Run()
 }
 
-func runSSHChecked(runner *CommandRunner, server string, command string, errMsg string) string {
+type sshRunner interface {
+	RunSSH(server string, command string) (string, string, int, error)
+}
+
+func runSSHRequired(runner sshRunner, server string, command string, errMsg string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
 		detail := strings.TrimSpace(stderr)
@@ -192,9 +195,17 @@ func runSSHChecked(runner *CommandRunner, server string, command string, errMsg 
 			detail = strings.TrimSpace(stdout)
 		}
 		if detail != "" {
-			utils.Die(fmt.Sprintf("%s: %s", errMsg, detail), 1)
+			return "", fmt.Errorf("%s: %s", errMsg, detail)
 		}
-		utils.Die(errMsg, 1)
+		return "", fmt.Errorf("%s", errMsg)
+	}
+	return stdout, nil
+}
+
+func runSSHChecked(runner sshRunner, server string, command string, errMsg string) string {
+	stdout, err := runSSHRequired(runner, server, command, errMsg)
+	if err != nil {
+		utils.Die(err.Error(), 1)
 	}
 	return stdout
 }
@@ -225,15 +236,29 @@ func serverAppSetupEnvCommand(appName string, envName string) string {
 	return serverCommand("app", "setup-env", appName, envName)
 }
 
-func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, sha string, rebuild bool) string {
+func serverAppPreflightCommand(appName string, envName string, requiredSecrets []string) string {
+	args := []string{"app", "preflight"}
+	for _, secret := range requiredSecrets {
+		args = append(args, "--secret", secret)
+	}
+	args = append(args, appName, envName)
+	return serverCommand(args...)
+}
+
+func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, plan localDeployPlan, rebuild bool) string {
 	args := []string{"app", "apply"}
 	if rebuild {
 		args = append(args, "--rebuild")
 	}
+	if plan.Dirty {
+		args = append(args, "--dirty")
+	}
 	args = append(args,
 		"--tarball", tarballPath,
 		"--manifest", manifestPath,
-		"--sha", sha,
+		"--sha", plan.Release,
+		"--base-commit", plan.BaseCommit,
+		"--created-at", plan.CreatedAt.Format(timeRFC3339UTC),
 		appName, envName,
 	)
 	return serverCommand(args...)
@@ -345,21 +370,16 @@ func serverAppSecretRmCommand(appName, envName, key string) string {
 }
 
 func CmdCheck(root string, envName string) {
-	errors, warnings, err := config.CheckManifest(root, envName)
+	diags, err := checkDiagnostics(root, envName)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	for _, w := range warnings {
-		fmt.Printf("Warning: %s\n", w)
-	}
-	if len(errors) > 0 {
-		for _, e := range errors {
-			fmt.Printf("Error: %s\n", e)
-		}
+	diags.print()
+	if diags.hasErrors() {
 		os.Exit(1)
 	}
 	if envName != "" {
-		fmt.Printf("Manifest simple-vps.toml is valid for env %s.\n", envName)
+		fmt.Printf("Manifest simple-vps.toml is deploy-ready for env %s.\n", envName)
 	} else {
 		fmt.Println("Manifest simple-vps.toml is valid.")
 	}
@@ -778,45 +798,27 @@ func CmdHostDoctor(server string, jsonFlag bool) {
 }
 
 func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDotenv bool) {
-	ctx, err := config.LoadAppContext(root, envName)
+	plan, diags, err := buildLocalDeployPlan(root, envName, localDeployOptions{
+		AllowDirty:    dirty,
+		IncludeDotenv: includeDotenv,
+	})
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-
-	shaOut, _, code, _ := runCommand("git", []string{"rev-parse", "--short=12", "HEAD"}, root)
-	if code != 0 {
-		utils.Die("git rev-parse failed", 1)
+	diags.print()
+	if diags.hasErrors() {
+		os.Exit(1)
 	}
-	release := strings.TrimSpace(shaOut)
-	if release == "" {
-		utils.Die("git rev-parse returned an empty release", 1)
-	}
-
-	statusOut, _, code, _ := runCommand("git", []string{"status", "--porcelain"}, root)
-	if code != 0 {
-		utils.Die("git status failed", 1)
-	}
-	worktreeDirty := strings.TrimSpace(statusOut) != ""
-	if worktreeDirty && !dirty {
-		utils.Die("working tree is dirty; commit changes or pass --dirty", 1)
-	}
-	if worktreeDirty {
-		release = fmt.Sprintf("dirty-%s", time.Now().UTC().Format("20060102150405"))
-	}
-	serveDirs := staticServeDirs(ctx.Routes)
-	if len(serveDirs) > 0 {
-		hash, err := staticTreeHash(root, serveDirs)
-		if err != nil {
-			utils.Die(fmt.Sprintf("hash static assets: %v", err), 1)
-		}
-		release = release + "-s" + hash[:12]
-	}
+	ctx := plan.Context
 
 	runner, err := NewCommandRunner()
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
 	defer runner.Close()
+	if err := deployRemotePreflight(runner, ctx); err != nil {
+		utils.Die(err.Error(), 1)
+	}
 
 	// 1. Tar source locally (git archive for clean tree, working tree for --dirty).
 	tarDir, err := os.MkdirTemp("", "simple-vps-deploy-")
@@ -827,23 +829,15 @@ func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDot
 
 	localTar := filepath.Join(tarDir, "source.tar")
 	localManifest := filepath.Join(tarDir, "simple-vps.toml")
-	if err := writeSourceTar(root, localTar, worktreeDirty, serveDirs); err != nil {
+	if err := writeSourceTar(root, localTar, plan.Dirty, plan.ServeDirs); err != nil {
 		utils.Die(err.Error(), 1)
 	}
 	if err := copyFile(filepath.Join(root, ManifestFile), localManifest); err != nil {
 		utils.Die(fmt.Sprintf("copy manifest: %v", err), 1)
 	}
 
-	if !includeDotenv {
-		// Quick dotenv check against the working tree — the same files
-		// would otherwise end up in the tarball.
-		if err := validateArtifactDotenv(root); err != nil {
-			utils.Die(err.Error(), 1)
-		}
-	}
-
 	// 2. Upload tarball + manifest to a per-deploy temp dir on the host.
-	remoteDir := fmt.Sprintf("%s/%s-%s-%s", RemoteDeployTmpDir, ctx.AppName, envName, release)
+	remoteDir := fmt.Sprintf("%s/%s-%s-%s", RemoteDeployTmpDir, ctx.AppName, envName, plan.Release)
 	runSSHChecked(runner, ctx.Server, fmt.Sprintf("mkdir -p %s && chmod 0700 %s", utils.ShellEscape(remoteDir), utils.ShellEscape(remoteDir)), "failed to create remote deploy dir")
 	if err := runner.Upload(localTar, remoteDir+"/source.tar", ctx.Server); err != nil {
 		utils.Die(fmt.Sprintf("failed to upload source: %v", err), 1)
@@ -856,7 +850,7 @@ func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDot
 	applyCmd := serverAppApplyCommand(ctx.AppName, envName,
 		remoteDir+"/source.tar",
 		remoteDir+"/simple-vps.toml",
-		release,
+		plan,
 		rebuild,
 	)
 	runSSHChecked(runner, ctx.Server, applyCmd, "deploy failed")
@@ -864,30 +858,64 @@ func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDot
 	// 4. Best-effort cleanup of the upload dir.
 	_, _, _, _ = runner.RunSSH(ctx.Server, fmt.Sprintf("rm -rf %s", utils.ShellEscape(remoteDir)))
 
-	fmt.Printf("Deployed %s (%s) at %s\n", ctx.AppName, envName, release)
+	fmt.Printf("Deployed %s (%s) at %s\n", ctx.AppName, envName, plan.Release)
 }
 
 func writeSourceTar(root string, dest string, dirty bool, staticDirs []string) error {
-	var cmd *exec.Cmd
 	if dirty {
-		cmd = exec.Command("sh", "-c", fmt.Sprintf(
+		cmd := exec.Command("sh", "-c", fmt.Sprintf(
 			"tar -C %s --exclude .git --exclude node_modules -cf %s .",
 			utils.ShellEscape(root), utils.ShellEscape(dest),
 		))
-	} else {
-		cmd = exec.Command("sh", "-c", fmt.Sprintf(
-			"git -C %s archive --format=tar -o %s HEAD",
-			utils.ShellEscape(root), utils.ShellEscape(dest),
-		))
-	}
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return err
+		}
+	} else if err := writeCleanSourceTar(root, dest); err != nil {
 		return err
 	}
 	if !dirty && len(staticDirs) > 0 {
 		return appendStaticDirsToTar(root, dest, staticDirs)
 	}
 	return nil
+}
+
+func writeCleanSourceTar(root string, dest string) error {
+	repoRoot, treeish, err := gitArchiveTreeish(root)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("git", "-C", repoRoot, "archive", "--format=tar", "-o", dest, treeish)
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func gitArchiveTreeish(root string) (repoRoot string, treeish string, err error) {
+	repoRootOut, stderr, code, _ := runCommand("git", []string{"rev-parse", "--show-toplevel"}, root)
+	if code != 0 {
+		detail := strings.TrimSpace(stderr)
+		if detail == "" {
+			detail = "git rev-parse --show-toplevel failed"
+		}
+		return "", "", errors.New(detail)
+	}
+	prefixOut, stderr, code, _ := runCommand("git", []string{"rev-parse", "--show-prefix"}, root)
+	if code != 0 {
+		detail := strings.TrimSpace(stderr)
+		if detail == "" {
+			detail = "git rev-parse --show-prefix failed"
+		}
+		return "", "", errors.New(detail)
+	}
+	repoRoot = strings.TrimSpace(repoRootOut)
+	prefix := strings.Trim(strings.TrimSpace(prefixOut), "/")
+	if repoRoot == "" {
+		return "", "", fmt.Errorf("git rev-parse --show-toplevel returned an empty path")
+	}
+	if prefix == "" {
+		return repoRoot, "HEAD", nil
+	}
+	return repoRoot, "HEAD:" + prefix, nil
 }
 
 func staticServeDirs(routes map[string]config.Route) []string {
@@ -984,32 +1012,144 @@ func copyFile(src, dst string) error {
 	return err
 }
 
-func validateArtifactDotenv(artifactDir string) error {
-	allowed := map[string]bool{
-		".env.example":  true,
-		".env.sample":   true,
-		".env.defaults": true,
+func validateDeployArtifactDotenv(root string, dirty bool, staticDirs []string) error {
+	if dirty {
+		return validateArtifactDotenv(root)
 	}
 	var dotenvs []string
+	tracked, err := cleanArtifactFiles(root)
+	if err != nil {
+		return err
+	}
+	for _, rel := range tracked {
+		if blockedDotenv(rel) {
+			dotenvs = append(dotenvs, rel)
+		}
+	}
+	staticDotenvs, err := dotenvsInStaticDirs(root, staticDirs)
+	if err != nil {
+		return err
+	}
+	dotenvs = append(dotenvs, staticDotenvs...)
+	return dotenvError(dotenvs)
+}
+
+func cleanArtifactFiles(root string) ([]string, error) {
+	repoRoot, treeish, err := gitArchiveTreeish(root)
+	if err != nil {
+		return nil, err
+	}
+	out, stderr, code, _ := runCommand("git", []string{"-C", repoRoot, "ls-tree", "-r", "--name-only", "-z", treeish}, "")
+	if code != 0 {
+		detail := strings.TrimSpace(stderr)
+		if detail == "" {
+			detail = "git ls-tree failed"
+		}
+		return nil, errors.New(detail)
+	}
+	var files []string
+	for _, path := range strings.Split(out, "\x00") {
+		if path == "" {
+			continue
+		}
+		files = append(files, filepath.ToSlash(path))
+	}
+	return files, nil
+}
+
+func dotenvsInStaticDirs(root string, dirs []string) ([]string, error) {
+	seen := map[string]bool{}
+	var dotenvs []string
+	for _, dir := range dirs {
+		base := filepath.Join(root, dir)
+		if err := filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				return nil
+			}
+			rel, relErr := filepath.Rel(root, path)
+			if relErr != nil {
+				return relErr
+			}
+			rel = filepath.ToSlash(rel)
+			if blockedDotenv(rel) && !seen[rel] {
+				seen[rel] = true
+				dotenvs = append(dotenvs, rel)
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return dotenvs, nil
+}
+
+func validateArtifactDotenv(artifactDir string) error {
+	var dotenvs []string
 	err := filepath.Walk(artifactDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+		if err != nil {
 			return err
 		}
+		if info.IsDir() {
+			switch info.Name() {
+			case ".git", "node_modules":
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		name := filepath.Base(path)
-		if strings.HasPrefix(name, ".env") && !allowed[name] {
+		if strings.HasPrefix(name, ".env") && !allowedDotenvName(name) {
 			rel, relErr := filepath.Rel(artifactDir, path)
 			if relErr != nil {
 				return relErr
 			}
-			dotenvs = append(dotenvs, rel)
+			dotenvs = append(dotenvs, filepath.ToSlash(rel))
 		}
 		return nil
 	})
 	if err != nil {
 		return err
 	}
+	return dotenvError(dotenvs)
+}
+
+func blockedDotenv(rel string) bool {
+	name := filepath.Base(rel)
+	return strings.HasPrefix(name, ".env") && !allowedDotenvName(name)
+}
+
+func allowedDotenvName(name string) bool {
+	switch name {
+	case ".env.example", ".env.sample", ".env.defaults":
+		return true
+	default:
+		return false
+	}
+}
+
+func dotenvError(dotenvs []string) error {
+	if len(dotenvs) == 0 {
+		return nil
+	}
+	dotenvs = uniqueStrings(dotenvs)
+	sort.Strings(dotenvs)
 	if len(dotenvs) > 0 {
 		return fmt.Errorf("refusing to deploy dotenv file: %s; use --include-dotenv to bypass", strings.Join(dotenvs, ", "))
 	}
 	return nil
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
 }

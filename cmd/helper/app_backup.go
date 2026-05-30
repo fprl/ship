@@ -285,6 +285,13 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 	if _, err := utils.RunChecked("chown", []string{"root:root", releaseManifest}, ""); err != nil {
 		return backupMetadata{}, fmt.Errorf("chown release manifest: %v", err)
 	}
+	releaseMetadata := identity.ReleaseMetadataFile(app, env, meta.Release)
+	if err := copyFilePath(filepath.Join(tmp, "release.json"), releaseMetadata, 0644); err != nil {
+		return backupMetadata{}, err
+	}
+	if _, err := utils.RunChecked("chown", []string{"root:root", releaseMetadata}, ""); err != nil {
+		return backupMetadata{}, fmt.Errorf("chown release metadata: %v", err)
+	}
 	if err := writeEnvIdentity(app, env); err != nil {
 		return backupMetadata{}, err
 	}
@@ -423,6 +430,9 @@ func writeBackupTar(path, app, env, manifestPath string, payload backupPayload, 
 		return err
 	}
 	if err := addFile(tw, manifestPath, "simple-vps.toml"); err != nil {
+		return err
+	}
+	if err := addFile(tw, identity.ReleaseMetadataFile(app, env, payload.Metadata.Release), "release.json"); err != nil {
 		return err
 	}
 	if err := addDir(tw, identity.DataDir(app, env), "data"); err != nil {

@@ -110,6 +110,12 @@ func ReleaseManifestFile(app, env, release string) string {
 	return ReleaseDir(app, env) + "/" + release + "/simple-vps.toml"
 }
 
+// ReleaseMetadataFile stores non-authoritative but user-visible release
+// details such as dirty state and base commit.
+func ReleaseMetadataFile(app, env, release string) string {
+	return ReleaseDir(app, env) + "/" + release + "/release.json"
+}
+
 // ManifestFile is the last manifest successfully applied for one `(app, env)`.
 func ManifestFile(app, env string) string {
 	return EnvRoot(app, env) + "/simple-vps.toml"
