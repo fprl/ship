@@ -255,7 +255,9 @@ PY
     name=""
     publish_host_port=""
     image=""
+    data_mount=""
     declare -a labels=()
+    declare -a command_args=()
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --name)
@@ -274,13 +276,21 @@ PY
         -d|--read-only|--rm)
           shift
           ;;
-        --user|--cap-drop|--cap-add|--security-opt|--memory|--cpus|--pids-limit|--restart|--network|-v|--tmpfs|--env-file)
+        --user|--cap-drop|--cap-add|--security-opt|--memory|--cpus|--pids-limit|--restart|--network|--tmpfs|--env-file)
+          shift 2
+          ;;
+        -v|--volume)
+          if [[ "$2" == *":/data:"* ]]; then
+            data_mount="${2%%:/data:*}"
+          fi
           shift 2
           ;;
         *)
           # First non-flag is the image; subsequent are command args.
           if [[ -z "$image" ]]; then
             image="$1"
+          else
+            command_args+=("$1")
           fi
           shift
           ;;
@@ -289,6 +299,23 @@ PY
     if [[ -z "$name" ]]; then
       echo "fake podman: run requires --name" >&2
       exit 1
+    fi
+    is_release=0
+    for label in "${labels[@]:-}"; do
+      if [[ "$label" == "simple-vps.process=release" ]]; then
+        is_release=1
+      fi
+    done
+    if [[ "$is_release" == "1" ]]; then
+      joined_command="$(printf '%s ' "${command_args[@]:-}")"
+      if [[ "$joined_command" == *simple-vps-fail-release* ]]; then
+        echo "fake release command failed" >&2
+        exit 42
+      fi
+      if [[ "$joined_command" == *"touch /data/release-ok"* && -n "$data_mount" ]]; then
+        touch "$data_mount/release-ok"
+      fi
+      exit 0
     fi
 
     labels_file="$state_dir/containers/$name.labels"

@@ -34,7 +34,7 @@ RUN chmod 0755 /usr/local/bin/simple-vps /usr/local/bin/systemctl /usr/local/bin
   && mkdir -p /etc/simple-vps/providers \
   && printf '%s\n' '{"routes":{},"version":1}' > /etc/simple-vps/providers/cloudflare.json \
   && printf '%s\n' 'operator ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/operator \
-  && printf '%s\n' 'deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps' > /etc/sudoers.d/simple-vps \
+  && printf '%s\n' 'deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server app *, /usr/local/bin/simple-vps server status, /usr/local/bin/simple-vps server status *, /usr/local/bin/simple-vps server doctor, /usr/local/bin/simple-vps server doctor *' > /etc/sudoers.d/simple-vps \
   && chmod 0600 /etc/simple-vps/providers/cloudflare.json \
   && chmod 0440 /etc/sudoers.d/operator /etc/sudoers.d/simple-vps
 

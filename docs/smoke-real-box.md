@@ -3,7 +3,7 @@
 For release-candidate validation, use the scripted smoke first:
 
 ```sh
-scripts/release-smoke.sh --version v0.6.0 --host <IP>
+scripts/release-smoke.sh --version v0.7.0 --host <IP>
 ```
 
 This runbook is the lower-level debugging path when the scripted smoke fails
@@ -279,7 +279,7 @@ purged secrets. Expected status after destroy has an empty `processes` array.
 
 ## 6. Example Matrix
 
-For v0.6 DX hardening, also run the checked-in example matrix after the
+For release DX hardening, also run the checked-in example matrix after the
 host has the current helper:
 
 ```sh
@@ -292,7 +292,7 @@ make build build-linux
 scripts/example-matrix-smoke.sh --host <IP> --client ./dist/simple-vps
 ```
 
-The May 30, 2026 v0.6 run against `128.140.3.159` passed PHP, Hono/Bun,
+The May 30, 2026 example-matrix run against `128.140.3.159` passed PHP, Hono/Bun,
 mixed API plus static docs, and real `astro build` static deploys. Host doctor
 was healthy before the run, and final `app list --json` was empty after manual
 cleanup verification.

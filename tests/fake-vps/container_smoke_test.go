@@ -44,6 +44,7 @@ func TestContainerSmoke(t *testing.T) {
 	env.waitForSSH(t)
 
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
+	t.Run("release command failure leaves old traffic unchanged", env.testReleaseCommandFailure)
 	t.Run("dirty deploy records base commit and status", env.testDirtyDeployStatus)
 	t.Run("container rollback runs an older image release", env.testRollback)
 	t.Run("backup and restore round-trip app state", env.testBackupRestore)
@@ -180,6 +181,56 @@ EOF`)
 	e.simpleVPS(t, app, nil, "deploy", "--env", "production", "--rebuild")
 	commandsLog = e.ssh(t, "cat /run/fake-podman/commands.log")
 	assertContains(t, commandsLog, "podman build --no-cache --pull=always")
+
+}
+
+func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
+	app := filepath.Join(e.tmp, "release-fail")
+	mustMkdir(t, app)
+	writeReleaseFailFixture(t, app)
+	e.commitFixture(t, app)
+
+	e.simpleVPS(t, app, nil, "setup", "--env", "production")
+	e.simpleVPS(t, app, nil, "deploy", "--env", "production")
+	e.dockerExec(t, "test -f "+identity.DataDir("releasefail", "production")+"/release-ok")
+	stableEnv := e.dockerExec(t, "cat "+identity.EnvFile("releasefail", "production"))
+	assertContains(t, stableEnv, "MARKER=stable")
+	statusJSON := e.simpleVPS(t, app, nil, "status", "--json", "--env", "production")
+	if strings.Contains(statusJSON, `"process":"release"`) || strings.Contains(statusJSON, `"process": "release"`) {
+		t.Fatalf("release command container polluted status:\n%s", statusJSON)
+	}
+	stableFragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("releasefail", "production"))
+	stableContainer := currentWebContainer(t, e, app)
+
+	manifestPath := filepath.Join(app, "simple-vps.toml")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failingManifest := strings.Replace(string(manifest), `release = "touch /data/release-ok"`, `release = "simple-vps-fail-release"`, 1)
+	failingManifest = strings.Replace(failingManifest, `MARKER = "stable"`, `MARKER = "failed"`, 1)
+	if failingManifest == string(manifest) {
+		t.Fatal("release failure fixture did not contain the success release command")
+	}
+	mustWrite(t, manifestPath, failingManifest)
+	e.commitFixture(t, app)
+	failedRelease := gitRelease(t, e, app)
+	failed := e.runSimpleVPS(t, app, nil, "deploy", "--env", "production")
+	if failed.err == nil {
+		t.Fatal("deploy with failing release command should fail")
+	}
+	assertContains(t, failed.stdout+failed.stderr, "release command")
+	assertContains(t, failed.stdout+failed.stderr, "failed before traffic switch")
+	fragmentAfterFailure := e.ssh(t, "cat "+identity.CaddyFragmentFile("releasefail", "production"))
+	if fragmentAfterFailure != stableFragment {
+		t.Fatalf("failing release command changed traffic:\nbefore:\n%s\nafter:\n%s", stableFragment, fragmentAfterFailure)
+	}
+	e.dockerExec(t, "test -e /run/fake-podman/containers/"+stableContainer+".labels")
+	e.dockerExec(t, "test ! -e /tmp/simple-vps-deploy/releasefail-production-"+failedRelease)
+	envAfterFailure := e.dockerExec(t, "cat "+identity.EnvFile("releasefail", "production"))
+	if envAfterFailure != stableEnv {
+		t.Fatalf("failing release command changed runtime env:\nbefore:\n%s\nafter:\n%s", stableEnv, envAfterFailure)
+	}
 }
 
 func (e *smokeEnv) testDirtyDeployStatus(t *testing.T) {
@@ -926,6 +977,32 @@ health = "/health"
 
 [routes.app]
 host = "dirty.example.com"
+process = "web"
+`)
+}
+
+func writeReleaseFailFixture(t *testing.T, app string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "releasefail"
+
+[env.production]
+server = "fake-vps"
+
+[vars]
+MARKER = "stable"
+
+[deploy]
+release = "touch /data/release-ok"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "release-fail.example.com"
 process = "web"
 `)
 }

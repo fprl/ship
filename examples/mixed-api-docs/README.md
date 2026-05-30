@@ -8,6 +8,9 @@ Before deploying, edit `simple-vps.toml`:
 - set both route hosts
 
 ```bash
+git init
+git add .
+git commit -m "initial simple-vps app"
 simple-vps check --env production
 simple-vps setup --env production
 simple-vps deploy --env production

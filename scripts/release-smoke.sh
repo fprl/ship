@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/release-smoke.sh --version v0.6.0 --host 128.140.3.159
+  scripts/release-smoke.sh --version v0.7.0 --host 128.140.3.159
 
 Runs a release-artifact smoke against one VPS:
   - fetch installer from the tag

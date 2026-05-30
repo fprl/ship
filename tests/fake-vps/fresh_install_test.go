@@ -87,7 +87,7 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	e.ssh(t, "getent passwd deploy >/dev/null")
 	assertContains(t, e.ssh(t, "id -nG operator"), "sudo")
 	e.ssh(t, "grep -q 'operator ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/operator")
-	e.ssh(t, "grep -q 'deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps' /etc/sudoers.d/simple-vps")
+	e.ssh(t, "grep -Fq 'deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server app *, /usr/local/bin/simple-vps server status, /usr/local/bin/simple-vps server status *, /usr/local/bin/simple-vps server doctor, /usr/local/bin/simple-vps server doctor *' /etc/sudoers.d/simple-vps")
 	e.ssh(t, "grep -q 'ssh-ed25519 AAAAoperator test-operator' /home/operator/.ssh/authorized_keys")
 	e.ssh(t, "grep -q 'ssh-ed25519 AAAAoperator test-operator' /home/deploy/.ssh/authorized_keys")
 

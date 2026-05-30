@@ -7,7 +7,7 @@ This is the shortest path from a fresh Ubuntu VPS to a deployed app.
 Download a release binary for the machine where you run deploy commands:
 
 ```bash
-VERSION=v0.6.0
+VERSION=v0.7.0
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 case "$OS" in
@@ -68,7 +68,7 @@ for `~/.ssh/<root-key>` below.
 Run this from your laptop against a fresh Ubuntu 24.04/26.04 VPS:
 
 ```bash
-VERSION=v0.6.0
+VERSION=v0.7.0
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   gh api -H 'Accept: application/vnd.github.raw' \
     "/repos/fprl/simple-vps/contents/install.sh?ref=$VERSION" > install.sh
@@ -79,16 +79,15 @@ fi
 chmod 0755 install.sh
 
 SIMPLE_VPS_VERSION="$VERSION" ./install.sh \
-  --mode remote \
   --host <vps-ip> \
-  --bootstrap-user root \
   --ssh-key ~/.ssh/<root-key> \
   --operator-ssh-public-key-file ~/.ssh/<root-key>.pub \
   --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub \
-  --ingress public \
-  --admin public-ssh \
   --yes
 ```
+
+The operator key is for human host recovery and rerunning host install. The
+deploy key is what app commands use after install.
 
 If release assets are private, authenticate `gh` before downloading the
 installer and export `SIMPLE_VPS_RELEASE_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`
@@ -142,6 +141,11 @@ simple-vps setup --env production
 simple-vps deploy --env production
 simple-vps status --env production
 ```
+
+`check --env` is a local check. It validates the manifest, Git release identity,
+static directories, Dockerfile shape, and lists required secrets with the exact
+`secret set` commands. `deploy --env` does the remote read-only preflight and
+hard-fails if required host secrets are missing.
 
 Then hit Caddy on the VPS:
 

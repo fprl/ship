@@ -410,11 +410,24 @@ func renderInitResult(result InitResult) {
 		fmt.Printf("Kept existing %s\n", initDisplayPath(result.Root, path))
 	}
 	configFlag := initConfigFlag(result.ConfigPath)
+	gitPrefix := initGitPrefix(result.Root)
+	steps := []string{
+		"review " + initDisplayPath(result.Root, ManifestFile),
+	}
+	if !initRootInsideGitWorktree(result.Root) {
+		steps = append(steps, gitPrefix+"init")
+	}
+	steps = append(steps,
+		gitPrefix+"add .",
+		gitPrefix+"commit -m \"initial simple-vps app\"",
+		fmt.Sprintf("simple-vps check%s --env %s", configFlag, result.Env),
+		fmt.Sprintf("simple-vps setup%s --env %s", configFlag, result.Env),
+		fmt.Sprintf("simple-vps deploy%s --env %s", configFlag, result.Env),
+	)
 	fmt.Println("Next:")
-	fmt.Printf("1. review %s\n", initDisplayPath(result.Root, ManifestFile))
-	fmt.Printf("2. simple-vps check%s --env %s\n", configFlag, result.Env)
-	fmt.Printf("3. simple-vps setup%s --env %s\n", configFlag, result.Env)
-	fmt.Printf("4. simple-vps deploy%s --env %s\n", configFlag, result.Env)
+	for i, step := range steps {
+		fmt.Printf("%d. %s\n", i+1, step)
+	}
 }
 
 func initConfigFlag(configPath string) string {
@@ -433,6 +446,32 @@ func initConfigFlag(configPath string) string {
 		return ""
 	}
 	return " --config " + utils.ShellEscape(configPath)
+}
+
+func initGitPrefix(root string) string {
+	if root == "" {
+		return "git "
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "git -C " + utils.ShellEscape(root) + " "
+	}
+	absCwd, err := filepath.Abs(cwd)
+	if err != nil {
+		return "git -C " + utils.ShellEscape(root) + " "
+	}
+	if root == absCwd {
+		return "git "
+	}
+	return "git -C " + utils.ShellEscape(root) + " "
+}
+
+func initRootInsideGitWorktree(root string) bool {
+	if root == "" {
+		root = "."
+	}
+	out, _, code, _ := runCommand("git", []string{"rev-parse", "--is-inside-work-tree"}, root)
+	return code == 0 && strings.TrimSpace(out) == "true"
 }
 
 func initDisplayPath(root string, rel string) string {

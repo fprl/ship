@@ -119,7 +119,7 @@ deploy user      identity used by the app CLI and CI
 ```
 
 The operator user keeps the root path host convergence needs. The deploy user
-gets only the `/usr/local/bin/simple-vps` grant.
+gets only the app lifecycle plus host status/doctor helper grant.
 
 The server-side helper owns privileged app operations such as per-env user and
 network setup, resolved env-file writes, Podman container lifecycle, Caddy
@@ -141,7 +141,8 @@ Future doctor hardening checks should cover:
 - Public `80` and `443` match the desired ingress mode.
 - Tailscale, cloudflared, Caddy, fail2ban, and unattended upgrades state in
   more detail than simple active/inactive reporting.
-- The deploy sudoers grant points at `/usr/local/bin/simple-vps`.
+- The deploy sudoers grant is limited to `server app *`, `server status`, and
+  `server doctor`.
 - The operator/deploy split is healthy.
 - Generated Caddy config validates.
 

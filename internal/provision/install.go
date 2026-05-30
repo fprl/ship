@@ -325,7 +325,7 @@ func addHelper(ops *[]operation, opts InstallOptions) {
 		return host.EnsureFile(apply, host.File{Path: "/usr/local/bin/simple-vps", Content: data, Owner: "root", Group: "root", Mode: 0755})
 	}})
 	*ops = append(*ops, operation{name: "simple-vps sudoers", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureSudoersFile(apply, "simple-vps", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/simple-vps\n", opts.DeployUser)))
+		return host.EnsureSudoersFile(apply, "simple-vps", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server app *, /usr/local/bin/simple-vps server status, /usr/local/bin/simple-vps server status *, /usr/local/bin/simple-vps server doctor, /usr/local/bin/simple-vps server doctor *\n", opts.DeployUser)))
 	}})
 }
 

@@ -16,7 +16,7 @@ import (
 
 var (
 	BroadSudoRe  = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\((?:ALL|ALL:ALL)\)\s+NOPASSWD:\s*ALL$`)
-	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/simple-vps$`)
+	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/simple-vps\s+server\s+app\s+\*,\s*/usr/local/bin/simple-vps\s+server\s+status,\s*/usr/local/bin/simple-vps\s+server\s+status\s+\*,\s*/usr/local/bin/simple-vps\s+server\s+doctor,\s*/usr/local/bin/simple-vps\s+server\s+doctor\s+\*$`)
 )
 
 type doctorCmd struct {

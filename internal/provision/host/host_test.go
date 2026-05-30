@@ -367,7 +367,8 @@ func TestEnsureSudoersFileValidatesBeforeWriting(t *testing.T) {
 	runner.validateErr = errors.New("bad sudoers")
 	apply := Apply{Context: context.Background(), Runner: runner}
 
-	changed, err := EnsureSudoersFile(apply, "simple-vps", []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps"))
+	sudoers := testDeploySudoers()
+	changed, err := EnsureSudoersFile(apply, "simple-vps", sudoers)
 	if err == nil {
 		t.Fatal("expected validation failure")
 	}
@@ -379,7 +380,7 @@ func TestEnsureSudoersFileValidatesBeforeWriting(t *testing.T) {
 	}
 
 	runner.validateErr = nil
-	changed, err = EnsureSudoersFile(apply, "simple-vps", []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps"))
+	changed, err = EnsureSudoersFile(apply, "simple-vps", sudoers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +388,7 @@ func TestEnsureSudoersFileValidatesBeforeWriting(t *testing.T) {
 		t.Fatal("expected sudoers file to be written")
 	}
 	got := runner.files["/etc/sudoers.d/simple-vps"]
-	if string(got.Content) != "deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps\n" {
+	if string(got.Content) != string(sudoers)+"\n" {
 		t.Fatalf("unexpected sudoers content: %q", string(got.Content))
 	}
 	if got.Owner != "root" || got.Group != "root" || got.Mode != 0440 {
@@ -399,13 +400,17 @@ func TestEnsureSudoersFileRejectsUnsafeName(t *testing.T) {
 	runner := newFakeRunner()
 	apply := Apply{Context: context.Background(), Runner: runner}
 
-	_, err := EnsureSudoersFile(apply, "../root", []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps\n"))
+	_, err := EnsureSudoersFile(apply, "../root", append(testDeploySudoers(), '\n'))
 	if err == nil {
 		t.Fatal("expected unsafe sudoers name to fail")
 	}
 	if len(runner.validations) != 0 || len(runner.writes) != 0 {
 		t.Fatalf("unsafe sudoers name touched runner: validations=%+v writes=%+v", runner.validations, runner.writes)
 	}
+}
+
+func testDeploySudoers() []byte {
+	return []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server app *, /usr/local/bin/simple-vps server status, /usr/local/bin/simple-vps server status *, /usr/local/bin/simple-vps server doctor, /usr/local/bin/simple-vps server doctor *")
 }
 
 func TestEnsureDirectoryRejectsExistingNonDirectory(t *testing.T) {

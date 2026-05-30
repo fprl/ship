@@ -3,6 +3,9 @@
 Small PHP app that exposes HTTP directly from the container.
 
 ```bash
+git init
+git add .
+git commit -m "initial simple-vps app"
 simple-vps check --env production
 simple-vps setup --env production
 printf '%s' 'change-me' | simple-vps secret set APP_SECRET --env production

@@ -11,6 +11,7 @@ Deploys the checked-in examples against an already installed Simple VPS host:
   - hono-bun-api
   - mixed-api-docs
   - astro-static (runs npm install + npm run build locally)
+  - django-sqlite when SIMPLE_VPS_EXAMPLE_MATRIX_INCLUDE_DJANGO=1
 
 Environment:
   SIMPLE_VPS_DEPLOY_SSH_KEY
@@ -19,6 +20,8 @@ Environment:
       defaults to a temp dir under /tmp
   SIMPLE_VPS_EXAMPLE_MATRIX_SKIP_DESTROY=1
       leave deployed example envs on the host for debugging
+  SIMPLE_VPS_EXAMPLE_MATRIX_INCLUDE_DJANGO=1
+      include the heavier Django + SQLite + migration example
 USAGE
 }
 
@@ -38,6 +41,7 @@ host="${SIMPLE_VPS_EXAMPLE_MATRIX_HOST:-}"
 workdir="${SIMPLE_VPS_EXAMPLE_MATRIX_WORKDIR:-$(mktemp -d /tmp/simple-vps-example-matrix-XXXXXX)}"
 deploy_key="${SIMPLE_VPS_DEPLOY_SSH_KEY:-$HOME/.ssh/simple-vps-deploy}"
 skip_destroy="${SIMPLE_VPS_EXAMPLE_MATRIX_SKIP_DESTROY:-0}"
+include_django="${SIMPLE_VPS_EXAMPLE_MATRIX_INCLUDE_DJANGO:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -162,6 +166,9 @@ run_example() {
   if [[ "$key" == "php" ]]; then
     printf 'matrix-secret' | "$client" secret set --config "$app_dir/simple-vps.toml" APP_SECRET --env production
   fi
+  if [[ "$key" == "django" ]]; then
+    printf 'matrix-django-secret' | "$client" secret set --config "$app_dir/simple-vps.toml" DJANGO_SECRET_KEY --env production
+  fi
 
   "$client" deploy --config "$app_dir/simple-vps.toml" --env production
   "$client" status --config "$app_dir/simple-vps.toml" --env production
@@ -178,6 +185,9 @@ run_matrix() {
   run_example hono hono-bun-api /health '^ok$'
   run_example mixed mixed-api-docs /docs/ 'docs-ok'
   run_example astro astro-static / 'static-ok'
+  if [[ "$include_django" == "1" ]]; then
+    run_example django django-sqlite /health '^ok$'
+  fi
 }
 
 run_matrix > >(tee "$log") 2>&1

@@ -165,6 +165,47 @@ process = "web"
 	}
 }
 
+func TestCheckDiagnosticsListsRequiredSecretsWithoutFailing(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, `name = "api"
+
+[env.production]
+server = "deploy@example.com"
+
+[vars]
+DATABASE_URL = "@secret:DATABASE_URL"
+
+[processes.web]
+port = 3000
+health = "/health"
+
+[routes.app]
+host = "api.example.com"
+process = "web"
+`)
+	runGit(t, root, "init")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+
+	diags, err := checkDiagnostics(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diags.hasErrors() {
+		t.Fatalf("secret guidance should not fail local check: %+v", diags)
+	}
+	if len(diags) != 1 || diags[0].Level != diagnosticWarning {
+		t.Fatalf("expected one warning, got %+v", diags)
+	}
+	if !strings.Contains(diags[0].Message, "secret DATABASE_URL must be set before deploy") {
+		t.Fatalf("unexpected secret message: %q", diags[0].Message)
+	}
+	if !strings.Contains(diags[0].Hint, "simple-vps secret set DATABASE_URL --env production") {
+		t.Fatalf("unexpected secret hint: %q", diags[0].Hint)
+	}
+}
+
 func TestGitWorktreeDirtyIsScopedToAppRoot(t *testing.T) {
 	repo := t.TempDir()
 	appRoot := filepath.Join(repo, "apps", "api")
@@ -449,7 +490,7 @@ func runGit(t *testing.T, root string, args ...string) {
 func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", false)
 	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, false)
-	want := "sudo simple-vps server app apply --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z api production"
+	want := "sudo -n /usr/local/bin/simple-vps server app apply --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -458,7 +499,7 @@ func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 func TestServerAppApplyCommandSupportsRebuild(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", true)
 	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, true)
-	want := "sudo simple-vps server app apply --rebuild --dirty --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z api production"
+	want := "sudo -n /usr/local/bin/simple-vps server app apply --rebuild --dirty --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -475,7 +516,7 @@ func testLocalDeployPlan(release string, dirty bool) localDeployPlan {
 
 func TestServerAppSetupEnvCommand(t *testing.T) {
 	got := serverAppSetupEnvCommand("api", "production")
-	want := "sudo simple-vps server app setup-env api production"
+	want := "sudo -n /usr/local/bin/simple-vps server app setup-env api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -483,13 +524,13 @@ func TestServerAppSetupEnvCommand(t *testing.T) {
 
 func TestServerAppPreflightCommandIncludesRequiredSecrets(t *testing.T) {
 	got := serverAppPreflightCommand("api", "production", []string{"DATABASE_URL", "API_KEY"})
-	want := "sudo simple-vps server app preflight --secret DATABASE_URL --secret API_KEY api production"
+	want := "sudo -n /usr/local/bin/simple-vps server app preflight --secret DATABASE_URL --secret API_KEY api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})
-	want = "sudo simple-vps server app preflight --json --secret DATABASE_URL api production"
+	want = "sudo -n /usr/local/bin/simple-vps server app preflight --json --secret DATABASE_URL api production"
 	if got != want {
 		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
 	}
@@ -497,13 +538,13 @@ func TestServerAppPreflightCommandIncludesRequiredSecrets(t *testing.T) {
 
 func TestServerAppListCommandSupportsJSON(t *testing.T) {
 	got := serverAppListCommand(false)
-	want := "sudo simple-vps server app list"
+	want := "sudo -n /usr/local/bin/simple-vps server app list"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppListCommand(true)
-	want = "sudo simple-vps server app list --json"
+	want = "sudo -n /usr/local/bin/simple-vps server app list --json"
 	if got != want {
 		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
 	}
@@ -511,13 +552,13 @@ func TestServerAppListCommandSupportsJSON(t *testing.T) {
 
 func TestServerAppRollbackCommandSupportsRelease(t *testing.T) {
 	got := serverAppRollbackCommand("api", "production", "")
-	want := "sudo simple-vps server app rollback api production"
+	want := "sudo -n /usr/local/bin/simple-vps server app rollback api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppRollbackCommand("api", "production", "abc1234")
-	want = "sudo simple-vps server app rollback api production abc1234"
+	want = "sudo -n /usr/local/bin/simple-vps server app rollback api production abc1234"
 	if got != want {
 		t.Fatalf("unexpected release command:\nwant: %s\n got: %s", want, got)
 	}
@@ -532,42 +573,42 @@ func TestServerAppBackupCommands(t *testing.T) {
 		{
 			name: "create",
 			got:  serverAppBackupCommand("api", "production", "", false),
-			want: "sudo simple-vps server app backup create api production",
+			want: "sudo -n /usr/local/bin/simple-vps server app backup create api production",
 		},
 		{
 			name: "create json",
 			got:  serverAppBackupCommand("api", "production", "", true),
-			want: "sudo simple-vps server app backup create --json api production",
+			want: "sudo -n /usr/local/bin/simple-vps server app backup create --json api production",
 		},
 		{
 			name: "create to",
 			got:  serverAppBackupCommand("api", "production", "/tmp/backups", false),
-			want: "sudo simple-vps server app backup create --to /tmp/backups api production",
+			want: "sudo -n /usr/local/bin/simple-vps server app backup create --to /tmp/backups api production",
 		},
 		{
 			name: "list",
 			got:  serverAppBackupListCommand("api", "production", false),
-			want: "sudo simple-vps server app backup list api production",
+			want: "sudo -n /usr/local/bin/simple-vps server app backup list api production",
 		},
 		{
 			name: "list json",
 			got:  serverAppBackupListCommand("api", "production", true),
-			want: "sudo simple-vps server app backup list --json api production",
+			want: "sudo -n /usr/local/bin/simple-vps server app backup list --json api production",
 		},
 		{
 			name: "rm",
 			got:  serverAppBackupRmCommand("api", "production", "backup-id"),
-			want: "sudo simple-vps server app backup rm api production backup-id",
+			want: "sudo -n /usr/local/bin/simple-vps server app backup rm api production backup-id",
 		},
 		{
 			name: "restore",
 			got:  serverAppRestoreCommand("api", "production", "backup-id", false),
-			want: "sudo simple-vps server app backup restore --from backup-id api production",
+			want: "sudo -n /usr/local/bin/simple-vps server app backup restore --from backup-id api production",
 		},
 		{
 			name: "restore dry run",
 			got:  serverAppRestoreCommand("api", "production", "backup-id", true),
-			want: "sudo simple-vps server app backup restore --from backup-id --dry-run api production",
+			want: "sudo -n /usr/local/bin/simple-vps server app backup restore --from backup-id --dry-run api production",
 		},
 	}
 	for _, tt := range tests {
@@ -581,13 +622,13 @@ func TestServerAppBackupCommands(t *testing.T) {
 
 func TestServerAppDestroyEnvCommand(t *testing.T) {
 	got := serverAppDestroyEnvCommand("api", "production", false)
-	want := "sudo simple-vps server app destroy-env api production"
+	want := "sudo -n /usr/local/bin/simple-vps server app destroy-env api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppDestroyEnvCommand("api", "production", true)
-	want = "sudo simple-vps server app destroy-env --purge api production"
+	want = "sudo -n /usr/local/bin/simple-vps server app destroy-env --purge api production"
 	if got != want {
 		t.Fatalf("unexpected purge command:\nwant: %s\n got: %s", want, got)
 	}
@@ -602,22 +643,22 @@ func TestServerHostReadCommandsSupportJSON(t *testing.T) {
 		{
 			name: "status text",
 			got:  serverStatusCommand(false),
-			want: "sudo simple-vps server status",
+			want: "sudo -n /usr/local/bin/simple-vps server status",
 		},
 		{
 			name: "status json",
 			got:  serverStatusCommand(true),
-			want: "sudo simple-vps server status --json",
+			want: "sudo -n /usr/local/bin/simple-vps server status --json",
 		},
 		{
 			name: "doctor text",
 			got:  serverDoctorCommand(false),
-			want: "sudo simple-vps server doctor",
+			want: "sudo -n /usr/local/bin/simple-vps server doctor",
 		},
 		{
 			name: "doctor json",
 			got:  serverDoctorCommand(true),
-			want: "sudo simple-vps server doctor --json",
+			want: "sudo -n /usr/local/bin/simple-vps server doctor --json",
 		},
 	}
 
@@ -632,13 +673,13 @@ func TestServerHostReadCommandsSupportJSON(t *testing.T) {
 
 func TestServerAppSecretListCommandSupportsJSON(t *testing.T) {
 	got := serverAppSecretListCommand("api", "production", false)
-	want := "sudo simple-vps server app secret list api production"
+	want := "sudo -n /usr/local/bin/simple-vps server app secret list api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppSecretListCommand("api", "production", true)
-	want = "sudo simple-vps server app secret list --json api production"
+	want = "sudo -n /usr/local/bin/simple-vps server app secret list --json api production"
 	if got != want {
 		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
 	}
@@ -669,9 +710,9 @@ func TestDeployRemotePreflightIsReadOnlyAndChecksSecrets(t *testing.T) {
 		SecretRefs: map[string]string{"DATABASE_URL": "DATABASE_URL"},
 	}
 	runner := &fakeSSHRunner{responses: map[string]string{
-		"true":                             `ok`,
-		"command -v simple-vps >/dev/null": "",
-		"command -v rsync >/dev/null":      "",
+		"true":                              `ok`,
+		"test -x /usr/local/bin/simple-vps": "",
+		"command -v rsync >/dev/null":       "",
 		serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"}): `{"app":"api","env":"production","healthy":true,"findings":[]}`,
 	}}
 
@@ -694,9 +735,9 @@ func TestDeployRemotePreflightFailsMissingSecrets(t *testing.T) {
 		SecretRefs: map[string]string{"DATABASE_URL": "DATABASE_URL"},
 	}
 	runner := &fakeSSHRunner{responses: map[string]string{
-		"true":                             `ok`,
-		"command -v simple-vps >/dev/null": "",
-		"command -v rsync >/dev/null":      "",
+		"true":                              `ok`,
+		"test -x /usr/local/bin/simple-vps": "",
+		"command -v rsync >/dev/null":       "",
 	}, failures: map[string]string{
 		serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"}): `{"app":"api","env":"production","healthy":false,"findings":["missing secret DATABASE_URL; run ` + "`" + `simple-vps secret set DATABASE_URL --env production` + "`" + `"]}`,
 	}}
@@ -704,6 +745,9 @@ func TestDeployRemotePreflightFailsMissingSecrets(t *testing.T) {
 	err := deployRemotePreflight(runner, ctx)
 	if err == nil || !strings.Contains(err.Error(), "missing secret DATABASE_URL") || !strings.Contains(err.Error(), "simple-vps secret set DATABASE_URL --env production") {
 		t.Fatalf("expected missing secret hint, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "No remote files, routes, or containers were changed.") {
+		t.Fatalf("expected read-only preflight boundary in error, got %v", err)
 	}
 }
 

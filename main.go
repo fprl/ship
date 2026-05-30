@@ -117,7 +117,7 @@ type deployCmd struct {
 	Env           string `name:"env" short:"e" required:"" help:"Environment to deploy."`
 	Dirty         bool   `help:"Allow deploying a dirty worktree."`
 	Rebuild       bool   `help:"Refresh base images and bypass Podman's build cache."`
-	IncludeDotenv bool   `name:"include-dotenv" help:"Allow deploying dotenv files."`
+	IncludeDotenv bool   `name:"include-dotenv" help:"Include .env-style files in the uploaded release artifact."`
 }
 
 func (c deployCmd) Run() error {

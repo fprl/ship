@@ -1,6 +1,7 @@
 package hostinstall
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"strings"
@@ -99,6 +100,43 @@ func TestRemoteLocalInstallCommandEnablesLitestreamExplicitly(t *testing.T) {
 	}
 	if strings.Contains(command, "--no-litestream") {
 		t.Fatalf("did not expect conflicting --no-litestream:\n%s", command)
+	}
+}
+
+func TestPrintNextStepsForRemoteInstall(t *testing.T) {
+	var out bytes.Buffer
+	installer := NewInstaller()
+	installer.Stdout = &out
+	installer.printNextSteps(Plan{
+		Mode:                   "remote",
+		TargetHost:             "203.0.113.12",
+		DeployUser:             "deploy",
+		DeploySSHPublicKeyFile: "/keys/deploy.pub",
+	})
+
+	text := out.String()
+	for _, want := range []string{
+		`export SIMPLE_VPS_SSH_KEY="$(cat /keys/deploy)"`,
+		`export SIMPLE_VPS_KNOWN_HOSTS="$(ssh-keyscan -t ed25519 -H 203.0.113.12 2>/dev/null)"`,
+		"simple-vps host status --server deploy@203.0.113.12",
+		"simple-vps init --server deploy@203.0.113.12 --host <app-domain>",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected next steps to contain %q:\n%s", want, text)
+		}
+	}
+	if strings.Index(text, "export SIMPLE_VPS_SSH_KEY") > strings.Index(text, "simple-vps host status") {
+		t.Fatalf("deploy key export should be printed before host status:\n%s", text)
+	}
+}
+
+func TestDeployPrivateKeyHintSupportsSharedKey(t *testing.T) {
+	got := deployPrivateKeyHint(Plan{
+		SharedKey:                true,
+		OperatorSSHPublicKeyFile: "/keys/operator.pub",
+	})
+	if got != "/keys/operator" {
+		t.Fatalf("deployPrivateKeyHint = %q", got)
 	}
 }
 

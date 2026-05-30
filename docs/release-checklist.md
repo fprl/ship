@@ -3,7 +3,7 @@
 Use this before cutting preview or stable releases.
 
 ```bash
-VERSION=v0.6.0
+VERSION=v0.7.0
 ```
 
 ## Local Checks
@@ -26,6 +26,7 @@ real static site before validating `serve = "dist"`.
 ```bash
 (cd examples/hono-bun-api && ../../dist/simple-vps check --env production)
 (cd examples/php-plain && ../../dist/simple-vps check --env production)
+(cd examples/django-sqlite && ../../dist/simple-vps check --env production)
 (cd examples/astro-static && npm install --no-package-lock && npm run build && ../../dist/simple-vps check --env production)
 (cd examples/mixed-api-docs && ../../dist/simple-vps check --env production)
 tmp=$(mktemp -d /tmp/simple-vps-init-check-XXXXXX)
@@ -86,3 +87,11 @@ scripts/example-matrix-smoke.sh --host <ip> --client ./dist/simple-vps
 The Astro example runs `npm install --no-package-lock && npm run build` locally
 before deploy. The script destroys each example env unless
 `SIMPLE_VPS_EXAMPLE_MATRIX_SKIP_DESTROY=1` is set.
+
+The Django example is heavier because it builds a Python framework image and
+runs a migration release command. Include it with:
+
+```bash
+SIMPLE_VPS_EXAMPLE_MATRIX_INCLUDE_DJANGO=1 \
+  scripts/example-matrix-smoke.sh --host <ip> --client ./dist/simple-vps
+```

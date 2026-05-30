@@ -327,10 +327,19 @@ type containerApplyResult struct {
 	processNames       map[string]string
 }
 
-func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, existing []containerEntry) (containerApplyResult, error) {
+func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, existing []containerEntry) (result containerApplyResult, retErr error) {
 	if len(app.Processes) == 0 {
 		return containerApplyResult{}, fmt.Errorf("manifest must declare at least one [processes.<name>] block")
 	}
+	restoreEnvFile, err := snapshotRuntimeEnvFile(c.App, c.Env)
+	if err != nil {
+		return containerApplyResult{}, err
+	}
+	defer func() {
+		if retErr != nil {
+			_ = restoreEnvFile()
+		}
+	}()
 	resolved, err := resolveEnv(c.App, c.Env, app.Vars, app.SecretRefs)
 	if err != nil {
 		return containerApplyResult{}, err
@@ -383,6 +392,25 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		containersToRemove: uniqueContainerNames(containersToRemove),
 		startedContainers:  uniqueContainerNames(started),
 		processNames:       processNames,
+	}, nil
+}
+
+func snapshotRuntimeEnvFile(app, env string) (func() error, error) {
+	path := identity.EnvFile(app, env)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return func() error {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			return nil
+		}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("snapshot runtime env file: %v", err)
+	}
+	return func() error {
+		return os.WriteFile(path, data, 0600)
 	}, nil
 }
 

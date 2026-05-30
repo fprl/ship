@@ -32,9 +32,13 @@ type CommandRunner struct {
 }
 
 func NewCommandRunner() (*CommandRunner, error) {
+	sshOpts := []string{"-o", "BatchMode=yes"}
 	key := os.Getenv("SIMPLE_VPS_SSH_KEY")
 	if key == "" {
-		return &CommandRunner{}, nil
+		return &CommandRunner{
+			SshOptions:       sshOpts,
+			RsyncRemoteShell: sshRemoteShell(sshOpts),
+		}, nil
 	}
 	knownHosts := os.Getenv("SIMPLE_VPS_KNOWN_HOSTS")
 	if knownHosts == "" {
@@ -64,24 +68,29 @@ func NewCommandRunner() (*CommandRunner, error) {
 		return nil, err
 	}
 
-	sshOpts := []string{
+	sshOpts = append(sshOpts,
 		"-i", keyPath,
 		"-o", "IdentitiesOnly=yes",
 		"-o", "StrictHostKeyChecking=yes",
-		"-o", "UserKnownHostsFile=" + knownHostsPath,
-	}
+		"-o", "UserKnownHostsFile="+knownHostsPath,
+	)
 
+	return &CommandRunner{
+		SshOptions:       sshOpts,
+		RsyncRemoteShell: sshRemoteShell(sshOpts),
+		TempDir:          dir,
+	}, nil
+}
+
+func sshRemoteShell(sshOpts []string) string {
+	if len(sshOpts) == 0 {
+		return ""
+	}
 	var escOpts []string
 	for _, opt := range sshOpts {
 		escOpts = append(escOpts, utils.ShellEscape(opt))
 	}
-	rsyncShell := "ssh " + strings.Join(escOpts, " ")
-
-	return &CommandRunner{
-		SshOptions:       sshOpts,
-		RsyncRemoteShell: rsyncShell,
-		TempDir:          dir,
-	}, nil
+	return "ssh " + strings.Join(escOpts, " ")
 }
 
 func (r *CommandRunner) Close() {
@@ -211,7 +220,7 @@ func runSSHChecked(runner sshRunner, server string, command string, errMsg strin
 }
 
 func serverCommand(args ...string) string {
-	parts := []string{"sudo", "simple-vps", "server"}
+	parts := []string{"sudo", "-n", "/usr/local/bin/simple-vps", "server"}
 	for _, arg := range args {
 		parts = append(parts, utils.ShellEscape(arg))
 	}
@@ -390,7 +399,7 @@ func CmdCheck(root string, envName string) {
 		os.Exit(1)
 	}
 	if envName != "" {
-		fmt.Printf("Manifest simple-vps.toml is deploy-ready for env %s.\n", envName)
+		fmt.Printf("Local deploy checks passed for env %s.\n", envName)
 	} else {
 		fmt.Println("Manifest simple-vps.toml is valid.")
 	}
@@ -414,14 +423,8 @@ func CmdSetup(root string, envName string) {
 	// live in the container image, not on the host. The host supplies
 	// simple-vps + rsync only; Podman/Caddy are checked by the
 	// installer, not per-deploy.
-	tools := []string{"simple-vps", "rsync"}
-	for _, tool := range tools {
-		errMsg := fmt.Sprintf("missing required server tool: %s", tool)
-		if tool == "simple-vps" {
-			errMsg = "missing Simple VPS server API; rerun the Simple VPS install"
-		}
-		runSSHChecked(runner, ctx.Server, fmt.Sprintf("command -v %s", utils.ShellEscape(tool)), errMsg)
-	}
+	runSSHChecked(runner, ctx.Server, "test -x /usr/local/bin/simple-vps", "missing Simple VPS server API at /usr/local/bin/simple-vps; rerun the Simple VPS install")
+	runSSHChecked(runner, ctx.Server, "command -v rsync", "missing required server tool: rsync")
 
 	// 3. create per-env user, dirs, and Podman network
 	runSSHChecked(runner, ctx.Server, serverAppSetupEnvCommand(ctx.AppName, envName), "simple-vps server app setup-env failed")
@@ -849,12 +852,21 @@ func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDot
 
 	// 2. Upload tarball + manifest to a per-deploy temp dir on the host.
 	remoteDir := fmt.Sprintf("%s/%s-%s-%s", RemoteDeployTmpDir, ctx.AppName, envName, plan.Release)
-	runSSHChecked(runner, ctx.Server, fmt.Sprintf("mkdir -p %s && chmod 0700 %s", utils.ShellEscape(remoteDir), utils.ShellEscape(remoteDir)), "failed to create remote deploy dir")
+	cleanupRemoteDir := func() {
+		_, _, _, _ = runner.RunSSH(ctx.Server, fmt.Sprintf("rm -rf %s", utils.ShellEscape(remoteDir)))
+	}
+	failAfterRemoteDir := func(message string) {
+		cleanupRemoteDir()
+		utils.Die(message, 1)
+	}
+	if _, err := runSSHRequired(runner, ctx.Server, fmt.Sprintf("mkdir -p %s && chmod 0700 %s", utils.ShellEscape(remoteDir), utils.ShellEscape(remoteDir)), "failed to create remote deploy dir"); err != nil {
+		failAfterRemoteDir(err.Error())
+	}
 	if err := runner.Upload(localTar, remoteDir+"/source.tar", ctx.Server); err != nil {
-		utils.Die(fmt.Sprintf("failed to upload source: %v", err), 1)
+		failAfterRemoteDir(fmt.Sprintf("failed to upload source: %v", err))
 	}
 	if err := runner.Upload(localManifest, remoteDir+"/simple-vps.toml", ctx.Server); err != nil {
-		utils.Die(fmt.Sprintf("failed to upload manifest: %v", err), 1)
+		failAfterRemoteDir(fmt.Sprintf("failed to upload manifest: %v", err))
 	}
 
 	// 3. Helper builds the image or snapshots static assets, then reloads Caddy.
@@ -864,10 +876,12 @@ func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDot
 		plan,
 		rebuild,
 	)
-	runSSHChecked(runner, ctx.Server, applyCmd, "deploy failed")
+	if _, err := runSSHRequired(runner, ctx.Server, applyCmd, "deploy failed"); err != nil {
+		failAfterRemoteDir(err.Error())
+	}
 
 	// 4. Best-effort cleanup of the upload dir.
-	_, _, _, _ = runner.RunSSH(ctx.Server, fmt.Sprintf("rm -rf %s", utils.ShellEscape(remoteDir)))
+	cleanupRemoteDir()
 
 	fmt.Printf("Deployed %s (%s) at %s\n", ctx.AppName, envName, plan.Release)
 }

@@ -77,7 +77,7 @@ func appPreflightFindings(app, env string, requiredSecrets []string) []string {
 	}
 	deployTmp := host.DeployTmpDir()
 	if info, err := os.Stat(deployTmp); err != nil {
-		findings = append(findings, fmt.Sprintf("deploy tmp dir is missing: %s; run `simple-vps setup --env %s`", deployTmp, env))
+		findings = append(findings, fmt.Sprintf("deploy tmp dir is missing: %s; run `simple-vps host install`", deployTmp))
 	} else if !info.IsDir() {
 		findings = append(findings, fmt.Sprintf("expected %s to be a directory", deployTmp))
 	} else {

@@ -36,6 +36,8 @@ Example apps live under `examples/`:
 
 - `examples/hono-bun-api` - Dockerfile-backed Bun/Hono API.
 - `examples/php-plain` - Dockerfile-backed PHP HTTP app.
+- `examples/django-sqlite` - Django, SQLite under `/data`, and migrations via
+  `[deploy].release`.
 - `examples/astro-static` - real Astro app; run `npm run build`, then deploy
   generated `dist/`.
 - `examples/mixed-api-docs` - container API plus host-served `/docs`.
@@ -67,7 +69,7 @@ install the local CLI onto your laptop.
 Download the installer from the same release you are installing:
 
 ```bash
-VERSION=v0.6.0
+VERSION=v0.7.0
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   gh api -H 'Accept: application/vnd.github.raw' \
     "/repos/fprl/simple-vps/contents/install.sh?ref=$VERSION" > install.sh
@@ -85,16 +87,16 @@ and verifies the matching Linux helper binary for the target VPS. Set
 
 ```bash
 SIMPLE_VPS_VERSION="$VERSION" ./install.sh \
-  --mode remote \
   --host <vps-ip> \
-  --bootstrap-user root \
   --ssh-key ~/.ssh/<root-key> \
   --operator-ssh-public-key-file ~/.ssh/<root-key>.pub \
   --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub \
-  --ingress public \
-  --admin public-ssh \
   --yes
 ```
+
+The operator key is for human host recovery and rerunning host install. The
+deploy key is what `deploy`, `status`, `secret`, and other app commands use
+after install.
 
 If the release assets are private, authenticate `gh` before downloading the
 installer and set `SIMPLE_VPS_RELEASE_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`
@@ -179,6 +181,9 @@ host = "staging-api.example.com"
 Then:
 
 ```bash
+git init
+git add .
+git commit -m "initial simple-vps app"
 simple-vps check --env production
 simple-vps setup --env production
 simple-vps deploy --env production
@@ -188,6 +193,10 @@ simple-vps status --env production
 `check --env` uses the same local deploy diagnostics as `deploy`: the app
 directory must be a committed Git worktree, and dirty deploys must be explicit
 with `deploy --dirty`.
+
+Deploy excludes dotenv files by default. Use `[vars]` and `@secret:` for real
+secrets; pass `deploy --include-dotenv` only when you intentionally want dotenv
+files in the uploaded release artifact.
 
 The `serve` directory is uploaded into the same release as the container image,
 so rollback and restore move the web process and static files together.
@@ -214,7 +223,7 @@ Build all release binaries:
 
 ```bash
 make clean
-make build-release VERSION=v0.6.0
+make build-release VERSION=v0.7.0
 ```
 
 Artifacts land in `dist/`:
@@ -229,7 +238,7 @@ simple-vps-darwin-arm64
 Smoke a published release against a VPS:
 
 ```bash
-scripts/release-smoke.sh --version v0.6.0 --host <ip>
+scripts/release-smoke.sh --version v0.7.0 --host <ip>
 ```
 
 ## References

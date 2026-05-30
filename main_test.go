@@ -26,6 +26,7 @@ func TestPublicCLIParsesV1Contract(t *testing.T) {
 		{"check", "-e", "production"},
 		{"setup", "--env", "production"},
 		{"deploy", "--env", "production"},
+		{"deploy", "--env", "production", "--include-dotenv"},
 		{"deploy", "-e", "production", "--config", "apps/api/simple-vps.toml"},
 		{"status", "--env", "production", "--json"},
 		{"logs", "web", "--env", "production", "--follow", "--tail", "100"},

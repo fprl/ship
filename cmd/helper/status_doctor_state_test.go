@@ -134,6 +134,19 @@ func TestDoctorServiceFindingsRequireConfiguredTunnelService(t *testing.T) {
 	}
 }
 
+func TestHelperSudoRegexRequiresServerSubtree(t *testing.T) {
+	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server app *, /usr/local/bin/simple-vps server status, /usr/local/bin/simple-vps server status *, /usr/local/bin/simple-vps server doctor, /usr/local/bin/simple-vps server doctor *"
+	if !HelperSudoRe.MatchString(good) {
+		t.Fatal("expected server subtree sudoers grant to match")
+	}
+	if HelperSudoRe.MatchString("deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps") {
+		t.Fatal("broad simple-vps sudoers grant must not match")
+	}
+	if HelperSudoRe.MatchString("deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server *") {
+		t.Fatal("whole server subtree grant must not match")
+	}
+}
+
 func writeValidHost(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

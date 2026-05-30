@@ -35,11 +35,15 @@ func checkDiagnostics(root, envName string) (diagnostics, error) {
 	if envName == "" || out.hasErrors() {
 		return out, nil
 	}
-	_, deployDiags, err := buildLocalDeployPlan(root, envName, localDeployOptions{})
+	plan, deployDiags, err := buildLocalDeployPlan(root, envName, localDeployOptions{})
 	if err != nil {
 		return nil, err
 	}
-	return append(out, deployDiags...), nil
+	out = append(out, deployDiags...)
+	if !out.hasErrors() {
+		out = append(out, secretReferenceDiagnostics(plan.Context)...)
+	}
+	return out, nil
 }
 
 func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localDeployPlan, diagnostics, error) {
@@ -157,12 +161,28 @@ func gitCommit(root string) (short string, full string, err error) {
 func gitCommitHint(err error) string {
 	switch err.Error() {
 	case "git repository not found":
-		return "simple-vps uses Git commits to name reproducible releases.\nRun:\n  git init\n  git add .\n  git commit -m \"initial commit\""
+		return "simple-vps uses Git commits to name reproducible releases.\nRun:\n  git init\n  git add .\n  git commit -m \"initial simple-vps app\""
 	case "git repository has no commits":
-		return "Create the first release identity:\n  git add .\n  git commit -m \"initial commit\""
+		return "Create the first release identity:\n  git add .\n  git commit -m \"initial simple-vps app\""
 	default:
 		return "Run this from a committed Git checkout. Dirty deploys still need a base commit."
 	}
+}
+
+func secretReferenceDiagnostics(ctx *config.AppContext) diagnostics {
+	keys := secretRefKeys(ctx.SecretRefs)
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make(diagnostics, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, diagnostic{
+			Level:   diagnosticWarning,
+			Message: fmt.Sprintf("secret %s must be set before deploy", key),
+			Hint:    fmt.Sprintf("Run:\n  printf '%%s' \"$%s\" | simple-vps secret set %s --env %s", key, key, ctx.EnvName),
+		})
+	}
+	return out
 }
 
 func gitWorktreeDirty(root string, ignoreDirs []string) (bool, error) {

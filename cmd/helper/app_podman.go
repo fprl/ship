@@ -184,7 +184,7 @@ func runReleaseCommand(app, env, command, imageTag, userID, groupID, release str
 	}
 	args = append(args, imageTag, "/bin/sh", "-c", command)
 	if _, err := utils.RunChecked("podman", args, ""); err != nil {
-		return fmt.Errorf("release command failed: %v", err)
+		return fmt.Errorf("release command %q failed before traffic switch: %v", command, err)
 	}
 	return nil
 }

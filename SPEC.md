@@ -70,7 +70,7 @@ relative to that manifest's directory.
 simple-vps init [--config <path>] [--template container|static|php|hono] [--name <app>] [--env <env>] [--server <ssh-target>] [--host <host>] [--tls auto|internal] [--port <port>] # scaffold simple-vps.toml plus starter files
 simple-vps check [--env <env>]                        # validate manifest; with --env also checks local deploy blockers
 simple-vps setup --env <env>                          # create per-env user, paths, Podman network
-simple-vps deploy --env <env> [--dirty] [--rebuild]   # build image or publish static assets, route via Caddy
+simple-vps deploy --env <env> [--dirty] [--rebuild] [--include-dotenv] # build image or publish static assets, route via Caddy
 simple-vps status --env <env> [--json]                # runtime process table
 simple-vps app list --server <ssh-target> [--json]    # env identity + podman labels app/env list
 simple-vps restart [process] --env <env>              # bounce running processes in place (same image)
@@ -112,6 +112,10 @@ All mutating helper operations for the same `(app, env)` are serialized
 by a host-side file lock. `setup`, `deploy`, `restart`, `destroy`, and
 secret writes/removals cannot interleave against the same environment.
 Different environments can proceed independently.
+
+Deploy artifacts reject `.env`-style files by default. `--include-dotenv`
+exists for deliberate checked-in dotenv artifacts; real secrets should use
+`[vars]` plus whole-value `@secret:KEY` references.
 
 For container apps, non-secret runtime values live in `[vars]`, with
 env-specific overrides in `[env.<env>.vars]`. Secret values are referenced
@@ -175,38 +179,38 @@ installer, and host helper.
 Shipping today:
 
 ```bash
-sudo simple-vps server status [--json]
-sudo simple-vps server doctor [--json]
+sudo -n /usr/local/bin/simple-vps server status [--json]
+sudo -n /usr/local/bin/simple-vps server doctor [--json]
 
-sudo simple-vps server app setup-env <app> <env>
-sudo simple-vps server app preflight [--secret <key> ...] [--json] <app> <env>
-sudo simple-vps server app destroy-env [--purge] <app> <env>
-sudo simple-vps server app apply --tarball <path> --manifest <path> --sha <release> --base-commit <sha> --created-at <rfc3339> [--dirty] <app> <env>
-sudo simple-vps server app list [--json]
-sudo simple-vps server app status [--json] <app> <env>
-sudo simple-vps server app restart <app> <env> [process]
-sudo simple-vps server app rollback <app> <env> [release]
-sudo simple-vps server app backup create [--json] [--to=<destination>] <app> <env>
-sudo simple-vps server app backup list [--json] <app> <env>
-sudo simple-vps server app backup rm <app> <env> <backup-id>
-sudo simple-vps server app backup restore --from=<backup-id> [--dry-run] <app> <env>
-sudo simple-vps server app logs [--follow] [--tail=N] <app> <env> [process]
-sudo simple-vps server app secret set <app> <env> <key>
-sudo simple-vps server app secret list [--json] <app> <env>
-sudo simple-vps server app secret rm <app> <env> <key>
+sudo -n /usr/local/bin/simple-vps server app setup-env <app> <env>
+sudo -n /usr/local/bin/simple-vps server app preflight [--secret <key> ...] [--json] <app> <env>
+sudo -n /usr/local/bin/simple-vps server app destroy-env [--purge] <app> <env>
+sudo -n /usr/local/bin/simple-vps server app apply --tarball <path> --manifest <path> --sha <release> --base-commit <sha> --created-at <rfc3339> [--dirty] <app> <env>
+sudo -n /usr/local/bin/simple-vps server app list [--json]
+sudo -n /usr/local/bin/simple-vps server app status [--json] <app> <env>
+sudo -n /usr/local/bin/simple-vps server app restart <app> <env> [process]
+sudo -n /usr/local/bin/simple-vps server app rollback <app> <env> [release]
+sudo -n /usr/local/bin/simple-vps server app backup create [--json] [--to=<destination>] <app> <env>
+sudo -n /usr/local/bin/simple-vps server app backup list [--json] <app> <env>
+sudo -n /usr/local/bin/simple-vps server app backup rm <app> <env> <backup-id>
+sudo -n /usr/local/bin/simple-vps server app backup restore --from=<backup-id> [--dry-run] <app> <env>
+sudo -n /usr/local/bin/simple-vps server app logs [--follow] [--tail=N] <app> <env> [process]
+sudo -n /usr/local/bin/simple-vps server app secret set <app> <env> <key>
+sudo -n /usr/local/bin/simple-vps server app secret list [--json] <app> <env>
+sudo -n /usr/local/bin/simple-vps server app secret rm <app> <env> <key>
 
-sudo simple-vps server cloudflare publish --app <name> <host>
-sudo simple-vps server cloudflare remove <host>
-sudo simple-vps server cloudflare remove --app <name>
-sudo simple-vps server cloudflare setup-tunnel --name <name>
 ```
 
-The sudoers contract is one line for the whole server binary, installed at
-`/etc/sudoers.d/simple-vps`. The grant belongs to the deploy user:
+Cloudflare server commands exist for host provisioning internals. They are not
+inside the deploy user's sudoers contract.
+
+The sudoers contract is one line for app lifecycle commands plus read-only
+host status/doctor commands, installed at `/etc/sudoers.d/simple-vps`. The
+grant belongs to the deploy user:
 
 ```text
 /etc/sudoers.d/simple-vps
-  deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps
+  deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server app *, /usr/local/bin/simple-vps server status, /usr/local/bin/simple-vps server status *, /usr/local/bin/simple-vps server doctor, /usr/local/bin/simple-vps server doctor *
 ```
 
 ## Manifest
@@ -348,7 +352,7 @@ The script finds, downloads, or builds a Go binary, then execs
 
 ```text
 # on a fresh box, ssh'd as root:
-VERSION=v0.6.0
+VERSION=v0.7.0
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   gh api -H 'Accept: application/vnd.github.raw' \
     "/repos/fprl/simple-vps/contents/install.sh?ref=$VERSION" > install.sh
@@ -362,10 +366,11 @@ SIMPLE_VPS_VERSION="$VERSION" ./install.sh \
 
 # or from a laptop, against a fresh box:
 SIMPLE_VPS_VERSION="$VERSION" ./install.sh \
-    --mode remote --host <ip> --bootstrap-user root \
+    --host <ip> \
     --ssh-key ~/.ssh/id_ed25519 \
     --operator-ssh-public-key-file ~/.ssh/id_ed25519.pub \
-    --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub
+    --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub \
+    --yes
 ```
 
 The default install opens host ports 80 / 443 publicly (the ADR-0002

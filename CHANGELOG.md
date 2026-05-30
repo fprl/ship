@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+## v0.7.0 - 2026-05-30
+
+### Added
+
+- First-run `init` next steps now include the required Git init/add/commit flow.
+- `check --env` now lists required `@secret` keys with exact `secret set`
+  commands without requiring remote secret presence.
+- Django + SQLite example showing `/data` persistence and `[deploy].release`
+  migrations.
+- Optional Django coverage in the example matrix smoke.
+
+### Changed
+
+- Deploy sudoers now grants only the app lifecycle plus host status/doctor
+  server APIs, and the client invokes that absolute server API path with
+  non-interactive `sudo -n` over SSH `BatchMode`.
+- `check --env` now reports local deploy checks instead of implying remote
+  deploy state.
+- Host install output prints exact next commands for host status, deploy-key
+  env vars, and app init.
+- GitHub Actions workflows use `actions/checkout@v5` and
+  `actions/setup-go@v6`.
+- Getting started and README now lead with the tested first-run flow and
+  simpler host install command.
+
+### Fixed
+
+- Release command failure diagnostics now say the failure happened before the
+  traffic switch.
+- Failed deploys now clean up their uploaded remote source directory before
+  exiting.
+- Failed release commands restore the previous runtime env file before
+  exiting.
+- Fake VPS smoke covers the release-command failure path and asserts old
+  traffic remains active.
+
 ## v0.6.0 - 2026-05-30
 
 ### Added

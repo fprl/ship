@@ -147,6 +147,7 @@ func (i *Installer) RunOptions(opts Options) error {
 	}
 
 	i.info("Provisioning complete")
+	i.printNextSteps(plan)
 	return nil
 }
 
@@ -810,6 +811,33 @@ func nonEmptyStrings(values ...string) []string {
 		}
 	}
 	return out
+}
+
+func (i *Installer) printNextSteps(plan Plan) {
+	if plan.Mode != "remote" {
+		return
+	}
+	server := plan.DeployUser + "@" + plan.TargetHost
+	fmt.Fprintln(i.Stdout, "Next:")
+	if privateKey := deployPrivateKeyHint(plan); privateKey != "" {
+		fmt.Fprintf(i.Stdout, "1. export SIMPLE_VPS_SSH_KEY=\"$(cat %s)\"\n", utils.ShellEscape(privateKey))
+	} else {
+		fmt.Fprintln(i.Stdout, "1. export SIMPLE_VPS_SSH_KEY=\"$(cat <deploy-private-key>)\"")
+	}
+	fmt.Fprintf(i.Stdout, "   export SIMPLE_VPS_KNOWN_HOSTS=\"$(ssh-keyscan -t ed25519 -H %s 2>/dev/null)\"\n", plan.TargetHost)
+	fmt.Fprintf(i.Stdout, "2. simple-vps host status --server %s\n", server)
+	fmt.Fprintln(i.Stdout, "3. simple-vps init --server "+server+" --host <app-domain>")
+}
+
+func deployPrivateKeyHint(plan Plan) string {
+	pub := plan.DeploySSHPublicKeyFile
+	if pub == "" && plan.SharedKey {
+		pub = plan.OperatorSSHPublicKeyFile
+	}
+	if strings.HasSuffix(pub, ".pub") {
+		return strings.TrimSuffix(pub, ".pub")
+	}
+	return ""
 }
 
 func fileExists(path string) bool {

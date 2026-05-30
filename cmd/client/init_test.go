@@ -186,9 +186,73 @@ func TestRenderInitResultIncludesConfigPathOutsideCwd(t *testing.T) {
 	}
 
 	out := captureInitOutput(t, result)
-	want := "simple-vps check --config " + result.ConfigPath + " --env production"
-	if !strings.Contains(out, want) {
-		t.Fatalf("expected output to include %q:\n%s", want, out)
+	for _, want := range []string{
+		"git -C " + result.Root + " init",
+		"git -C " + result.Root + " add .",
+		"git -C " + result.Root + " commit -m \"initial simple-vps app\"",
+		"simple-vps check --config " + result.ConfigPath + " --env production",
+		"simple-vps setup --config " + result.ConfigPath + " --env production",
+		"simple-vps deploy --config " + result.ConfigPath + " --env production",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected output to include %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRenderInitResultDoesNotCreateNestedGitRepoInMonorepo(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	root := filepath.Join(repo, "apps", "api")
+	result, err := RunInit(root, InitOptions{Template: "static", Name: "api", Server: "deploy@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureInitOutput(t, result)
+	if strings.Contains(out, "git -C "+result.Root+" init") {
+		t.Fatalf("init output should not create nested git repo inside existing worktree:\n%s", out)
+	}
+	for _, want := range []string{
+		"git -C " + result.Root + " add .",
+		"git -C " + result.Root + " commit -m \"initial simple-vps app\"",
+		"simple-vps check --config " + result.ConfigPath + " --env production",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected output to include %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestInitFirstRunFlowRequiresCommitBeforeCheck(t *testing.T) {
+	root := t.TempDir()
+	if _, err := RunInit(root, InitOptions{
+		Template: "static",
+		Name:     "api",
+		Server:   "deploy@example.com",
+		Host:     "api.example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	diags, err := checkDiagnostics(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !diags.hasErrors() || !strings.Contains(strings.Join(diags.errorMessages(), "\n"), "git repository not found") {
+		t.Fatalf("expected missing git diagnostic before first commit:\n%+v", diags)
+	}
+
+	runGit(t, root, "init")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "initial simple-vps app")
+
+	diags, err = checkDiagnostics(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diags.hasErrors() {
+		t.Fatalf("check should pass after first commit:\n%+v", diags)
 	}
 }
 
