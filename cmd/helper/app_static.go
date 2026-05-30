@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/identity"
@@ -71,46 +70,6 @@ func currentStaticRelease(app, env string) (string, error) {
 		return "", fmt.Errorf("static release %s not found: %v", release, err)
 	}
 	return release, nil
-}
-
-func staticReleases(app, env string) ([]imageRelease, error) {
-	return staticReleasesAt(filepath.Join(identity.StaticDir(app, env), "releases"))
-}
-
-func staticReleasesAt(releasesDir string) ([]imageRelease, error) {
-	entries, err := os.ReadDir(releasesDir)
-	if err != nil {
-		return nil, fmt.Errorf("static releases not found; deploy before rollback")
-	}
-	type releaseDir struct {
-		name    string
-		modTime int64
-	}
-	var dirs []releaseDir
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		if err := validateRelease(entry.Name()); err != nil {
-			return nil, err
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return nil, err
-		}
-		dirs = append(dirs, releaseDir{name: entry.Name(), modTime: info.ModTime().UnixNano()})
-	}
-	sort.Slice(dirs, func(i, j int) bool {
-		if dirs[i].modTime != dirs[j].modTime {
-			return dirs[i].modTime > dirs[j].modTime
-		}
-		return dirs[i].name > dirs[j].name
-	})
-	out := make([]imageRelease, 0, len(dirs))
-	for _, dir := range dirs {
-		out = append(out, imageRelease{Release: dir.name})
-	}
-	return out, nil
 }
 
 func activateStaticRelease(app, env, release string) error {
