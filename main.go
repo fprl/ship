@@ -517,8 +517,16 @@ func (c hostInstallCmd) Run() error {
 	return hostinstall.NewInstaller().RunOptions(opts)
 }
 
+func cliArgs(args []string) []string {
+	if len(args) == 0 {
+		return []string{"--help"}
+	}
+	return args
+}
+
 func main() {
-	parser := kong.Parse(
+	args := cliArgs(os.Args[1:])
+	parser, err := kong.New(
 		&cli{},
 		kong.Name("simple-vps"),
 		kong.Description("Deploy containerized apps to a single hardened VPS."),
@@ -526,5 +534,10 @@ func main() {
 		kong.ConfigureHelp(kong.HelpOptions{NoExpandSubcommands: true}),
 		kong.UsageOnError(),
 	)
-	parser.FatalIfErrorf(parser.Run())
+	if err != nil {
+		panic(err)
+	}
+	ctx, err := parser.Parse(args)
+	parser.FatalIfErrorf(err)
+	parser.FatalIfErrorf(ctx.Run())
 }

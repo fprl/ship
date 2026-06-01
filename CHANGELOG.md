@@ -54,6 +54,8 @@
   safely.
 - Project commands now explain missing `simple-vps.toml` with `--config` and
   `init` guidance instead of surfacing a low-level manifest read error.
+- Running `simple-vps` with no arguments now shows clean top-level help without
+  an "expected one of" parser error.
 - Failed deploys now clean up their uploaded remote source directory before
   exiting.
 - Failed release commands restore the previous runtime env file before

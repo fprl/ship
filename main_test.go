@@ -136,6 +136,21 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	}
 }
 
+func TestCLIArgsShowsHelpForNoArgs(t *testing.T) {
+	got := cliArgs(nil)
+	if len(got) != 1 || got[0] != "--help" {
+		t.Fatalf("cliArgs(nil) = %v, want [--help]", got)
+	}
+}
+
+func TestCLIArgsKeepsExplicitArgs(t *testing.T) {
+	got := cliArgs([]string{"deploy", "--env", "production"})
+	want := []string{"deploy", "--env", "production"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("cliArgs kept args = %v, want %v", got, want)
+	}
+}
+
 func TestAppRootUsesManifestDirectory(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "apps", "api", "simple-vps.toml")
