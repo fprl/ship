@@ -140,7 +140,8 @@ func (c setupCmd) Run() error {
 
 type deployCmd struct {
 	Config        string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Env           string `name:"env" short:"e" required:"" help:"Environment to deploy."`
+	Env           string `name:"env" short:"e" help:"Environment to deploy. Omit to derive it from the current branch."`
+	Branch        string `name:"branch" help:"Branch name to use when HEAD is detached."`
 	Dirty         bool   `help:"Allow deploying a dirty worktree."`
 	Rebuild       bool   `help:"Refresh base images and bypass Podman's build cache."`
 	IncludeDotenv bool   `name:"include-dotenv" help:"Include .env-style files in the uploaded release artifact."`
@@ -151,7 +152,7 @@ func (c deployCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdDeploy(root, c.Env, c.Dirty, c.Rebuild, c.IncludeDotenv)
+	client.CmdDeploy(root, c.Env, c.Branch, c.Dirty, c.Rebuild, c.IncludeDotenv)
 	return nil
 }
 
@@ -171,7 +172,8 @@ func (c sshCmd) Run() error {
 
 type statusCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Env    string `name:"env" short:"e" required:"" help:"Environment to inspect."`
+	Env    string `name:"env" short:"e" help:"Environment to inspect. Omit to derive it from the current branch."`
+	Branch string `name:"branch" help:"Branch name to inspect instead of the current branch."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text table."`
 }
 
@@ -180,14 +182,15 @@ func (c statusCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdStatus(root, c.Env, c.JSON)
+	client.CmdStatus(root, c.Env, c.Branch, c.JSON)
 	return nil
 }
 
 type logsCmd struct {
 	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Process string `arg:"" optional:"" help:"Process name. Optional when only one process runs."`
-	Env     string `name:"env" short:"e" required:"" help:"Environment containing the process."`
+	Env     string `name:"env" short:"e" help:"Environment containing the process. Omit to derive it from the current branch."`
+	Branch  string `name:"branch" help:"Branch name to inspect instead of the current branch."`
 	Follow  bool   `name:"follow" short:"f" help:"Stream new log lines."`
 	Tail    int    `name:"tail" default:"100" help:"How many trailing lines to show. Ignored in --follow mode."`
 }
@@ -197,7 +200,7 @@ func (c logsCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdLogs(root, c.Env, c.Process, c.Follow, c.Tail)
+	client.CmdLogs(root, c.Env, c.Branch, c.Process, c.Follow, c.Tail)
 	return nil
 }
 

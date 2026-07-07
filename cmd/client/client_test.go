@@ -124,6 +124,208 @@ func TestDirtyReleaseIDIncludesBaseCommit(t *testing.T) {
 	}
 }
 
+func TestSanitizeBranchEnvName(t *testing.T) {
+	tests := []struct {
+		branch string
+		want   string
+	}{
+		{branch: "feat/x", want: "feat-x"},
+		{branch: "--Feat///X--", want: "feat-x"},
+		{branch: "mañana/Über", want: "ma-ana-ber"},
+		{branch: "こんにちは-feature", want: "feature"},
+		{branch: strings.Repeat("a", 40), want: strings.Repeat("a", 28)},
+		{branch: strings.Repeat("a", 27) + "/x", want: strings.Repeat("a", 27)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.branch, func(t *testing.T) {
+			if got := sanitizeBranchEnvName(tt.branch); got != tt.want {
+				t.Fatalf("sanitizeBranchEnvName(%q) = %q, want %q", tt.branch, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnvNameForBranchRejectsUnmappableBranchName(t *testing.T) {
+	_, err := envNameForBranch("日本語", "main")
+	if err == nil || !strings.Contains(err.Error(), "unmappable_branch_name") || !strings.Contains(err.Error(), "next: rename the branch") {
+		t.Fatalf("expected unmappable_branch_name with rename guidance, got %v", err)
+	}
+}
+
+func TestResolveDeployAddressMapsBranchesToEnvs(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, clientContainerManifest())
+	initCommittedGitApp(t, root, "main")
+
+	addr, err := resolveDeployAddress(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr.EnvName != "prod" || !addr.ProductionBranch || addr.Branch != "main" {
+		t.Fatalf("main should resolve to prod production branch, got %+v", addr)
+	}
+
+	runGit(t, root, "checkout", "-B", "feat/x")
+	addr, err = resolveDeployAddress(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr.EnvName != "feat-x" || addr.ProductionBranch {
+		t.Fatalf("feat/x should resolve to preview feat-x, got %+v", addr)
+	}
+}
+
+func TestResolveDeployAddressHonorsProductionBranchOverride(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, `name = "api"
+box = "deploy@example.com"
+production_branch = "stable"
+probe = "/health"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"api.example.com" = "web"
+`)
+	initCommittedGitApp(t, root, "main")
+
+	addr, err := resolveDeployAddress(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr.EnvName != "main" || addr.ProductionBranch {
+		t.Fatalf("main should be a preview when production_branch=stable, got %+v", addr)
+	}
+
+	runGit(t, root, "checkout", "-B", "stable")
+	addr, err = resolveDeployAddress(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr.EnvName != "prod" || !addr.ProductionBranch {
+		t.Fatalf("stable should resolve to prod, got %+v", addr)
+	}
+}
+
+func TestResolveDeployAddressDetachedBranchGate(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, clientContainerManifest())
+	initCommittedGitApp(t, root, "main")
+
+	if _, err := resolveDeployAddress(root, "", "feat/x"); err == nil || !strings.Contains(err.Error(), "branch_flag_requires_detached_head") {
+		t.Fatalf("expected checked-out --branch rejection, got %v", err)
+	}
+
+	runGit(t, root, "checkout", "--detach")
+	if _, err := resolveDeployAddress(root, "", ""); err == nil || !strings.Contains(err.Error(), "detached_head_requires_branch") {
+		t.Fatalf("expected detached HEAD rejection, got %v", err)
+	}
+
+	addr, err := resolveDeployAddress(root, "", "feat/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr.EnvName != "feat-x" || addr.Branch != "feat/x" {
+		t.Fatalf("detached --branch should resolve preview env, got %+v", addr)
+	}
+}
+
+func TestResolveDeployAddressReportsNotGitRepo(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, clientContainerManifest())
+
+	_, err := resolveDeployAddress(root, "", "")
+	if err == nil || !strings.Contains(err.Error(), "not_a_git_repo") || !strings.Contains(err.Error(), "next:") {
+		t.Fatalf("expected not_a_git_repo with next step, got %v", err)
+	}
+}
+
+func TestResolveDeployAddressDetectsStagedAndUnstagedDirtyState(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, clientContainerManifest())
+	initCommittedGitApp(t, root, "main")
+
+	if err := os.WriteFile(filepath.Join(root, "unstaged.txt"), []byte("dirty"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	addr, err := resolveDeployAddress(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !addr.Dirty {
+		t.Fatal("unstaged file should mark worktree dirty")
+	}
+
+	runGit(t, root, "add", "unstaged.txt")
+	addr, err = resolveDeployAddress(root, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !addr.Dirty {
+		t.Fatal("staged file should mark worktree dirty")
+	}
+}
+
+func TestEnforceProductionAncestryRejectsBehindProduction(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, clientContainerManifest())
+	initCommittedGitApp(t, root, "main")
+	first := gitHead(t, root)
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("new production"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "new production")
+	deployed := gitHead(t, root)
+	runGit(t, root, "reset", "--hard", first)
+
+	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@example.com"}
+	runner := &fakeSSHRunner{responses: map[string]string{
+		serverAppStatusCommand("api", "prod", true): `{"app":"api","env":"prod","release":{"release":"` + deployed[:12] + `","base_commit":"` + deployed + `","source":"process"},"processes":[]}`,
+	}}
+
+	err := enforceProductionAncestry(root, runner, ctx, first)
+	if err == nil || !strings.Contains(err.Error(), "behind_production") || !strings.Contains(err.Error(), "next: git pull") {
+		t.Fatalf("expected behind_production, got %v", err)
+	}
+}
+
+func TestEnforceProductionAncestryAllowsFirstDeployAndAncestor(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, clientContainerManifest())
+	initCommittedGitApp(t, root, "main")
+	first := gitHead(t, root)
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("new production"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "new production")
+	head := gitHead(t, root)
+
+	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@example.com"}
+	firstDeploy := &fakeSSHRunner{responses: map[string]string{
+		serverAppStatusCommand("api", "prod", true): `{"app":"api","env":"prod","processes":[]}`,
+	}}
+	if err := enforceProductionAncestry(root, firstDeploy, ctx, head); err != nil {
+		t.Fatalf("first deploy should skip ancestry check: %v", err)
+	}
+
+	ancestor := &fakeSSHRunner{responses: map[string]string{
+		serverAppStatusCommand("api", "prod", true): `{"app":"api","env":"prod","release":{"release":"` + first[:12] + `","base_commit":"` + first + `","source":"process"},"processes":[]}`,
+	}}
+	if err := enforceProductionAncestry(root, ancestor, ctx, head); err != nil {
+		t.Fatalf("ancestor deployed commit should pass: %v", err)
+	}
+}
+
 func TestCheckAndDeployShareDirtyWorktreeDiagnostic(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
@@ -472,6 +674,34 @@ func runGit(t *testing.T, root string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}
+}
+
+func initCommittedGitApp(t *testing.T, root, branch string) {
+	t.Helper()
+	runGit(t, root, "init")
+	runGit(t, root, "checkout", "-B", branch)
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+}
+
+func gitHead(t *testing.T, root string) string {
+	t.Helper()
+	out := strings.TrimSpace(runGitOutput(t, root, "rev-parse", "HEAD"))
+	if out == "" {
+		t.Fatal("git rev-parse HEAD returned empty output")
+	}
+	return out
+}
+
+func runGitOutput(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
 }
 
 func assertSSHOptionSequence(t *testing.T, opts []string, first string, second string) {

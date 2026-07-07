@@ -455,7 +455,12 @@ func CmdSSH(root string, envName string) {
 	}
 }
 
-func CmdStatus(root string, envName string, jsonFlag bool) {
+func CmdStatus(root string, envName string, branchName string, jsonFlag bool) {
+	resolvedEnv, err := resolveReadEnv(root, envName, branchName, "status")
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	envName = resolvedEnv
 	ctx, err := config.LoadAppContext(root, envName)
 	if err != nil {
 		utils.Die(err.Error(), 1)
@@ -633,7 +638,12 @@ func validateDestroyConfirmation(appName, confirm string, yes bool) error {
 	return fmt.Errorf("destroy requires --confirm %s or --yes", appName)
 }
 
-func CmdLogs(root string, envName string, process string, follow bool, tail int) {
+func CmdLogs(root string, envName string, branchName string, process string, follow bool, tail int) {
+	resolvedEnv, err := resolveReadEnv(root, envName, branchName, "logs")
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	envName = resolvedEnv
 	ctx, err := config.LoadAppContext(root, envName)
 	if err != nil {
 		utils.Die(err.Error(), 1)
@@ -818,9 +828,21 @@ func CmdHostDoctor(server string, jsonFlag bool) {
 	fmt.Print(stdout)
 }
 
-func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDotenv bool) {
-	plan, diags, err := buildLocalDeployPlan(root, envName, localDeployOptions{
-		AllowDirty:    dirty,
+func CmdDeploy(root string, envName string, branchName string, dirty bool, rebuild bool, includeDotenv bool) {
+	address, err := resolveDeployAddress(root, envName, branchName)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	if address.ProductionBranch && address.Dirty {
+		utils.Die(codedNextError(
+			"dirty_worktree",
+			fmt.Sprintf("production branch %q has uncommitted changes", address.Branch),
+			"git commit",
+		).Error(), 1)
+	}
+
+	plan, diags, err := buildLocalDeployPlan(root, address.EnvName, localDeployOptions{
+		AllowDirty:    dirty || !address.ProductionBranch,
 		IncludeDotenv: includeDotenv,
 	})
 	if err != nil {
@@ -831,12 +853,21 @@ func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDot
 		os.Exit(1)
 	}
 	ctx := plan.Context
+	envName = address.EnvName
 
 	runner, err := NewCommandRunner()
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
 	defer runner.Close()
+	if address.ProductionBranch {
+		if err := deployHostPreflight(runner, ctx); err != nil {
+			utils.Die(err.Error(), 1)
+		}
+		if err := enforceProductionAncestry(root, runner, ctx, plan.BaseCommit); err != nil {
+			utils.Die(err.Error(), 1)
+		}
+	}
 	if err := ensureRemoteEnvReadyForDeploy(runner, ctx); err != nil {
 		utils.Die(err.Error(), 1)
 	}

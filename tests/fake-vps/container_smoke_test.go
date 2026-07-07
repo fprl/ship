@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/identity"
 )
 
@@ -44,7 +45,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
 	t.Run("release command failure leaves old traffic unchanged", env.testReleaseCommandFailure)
 	t.Run("caddy switch failure restores runtime state", env.testCaddySwitchFailureRollback)
-	t.Run("dirty deploy records base commit and status", env.testDirtyDeployStatus)
+	t.Run("branch env resolution and production guards", env.testBranchEnvironmentGuards)
 	t.Run("container rollback runs an older image release", env.testRollback)
 	t.Run("backup and restore round-trip app state", env.testBackupRestore)
 	t.Run("deploy removes processes dropped from the manifest", env.testRemovedProcessReconciliation)
@@ -286,23 +287,46 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 	e.dockerExec(t, "test ! -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", "production", "worker", failedRelease)+".labels")
 }
 
-func (e *smokeEnv) testDirtyDeployStatus(t *testing.T) {
-	app := filepath.Join(e.tmp, "dirty-api")
+func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
+	app := filepath.Join(e.tmp, "branch-api")
 	mustMkdir(t, app)
-	writeDirtyFixture(t, app)
+	writeBranchFixture(t, app)
 	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "stable")
 	baseCommit := strings.TrimSpace(e.mustRun(t, app, nil, "git", "rev-parse", "HEAD"))
 	baseShort := gitRelease(t, e, app)
 
-	mustWrite(t, filepath.Join(app, "dirty.txt"), "dirty deploy payload")
-	rejected := e.runSimpleVPS(t, app, nil, "deploy", "--env", "production")
-	if rejected.err == nil {
-		t.Fatal("deploy without --dirty should reject a dirty worktree")
-	}
-	assertContains(t, rejected.stdout+rejected.stderr, "working tree is dirty")
+	e.simpleVPS(t, app, nil, "deploy")
+	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", "prod"))
 
-	e.simpleVPS(t, app, nil, "deploy", "--env", "production", "--dirty")
-	rawStatus := e.simpleVPS(t, app, nil, "status", "--json", "--env", "production")
+	mustWrite(t, filepath.Join(app, "dirty.txt"), "dirty deploy payload")
+	rejected := e.runSimpleVPS(t, app, nil, "deploy")
+	if rejected.err == nil {
+		t.Fatal("production branch deploy should reject a dirty worktree")
+	}
+	assertContains(t, rejected.stdout+rejected.stderr, "dirty_worktree")
+	assertContains(t, rejected.stdout+rejected.stderr, "next: git commit")
+	if err := os.Remove(filepath.Join(app, "dirty.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	mustWrite(t, filepath.Join(app, "README.md"), "new production\n")
+	e.mustRun(t, app, nil, "git", "add", ".")
+	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "new production")
+	e.simpleVPS(t, app, nil, "deploy")
+	e.mustRun(t, app, nil, "git", "reset", "--hard", baseCommit)
+	behind := e.runSimpleVPS(t, app, nil, "deploy")
+	if behind.err == nil {
+		t.Fatal("production deploy from behind checkout should fail")
+	}
+	assertContains(t, behind.stdout+behind.stderr, "behind_production")
+	assertContains(t, behind.stdout+behind.stderr, "next: git pull")
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feat/x")
+	mustWrite(t, filepath.Join(app, "preview-dirty.txt"), "dirty preview payload")
+	e.simpleVPS(t, app, nil, "deploy")
+	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", "feat-x"))
+	rawStatus := e.simpleVPS(t, app, nil, "status", "--json", "--branch", "feat/x")
 	var status struct {
 		Release struct {
 			Release    string `json:"release"`
@@ -322,11 +346,34 @@ func (e *smokeEnv) testDirtyDeployStatus(t *testing.T) {
 	if !strings.HasPrefix(status.Release.Release, baseShort+"-dirty-") {
 		t.Fatalf("dirty release id %q should start with %s-dirty-", status.Release.Release, baseShort)
 	}
-	releaseMetadata := e.ssh(t, "cat "+identity.ReleaseMetadataFile("dirtyapi", "production", status.Release.Release))
+	releaseMetadata := e.ssh(t, "cat "+identity.ReleaseMetadataFile("branchapi", "feat-x", status.Release.Release))
 	assertContains(t, releaseMetadata, `"dirty": true`)
 	assertContains(t, releaseMetadata, `"base_commit": "`+baseCommit+`"`)
-	textStatus := e.simpleVPS(t, app, nil, "status", "--env", "production")
+	textStatus := e.simpleVPS(t, app, nil, "status", "--branch", "feat/x")
 	assertContains(t, textStatus, "(dirty")
+
+	checkedOutBranchFlag := e.runSimpleVPS(t, app, nil, "deploy", "--branch", "feat/x")
+	if checkedOutBranchFlag.err == nil {
+		t.Fatal("deploy --branch should fail while a branch is checked out")
+	}
+	assertContains(t, checkedOutBranchFlag.stdout+checkedOutBranchFlag.stderr, "branch_flag_requires_detached_head")
+
+	e.mustRun(t, app, nil, "git", "checkout", "--detach")
+	detachedWithoutBranch := e.runSimpleVPS(t, app, nil, "deploy")
+	if detachedWithoutBranch.err == nil {
+		t.Fatal("detached HEAD deploy without --branch should fail")
+	}
+	assertContains(t, detachedWithoutBranch.stdout+detachedWithoutBranch.stderr, "detached_head_requires_branch")
+	e.simpleVPS(t, app, nil, "deploy", "--branch", "feat/x")
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "mañana/Über")
+	e.simpleVPS(t, app, nil, "deploy")
+	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", "ma-ana-ber"))
+
+	longBranch := "feature/abcdefghijklmnopqrstuvwxyz0123456789"
+	e.mustRun(t, app, nil, "git", "checkout", "-B", longBranch)
+	e.simpleVPS(t, app, nil, "deploy")
+	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", "feature-abcdefghijklmnopqrst"))
 }
 
 func (e *smokeEnv) testBackupRestore(t *testing.T) {
@@ -600,7 +647,7 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	oldWeb := identity.ContainerName("mix", "production", "web", oldRelease)
 	fragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", "production"))
 	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
-	assertContains(t, fragment, `root * "`+filepath.Join(identity.StaticDir("mix", "production"), "releases", oldRelease, "docs")+`"`)
+	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", "production", oldRelease, "mixed.example.com/docs")+`"`)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/health", "ok")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs/", "docs-v1")
@@ -617,14 +664,14 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	newWeb := identity.ContainerName("mix", "production", "web", newRelease)
 	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", "production"))
 	assertContains(t, fragment, "reverse_proxy http://"+newWeb+":3000")
-	assertContains(t, fragment, `root * "`+filepath.Join(identity.StaticDir("mix", "production"), "releases", newRelease, "docs")+`"`)
+	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", "production", newRelease, "mixed.example.com/docs")+`"`)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/health", "ok")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v2")
 
 	e.simpleVPS(t, app, nil, "rollback", "--env", "production")
 	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", "production"))
 	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
-	assertContains(t, fragment, `root * "`+filepath.Join(identity.StaticDir("mix", "production"), "releases", oldRelease, "docs")+`"`)
+	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", "production", oldRelease, "mixed.example.com/docs")+`"`)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
 
 	e.simpleVPS(t, app, nil, "backup", "create", "--env", "production")
@@ -646,7 +693,7 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	e.simpleVPS(t, app, nil, "restore", "--from", backupID, "--env", "production")
 	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", "production"))
 	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
-	assertContains(t, fragment, `root * "`+filepath.Join(identity.StaticDir("mix", "production"), "releases", oldRelease, "docs")+`"`)
+	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", "production", oldRelease, "mixed.example.com/docs")+`"`)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
 
 	e.simpleVPS(t, app, nil, "destroy", "--env", "production", "--confirm", "mix")
@@ -1013,6 +1060,24 @@ web = { port = 3000 }
 `)
 }
 
+func writeBranchFixture(t *testing.T, app string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "branchapi"
+box = "fake-vps"
+production_branch = "stable"
+probe = "/health"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"branch.example.com" = "web"
+`)
+}
+
 func writeReleaseFailFixture(t *testing.T, app string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
@@ -1111,6 +1176,10 @@ web = { port = 3000 }
 func gitRelease(t *testing.T, e *smokeEnv, app string) string {
 	t.Helper()
 	return strings.TrimSpace(e.mustRun(t, app, nil, "git", "rev-parse", "--short=12", "HEAD"))
+}
+
+func staticRouteRoot(app, env, release, routeKey string) string {
+	return filepath.Join(identity.StaticDir(app, env), "releases", release, config.RouteStorageName(routeKey))
 }
 
 func currentStaticReleaseFor(t *testing.T, e *smokeEnv, app, env string) string {
