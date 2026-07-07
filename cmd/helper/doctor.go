@@ -276,9 +276,6 @@ func recordDoctorRun(opts doctorOptions) (store.DoctorFile, error) {
 		previousChecks = nil
 	}
 	delta := doctorDelta(previousChecks, checks)
-	if len(delta) > 0 {
-		// TODO(§7): fire notify webhook for newly degraded/failed doctor checks.
-	}
 	file := store.DoctorFile{
 		Version:    store.CurrentVersion,
 		RecordedAt: now.Format(time.RFC3339Nano),
@@ -288,6 +285,7 @@ func recordDoctorRun(opts doctorOptions) (store.DoctorFile, error) {
 	if err := opts.StateStore.WriteDoctor(file); err != nil {
 		return store.DoctorFile{}, err
 	}
+	notifyDoctorDegraded(delta, now)
 	return file, nil
 }
 

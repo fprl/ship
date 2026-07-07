@@ -1,13 +1,48 @@
 #!/usr/bin/env bash
-# Minimal systemctl stub for the container-deploy smoke. The new
-# lifecycle only invokes `systemctl reload caddy`; everything else is
-# either fake-podman (container ops), fake-caddy (config validate), or
-# direct shell. Accept the verbs the deploy path might call and exit
-# 0 — no real service supervision needed.
+# Minimal systemctl stub for the container-deploy smoke. It accepts the
+# lifecycle verbs the helper uses and records enough timer state for
+# doctor's reaper check.
 set -euo pipefail
 
+state_dir=/run/fake-systemctl
+mkdir -p "$state_dir"
+
+unit="${2:-}"
+
 case "${1:-}" in
-  daemon-reload|enable|disable|reload|start|stop|restart|is-active|status)
+  daemon-reload|reload|restart|status)
+    exit 0
+    ;;
+  enable)
+    rm -f "$state_dir/$unit.disabled"
+    exit 0
+    ;;
+  disable)
+    : > "$state_dir/$unit.disabled"
+    exit 0
+    ;;
+  start)
+    rm -f "$state_dir/$unit.inactive"
+    exit 0
+    ;;
+  stop)
+    : > "$state_dir/$unit.inactive"
+    exit 0
+    ;;
+  is-active)
+    if [[ -f "$state_dir/$unit.inactive" ]]; then
+      printf '%s\n' inactive
+      exit 3
+    fi
+    printf '%s\n' active
+    exit 0
+    ;;
+  is-enabled)
+    if [[ -f "$state_dir/$unit.disabled" ]]; then
+      printf '%s\n' disabled
+      exit 1
+    fi
+    printf '%s\n' enabled
     exit 0
     ;;
   *)

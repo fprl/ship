@@ -74,13 +74,19 @@ func (c appApplyCmd) runLocked() {
 func (c appApplyCmd) runLockedE() (err error) {
 	startedAt := time.Now().UTC()
 	previousRelease := currentActiveReleaseBestEffort(c.App, c.Env)
+	var app *config.AppContext
 	defer func() {
 		if err == nil {
 			return
 		}
 		entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, err)
-		if appendErr := appendDeployJournalEntry(c.App, c.Env, entry, scrubValues); appendErr != nil {
+		entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
+		if appendErr := appendSanitizedDeployJournalEntry(c.App, c.Env, entry); appendErr != nil {
 			err = fmt.Errorf("%v; additionally failed to write deploy journal: %v", err, appendErr)
+			return
+		}
+		if app != nil && isAbortedJournalOutcome(entry.Outcome) {
+			notifyDeployAborted(app.Notify, app, entry, time.Now().UTC())
 		}
 	}()
 
@@ -90,7 +96,7 @@ func (c appApplyCmd) runLockedE() (err error) {
 	}
 	defer os.RemoveAll(ctxDir)
 
-	app, err := c.loadApplyContext(ctxDir)
+	app, err = c.loadApplyContext(ctxDir)
 	if err != nil {
 		return err
 	}
@@ -152,7 +158,8 @@ func (c appApplyCmd) runLockedE() (err error) {
 	releaseSnapshotActive = true
 	deployCommitted = true
 	removeContainers(result.containersToRemove)
-	if err := appendDeployJournalEntry(c.App, c.Env, deployJournalEntry{
+	previousJournal, previousJournalErr := readLatestDeployJournalEntry(c.App, c.Env)
+	entry := sanitizeDeployJournalEntry(c.App, c.Env, deployJournalEntry{
 		SchemaVersion:    deployJournalSchemaVersion,
 		App:              c.App,
 		Env:              c.Env,
@@ -162,8 +169,12 @@ func (c appApplyCmd) runLockedE() (err error) {
 		PreviousRelease:  previousRelease,
 		AttemptedRelease: c.SHA,
 		Identity:         c.actor(),
-	}, nil); err != nil {
+	}, nil)
+	if err := appendSanitizedDeployJournalEntry(c.App, c.Env, entry); err != nil {
 		return err
+	}
+	if previousJournalErr == nil && isAbortedJournalOutcome(previousJournal.Outcome) {
+		notifyDeployRecovered(app.Notify, app, previousJournal, entry, time.Now().UTC())
 	}
 
 	fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, c.SHA)

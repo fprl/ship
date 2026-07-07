@@ -20,6 +20,13 @@ import (
 
 const productionEnv = "prod"
 
+const (
+	notifyEventDeployAborted   = "deploy_aborted"
+	notifyEventDeployRecovered = "deploy_recovered"
+	notifyEventPreviewReaped   = "preview_reaped"
+	notifyEventDoctorDegraded  = "doctor_degraded"
+)
+
 // TestContainerSmoke exercises the new container-deploy lifecycle (ADR-0005
 // + ADR-0006 Cut 2) end-to-end against the fake-vps fixture:
 //
@@ -48,6 +55,7 @@ func TestContainerSmoke(t *testing.T) {
 	env.configureSSH(t, "deploy")
 	env.waitForSSH(t)
 
+	t.Run("notify webhook events", env.testNotifyWebhooks)
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
 	t.Run("phase 1 acceptance init ship branch and sslip", env.testPhase1AcceptanceAndZeroDNS)
 	t.Run("release command failure leaves old traffic unchanged", env.testReleaseCommandFailure)
@@ -81,6 +89,127 @@ func (e *smokeEnv) assertShipSudoersMatchesRealHelperShape(t *testing.T) {
 	}
 }
 
+func (e *smokeEnv) ensureSmokeHostSeed(t *testing.T) {
+	t.Helper()
+	e.dockerExec(t, `cat > /etc/simple-vps/host.json <<'EOF'
+{"version":1,"desired":{"users":{"operator":"operator","deploy":"deploy"},"ingress":{"expose":"public","tunnel":"none"},"features":{},"packages":{"podman":{"source":"apt"},"rsync":{"source":"apt"},"caddy":{"source":"container"}}},"observed":{"packages":{},"ingress":{}},"meta":{}}
+EOF`)
+	e.dockerExec(t, "mkdir -p /etc/caddy/simple-vps /etc/caddy/conf.d /var/lib/caddy /etc/systemd/system")
+	e.dockerExec(t, "mkdir -p /tmp/simple-vps-deploy && chmod 1777 /tmp/simple-vps-deploy")
+	e.dockerExec(t, `cat > /etc/caddy/Caddyfile <<'EOF'
+import simple-vps/*.caddy
+import conf.d/*.caddy
+EOF`)
+	e.dockerExec(t, "podman network exists ingress || podman network create ingress")
+	e.dockerExec(t, "if [ ! -f /run/fake-podman/containers/caddy.labels ]; then podman run -d --name caddy --network ingress --publish 80:80 -v /etc/caddy:/etc/caddy:Z docker.io/library/caddy:2-alpine; fi")
+	e.dockerExec(t, "touch /etc/systemd/system/ship-preview-reaper.timer /etc/systemd/system/ship-doctor.timer")
+	e.dockerExec(t, "systemctl enable ship-preview-reaper.timer >/dev/null && systemctl start ship-preview-reaper.timer >/dev/null")
+}
+
+func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
+	e.ensureSmokeHostSeed(t)
+	sink := e.startNotifySink(t)
+	t.Cleanup(func() {
+		e.dockerExec(t, "systemctl enable ship-preview-reaper.timer >/dev/null && systemctl start ship-preview-reaper.timer >/dev/null")
+	})
+
+	app := filepath.Join(e.tmp, "notify-api")
+	mustMkdir(t, app)
+	secretValue := "notify-secret-value"
+	writeNotifyFixture(t, app, sink.URL("/hook"))
+	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+	e.simpleVPS(t, app, []byte(secretValue), "secret", "set", "api_token")
+	e.simpleVPS(t, app, []byte(secretValue), "secret", "set", "api_token", "--preview")
+	e.simpleVPS(t, app, nil)
+
+	manifestPath := filepath.Join(app, "ship.toml")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failingManifest := strings.Replace(string(manifest), `release = "touch /data/release-ok"`, `release = "simple-vps-fail-release"`, 1)
+	if failingManifest == string(manifest) {
+		t.Fatal("notify fixture did not contain the success release command")
+	}
+	mustWrite(t, manifestPath, failingManifest)
+	mustWrite(t, filepath.Join(app, "README.md"), "notify failed release\n")
+	e.commitFixture(t, app)
+	failedRelease := gitRelease(t, e, app)
+	failed := e.runSimpleVPS(t, app, nil)
+	if failed.err == nil {
+		t.Fatal("deploy with failing release command should fail")
+	}
+	aborted := sink.waitForEvent(t, notifyEventDeployAborted)
+	assertNotifySmokeField(t, aborted, "release", failedRelease)
+	assertNotifySmokeNested(t, aborted, "why.outcome", "aborted_release")
+	assertContains(t, notifySmokeNestedString(t, aborted, "why.stderr_tail"), "fake release command failed")
+	assertNotifySmokeNested(t, aborted, "remediation.command", "ship")
+	assertNotifySmokeNested(t, aborted, "remediation.journal.failing_step", "release")
+
+	fixedManifest := strings.Replace(failingManifest, `release = "simple-vps-fail-release"`, `release = "touch /data/release-ok"`, 1)
+	mustWrite(t, manifestPath, fixedManifest)
+	mustWrite(t, filepath.Join(app, "README.md"), "notify recovered release\n")
+	e.commitFixture(t, app)
+	recoveredRelease := gitRelease(t, e, app)
+	e.simpleVPS(t, app, nil)
+	recovered := sink.waitForEvent(t, notifyEventDeployRecovered)
+	assertNotifySmokeField(t, recovered, "release", recoveredRelease)
+	assertNotifySmokeNested(t, recovered, "why.previous_failure.attempted_release", failedRelease)
+	assertNotifySmokeNested(t, recovered, "why.current.outcome", "deployed")
+	assertNotifySmokeNested(t, recovered, "remediation.command", "ship status")
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/notify")
+	e.simpleVPS(t, app, nil)
+	previewEnv := previewEnvForBranch(t, e, "notifyapi", "feature/notify")
+	forcePreviewExpired(t, e, "notifyapi", previewEnv)
+	e.dockerExec(t, "/usr/local/bin/ship server env reap")
+	reaped := sink.waitForEvent(t, notifyEventPreviewReaped)
+	assertNotifySmokeField(t, reaped, "env", "Preview feature/notify")
+	assertNotifySmokeNested(t, reaped, "why.branch", "feature/notify")
+	assertNotifySmokeNested(t, reaped, "remediation.command", "git checkout feature/notify && ship")
+
+	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
+	e.dockerExec(t, "systemctl stop ship-preview-reaper.timer")
+	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
+	doctor := sink.waitForEvent(t, notifyEventDoctorDegraded)
+	assertNotifySmokeField(t, doctor, "env", "Production main")
+	assertNotifySmokeNested(t, doctor, "why.id", "reaper_timer")
+	assertContains(t, notifySmokeNestedString(t, doctor, "why.evidence"), "active=inactive")
+	assertContains(t, notifySmokeNestedString(t, doctor, "remediation.command"), "systemctl start ship-preview-reaper.timer")
+
+	slowManifest := strings.Replace(fixedManifest, sink.URL("/hook"), sink.URL("/slow?token=notify-url-secret"), 1)
+	slowFailing := strings.Replace(slowManifest, `release = "touch /data/release-ok"`, `release = "simple-vps-fail-release"`, 1)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+	mustWrite(t, manifestPath, slowFailing)
+	mustWrite(t, filepath.Join(app, "README.md"), "slow notify failed release\n")
+	e.commitFixture(t, app)
+	if result := e.runSimpleVPS(t, app, nil); result.err == nil {
+		t.Fatal("deploy with failing release command should fail")
+	}
+	slowFixed := strings.Replace(slowFailing, `release = "simple-vps-fail-release"`, `release = "touch /data/release-ok"`, 1)
+	mustWrite(t, manifestPath, slowFixed)
+	mustWrite(t, filepath.Join(app, "README.md"), "slow notify recovered release\n")
+	e.commitFixture(t, app)
+	start := time.Now()
+	result := e.runSimpleVPS(t, app, nil)
+	elapsed := time.Since(start)
+	if result.err != nil {
+		t.Fatalf("deploy should succeed even when notify times out: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
+	}
+	if elapsed > 7*time.Second {
+		t.Fatalf("deploy was delayed beyond notify timeout budget: %s\nstdout:\n%s\nstderr:\n%s", elapsed, result.stdout, result.stderr)
+	}
+	if strings.Contains(result.stdout+result.stderr, "notify-url-secret") || strings.Contains(result.stdout+result.stderr, sink.URL("/slow")) {
+		t.Fatalf("notify timeout leaked URL/token\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	}
+
+	rawEvents := sink.rawEvents(t)
+	if strings.Contains(rawEvents, secretValue) {
+		t.Fatalf("notify payload leaked secret value:\n%s", rawEvents)
+	}
+}
+
 func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	app := filepath.Join(e.tmp, "container-api")
 	mustMkdir(t, app)
@@ -97,17 +226,7 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	// the provisioner does. These need root and the deploy user only
 	// has passwordless sudo for /usr/local/bin/ship — use
 	// docker exec instead.
-	e.dockerExec(t, `cat > /etc/simple-vps/host.json <<'EOF'
-{"version":1,"desired":{"users":{"operator":"operator","deploy":"deploy"},"ingress":{"expose":"public","tunnel":"none"},"features":{},"packages":{"podman":{"source":"apt"},"rsync":{"source":"apt"},"caddy":{"source":"container"}}},"observed":{"packages":{},"ingress":{}},"meta":{}}
-EOF`)
-	e.dockerExec(t, "mkdir -p /etc/caddy/simple-vps /etc/caddy/conf.d /var/lib/caddy")
-	e.dockerExec(t, "mkdir -p /tmp/simple-vps-deploy && chmod 1777 /tmp/simple-vps-deploy")
-	e.dockerExec(t, `cat > /etc/caddy/Caddyfile <<'EOF'
-import simple-vps/*.caddy
-import conf.d/*.caddy
-EOF`)
-	e.dockerExec(t, "podman network create ingress")
-	e.dockerExec(t, "podman run -d --name caddy --network ingress --publish 80:80 -v /etc/caddy:/etc/caddy:Z docker.io/library/caddy:2-alpine")
+	e.ensureSmokeHostSeed(t)
 
 	// 1. Deploy on a clean tree. First deploy prepares the per-env user,
 	// paths, identity, and per-(app, env) network before the release starts.
@@ -1466,6 +1585,30 @@ web = { port = 3000 }
 	`)
 }
 
+func writeNotifyFixture(t *testing.T, app string, notifyURL string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "notifyapi"
+box = "fake-vps"
+production_branch = "main"
+release = "touch /data/release-ok"
+probe = "/health"
+notify = "`+notifyURL+`"
+
+[env]
+API_TOKEN = "@secret:api_token"
+
+[processes]
+web = { port = 3000 }
+
+[routes."notify.example.com"]
+process = "web"
+tls = "internal"
+`)
+}
+
 func writeProbeFailFixture(t *testing.T, app string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
@@ -1768,6 +1911,144 @@ func previewEnvForBranch(t *testing.T, e *smokeEnv, app, branch string) string {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+type smokeNotifySink struct {
+	env        *smokeEnv
+	eventsPath string
+	port       string
+}
+
+func (e *smokeEnv) startNotifySink(t *testing.T) *smokeNotifySink {
+	t.Helper()
+	sink := &smokeNotifySink{
+		env:        e,
+		eventsPath: "/tmp/ship-notify-events.jsonl",
+		port:       "18081",
+	}
+	e.dockerExec(t, `rm -f /tmp/ship-notify-events.jsonl /tmp/ship-notify-sink.pid /tmp/ship-notify-sink.log /tmp/ship-notify-sink.py`)
+	e.dockerExec(t, `cat > /tmp/ship-notify-sink.py <<'PY'
+import sys
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+events_path = sys.argv[1]
+port = int(sys.argv[2])
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        return
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+        with open(events_path, "ab") as f:
+            f.write(body + b"\n")
+        if self.path.startswith("/slow"):
+            time.sleep(5)
+        try:
+            self.send_response(204)
+            self.end_headers()
+        except BrokenPipeError:
+            pass
+
+server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+server.serve_forever()
+PY
+python3 /tmp/ship-notify-sink.py /tmp/ship-notify-events.jsonl 18081 >/tmp/ship-notify-sink.log 2>&1 &
+echo $! >/tmp/ship-notify-sink.pid`)
+	t.Cleanup(func() {
+		e.dockerExec(t, `if [ -f /tmp/ship-notify-sink.pid ]; then kill "$(cat /tmp/ship-notify-sink.pid)" 2>/dev/null || true; fi`)
+	})
+	e.dockerExec(t, `for i in $(seq 1 50); do
+  if curl -fsS http://127.0.0.1:18081/ready >/dev/null 2>&1; then
+    exit 0
+  fi
+  sleep 0.1
+done
+cat /tmp/ship-notify-sink.log >&2
+exit 1`)
+	return sink
+}
+
+func (s *smokeNotifySink) URL(path string) string {
+	return "http://127.0.0.1:" + s.port + path
+}
+
+func (s *smokeNotifySink) rawEvents(t *testing.T) string {
+	t.Helper()
+	return s.env.dockerExec(t, "if [ -f "+shellQuote(s.eventsPath)+" ]; then cat "+shellQuote(s.eventsPath)+"; fi")
+}
+
+func (s *smokeNotifySink) waitForEvent(t *testing.T, event string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var lastRaw string
+	for time.Now().Before(deadline) {
+		lastRaw = s.rawEvents(t)
+		for _, line := range strings.Split(strings.TrimSpace(lastRaw), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			var payload map[string]any
+			if err := json.Unmarshal([]byte(line), &payload); err != nil {
+				t.Fatalf("notify sink captured invalid JSON: %v\nraw:\n%s", err, line)
+			}
+			if got, _ := payload["event"].(string); got == event {
+				return payload
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for notify event %s\ncaptured:\n%s", event, lastRaw)
+	return nil
+}
+
+func assertNotifySmokeField(t *testing.T, payload map[string]any, field, want string) {
+	t.Helper()
+	if got, _ := payload[field].(string); got != want {
+		t.Fatalf("notify field %s = %q, want %q\npayload:\n%s", field, got, want, prettySmokeJSON(t, payload))
+	}
+}
+
+func assertNotifySmokeNested(t *testing.T, payload map[string]any, path, want string) {
+	t.Helper()
+	if got := notifySmokeNestedString(t, payload, path); got != want {
+		t.Fatalf("notify field %s = %q, want %q\npayload:\n%s", path, got, want, prettySmokeJSON(t, payload))
+	}
+}
+
+func notifySmokeNestedString(t *testing.T, payload map[string]any, path string) string {
+	t.Helper()
+	var current any = payload
+	for _, part := range strings.Split(path, ".") {
+		obj, ok := current.(map[string]any)
+		if !ok {
+			t.Fatalf("notify field %s is not an object at %s\npayload:\n%s", path, part, prettySmokeJSON(t, payload))
+		}
+		current = obj[part]
+	}
+	got, ok := current.(string)
+	if !ok {
+		t.Fatalf("notify field %s is not a string\npayload:\n%s", path, prettySmokeJSON(t, payload))
+	}
+	return got
+}
+
+func prettySmokeJSON(t *testing.T, payload map[string]any) string {
+	t.Helper()
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func assertPreviewEnvName(t *testing.T, env, sanitizedBranch string) {

@@ -46,7 +46,13 @@ func reapExpiredPreviews(now time.Time, destroy destroyEnvFunc) (int, error) {
 		if err != nil {
 			return reaped, err
 		}
-		summary, destroyErr := destroy(file.App, file.Env, true)
+		notifyURL := ""
+		release := latestSuccessfulRelease(file.App, file.Env)
+		if ctx, cleanup, err := loadAppliedAppContext(file.App, file.Env); err == nil {
+			notifyURL = ctx.Notify
+			cleanup()
+		}
+		_, destroyErr := destroy(file.App, file.Env, true)
 		releaseErr := lock.Release()
 		if destroyErr != nil {
 			return reaped, destroyErr
@@ -54,7 +60,6 @@ func reapExpiredPreviews(now time.Time, destroy destroyEnvFunc) (int, error) {
 		if releaseErr != nil {
 			return reaped, fmt.Errorf("release lock for %s (%s): %v", file.App, file.Env, releaseErr)
 		}
-		_ = summary
 		reaped++
 		fmt.Printf("Reaped preview %s (%s) branch=%s expired_at=%s\n",
 			file.App,
@@ -62,7 +67,7 @@ func reapExpiredPreviews(now time.Time, destroy destroyEnvFunc) (int, error) {
 			file.Preview.Branch,
 			file.Preview.ExpiresAt.UTC().Format(time.RFC3339),
 		)
-		// TODO(§7): fire notify webhook for reaped preview events.
+		notifyPreviewReaped(notifyURL, file, release, now)
 	}
 	return reaped, nil
 }

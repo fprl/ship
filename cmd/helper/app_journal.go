@@ -76,16 +76,25 @@ func newJournalStepError(step string, err error, scrubValues []string, probe *jo
 	}
 }
 
-func appendDeployJournalEntry(app, env string, entry deployJournalEntry, scrubValues []string) error {
-	if err := validateAppEnv(app, env); err != nil {
-		return err
-	}
+func sanitizeDeployJournalEntry(app, env string, entry deployJournalEntry, scrubValues []string) deployJournalEntry {
 	entry.SchemaVersion = deployJournalSchemaVersion
 	entry.App = app
 	entry.Env = env
 	entry.StderrTail = scrubText(tailLines(entry.StderrTail, 40), scrubValues)
 	if entry.Probe != nil {
 		entry.Probe.BodySnippet = scrubText(tailLines(entry.Probe.BodySnippet, 8), scrubValues)
+	}
+	return entry
+}
+
+func appendDeployJournalEntry(app, env string, entry deployJournalEntry, scrubValues []string) error {
+	entry = sanitizeDeployJournalEntry(app, env, entry, scrubValues)
+	return appendSanitizedDeployJournalEntry(app, env, entry)
+}
+
+func appendSanitizedDeployJournalEntry(app, env string, entry deployJournalEntry) error {
+	if err := validateAppEnv(app, env); err != nil {
+		return err
 	}
 	path := identity.DeployJournalFile(app, env)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
