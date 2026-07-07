@@ -178,6 +178,11 @@ ship init                 scaffold ship.toml + Dockerfile (stack detection)
 ship status [--json]      all live envs for this app: branch, url, release,
                           who shipped, health, age, expires/pinned, dirty hint
 ship logs [process] [--follow] [--tail N]   current branch's env
+ship exec <cmd...>        run a one-off command inside the current
+                          branch's env container, with its secrets and
+                          /data mounted (Heroku's `heroku run`; built
+                          in Phase 2 — agents need it to inspect state
+                          without ssh+podman guessing)
 ship why [--json]              explain the last failed/aborted deploy (§7)
 ship rollback [release]        previous release of the current branch's env;
                           release = commit short-sha (from ship status)
@@ -191,7 +196,13 @@ ship box init <ssh-target> [--ingress ...] [--admin ...]   existing host install
 ship box add-key <github-user|key|path>   authorize a teammate's SSH key
                           (bare word → fetches github.com/<user>.keys)
 ship box doctor [--json]  existing doctor, output upgraded per §9
-ship box ls [--json]      existing app list (explicit scope, works anywhere)
+ship box ls [--json]      existing app list (explicit scope, works
+                          anywhere); --json is the fleet view: per-app
+                          envs, branches, urls, releases, health,
+                          expiry (Phase 3)
+ship box rm <app> [--confirm <app>]   destroy an app and all its envs
+                          without the repo dir (orphan cleanup; same
+                          confirm guard as prod rm; Phase 3)
 ship docs                 print the agent contract (§9)
 ship version
 ```
@@ -348,14 +359,18 @@ mapping/preview tests green.
 
 **Phase 2 — failure UX & agent contract.** Deploy journal + `why`;
 `notify`; error catalogue + §5 shapes across every verb; `--json` on
-mutations; `ship docs` + AGENT.md; doctor upgrade; eval harness with the
-six scenarios passing against at least one agent. *Accept when:* every
+mutations; `ship exec`; `ship docs` + AGENT.md; doctor upgrade; eval
+harness with the six scenarios passing against at least one agent. *Accept when:* every
 eval scenario passes; grepping the codebase finds no error return that
 bypasses the catalogue; `ship docs | wc -l` > 0 and drift test green.
 
-**Phase 3 — polish.** Preview-scoped secrets UX refinements,
-`box add-key`, install one-liner (curl script) + Homebrew tap + shell
-completions, README rewritten around the four moments (§0), `box doctor`
+**Phase 3 — polish.** Preview-scoped secrets UX refinements, including
+bulk import: `ship secret set --from .env [--preview|--branch <name>]`
+(merge by default; `--replace` makes the file authoritative for the
+scope and lists removed key names on stderr — never values);
+`box add-key`, `box rm <app>` + the `box ls --json` fleet view,
+install one-liner (curl script) + Homebrew tap + shell completions,
+README rewritten around the four moments (§0), `box doctor`
 remediation coverage, error-text audit driven by eval transcripts,
 CHANGELOG, release.
 
