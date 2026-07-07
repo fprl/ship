@@ -943,8 +943,9 @@ func captureClientStdout(t *testing.T, fn func()) string {
 
 func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", false)
-	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, false)
-	want := "sudo -n /usr/local/bin/ship server app apply --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z api production"
+	actor := testDeployIdentity()
+	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, actor, false)
+	want := "sudo -n /usr/local/bin/ship server app apply --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -952,11 +953,16 @@ func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 
 func TestServerAppApplyCommandSupportsRebuild(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", true)
-	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, true)
-	want := "sudo -n /usr/local/bin/ship server app apply --rebuild --dirty --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z api production"
+	actor := testDeployIdentity()
+	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, actor, true)
+	want := "sudo -n /usr/local/bin/ship server app apply --rebuild --dirty --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
+}
+
+func testDeployIdentity() deployIdentityJSON {
+	return deployIdentityJSON{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"}
 }
 
 func testLocalDeployPlan(release string, dirty bool) localDeployPlan {
@@ -1004,17 +1010,112 @@ func TestServerAppListCommandSupportsJSON(t *testing.T) {
 	}
 }
 
+func TestServerAppWhyCommandUsesJSON(t *testing.T) {
+	got := serverAppWhyCommand("api", "prod")
+	want := "sudo -n /usr/local/bin/ship server app why --json api prod"
+	if got != want {
+		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
 func TestServerAppRollbackCommandSupportsRelease(t *testing.T) {
-	got := serverAppRollbackCommand("api", "production", "")
-	want := "sudo -n /usr/local/bin/ship server app rollback api production"
+	actor := testDeployIdentity()
+	got := serverAppRollbackCommand("api", "production", "", actor)
+	want := "sudo -n /usr/local/bin/ship server app rollback --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
-	got = serverAppRollbackCommand("api", "production", "abc1234")
-	want = "sudo -n /usr/local/bin/ship server app rollback api production abc1234"
+	got = serverAppRollbackCommand("api", "production", "abc1234", actor)
+	want = "sudo -n /usr/local/bin/ship server app rollback --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production abc1234"
 	if got != want {
 		t.Fatalf("unexpected release command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestRenderWhyReleaseFailure(t *testing.T) {
+	read := readContext{
+		AppContext: &config.AppContext{ProductionBranch: "main"},
+		Address:    readAddress{ProductionBranch: true},
+	}
+	entry := whyJournalEntry{
+		Outcome:          "aborted_release",
+		EndedAt:          "2026-07-07T10:00:01Z",
+		PreviousRelease:  "aaa111",
+		AttemptedRelease: "bbb222",
+		FailingStep:      "release",
+		StderrTail:       "fake release command failed",
+		Identity:         testDeployIdentity(),
+	}
+	got := renderWhy(entry, read)
+	want := "Deploy aborted for Production main at 2026-07-07T10:00:01Z.\n" +
+		"attempted release: bbb222\n" +
+		"previous release: aaa111\n" +
+		"failing step: release\n" +
+		"probable cause: release command exited non-zero before traffic switched.\n" +
+		"stderr tail:\n" +
+		"fake release command failed\n" +
+		"traffic: old release aaa111 kept serving; no traffic was switched.\n" +
+		"shipped by: Smoke <smoke@example.com> (ssh key: fake-vps-smoke)\n" +
+		"next: ship\n"
+	if got != want {
+		t.Fatalf("unexpected why output:\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestRenderWhyProbeFailure(t *testing.T) {
+	read := readContext{
+		AppContext: &config.AppContext{ProductionBranch: "main"},
+		Address:    readAddress{ProductionBranch: true},
+	}
+	entry := whyJournalEntry{
+		Outcome:          "aborted_probe",
+		EndedAt:          "2026-07-07T10:02:01Z",
+		PreviousRelease:  "aaa111",
+		AttemptedRelease: "ccc333",
+		FailingStep:      "probe",
+		StderrTail:       "HTTP status 502: upstream web listens on 3000, probed 3999",
+		Identity:         testDeployIdentity(),
+		Probe:            &whyJournalProbe{Status: 502, BodySnippet: "upstream web listens on 3000, probed 3999"},
+	}
+	got := renderWhy(entry, read)
+	want := "Deploy aborted for Production main at 2026-07-07T10:02:01Z.\n" +
+		"attempted release: ccc333\n" +
+		"previous release: aaa111\n" +
+		"failing step: probe\n" +
+		"probable cause: probe returned HTTP 502 with body: upstream web listens on 3000, probed 3999\n" +
+		"stderr tail:\n" +
+		"HTTP status 502: upstream web listens on 3000, probed 3999\n" +
+		"traffic: old release aaa111 kept serving; failed probes never receive traffic with the current engine.\n" +
+		"shipped by: Smoke <smoke@example.com> (ssh key: fake-vps-smoke)\n" +
+		"next: ship\n"
+	if got != want {
+		t.Fatalf("unexpected why output:\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestStatusFromAppListIncludesShippedBy(t *testing.T) {
+	ctx := &config.AppContext{
+		AppName:          "api",
+		ProductionBranch: "main",
+		Routes: map[string]config.Route{
+			"api.example.com": {Host: "api.example.com", Process: "web"},
+		},
+	}
+	raw := `{"apps":[{"app":"api","env":"prod","shipped_by":{"ssh_key_comment":"fake-vps-smoke","git_author":"Smoke <smoke@example.com>"},"processes":[{"process":"web","container":"api-web","state":"running","release":"abc1234","created_at":"2026-07-07T10:00:00Z"}]}]}`
+	payload, err := statusFromAppList(ctx, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Envs) != 1 || payload.Envs[0].ShippedBy == nil {
+		t.Fatalf("status missing shipped_by: %+v", payload)
+	}
+	if payload.Envs[0].ShippedBy.GitAuthor != "Smoke <smoke@example.com>" || payload.Envs[0].ShippedBy.SSHKeyComment != "fake-vps-smoke" {
+		t.Fatalf("wrong shipped_by: %+v", payload.Envs[0].ShippedBy)
+	}
+	text := renderStatusSummary(payload)
+	if !strings.Contains(text, `shipped_by="Smoke <smoke@example.com>"`) || !strings.Contains(text, `ssh_key="fake-vps-smoke"`) {
+		t.Fatalf("human status missing attribution:\n%s", text)
 	}
 }
 

@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,15 +25,17 @@ import (
 //  5. Synthesizes a Caddyfile fragment, validates, reloads, and only
 //     then removes old routed containers.
 type appApplyCmd struct {
-	App        string `arg:"" help:"App name."`
-	Env        string `arg:"" help:"Env name."`
-	Tarball    string `name:"tarball" required:"" help:"Path to the streamed source tarball."`
-	Manifest   string `name:"manifest" required:"" help:"Path to the uploaded ship.toml."`
-	SHA        string `name:"sha" required:"" help:"Release identifier."`
-	Dirty      bool   `name:"dirty" help:"Mark this release as built from a dirty worktree snapshot."`
-	BaseCommit string `name:"base-commit" required:"" help:"Git commit the release is based on."`
-	CreatedAt  string `name:"created-at" required:"" help:"Release creation time in RFC3339."`
-	Rebuild    bool   `name:"rebuild" help:"Pass --no-cache --pull=always to podman build."`
+	App           string `arg:"" help:"App name."`
+	Env           string `arg:"" help:"Env name."`
+	Tarball       string `name:"tarball" required:"" help:"Path to the streamed source tarball."`
+	Manifest      string `name:"manifest" required:"" help:"Path to the uploaded ship.toml."`
+	SHA           string `name:"sha" required:"" help:"Release identifier."`
+	Dirty         bool   `name:"dirty" help:"Mark this release as built from a dirty worktree snapshot."`
+	BaseCommit    string `name:"base-commit" required:"" help:"Git commit the release is based on."`
+	CreatedAt     string `name:"created-at" required:"" help:"Release creation time in RFC3339."`
+	Rebuild       bool   `name:"rebuild" help:"Pass --no-cache --pull=always to podman build."`
+	SSHKeyComment string `name:"ssh-key-comment" help:"SSH public key comment for the deploying key."`
+	GitAuthor     string `name:"git-author" help:"Git author configured by the deploying client."`
 }
 
 type applyReleaseResult struct {
@@ -67,7 +70,19 @@ func (c appApplyCmd) runLocked() {
 	}
 }
 
-func (c appApplyCmd) runLockedE() error {
+func (c appApplyCmd) runLockedE() (err error) {
+	startedAt := time.Now().UTC()
+	previousRelease := currentActiveReleaseBestEffort(c.App, c.Env)
+	defer func() {
+		if err == nil {
+			return
+		}
+		entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, err)
+		if appendErr := appendDeployJournalEntry(c.App, c.Env, entry, scrubValues); appendErr != nil {
+			err = fmt.Errorf("%v; additionally failed to write deploy journal: %v", err, appendErr)
+		}
+	}()
+
 	ctxDir, err := c.prepareApplyContext()
 	if err != nil {
 		return err
@@ -136,9 +151,33 @@ func (c appApplyCmd) runLockedE() error {
 	releaseSnapshotActive = true
 	deployCommitted = true
 	removeContainers(result.containersToRemove)
+	if err := appendDeployJournalEntry(c.App, c.Env, deployJournalEntry{
+		SchemaVersion:    deployJournalSchemaVersion,
+		App:              c.App,
+		Env:              c.Env,
+		Outcome:          "deployed",
+		StartedAt:        startedAt.Format(time.RFC3339Nano),
+		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
+		PreviousRelease:  previousRelease,
+		AttemptedRelease: c.SHA,
+		Identity:         c.actor(),
+	}, nil); err != nil {
+		return err
+	}
 
 	fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, c.SHA)
 	return nil
+}
+
+func (c appApplyCmd) actor() deployIdentity {
+	actor := deployIdentity{SSHKeyComment: c.SSHKeyComment, GitAuthor: c.GitAuthor}
+	if actor.SSHKeyComment == "" {
+		actor.SSHKeyComment = "unknown"
+	}
+	if actor.GitAuthor == "" {
+		actor.GitAuthor = "unknown"
+	}
+	return actor
 }
 
 func (c appApplyCmd) releaseMetadata() (releaseMetadata, error) {
@@ -381,6 +420,7 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 	if err != nil {
 		return containerApplyResult{}, err
 	}
+	scrubValues := collectEnvValues(resolved)
 	if err := writeEnvFile(c.App, c.Env, resolved); err != nil {
 		return containerApplyResult{}, err
 	}
@@ -393,12 +433,12 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 	imageTag := identity.ImageTag(c.App, c.Env, c.SHA)
 	buildArgs := podmanBuildArgs(c.App, c.Env, imageTag, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild)
 	if _, err := utils.RunChecked("podman", buildArgs, ""); err != nil {
-		return containerApplyResult{}, fmt.Errorf("podman build: %v", err)
+		return containerApplyResult{}, newJournalStepError("build", fmt.Errorf("podman build: %w", err), scrubValues, nil)
 	}
 
 	if app.Deploy.Release != "" {
 		if err := runReleaseCommand(c.App, c.Env, app.Deploy.Release, imageTag, userID, groupID, c.SHA); err != nil {
-			return containerApplyResult{}, err
+			return containerApplyResult{}, newJournalStepError("release", err, scrubValues, nil)
 		}
 	}
 
@@ -432,7 +472,17 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		if err := startProcess(c.App, c.Env, processName, proc, imageTag, userID, groupID, c.SHA, containerName, processProbe(routed, processName, app.Probe), previewEnv); err != nil {
 			removeContainers(started)
 			startContainers(stopped)
-			return containerApplyResult{}, err
+			step := "release"
+			var probe *journalProbe
+			var probeErr *probeFailureError
+			if strings.Contains(err.Error(), "health check failed") {
+				step = "probe"
+			}
+			if errors.As(err, &probeErr) {
+				step = "probe"
+				probe = &journalProbe{Status: probeErr.Status, BodySnippet: probeErr.BodySnippet}
+			}
+			return containerApplyResult{}, newJournalStepError(step, err, scrubValues, probe)
 		}
 		if proc.Port != nil {
 			containersToRemove = append(containersToRemove, processContainers(existing, processName, "")...)

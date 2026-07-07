@@ -95,6 +95,9 @@ func buildPodmanRunArgs(app, env, processName string, proc config.Process, image
 		"--label", "simple-vps.infra_id=" + identity.InfraID(app, env),
 		"--label", "simple-vps.release=" + release,
 	}
+	if proc.Port != nil {
+		args = append(args, "--label", "simple-vps.port="+strconv.Itoa(*proc.Port))
+	}
 	if resources.Memory != nil {
 		args = append(args, "--memory", *resources.Memory)
 	}
@@ -149,10 +152,20 @@ func startProcess(app, env, processName string, proc config.Process, imageTag, u
 			// Surface logs on failure so the user can see why.
 			out, _ := exec.Command("podman", "logs", "--tail", "50", containerName).CombinedOutput()
 			os.Stderr.Write(out)
-			return fmt.Errorf("health check failed for %s: %v", processName, err)
+			return fmt.Errorf("health check failed for %s: %w", processName, err)
 		}
 	}
 	return nil
+}
+
+type probeFailureError struct {
+	Status      int
+	BodySnippet string
+	Detail      string
+}
+
+func (e *probeFailureError) Error() string {
+	return e.Detail
 }
 
 // waitHealthy probes the app container's health path via Caddy on the
@@ -174,13 +187,28 @@ func waitHealthy(containerName string, port int, path string, timeout time.Durat
 		if detail == "" {
 			detail = err.Error()
 		}
-		lastErr = fmt.Errorf("%s: %s", url, detail)
+		lastErr = &probeFailureError{
+			Status:      probeStatusFromDetail(detail),
+			BodySnippet: tailLines(detail, 8),
+			Detail:      fmt.Sprintf("%s: %s", url, detail),
+		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	if lastErr == nil {
-		lastErr = fmt.Errorf("timed out after %s", timeout)
+		lastErr = &probeFailureError{Detail: fmt.Sprintf("timed out after %s", timeout)}
 	}
 	return lastErr
+}
+
+func probeStatusFromDetail(detail string) int {
+	for _, field := range strings.Fields(detail) {
+		field = strings.Trim(field, ".,:;()[]")
+		code, err := strconv.Atoi(field)
+		if err == nil && code >= 100 && code <= 599 {
+			return code
+		}
+	}
+	return 0
 }
 
 const releaseCommandTimeout = 10 * time.Minute
@@ -209,7 +237,7 @@ func runReleaseCommand(app, env, command, imageTag, userID, groupID, release str
 	args = append(args, imageTag, "/bin/sh", "-c", command)
 	if _, err := utils.RunCheckedWithTimeout("podman", args, "", releaseCommandTimeout); err != nil {
 		_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
-		return fmt.Errorf("release command %q failed before traffic switch: %v", command, err)
+		return fmt.Errorf("release command %q failed before traffic switch: %w", command, err)
 	}
 	return nil
 }

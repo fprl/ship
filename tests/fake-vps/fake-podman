@@ -222,7 +222,8 @@ PY
           fi
           rm -f "$state_dir/containers/$name.labels" \
                 "$state_dir/containers/$name.port" \
-                "$state_dir/containers/$name.image"
+                "$state_dir/containers/$name.image" \
+                "$state_dir/containers/$name.actual-port"
           shift
           ;;
       esac
@@ -248,6 +249,47 @@ PY
     if [[ "$container" == "caddy" && "${1:-}" == "caddy" && "${2:-}" == "reload" && -f "$state_dir/fail-caddy-reload" ]]; then
       echo "fake caddy reload failed" >&2
       exit 42
+    fi
+    if [[ "$container" == "caddy" && "${1:-}" == "wget" ]]; then
+      python3 - "$state_dir" "$@" <<'PY'
+import os
+import sys
+from urllib.parse import urlparse
+
+state_dir = sys.argv[1]
+args = sys.argv[2:]
+url = args[-1] if args else ""
+parsed = urlparse(url)
+name = parsed.hostname or ""
+port = parsed.port or 80
+if not name:
+    print("wget: missing URL", file=sys.stderr)
+    sys.exit(1)
+labels = {}
+labels_path = os.path.join(state_dir, "containers", name + ".labels")
+try:
+    with open(labels_path) as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if "=" in line:
+                k, v = line.split("=", 1)
+                labels[k] = v
+except OSError:
+    print(f"wget: bad address '{name}'", file=sys.stderr)
+    sys.exit(1)
+actual_path = os.path.join(state_dir, "containers", name + ".actual-port")
+actual = labels.get("simple-vps.port", str(port))
+try:
+    with open(actual_path) as f:
+        actual = f.read().strip() or actual
+except OSError:
+    pass
+if str(port) != str(actual):
+    print(f"HTTP status 502: upstream {name} listens on {actual}, probed {port}", file=sys.stderr)
+    sys.exit(1)
+print("ok")
+PY
+      exit $?
     fi
     # If the request is `caddy validate` or `caddy reload`, exit 0.
     # Real validation runs inside the Caddy container against the full
@@ -329,10 +371,22 @@ PY
 
     labels_file="$state_dir/containers/$name.labels"
     : > "$labels_file"
+    declared_port=""
     for label in "${labels[@]:-}"; do
       [[ -n "$label" ]] && printf '%s\n' "$label" >> "$labels_file"
+      if [[ "$label" == simple-vps.port=* ]]; then
+        declared_port="${label#simple-vps.port=}"
+      fi
     done
     printf '%s\n' "$image" > "$state_dir/containers/$name.image"
+    joined_command="$(printf '%s ' "${command_args[@]:-}")"
+    actual_port="$declared_port"
+    if [[ "$joined_command" =~ simple-vps-listen-port=([0-9]+) ]]; then
+      actual_port="${BASH_REMATCH[1]}"
+    fi
+    if [[ -n "$actual_port" ]]; then
+      printf '%s\n' "$actual_port" > "$state_dir/containers/$name.actual-port"
+    fi
 
     # Caddy gets the conf.d-aware proxy; everything else gets the
     # "always 200 ok" stub. Caddy listens on the --publish host port;

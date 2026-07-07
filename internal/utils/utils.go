@@ -43,6 +43,38 @@ func SystemctlBin() string {
 	return "systemctl"
 }
 
+type CommandError struct {
+	Name     string
+	Args     []string
+	Stdout   string
+	Stderr   string
+	Err      error
+	TimedOut bool
+	Timeout  time.Duration
+}
+
+func (e *CommandError) Error() string {
+	if e.TimedOut {
+		return fmt.Sprintf("command timed out after %s: %s %v", e.Timeout, e.Name, e.Args)
+	}
+	return fmt.Sprintf("command failed: %s %v: %v", e.Name, e.Args, e.Err)
+}
+
+func (e *CommandError) Unwrap() error {
+	return e.Err
+}
+
+func (e *CommandError) CombinedOutput() string {
+	switch {
+	case e.Stderr != "" && e.Stdout != "":
+		return e.Stderr + "\n" + e.Stdout
+	case e.Stderr != "":
+		return e.Stderr
+	default:
+		return e.Stdout
+	}
+}
+
 func Die(message string, code int) {
 	if code == 1 && usageOrManifestFailure(message) {
 		code = 2
@@ -98,10 +130,16 @@ func runChecked(ctx context.Context, timeout time.Duration, name string, args []
 		if stdout.Len() > 0 {
 			os.Stderr.Write(stdout.Bytes())
 		}
-		if ctx != nil && ctx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("command timed out after %s: %s %v", timeout, name, args)
+		cmdErr := &CommandError{
+			Name:     name,
+			Args:     append([]string(nil), args...),
+			Stdout:   stdout.String(),
+			Stderr:   stderr.String(),
+			Err:      err,
+			TimedOut: ctx != nil && ctx.Err() == context.DeadlineExceeded,
+			Timeout:  timeout,
 		}
-		return nil, fmt.Errorf("command failed: %s %v: %w", name, args, err)
+		return nil, cmdErr
 	}
 	return stdout.Bytes(), nil
 }

@@ -21,6 +21,7 @@ type cli struct {
 	Init     initCmd          `cmd:"" group:"project" help:"Create local project files and a ship.toml manifest."`
 	Status   statusCmd        `cmd:"" group:"project" help:"Show all live environments for this app."`
 	Logs     logsCmd          `cmd:"" group:"project" help:"Tail logs for the current branch environment."`
+	Why      whyCmd           `cmd:"" group:"project" help:"Explain the latest deploy outcome for the current branch environment."`
 	Rollback rollbackCmd      `cmd:"" group:"project" help:"Roll back the current branch environment."`
 	Rm       rmCmd            `cmd:"rm" group:"project" help:"Remove an environment by branch name."`
 	Pin      pinCmd           `cmd:"" group:"project" help:"Pin a preview environment so the reaper leaves it running."`
@@ -167,6 +168,21 @@ func (c logsCmd) Run() error {
 		return err
 	}
 	client.CmdLogs(root, c.Process, c.Follow, c.Tail, c.JSON)
+	return nil
+}
+
+type whyCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	Branch string `name:"branch" help:"Branch name to inspect."`
+	JSON   bool   `name:"json" help:"Emit the raw deploy journal entry as JSON."`
+}
+
+func (c whyCmd) Run() error {
+	root, err := projectAppRoot(c.Config)
+	if err != nil {
+		return err
+	}
+	client.CmdWhy(root, c.Branch, c.JSON)
 	return nil
 }
 

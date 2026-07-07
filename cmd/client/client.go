@@ -108,6 +108,83 @@ func (r *CommandRunner) Close() {
 	}
 }
 
+func deployIdentity(root string, runner *CommandRunner, server string) deployIdentityJSON {
+	actor := deployIdentityJSON{
+		SSHKeyComment: sshKeyCommentForServer(runner, server),
+		GitAuthor:     gitAuthor(root),
+	}
+	if actor.SSHKeyComment == "" {
+		actor.SSHKeyComment = "unknown"
+	}
+	if actor.GitAuthor == "" {
+		actor.GitAuthor = "unknown"
+	}
+	return actor
+}
+
+func gitAuthor(root string) string {
+	nameOut, _, nameCode, _ := runCommand("git", []string{"config", "user.name"}, root)
+	emailOut, _, emailCode, _ := runCommand("git", []string{"config", "user.email"}, root)
+	name := strings.TrimSpace(nameOut)
+	email := strings.TrimSpace(emailOut)
+	switch {
+	case nameCode == 0 && emailCode == 0 && name != "" && email != "":
+		return fmt.Sprintf("%s <%s>", name, email)
+	case nameCode == 0 && name != "":
+		return name
+	case emailCode == 0 && email != "":
+		return email
+	default:
+		out, _, code, _ := runCommand("git", []string{"log", "-1", "--format=%an <%ae>"}, root)
+		if code == 0 {
+			return strings.TrimSpace(out)
+		}
+		return ""
+	}
+}
+
+func sshKeyCommentForServer(runner *CommandRunner, server string) string {
+	var args []string
+	args = append(args, runner.SshOptions...)
+	args = append(args, "-G", server)
+	stdout, _, code, _ := runCommand("ssh", args, "")
+	if code != 0 {
+		return ""
+	}
+	for _, path := range sshIdentityFiles(stdout) {
+		if comment := publicKeyComment(path + ".pub"); comment != "" {
+			return comment
+		}
+	}
+	return ""
+}
+
+func sshIdentityFiles(sshConfig string) []string {
+	var out []string
+	for _, line := range strings.Split(sshConfig, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[0] != "identityfile" || fields[1] == "none" {
+			continue
+		}
+		out = append(out, fields[1])
+	}
+	return out
+}
+
+func publicKeyComment(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(data))
+	parts := strings.Fields(line)
+	if len(parts) < 3 {
+		return ""
+	}
+	prefix := parts[0] + " " + parts[1]
+	return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+}
+
 func (r *CommandRunner) RunSSH(server string, command string) (string, string, int, error) {
 	var args []string
 	if len(r.SshOptions) > 0 {
@@ -283,7 +360,12 @@ func serverAppPreflightCommandWithJSON(appName string, envName string, requiredS
 	return serverCommand(args...)
 }
 
-func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, plan localDeployPlan, rebuild bool) string {
+type deployIdentityJSON struct {
+	SSHKeyComment string `json:"ssh_key_comment"`
+	GitAuthor     string `json:"git_author"`
+}
+
+func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, plan localDeployPlan, actor deployIdentityJSON, rebuild bool) string {
 	args := []string{"app", "apply"}
 	if rebuild {
 		args = append(args, "--rebuild")
@@ -297,6 +379,8 @@ func serverAppApplyCommand(appName string, envName string, tarballPath string, m
 		"--sha", plan.Release,
 		"--base-commit", plan.BaseCommit,
 		"--created-at", plan.CreatedAt.Format(timeRFC3339UTC),
+		"--ssh-key-comment", actor.SSHKeyComment,
+		"--git-author", actor.GitAuthor,
 		appName, envName,
 	)
 	return serverCommand(args...)
@@ -331,8 +415,12 @@ func serverAppLogsCommand(appName, envName, process string, follow bool, tail in
 	return serverCommand(args...)
 }
 
-func serverAppRollbackCommand(appName, envName, release string) string {
+func serverAppRollbackCommand(appName, envName, release string, actor deployIdentityJSON) string {
 	args := []string{"app", "rollback"}
+	args = append(args,
+		"--ssh-key-comment", actor.SSHKeyComment,
+		"--git-author", actor.GitAuthor,
+	)
 	args = append(args, appName, envName)
 	if release != "" {
 		args = append(args, release)
@@ -401,6 +489,10 @@ func serverAppSecretRmCommand(appName, envName, key string) string {
 	return serverCommand("app", "secret", "rm", appName, envName, key)
 }
 
+func serverAppWhyCommand(appName, envName string) string {
+	return serverCommand("app", "why", "--json", appName, envName)
+}
+
 func CmdSSHCurrent(root string) {
 	read, err := currentReadContext(root, "ssh")
 	if err != nil {
@@ -460,7 +552,11 @@ func BoxTarget(root string) (string, error) {
 }
 
 func currentReadContext(root, command string) (readContext, error) {
-	address, err := resolveReadAddress(root, "", "", command)
+	return currentReadContextForBranch(root, command, "")
+}
+
+func currentReadContextForBranch(root, command, branch string) (readContext, error) {
+	address, err := resolveReadAddress(root, "", branch, command)
 	if err != nil {
 		return readContext{}, err
 	}
@@ -494,11 +590,12 @@ type appListJSON struct {
 }
 
 type appListEnvJSON struct {
-	App       string             `json:"app"`
-	Env       string             `json:"env"`
-	Preview   *previewStatusJSON `json:"preview,omitempty"`
-	Processes []processJSON      `json:"processes"`
-	Static    *staticJSON        `json:"static,omitempty"`
+	App       string              `json:"app"`
+	Env       string              `json:"env"`
+	Preview   *previewStatusJSON  `json:"preview,omitempty"`
+	ShippedBy *deployIdentityJSON `json:"shipped_by,omitempty"`
+	Processes []processJSON       `json:"processes"`
+	Static    *staticJSON         `json:"static,omitempty"`
 }
 
 type previewStatusJSON struct {
@@ -534,17 +631,18 @@ type statusPayload struct {
 }
 
 type statusEnvJSON struct {
-	Kind       string        `json:"kind"`
-	Branch     string        `json:"branch"`
-	URL        string        `json:"url"`
-	Env        string        `json:"env"`
-	Release    string        `json:"release,omitempty"`
-	Health     string        `json:"health"`
-	AgeSeconds int64         `json:"ageSeconds,omitempty"`
-	ExpiresAt  string        `json:"expiresAt,omitempty"`
-	Pinned     bool          `json:"pinned,omitempty"`
-	Dirty      bool          `json:"dirty,omitempty"`
-	Processes  []processJSON `json:"processes"`
+	Kind       string              `json:"kind"`
+	Branch     string              `json:"branch"`
+	URL        string              `json:"url"`
+	Env        string              `json:"env"`
+	Release    string              `json:"release,omitempty"`
+	Health     string              `json:"health"`
+	AgeSeconds int64               `json:"ageSeconds,omitempty"`
+	ExpiresAt  string              `json:"expiresAt,omitempty"`
+	Pinned     bool                `json:"pinned,omitempty"`
+	Dirty      bool                `json:"dirty,omitempty"`
+	ShippedBy  *deployIdentityJSON `json:"shipped_by,omitempty"`
+	Processes  []processJSON       `json:"processes"`
 }
 
 func CmdStatus(root string, jsonFlag bool) {
@@ -572,6 +670,133 @@ func CmdStatus(root string, jsonFlag bool) {
 		return
 	}
 	fmt.Print(renderStatusSummary(payload))
+}
+
+type whyJournalEntry struct {
+	SchemaVersion    int                `json:"schema_version"`
+	App              string             `json:"app"`
+	Env              string             `json:"env"`
+	Outcome          string             `json:"outcome"`
+	StartedAt        string             `json:"started_at"`
+	EndedAt          string             `json:"ended_at"`
+	PreviousRelease  string             `json:"previous_release"`
+	AttemptedRelease string             `json:"attempted_release"`
+	FailingStep      string             `json:"failing_step"`
+	StderrTail       string             `json:"stderr_tail"`
+	Identity         deployIdentityJSON `json:"identity"`
+	Probe            *whyJournalProbe   `json:"probe"`
+}
+
+type whyJournalProbe struct {
+	Status      int    `json:"status"`
+	BodySnippet string `json:"body_snippet"`
+}
+
+func CmdWhy(root, branch string, jsonFlag bool) {
+	read, err := currentReadContextForBranch(root, "why", branch)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer read.Runner.Close()
+
+	out, err := runSSHDetail(read.Runner, read.AppContext.Server, serverAppWhyCommand(read.AppContext.AppName, read.EnvName))
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	if jsonFlag {
+		fmt.Print(out)
+		return
+	}
+	var entry whyJournalEntry
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &entry); err != nil {
+		utils.Die(fmt.Sprintf("why failed: invalid journal JSON: %v", err), 1)
+	}
+	fmt.Print(renderWhy(entry, read))
+}
+
+func renderWhy(entry whyJournalEntry, read readContext) string {
+	kind, branch := readSurface(read)
+	when := entry.EndedAt
+	if when == "" {
+		when = entry.StartedAt
+	}
+	var b strings.Builder
+	switch entry.Outcome {
+	case "deployed":
+		fmt.Fprintf(&b, "Deploy succeeded for %s %s at %s.\n", kind, branch, when)
+		fmt.Fprintf(&b, "release: %s", dashIfEmpty(entry.AttemptedRelease))
+		if entry.PreviousRelease != "" {
+			fmt.Fprintf(&b, " (previous %s)", entry.PreviousRelease)
+		}
+		b.WriteString("\n")
+		fmt.Fprintf(&b, "traffic: release %s is live.\n", dashIfEmpty(entry.AttemptedRelease))
+		fmt.Fprintf(&b, "shipped by: %s (ssh key: %s)\n", entry.Identity.GitAuthor, entry.Identity.SSHKeyComment)
+		b.WriteString("next: ship status\n")
+	case "rolled_back":
+		fmt.Fprintf(&b, "Rollback completed for %s %s at %s.\n", kind, branch, when)
+		fmt.Fprintf(&b, "release: %s (from %s)\n", dashIfEmpty(entry.AttemptedRelease), dashIfEmpty(entry.PreviousRelease))
+		fmt.Fprintf(&b, "traffic: release %s is live.\n", dashIfEmpty(entry.AttemptedRelease))
+		fmt.Fprintf(&b, "shipped by: %s (ssh key: %s)\n", entry.Identity.GitAuthor, entry.Identity.SSHKeyComment)
+		b.WriteString("next: ship status\n")
+	default:
+		fmt.Fprintf(&b, "Deploy aborted for %s %s at %s.\n", kind, branch, when)
+		fmt.Fprintf(&b, "attempted release: %s\n", dashIfEmpty(entry.AttemptedRelease))
+		fmt.Fprintf(&b, "previous release: %s\n", dashIfEmpty(entry.PreviousRelease))
+		fmt.Fprintf(&b, "failing step: %s\n", dashIfEmpty(entry.FailingStep))
+		fmt.Fprintf(&b, "probable cause: %s\n", probableCause(entry))
+		if entry.StderrTail != "" {
+			b.WriteString("stderr tail:\n")
+			b.WriteString(entry.StderrTail)
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "traffic: %s\n", trafficImpact(entry))
+		fmt.Fprintf(&b, "shipped by: %s (ssh key: %s)\n", entry.Identity.GitAuthor, entry.Identity.SSHKeyComment)
+		b.WriteString("next: ship\n")
+	}
+	return b.String()
+}
+
+func probableCause(entry whyJournalEntry) string {
+	switch entry.Outcome {
+	case "aborted_build":
+		return "image build failed."
+	case "aborted_probe":
+		if entry.Probe != nil && entry.Probe.Status != 0 {
+			if entry.Probe.BodySnippet != "" {
+				return fmt.Sprintf("probe returned HTTP %d with body: %s", entry.Probe.Status, singleLineSnippet(entry.Probe.BodySnippet))
+			}
+			return fmt.Sprintf("probe returned HTTP %d.", entry.Probe.Status)
+		}
+		return "the new container did not pass its health probe."
+	case "aborted_release":
+		if entry.FailingStep == "release" {
+			return "release command exited non-zero before traffic switched."
+		}
+		return "deploy failed before traffic switched."
+	default:
+		return "latest journal entry did not record a known failure pattern."
+	}
+}
+
+func trafficImpact(entry whyJournalEntry) string {
+	if entry.PreviousRelease == "" {
+		return "no previous release was serving, so no old traffic was available."
+	}
+	if entry.Outcome == "aborted_probe" {
+		return fmt.Sprintf("old release %s kept serving; failed probes never receive traffic with the current engine.", entry.PreviousRelease)
+	}
+	return fmt.Sprintf("old release %s kept serving; no traffic was switched.", entry.PreviousRelease)
+}
+
+func singleLineSnippet(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func dashIfEmpty(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
 
 func statusFromAppList(ctx *config.AppContext, raw string) (statusPayload, error) {
@@ -621,6 +846,7 @@ func statusEnvFromAppListItem(ctx *config.AppContext, item appListEnvJSON) statu
 		ExpiresAt:  expiresAt,
 		Pinned:     pinned,
 		Dirty:      dirty,
+		ShippedBy:  item.ShippedBy,
 		Processes:  item.Processes,
 	}
 }
@@ -683,7 +909,11 @@ func renderStatusSummary(payload statusPayload) string {
 		case env.Kind == "Preview" && env.ExpiresAt != "":
 			lifecycle = " expires=" + env.ExpiresAt
 		}
-		fmt.Fprintf(&b, "%s %s  %s  release=%s  health=%s%s\n", env.Kind, env.Branch, env.URL, release, env.Health, lifecycle)
+		shippedBy := ""
+		if env.ShippedBy != nil {
+			shippedBy = fmt.Sprintf("  shipped_by=%q ssh_key=%q", env.ShippedBy.GitAuthor, env.ShippedBy.SSHKeyComment)
+		}
+		fmt.Fprintf(&b, "%s %s  %s  release=%s  health=%s%s%s\n", env.Kind, env.Branch, env.URL, release, env.Health, lifecycle, shippedBy)
 	}
 	return b.String()
 }
@@ -712,7 +942,8 @@ func CmdRollback(root string, release string) {
 	}
 	defer read.Runner.Close()
 
-	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppRollbackCommand(read.AppContext.AppName, read.EnvName, release), "rollback failed")
+	actor := deployIdentity(root, read.Runner, read.AppContext.Server)
+	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppRollbackCommand(read.AppContext.AppName, read.EnvName, release, actor), "rollback failed")
 	fmt.Print(rewriteRollbackSummary(out, read))
 }
 
@@ -1267,6 +1498,7 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, inclu
 		remoteDir+"/source.tar",
 		remoteDir+"/ship.toml",
 		plan,
+		deployIdentity(root, runner, ctx.Server),
 		rebuild,
 	)
 	if _, err := runSSHRequired(runner, ctx.Server, applyCmd, "deploy failed"); err != nil {

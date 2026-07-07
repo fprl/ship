@@ -143,6 +143,7 @@ type appEnvStatus struct {
 	App       string                    `json:"app"`
 	Env       string                    `json:"env"`
 	Preview   *identity.PreviewIdentity `json:"preview,omitempty"`
+	ShippedBy *deployIdentity           `json:"shipped_by,omitempty"`
 	Processes []processStatus           `json:"processes"`
 	Static    *staticStatus             `json:"static,omitempty"`
 }
@@ -388,6 +389,9 @@ func renderAppListText(apps []appEnvStatus) string {
 			}
 			fmt.Fprintf(&b, "  %-12s active  release=%s routes=%s\n", "static", staticRelease, routes)
 		}
+		if app.ShippedBy != nil {
+			fmt.Fprintf(&b, "  shipped by %s (ssh key: %s)\n", app.ShippedBy.GitAuthor, app.ShippedBy.SSHKeyComment)
+		}
 		for _, s := range app.Processes {
 			release := s.Release
 			if release == "" {
@@ -416,6 +420,10 @@ func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 			return err
 		}
 		apps[i].Static = static
+		if entry, err := readLatestSuccessfulDeployJournalEntry(apps[i].App, apps[i].Env); err == nil {
+			actor := entry.Identity
+			apps[i].ShippedBy = &actor
+		}
 	}
 	return nil
 }

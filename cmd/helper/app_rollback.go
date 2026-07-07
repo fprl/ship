@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/identity"
@@ -17,9 +18,11 @@ import (
 // release artifact supplies the image/static tree, and the release manifest
 // snapshot supplies the process and route shape.
 type appRollbackCmd struct {
-	App     string `arg:"" help:"App name."`
-	Env     string `arg:"" help:"Env name."`
-	Release string `arg:"" optional:"" help:"Release to run. Omitted = previous local release."`
+	App           string `arg:"" help:"App name."`
+	Env           string `arg:"" help:"Env name."`
+	Release       string `arg:"" optional:"" help:"Release to run. Omitted = previous local release."`
+	SSHKeyComment string `name:"ssh-key-comment" help:"SSH public key comment for the deploying key."`
+	GitAuthor     string `name:"git-author" help:"Git author configured by the deploying client."`
 }
 
 func (c appRollbackCmd) Run() error {
@@ -38,6 +41,7 @@ func (c appRollbackCmd) Run() error {
 }
 
 func (c appRollbackCmd) runLocked() {
+	startedAt := time.Now().UTC()
 	currentApp, cleanup, err := loadAppliedAppContext(c.App, c.Env)
 	if err != nil {
 		utils.Die(err.Error(), 1)
@@ -47,7 +51,31 @@ func (c appRollbackCmd) runLocked() {
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
+	if err := appendDeployJournalEntry(c.App, c.Env, deployJournalEntry{
+		SchemaVersion:    deployJournalSchemaVersion,
+		App:              c.App,
+		Env:              c.Env,
+		Outcome:          "rolled_back",
+		StartedAt:        startedAt.Format(time.RFC3339Nano),
+		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
+		PreviousRelease:  result.Previous,
+		AttemptedRelease: result.Release,
+		Identity:         c.actor(),
+	}, nil); err != nil {
+		utils.Die(err.Error(), 1)
+	}
 	fmt.Print(renderRollbackText(result))
+}
+
+func (c appRollbackCmd) actor() deployIdentity {
+	actor := deployIdentity{SSHKeyComment: c.SSHKeyComment, GitAuthor: c.GitAuthor}
+	if actor.SSHKeyComment == "" {
+		actor.SSHKeyComment = "unknown"
+	}
+	if actor.GitAuthor == "" {
+		actor.GitAuthor = "unknown"
+	}
+	return actor
 }
 
 func (c appRollbackCmd) rollbackRelease(currentApp *config.AppContext) (rollbackPayload, error) {

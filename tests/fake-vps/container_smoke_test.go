@@ -49,6 +49,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
 	t.Run("phase 1 acceptance init ship branch and sslip", env.testPhase1AcceptanceAndZeroDNS)
 	t.Run("release command failure leaves old traffic unchanged", env.testReleaseCommandFailure)
+	t.Run("probe failure explains old traffic kept serving", env.testProbeFailureWhy)
 	t.Run("caddy switch failure restores runtime state", env.testCaddySwitchFailureRollback)
 	t.Run("branch env resolution and production guards", env.testBranchEnvironmentGuards)
 	t.Run("preview lifecycle mapping pin and reap", env.testPreviewLifecycle)
@@ -261,6 +262,15 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	writeReleaseFailFixture(t, app)
 	e.commitFixture(t, app)
 
+	noWhy := e.runSimpleVPS(t, app, nil, "why")
+	if noWhy.err == nil {
+		t.Fatal("why before any deploy should fail")
+	}
+	assertContains(t, noWhy.stdout+noWhy.stderr, "no_deploys")
+	assertContains(t, noWhy.stdout+noWhy.stderr, "next: ship")
+
+	secretValue := "releasefail-secret-token"
+	e.simpleVPS(t, app, []byte(secretValue), "secret", "set", "api_token")
 	e.simpleVPS(t, app, nil)
 	e.dockerExec(t, "test -f "+identity.DataDir("releasefail", productionEnv)+"/release-ok")
 	stableEnv := e.dockerExec(t, "cat "+identity.EnvFile("releasefail", productionEnv))
@@ -278,7 +288,7 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	failingManifest := strings.Replace(string(manifest), `release = "touch /data/release-ok"`, `release = "simple-vps-fail-release"`, 1)
-	failingManifest = strings.Replace(failingManifest, `MARKER = "stable"`, `MARKER = "failed"`, 1)
+	failingManifest = strings.Replace(failingManifest, `MARKER = "stable"`, `MARKER = "next-marker"`, 1)
 	if failingManifest == string(manifest) {
 		t.Fatal("release failure fixture did not contain the success release command")
 	}
@@ -300,6 +310,91 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	envAfterFailure := e.dockerExec(t, "cat "+identity.EnvFile("releasefail", productionEnv))
 	if envAfterFailure != stableEnv {
 		t.Fatalf("failing release command changed runtime env:\nbefore:\n%s\nafter:\n%s", stableEnv, envAfterFailure)
+	}
+
+	why := e.simpleVPS(t, app, nil, "why")
+	assertContains(t, why, "Deploy aborted for Production main")
+	assertContains(t, why, "failing step: release")
+	assertContains(t, why, "probable cause: release command exited non-zero before traffic switched.")
+	assertContains(t, why, "fake release command failed")
+	assertContains(t, why, "old release ")
+	assertContains(t, why, "kept serving; no traffic was switched.")
+	assertContains(t, why, "shipped by: Smoke <smoke@example.com> (ssh key: fake-vps-smoke)")
+	assertContains(t, why, "next: ship")
+
+	var whyJSON smokeWhyEntry
+	rawWhyJSON := e.simpleVPS(t, app, nil, "why", "--json")
+	if err := json.Unmarshal([]byte(rawWhyJSON), &whyJSON); err != nil {
+		t.Fatalf("why --json output not parseable as JSON: %v\nraw:\n%s", err, rawWhyJSON)
+	}
+	if whyJSON.Outcome != "aborted_release" || whyJSON.FailingStep != "release" || whyJSON.AttemptedRelease != failedRelease {
+		t.Fatalf("unexpected release failure journal entry: %+v", whyJSON)
+	}
+	if whyJSON.Identity.GitAuthor != "Smoke <smoke@example.com>" || whyJSON.Identity.SSHKeyComment != "fake-vps-smoke" {
+		t.Fatalf("why --json missing attribution: %+v", whyJSON.Identity)
+	}
+	journal := e.ssh(t, "cat "+identity.DeployJournalFile("releasefail", productionEnv))
+	if strings.Contains(journal, secretValue) {
+		t.Fatalf("deploy journal leaked secret value:\n%s", journal)
+	}
+}
+
+func (e *smokeEnv) testProbeFailureWhy(t *testing.T) {
+	app := filepath.Join(e.tmp, "probe-fail")
+	mustMkdir(t, app)
+	writeProbeFailFixture(t, app)
+	e.commitFixture(t, app)
+
+	e.simpleVPS(t, app, nil)
+	stableFragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("probefail", productionEnv))
+	stableContainer := currentWebContainer(t, e, app)
+
+	manifestPath := filepath.Join(app, "ship.toml")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failingManifest := strings.Replace(string(manifest), "port = 3000", "port = 3999", 1)
+	if failingManifest == string(manifest) {
+		t.Fatal("probe failure fixture did not contain port = 3000")
+	}
+	mustWrite(t, manifestPath, failingManifest)
+	mustWrite(t, filepath.Join(app, "README.md"), "probe failure\n")
+	e.commitFixture(t, app)
+	failedRelease := gitRelease(t, e, app)
+	failed := e.runSimpleVPS(t, app, nil)
+	if failed.err == nil {
+		t.Fatal("deploy with failing probe should fail")
+	}
+	assertContains(t, failed.stdout+failed.stderr, "health check failed")
+	assertContains(t, failed.stdout+failed.stderr, "HTTP status 502")
+	fragmentAfterFailure := e.ssh(t, "cat "+identity.CaddyFragmentFile("probefail", productionEnv))
+	if fragmentAfterFailure != stableFragment {
+		t.Fatalf("failing probe changed traffic:\nbefore:\n%s\nafter:\n%s", stableFragment, fragmentAfterFailure)
+	}
+	e.dockerExec(t, "test -e /run/fake-podman/containers/"+stableContainer+".labels")
+	e.dockerExec(t, "test ! -e /run/fake-podman/containers/"+identity.ContainerName("probefail", productionEnv, "web", failedRelease)+".labels")
+
+	why := e.simpleVPS(t, app, nil, "why")
+	assertContains(t, why, "Deploy aborted for Production main")
+	assertContains(t, why, "failing step: probe")
+	assertContains(t, why, "probable cause: probe returned HTTP 502")
+	assertContains(t, why, "HTTP status 502: upstream ")
+	assertContains(t, why, "old release ")
+	assertContains(t, why, "kept serving; failed probes never receive traffic with the current engine.")
+	assertContains(t, why, "shipped by: Smoke <smoke@example.com> (ssh key: fake-vps-smoke)")
+	assertContains(t, why, "next: ship")
+
+	var whyJSON smokeWhyEntry
+	rawWhyJSON := e.simpleVPS(t, app, nil, "why", "--json")
+	if err := json.Unmarshal([]byte(rawWhyJSON), &whyJSON); err != nil {
+		t.Fatalf("why --json output not parseable as JSON: %v\nraw:\n%s", err, rawWhyJSON)
+	}
+	if whyJSON.Outcome != "aborted_probe" || whyJSON.FailingStep != "probe" || whyJSON.AttemptedRelease != failedRelease {
+		t.Fatalf("unexpected probe failure journal entry: %+v", whyJSON)
+	}
+	if whyJSON.Probe == nil || whyJSON.Probe.Status != 502 {
+		t.Fatalf("probe journal missing HTTP status: %+v", whyJSON.Probe)
 	}
 }
 
@@ -614,6 +709,20 @@ func (e *smokeEnv) testRollback(t *testing.T) {
 	appliedManifest := e.ssh(t, "cat "+identity.ManifestFile("api", productionEnv))
 	assertContains(t, appliedManifest, "port = 3000")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: api.example.com' http://127.0.0.1/health", "ok")
+
+	why := e.simpleVPS(t, app, nil, "why")
+	assertContains(t, why, "Rollback completed for Production "+prodStatus.Branch)
+	assertContains(t, why, "release: "+oldRelease+" (from "+newRelease+")")
+	assertContains(t, why, "traffic: release "+oldRelease+" is live.")
+	assertContains(t, why, "shipped by: Smoke <smoke@example.com> (ssh key: fake-vps-smoke)")
+	var whyJSON smokeWhyEntry
+	rawWhyJSON := e.simpleVPS(t, app, nil, "why", "--json")
+	if err := json.Unmarshal([]byte(rawWhyJSON), &whyJSON); err != nil {
+		t.Fatalf("why --json output not parseable as JSON: %v\nraw:\n%s", err, rawWhyJSON)
+	}
+	if whyJSON.Outcome != "rolled_back" || whyJSON.PreviousRelease != newRelease || whyJSON.AttemptedRelease != oldRelease {
+		t.Fatalf("unexpected rollback journal entry: %+v", whyJSON)
+	}
 }
 
 func (e *smokeEnv) testConcurrentDeploys(t *testing.T) {
@@ -1021,6 +1130,8 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 	assertContains(t, text, "Production ")
 	assertContains(t, text, "release=")
 	assertContains(t, text, "health=healthy")
+	assertContains(t, text, `shipped_by="Smoke <smoke@example.com>"`)
+	assertContains(t, text, `ssh_key="fake-vps-smoke"`)
 	if strings.Contains(text, "No live envs") {
 		t.Fatalf("status reported no live envs after a successful deploy:\n%s", text)
 	}
@@ -1041,6 +1152,9 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 	}
 	if env.Processes[0].Release == "" {
 		t.Fatalf("status --json missing release label: %+v", env.Processes[0])
+	}
+	if env.ShippedBy == nil || env.ShippedBy.GitAuthor != "Smoke <smoke@example.com>" || env.ShippedBy.SSHKeyComment != "fake-vps-smoke" {
+		t.Fatalf("status --json missing shipped_by: %+v", env.ShippedBy)
 	}
 
 	// Host-level app listing is sourced from Podman labels instead
@@ -1251,6 +1365,7 @@ probe = "/health"
 
 [env]
 MARKER = "stable"
+API_TOKEN = "@secret:api_token"
 
 [processes]
 web = { port = 3000 }
@@ -1258,6 +1373,23 @@ web = { port = 3000 }
 [routes]
 "release-fail.example.com" = "web"
 	`)
+}
+
+func writeProbeFailFixture(t *testing.T, app string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "probefail"
+box = "fake-vps"
+probe = "/health"
+
+[processes]
+web = { port = 3000, cmd = "simple-vps-listen-port=3000 sleep 3600" }
+
+[routes]
+"probe-fail.example.com" = "web"
+`)
 }
 
 func writeCaddyFailFixture(t *testing.T, app string) {
@@ -1442,12 +1574,32 @@ type smokeStatusEnv struct {
 	ExpiresAt string `json:"expiresAt"`
 	Pinned    bool   `json:"pinned"`
 	Dirty     bool   `json:"dirty"`
+	ShippedBy *struct {
+		SSHKeyComment string `json:"ssh_key_comment"`
+		GitAuthor     string `json:"git_author"`
+	} `json:"shipped_by"`
 	Processes []struct {
 		Process   string `json:"process"`
 		Container string `json:"container"`
 		State     string `json:"state"`
 		Release   string `json:"release"`
 	} `json:"processes"`
+}
+
+type smokeWhyEntry struct {
+	Outcome          string `json:"outcome"`
+	PreviousRelease  string `json:"previous_release"`
+	AttemptedRelease string `json:"attempted_release"`
+	FailingStep      string `json:"failing_step"`
+	StderrTail       string `json:"stderr_tail"`
+	Identity         struct {
+		SSHKeyComment string `json:"ssh_key_comment"`
+		GitAuthor     string `json:"git_author"`
+	} `json:"identity"`
+	Probe *struct {
+		Status      int    `json:"status"`
+		BodySnippet string `json:"body_snippet"`
+	} `json:"probe"`
 }
 
 func statusPayloadForApp(t *testing.T, e *smokeEnv, app string) smokeStatusPayload {

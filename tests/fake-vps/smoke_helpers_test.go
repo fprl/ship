@@ -122,7 +122,7 @@ func (e *smokeEnv) startContainer(t *testing.T) {
 func (e *smokeEnv) configureSSH(t *testing.T, user string) {
 	t.Helper()
 	keyPath := filepath.Join(e.tmp, "id_ed25519")
-	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", keyPath)
+	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "fake-vps-smoke", "-f", keyPath)
 
 	pub, err := os.ReadFile(keyPath + ".pub")
 	if err != nil {

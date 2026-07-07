@@ -135,6 +135,11 @@ func ReleaseMetadataFile(app, env, release string) string {
 	return ReleaseDir(app, env) + "/" + release + "/release.json"
 }
 
+// DeployJournalFile stores append-only deploy/rollback attempts for one env.
+func DeployJournalFile(app, env string) string {
+	return ReleaseDir(app, env) + "/journal.jsonl"
+}
+
 // ManifestFile is the last manifest successfully applied for one `(app, env)`.
 func ManifestFile(app, env string) string {
 	return EnvRoot(app, env) + "/ship.toml"

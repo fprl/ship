@@ -11,6 +11,7 @@ type appCmd struct {
 	Status     appStatusCmd     `cmd:"status" help:"Show running processes for one (app, env) pair."`
 	Restart    appRestartCmd    `cmd:"restart" help:"Bounce running containers for one (app, env) pair via podman restart."`
 	Rollback   appRollbackCmd   `cmd:"rollback" help:"Run an older image release for one (app, env) pair."`
+	Why        appWhyCmd        `cmd:"why" help:"Show the latest deploy journal entry for one (app, env)."`
 	Backup     appBackupCmd     `cmd:"backup" help:"Create, list, remove, and restore app backups."`
 	Logs       appLogsCmd       `cmd:"logs" help:"Tail logs for one process via podman logs."`
 	Secret     appSecretCmd     `cmd:"secret" help:"Manage the per-(app, env, key) secret store."`
