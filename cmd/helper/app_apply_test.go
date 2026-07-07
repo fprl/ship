@@ -215,7 +215,7 @@ func TestBuildPodmanRunArgsEmitsHardeningDataMountResourcesAndLabels(t *testing.
 		Resources: config.Resources{Memory: &memory, CPUs: &cpus},
 	}
 	containerName := identity.ContainerName("api", "production", "web", "abc123")
-	args := buildPodmanRunArgs("api", "production", "web", proc, identity.ImageTag("api", "production", "abc123"), "999", "988", "abc123", containerName, true)
+	args := buildPodmanRunArgs("api", "production", "web", proc, identity.ImageTag("api", "production", "abc123"), "999", "988", "abc123", containerName, true, false)
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"--cap-drop ALL",
@@ -243,11 +243,29 @@ func TestBuildPodmanRunArgsEmitsHardeningDataMountResourcesAndLabels(t *testing.
 }
 
 func TestBuildPodmanRunArgsSkipsEnvFileWhenAbsent(t *testing.T) {
-	args := buildPodmanRunArgs("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "production", "web", "abc123"), false)
+	args := buildPodmanRunArgs("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "production", "web", "abc123"), false, false)
 	for _, a := range args {
 		if a == "--env-file" {
 			t.Fatalf("did not expect --env-file when env file is absent, args:\n%s", strings.Join(args, " "))
 		}
+	}
+}
+
+func TestBuildPodmanRunArgsAppliesDefaultPreviewResourceCaps(t *testing.T) {
+	args := buildPodmanRunArgs("api", "feat-x-ab12", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "feat-x-ab12", "web", "abc123"), false, true)
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--memory 512m", "--cpus 0.5"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("preview args missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestBuildPodmanRunArgsLeavesProdUncappedByDefault(t *testing.T) {
+	args := buildPodmanRunArgs("api", "prod", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "prod", "web", "abc123"), false, false)
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "--memory") || strings.Contains(joined, "--cpus") {
+		t.Fatalf("prod args should not get default resource caps:\n%s", joined)
 	}
 }
 
@@ -502,13 +520,18 @@ func TestValidateAppEnvAcceptsCanonicalNames(t *testing.T) {
 	if err := validateAppEnv("multi-word-app", "stage-2"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if err := validateAppEnv("api", "1-preview-ab12"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 
-func TestValidateAppEnvRejectsLeadingDigitOrPunctuation(t *testing.T) {
+func TestValidateAppEnvRejectsInvalidAppNamesAndEnvPunctuation(t *testing.T) {
 	for _, name := range []string{"1bad", "-bad", "bad name", "BAD"} {
 		if err := validateAppEnv(name, "production"); err == nil {
 			t.Fatalf("expected error for app=%q", name)
 		}
+	}
+	for _, name := range []string{"-bad", "bad name", "BAD"} {
 		if err := validateAppEnv("good", name); err == nil {
 			t.Fatalf("expected error for env=%q", name)
 		}

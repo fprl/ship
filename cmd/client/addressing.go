@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/names"
 )
 
 const productionEnvName = "prod"
@@ -18,38 +19,19 @@ type gitState struct {
 type deployAddress struct {
 	EnvName          string
 	Branch           string
+	PreviewBranch    string
 	ProductionBranch bool
 	Dirty            bool
 }
 
+type readAddress struct {
+	EnvName          string
+	PreviewBranch    string
+	ProductionBranch bool
+}
+
 func sanitizeBranchEnvName(branch string) string {
-	branch = strings.ToLower(branch)
-	var b strings.Builder
-	prevDash := false
-	for _, r := range branch {
-		valid := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-'
-		if valid {
-			if r == '-' {
-				if prevDash {
-					continue
-				}
-				prevDash = true
-			} else {
-				prevDash = false
-			}
-			b.WriteRune(r)
-			continue
-		}
-		if !prevDash {
-			b.WriteByte('-')
-			prevDash = true
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if len(out) > 28 {
-		out = out[:28]
-	}
-	return strings.Trim(out, "-")
+	return names.SanitizeBranchEnvName(branch)
 }
 
 func resolveDeployAddress(root, explicitEnv, branchFlag string) (deployAddress, error) {
@@ -84,41 +66,51 @@ func resolveDeployAddress(root, explicitEnv, branchFlag string) (deployAddress, 
 	if err != nil {
 		return deployAddress{}, fmt.Errorf("git status failed\nnext: check that Git is installed and this is a valid Git worktree")
 	}
-	return deployAddress{
+	address := deployAddress{
 		EnvName:          envName,
 		Branch:           branch,
 		ProductionBranch: branch == baseCtx.ProductionBranch,
 		Dirty:            dirty,
-	}, nil
+	}
+	if explicitEnv == "" && !address.ProductionBranch {
+		address.PreviewBranch = branch
+	}
+	return address, nil
 }
 
-func resolveReadEnv(root, explicitEnv, branchFlag, command string) (string, error) {
+func resolveReadAddress(root, explicitEnv, branchFlag, command string) (readAddress, error) {
 	if explicitEnv != "" {
-		return explicitEnv, nil
+		return readAddress{EnvName: explicitEnv}, nil
 	}
 	baseCtx, err := config.LoadAppContext(root, productionEnvName)
 	if err != nil {
-		return "", err
+		return readAddress{}, err
 	}
 	branch := branchFlag
 	if branch == "" {
 		state, err := currentGitState(root)
 		if err != nil {
-			return "", err
+			return readAddress{}, err
 		}
 		if state.Detached {
-			return "", detachedHeadRequiresBranchError(command)
+			return readAddress{}, detachedHeadRequiresBranchError(command)
 		}
 		branch = state.Branch
 	}
-	return envNameForBranch(branch, baseCtx.ProductionBranch)
+	envName, err := envNameForBranch(branch, baseCtx.ProductionBranch)
+	if err != nil {
+		return readAddress{}, err
+	}
+	if branch == baseCtx.ProductionBranch {
+		return readAddress{EnvName: envName, ProductionBranch: true}, nil
+	}
+	return readAddress{EnvName: envName, PreviewBranch: branch}, nil
 }
 
 func envNameForBranch(branch, productionBranch string) (string, error) {
 	if branch == productionBranch {
 		return productionEnvName, nil
 	}
-	// TODO(§3): append and persist the random 4-char preview suffix on the box.
 	envName := sanitizeBranchEnvName(branch)
 	if envName == "" {
 		return "", codedNextError(

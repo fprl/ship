@@ -134,6 +134,13 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 		}
 		imageTag := identity.ImageTag(c.App, c.Env, targetRelease)
 		routed := routedProcessNames(app.Routes)
+		previewEnv, err := isPreviewEnv(c.App, c.Env)
+		if err != nil {
+			cleanupStarted()
+			_ = restoreEnvFile(c.App, c.Env, envSnapshot)
+			_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
+			return rollbackPayload{}, err
+		}
 		for _, procName := range sortedKeys(app.Processes) {
 			proc := app.Processes[procName]
 			if proc.Port == nil {
@@ -143,7 +150,7 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 			}
 			containerName := identity.ContainerName(c.App, c.Env, procName, targetRelease)
 			started = append(started, containerName)
-			if err := startProcess(c.App, c.Env, procName, proc, imageTag, userID, groupID, targetRelease, containerName, processProbe(routed, procName, app.Probe)); err != nil {
+			if err := startProcess(c.App, c.Env, procName, proc, imageTag, userID, groupID, targetRelease, containerName, processProbe(routed, procName, app.Probe), previewEnv); err != nil {
 				cleanupStarted()
 				_ = restoreEnvFile(c.App, c.Env, envSnapshot)
 				_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)

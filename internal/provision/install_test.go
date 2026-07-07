@@ -653,6 +653,64 @@ func TestRunInstallWritesCaddyContainerSystemdUnit(t *testing.T) {
 	}
 }
 
+func TestRunInstallWritesPreviewReaperTimer(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "simple-vps")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &installFakeRunner{files: map[string]host.FileState{}}
+
+	_, err := RunInstall(context.Background(), runner, InstallOptions{
+		OperatorUser:          "operator",
+		DeployUser:            "deploy",
+		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
+		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		StateRoot:             root,
+		HelperBinaryPath:      helper,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	service, ok := runner.files["/etc/systemd/system/ship-preview-reaper.service"]
+	if !ok {
+		t.Fatal("expected preview reaper service")
+	}
+	if !strings.Contains(string(service.Content), "ExecStart=/usr/local/bin/ship server env reap") {
+		t.Fatalf("unexpected reaper service:\n%s", service.Content)
+	}
+	timer, ok := runner.files["/etc/systemd/system/ship-preview-reaper.timer"]
+	if !ok {
+		t.Fatal("expected preview reaper timer")
+	}
+	timerContent := string(timer.Content)
+	for _, want := range []string{"OnBootSec=15min", "OnUnitActiveSec=1h", "Persistent=true", "WantedBy=timers.target"} {
+		if !strings.Contains(timerContent, want) {
+			t.Fatalf("timer missing %q:\n%s", want, timerContent)
+		}
+	}
+}
+
+func TestEnsureSystemdUnitEnabledRunsEnableWhenDisabled(t *testing.T) {
+	runner := &installFakeRunner{
+		files: map[string]host.FileState{},
+		commandResults: map[string]host.CommandResult{
+			"systemctl is-enabled --quiet ship-preview-reaper.timer": {ExitCode: 1},
+		},
+	}
+	changed, err := ensureSystemdUnitEnabled(host.Apply{Context: context.Background(), Runner: runner}, "ship-preview-reaper.timer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("expected disabled timer to be enabled")
+	}
+	if !runner.ranCommand("systemctl", "enable ship-preview-reaper.timer") {
+		t.Fatalf("expected systemctl enable, commands: %+v", runner.commands)
+	}
+}
+
 func TestCaddyUnitIngressModes(t *testing.T) {
 	public := caddyUnit("public")
 	if !strings.Contains(public, "--publish 80:80") || !strings.Contains(public, "--publish 443:443") {

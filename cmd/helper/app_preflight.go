@@ -173,7 +173,7 @@ func validateEnvIdentityFile(app, env string) error {
 }
 
 func validateEnvIdentityData(app, env string, data []byte) error {
-	var file envIdentityFile
+	var file identity.EnvIdentity
 	if err := json.Unmarshal(data, &file); err != nil {
 		return fmt.Errorf("parse identity file: %v", err)
 	}

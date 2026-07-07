@@ -27,6 +27,8 @@ type cli struct {
 	Restore  restoreCmd       `cmd:"" group:"project" help:"Restore the current app environment from a backup."`
 	Destroy  destroyCmd       `cmd:"" group:"project" help:"Destroy the current app environment on the host."`
 	Logs     logsCmd          `cmd:"" group:"project" help:"Tail process logs for the current app environment."`
+	Pin      pinCmd           `cmd:"" group:"project" help:"Pin a preview environment so the reaper leaves it running."`
+	Unpin    unpinCmd         `cmd:"" group:"project" help:"Unpin a preview environment so normal expiry applies."`
 	Secret   secretCmd        `cmd:"" group:"project" help:"Manage secrets for the current app environment."`
 	SSH      sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the current app environment."`
 	App      appCmd           `cmd:"" group:"host" help:"List app environments on a host."`
@@ -201,6 +203,34 @@ func (c logsCmd) Run() error {
 		return err
 	}
 	client.CmdLogs(root, c.Env, c.Branch, c.Process, c.Follow, c.Tail)
+	return nil
+}
+
+type pinCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	Branch string `arg:"" help:"Branch name to pin."`
+}
+
+func (c pinCmd) Run() error {
+	root, err := projectAppRoot(c.Config)
+	if err != nil {
+		return err
+	}
+	client.CmdPreviewPin(root, c.Branch, true)
+	return nil
+}
+
+type unpinCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	Branch string `arg:"" help:"Branch name to unpin."`
+}
+
+func (c unpinCmd) Run() error {
+	root, err := projectAppRoot(c.Config)
+	if err != nil {
+		return err
+	}
+	client.CmdPreviewPin(root, c.Branch, false)
 	return nil
 }
 

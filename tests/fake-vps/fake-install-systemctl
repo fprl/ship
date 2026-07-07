@@ -3,7 +3,8 @@ set -euo pipefail
 
 state_dir=/run/simple-vps-fresh-host
 active_dir="$state_dir/systemctl-active"
-mkdir -p "$active_dir"
+enabled_dir="$state_dir/systemctl-enabled"
+mkdir -p "$active_dir" "$enabled_dir"
 
 action="${1:-}"
 shift || true
@@ -27,6 +28,10 @@ active_file() {
   printf '%s/%s\n' "$active_dir" "${1//\//_}"
 }
 
+enabled_file() {
+  printf '%s/%s\n' "$enabled_dir" "${1//\//_}"
+}
+
 unit_candidates() {
   local unit="$1"
   printf '%s\n' "$unit"
@@ -41,8 +46,35 @@ unit_candidates() {
 }
 
 case "$action" in
-  daemon-reload|enable|disable)
+  daemon-reload)
     exit 0
+    ;;
+  enable)
+    unit="$(unit_from_args "$@")"
+    if [[ -n "$unit" ]]; then
+      printf 'enabled\n' > "$(enabled_file "$unit")"
+    fi
+    exit 0
+    ;;
+  disable)
+    unit="$(unit_from_args "$@")"
+    if [[ -n "$unit" ]]; then
+      rm -f "$(enabled_file "$unit")"
+    fi
+    exit 0
+    ;;
+  is-enabled)
+    unit="$(unit_from_args "$@")"
+    if [[ -n "$unit" ]]; then
+      while IFS= read -r candidate; do
+        if [[ -f "$(enabled_file "$candidate")" ]]; then
+          echo enabled
+          exit 0
+        fi
+      done < <(unit_candidates "$unit")
+    fi
+    echo disabled
+    exit 1
     ;;
   is-active)
     unit="$(unit_from_args "$@")"

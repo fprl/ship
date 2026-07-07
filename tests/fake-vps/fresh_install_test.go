@@ -138,6 +138,10 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	systemctlLog := e.ssh(t, "cat /run/simple-vps-fresh-host/systemctl.log")
 	assertContains(t, systemctlLog, "start fail2ban.service")
 	assertContains(t, systemctlLog, "start caddy.service")
+	assertContains(t, systemctlLog, "start ship-preview-reaper.timer")
+	assertContains(t, systemctlLog, "enable ship-preview-reaper.timer")
+	e.ssh(t, "grep -Fq 'ExecStart=/usr/local/bin/ship server env reap' /etc/systemd/system/ship-preview-reaper.service")
+	e.ssh(t, "grep -Fq 'OnUnitActiveSec=1h' /etc/systemd/system/ship-preview-reaper.timer")
 
 	ufwLog := e.ssh(t, "cat /run/simple-vps-fresh-host/ufw.log")
 	for _, want := range []string{

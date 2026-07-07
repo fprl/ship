@@ -127,6 +127,10 @@ func (c appApplyCmd) runLockedE() error {
 		result.cleanupFailed(c.App, c.Env)
 		return err
 	}
+	if err := refreshPreviewShip(c.App, c.Env, time.Now().UTC()); err != nil {
+		result.cleanupFailed(c.App, c.Env)
+		return err
+	}
 	if err := c.switchTraffic(app, result); err != nil {
 		result.cleanupFailed(c.App, c.Env)
 		return err
@@ -400,6 +404,11 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		}
 	}
 
+	previewEnv, err := isPreviewEnv(c.App, c.Env)
+	if err != nil {
+		return containerApplyResult{}, err
+	}
+
 	var started []string
 	var stopped []string
 	processNames := map[string]string{}
@@ -422,7 +431,7 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		if proc.Port != nil {
 			processNames[processName] = containerName
 		}
-		if err := startProcess(c.App, c.Env, processName, proc, imageTag, userID, groupID, c.SHA, containerName, processProbe(routed, processName, app.Probe)); err != nil {
+		if err := startProcess(c.App, c.Env, processName, proc, imageTag, userID, groupID, c.SHA, containerName, processProbe(routed, processName, app.Probe), previewEnv); err != nil {
 			removeContainers(started)
 			startContainers(stopped)
 			return containerApplyResult{}, err

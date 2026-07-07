@@ -38,6 +38,10 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "destroy-env", "api", "production"},
 		{"app", "destroy-env", "--purge", "api", "production"},
 		{"app", "apply", "--tarball", "/tmp/simple-vps-deploy/x.tar", "--manifest", "/tmp/simple-vps-deploy/x.toml", "--sha", "deadbeef", "--base-commit", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "--created-at", "2026-05-30T14:30:12Z", "api", "production"},
+		{"app", "preview", "resolve-or-create", "api", "feat/x"},
+		{"app", "preview", "resolve", "api", "feat/x"},
+		{"app", "preview", "pin", "api", "feat/x"},
+		{"app", "preview", "unpin", "api", "feat/x"},
 		{"app", "secret", "set", "api", "production", "DATABASE_URL"},
 		{"app", "secret", "list", "api", "production"},
 		{"app", "secret", "list", "--json", "api", "production"},
@@ -59,6 +63,7 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "backup", "rm", "api", "production", "backup-id"},
 		{"app", "backup", "restore", "--from", "backup-id", "api", "production"},
 		{"app", "backup", "restore", "--from", "backup-id", "--dry-run", "api", "production"},
+		{"env", "reap"},
 	}
 
 	for _, tt := range tests {

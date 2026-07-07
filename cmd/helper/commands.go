@@ -17,6 +17,7 @@ type ServerCmd struct {
 	Doctor     doctorCmd     `cmd:"" help:"Run host diagnostics."`
 	Cloudflare cloudflareCmd `cmd:"" help:"Manage Cloudflare Tunnel ingress."`
 	App        appCmd        `cmd:"" help:"Manage app users, files, and processes."`
+	Env        envCmd        `cmd:"" help:"Manage host environments."`
 }
 
 func (ServerCmd) BeforeApply() error {

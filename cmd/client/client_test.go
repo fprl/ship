@@ -326,6 +326,26 @@ func TestEnforceProductionAncestryAllowsFirstDeployAndAncestor(t *testing.T) {
 	}
 }
 
+func TestResolveReadPreviewEnvPropagatesUnknownBranchError(t *testing.T) {
+	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@example.com"}
+	command := serverAppPreviewResolveCommand("api", "feat/x")
+	runner := &fakeSSHRunner{failures: map[string]string{
+		command: "Error: unknown_preview_branch: no preview environment is mapped for branch \"feat/x\"\nnext: ship deploy\n",
+	}}
+
+	_, err := resolveReadPreviewEnv(runner, ctx, readAddress{PreviewBranch: "feat/x"})
+	if err == nil {
+		t.Fatal("expected unknown preview branch error")
+	}
+	want := "unknown_preview_branch: no preview environment is mapped for branch \"feat/x\"\nnext: ship deploy"
+	if err.Error() != want {
+		t.Fatalf("unexpected error:\nwant: %q\n got: %q", want, err.Error())
+	}
+	if len(runner.commands) != 1 || runner.commands[0] != command {
+		t.Fatalf("unexpected commands: %v", runner.commands)
+	}
+}
+
 func TestCheckAndDeployShareDirtyWorktreeDiagnostic(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
@@ -858,6 +878,42 @@ func TestServerAppDestroyEnvCommand(t *testing.T) {
 	want = "sudo -n /usr/local/bin/ship server app destroy-env --purge api production"
 	if got != want {
 		t.Fatalf("unexpected purge command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestServerAppPreviewCommands(t *testing.T) {
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{
+			name: "resolve or create",
+			got:  serverAppPreviewResolveOrCreateCommand("api", "feat/x"),
+			want: "sudo -n /usr/local/bin/ship server app preview resolve-or-create api feat/x",
+		},
+		{
+			name: "resolve",
+			got:  serverAppPreviewResolveCommand("api", "feat/x"),
+			want: "sudo -n /usr/local/bin/ship server app preview resolve api feat/x",
+		},
+		{
+			name: "pin",
+			got:  serverAppPreviewPinCommand("api", "feat/x"),
+			want: "sudo -n /usr/local/bin/ship server app preview pin api feat/x",
+		},
+		{
+			name: "unpin",
+			got:  serverAppPreviewUnpinCommand("api", "feat/x"),
+			want: "sudo -n /usr/local/bin/ship server app preview unpin api feat/x",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Fatalf("unexpected command:\nwant: %s\n got: %s", tt.want, tt.got)
+			}
+		})
 	}
 }
 

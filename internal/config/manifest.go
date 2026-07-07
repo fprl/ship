@@ -726,21 +726,7 @@ func validateVarsBlock(vars map[string]any, errors *[]string) {
 }
 
 func validateProductionBranch(branch string) bool {
-	if strings.TrimSpace(branch) != branch || branch == "" {
-		return false
-	}
-	if strings.HasPrefix(branch, "-") || strings.HasPrefix(branch, "/") || strings.HasSuffix(branch, "/") || strings.HasSuffix(branch, ".") {
-		return false
-	}
-	if strings.Contains(branch, "..") || strings.Contains(branch, "@{") || strings.Contains(branch, "\\") {
-		return false
-	}
-	for _, part := range strings.Split(branch, "/") {
-		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
-			return false
-		}
-	}
-	return !strings.ContainsAny(branch, " \t\r\n~^:?*[")
+	return names.ValidGitBranch(branch)
 }
 
 func validateProbe(probe string, errors *[]string) {

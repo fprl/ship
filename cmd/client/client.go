@@ -218,6 +218,22 @@ func runSSHRequired(runner sshRunner, server string, command string, errMsg stri
 	return stdout, nil
 }
 
+func runSSHDetail(runner sshRunner, server string, command string) (string, error) {
+	stdout, stderr, code, err := runner.RunSSH(server, command)
+	if err != nil || code != 0 {
+		detail := strings.TrimSpace(stderr)
+		if detail == "" {
+			detail = strings.TrimSpace(stdout)
+		}
+		detail = strings.TrimPrefix(detail, "Error: ")
+		if detail == "" {
+			detail = "remote command failed"
+		}
+		return "", fmt.Errorf("%s", detail)
+	}
+	return stdout, nil
+}
+
 func runSSHChecked(runner sshRunner, server string, command string, errMsg string) string {
 	stdout, err := runSSHRequired(runner, server, command, errMsg)
 	if err != nil {
@@ -381,6 +397,22 @@ func serverAppDestroyEnvCommand(appName, envName string, purge bool) string {
 	return serverCommand(args...)
 }
 
+func serverAppPreviewResolveOrCreateCommand(appName, branch string) string {
+	return serverCommand("app", "preview", "resolve-or-create", appName, branch)
+}
+
+func serverAppPreviewResolveCommand(appName, branch string) string {
+	return serverCommand("app", "preview", "resolve", appName, branch)
+}
+
+func serverAppPreviewPinCommand(appName, branch string) string {
+	return serverCommand("app", "preview", "pin", appName, branch)
+}
+
+func serverAppPreviewUnpinCommand(appName, branch string) string {
+	return serverCommand("app", "preview", "unpin", appName, branch)
+}
+
 func serverAppSecretSetCommand(appName, envName, key string) string {
 	return serverCommand("app", "secret", "set", appName, envName, key)
 }
@@ -455,13 +487,46 @@ func CmdSSH(root string, envName string) {
 	}
 }
 
+func resolveDeployPreviewEnv(runner sshRunner, ctx *config.AppContext, address deployAddress) (string, error) {
+	if address.PreviewBranch == "" {
+		return address.EnvName, nil
+	}
+	out, err := runSSHDetail(runner, ctx.Server, serverAppPreviewResolveOrCreateCommand(ctx.AppName, address.PreviewBranch))
+	if err != nil {
+		return "", err
+	}
+	env := strings.TrimSpace(out)
+	if !names.EnvRe.MatchString(env) {
+		return "", fmt.Errorf("preview resolver returned invalid env name: %q", env)
+	}
+	return env, nil
+}
+
+func resolveReadPreviewEnv(runner sshRunner, ctx *config.AppContext, address readAddress) (string, error) {
+	if address.PreviewBranch == "" {
+		return address.EnvName, nil
+	}
+	out, err := runSSHDetail(runner, ctx.Server, serverAppPreviewResolveCommand(ctx.AppName, address.PreviewBranch))
+	if err != nil {
+		return "", err
+	}
+	env := strings.TrimSpace(out)
+	if !names.EnvRe.MatchString(env) {
+		return "", fmt.Errorf("preview resolver returned invalid env name: %q", env)
+	}
+	return env, nil
+}
+
 func CmdStatus(root string, envName string, branchName string, jsonFlag bool) {
-	resolvedEnv, err := resolveReadEnv(root, envName, branchName, "status")
+	address, err := resolveReadAddress(root, envName, branchName, "status")
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	envName = resolvedEnv
-	ctx, err := config.LoadAppContext(root, envName)
+	baseEnv := address.EnvName
+	if address.PreviewBranch != "" {
+		baseEnv = productionEnvName
+	}
+	ctx, err := config.LoadAppContext(root, baseEnv)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -470,6 +535,15 @@ func CmdStatus(root string, envName string, branchName string, jsonFlag bool) {
 		utils.Die(err.Error(), 1)
 	}
 	defer runner.Close()
+	resolvedEnv, err := resolveReadPreviewEnv(runner, ctx, address)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	envName = resolvedEnv
+	ctx, err = config.LoadAppContext(root, envName)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
 
 	out := runSSHChecked(runner, ctx.Server, serverAppStatusCommand(ctx.AppName, envName, jsonFlag), "status failed")
 	// Pass the helper's output through unchanged so `--json` produces
@@ -639,12 +713,15 @@ func validateDestroyConfirmation(appName, confirm string, yes bool) error {
 }
 
 func CmdLogs(root string, envName string, branchName string, process string, follow bool, tail int) {
-	resolvedEnv, err := resolveReadEnv(root, envName, branchName, "logs")
+	address, err := resolveReadAddress(root, envName, branchName, "logs")
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	envName = resolvedEnv
-	ctx, err := config.LoadAppContext(root, envName)
+	baseEnv := address.EnvName
+	if address.PreviewBranch != "" {
+		baseEnv = productionEnvName
+	}
+	ctx, err := config.LoadAppContext(root, baseEnv)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -653,6 +730,15 @@ func CmdLogs(root string, envName string, branchName string, process string, fol
 		utils.Die(err.Error(), 1)
 	}
 	defer runner.Close()
+	resolvedEnv, err := resolveReadPreviewEnv(runner, ctx, address)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	envName = resolvedEnv
+	ctx, err = config.LoadAppContext(root, envName)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
 
 	// Follow mode needs interactive stdout/stderr passthrough so the
 	// user sees the stream as it arrives. Non-follow mode reads a
@@ -768,6 +854,43 @@ func CmdSecretRm(root string, envName string, key string) {
 	fmt.Print(out)
 }
 
+func CmdPreviewPin(root string, branch string, pinned bool) {
+	ctx, err := config.LoadAppContext(root, productionEnvName)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	if branch == ctx.ProductionBranch {
+		utils.Die(codedNextError(
+			"production_branch_not_preview",
+			fmt.Sprintf("branch %q maps to production", branch),
+			"choose a preview branch",
+		).Error(), 1)
+	}
+	previewBranch := sanitizeBranchEnvName(branch)
+	if previewBranch == "" {
+		utils.Die(codedNextError(
+			"unmappable_branch_name",
+			fmt.Sprintf("branch %q does not produce a valid environment name", branch),
+			"rename the branch",
+		).Error(), 1)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer runner.Close()
+
+	command := serverAppPreviewPinCommand(ctx.AppName, branch)
+	if !pinned {
+		command = serverAppPreviewUnpinCommand(ctx.AppName, branch)
+	}
+	out, err := runSSHDetail(runner, ctx.Server, command)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	fmt.Print(out)
+}
+
 // envKeyValid mirrors `secrets.SecretKeyRe` without taking a dep on
 // the helper-only `internal/secrets` package — keeps the client
 // binary's surface narrow.
@@ -840,20 +963,14 @@ func CmdDeploy(root string, envName string, branchName string, dirty bool, rebui
 			"git commit",
 		).Error(), 1)
 	}
-
-	plan, diags, err := buildLocalDeployPlan(root, address.EnvName, localDeployOptions{
-		AllowDirty:    dirty || !address.ProductionBranch,
-		IncludeDotenv: includeDotenv,
-	})
+	baseEnv := address.EnvName
+	if address.PreviewBranch != "" {
+		baseEnv = productionEnvName
+	}
+	ctx, err := config.LoadAppContext(root, baseEnv)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	diags.print()
-	if diags.hasErrors() {
-		os.Exit(1)
-	}
-	ctx := plan.Context
-	envName = address.EnvName
 
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -864,6 +981,27 @@ func CmdDeploy(root string, envName string, branchName string, dirty bool, rebui
 		if err := deployHostPreflight(runner, ctx); err != nil {
 			utils.Die(err.Error(), 1)
 		}
+	}
+	resolvedEnv, err := resolveDeployPreviewEnv(runner, ctx, address)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	address.EnvName = resolvedEnv
+	envName = address.EnvName
+
+	plan, diags, err := buildLocalDeployPlan(root, envName, localDeployOptions{
+		AllowDirty:    dirty || !address.ProductionBranch,
+		IncludeDotenv: includeDotenv,
+	})
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	diags.print()
+	if diags.hasErrors() {
+		os.Exit(1)
+	}
+	ctx = plan.Context
+	if address.ProductionBranch {
 		if err := enforceProductionAncestry(root, runner, ctx, plan.BaseCommit); err != nil {
 			utils.Die(err.Error(), 1)
 		}

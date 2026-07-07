@@ -163,6 +163,7 @@ func installOperations(opts InstallOptions, stateStore store.Store) []operation 
 	addSSHHardening(&ops)
 	addSecurity(&ops, opts)
 	addHelper(&ops, opts)
+	addPreviewReaper(&ops)
 	addPodman(&ops)
 	addPodmanHostBaseline(&ops)
 	addDeployTmpDir(&ops)
@@ -327,6 +328,71 @@ func addHelper(ops *[]operation, opts InstallOptions) {
 	*ops = append(*ops, operation{name: "ship sudoers", run: func(apply host.Apply) (bool, error) {
 		return host.EnsureSudoersFile(apply, "ship", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server status, /usr/local/bin/ship server status *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *\n", opts.DeployUser)))
 	}})
+}
+
+func addPreviewReaper(ops *[]operation) {
+	*ops = append(*ops, operation{name: "preview reaper service", run: func(apply host.Apply) (bool, error) {
+		return host.EnsureSystemdUnit(apply, host.SystemdUnit{
+			Name:    "ship-preview-reaper.service",
+			Content: []byte(previewReaperServiceUnit()),
+		})
+	}})
+	*ops = append(*ops, operation{name: "preview reaper timer", run: func(apply host.Apply) (bool, error) {
+		return host.EnsureSystemdUnit(apply, host.SystemdUnit{
+			Name:    "ship-preview-reaper.timer",
+			Content: []byte(previewReaperTimerUnit()),
+			Action:  host.Started,
+		})
+	}})
+	*ops = append(*ops, operation{name: "preview reaper timer enabled", run: func(apply host.Apply) (bool, error) {
+		return ensureSystemdUnitEnabled(apply, "ship-preview-reaper.timer")
+	}})
+}
+
+func ensureSystemdUnitEnabled(apply host.Apply, unit string) (bool, error) {
+	result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "systemctl", Args: []string{"is-enabled", "--quiet", unit}})
+	if err != nil {
+		return false, err
+	}
+	if result.ExitCode == 0 {
+		return false, nil
+	}
+	if apply.CheckMode {
+		return true, nil
+	}
+	enable, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "systemctl", Args: []string{"enable", unit}})
+	if err != nil {
+		return false, err
+	}
+	return true, commandOK(enable, "systemctl", []string{"enable", unit})
+}
+
+func previewReaperServiceUnit() string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=ship preview environment reaper",
+		"",
+		"[Service]",
+		"Type=oneshot",
+		"ExecStart=/usr/local/bin/ship server env reap",
+		"",
+	}, "\n")
+}
+
+func previewReaperTimerUnit() string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=Run ship preview environment reaper",
+		"",
+		"[Timer]",
+		"OnBootSec=15min",
+		"OnUnitActiveSec=1h",
+		"Persistent=true",
+		"",
+		"[Install]",
+		"WantedBy=timers.target",
+		"",
+	}, "\n")
 }
 
 // addPodman installs the Podman container engine and creates the shared

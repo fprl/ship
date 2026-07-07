@@ -15,7 +15,7 @@ import (
 var (
 	ErrNotExist   = errors.New("remote file does not exist")
 	sudoersNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-	unitNameRe    = regexp.MustCompile(`^[A-Za-z0-9_.@-]+\.service$`)
+	unitNameRe    = regexp.MustCompile(`^[A-Za-z0-9_.@-]+\.(service|timer)$`)
 )
 
 type Apply struct {

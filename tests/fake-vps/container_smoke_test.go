@@ -3,6 +3,7 @@ package fakevps
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +47,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("release command failure leaves old traffic unchanged", env.testReleaseCommandFailure)
 	t.Run("caddy switch failure restores runtime state", env.testCaddySwitchFailureRollback)
 	t.Run("branch env resolution and production guards", env.testBranchEnvironmentGuards)
+	t.Run("preview lifecycle mapping pin and reap", env.testPreviewLifecycle)
 	t.Run("container rollback runs an older image release", env.testRollback)
 	t.Run("backup and restore round-trip app state", env.testBackupRestore)
 	t.Run("deploy removes processes dropped from the manifest", env.testRemovedProcessReconciliation)
@@ -325,7 +327,9 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feat/x")
 	mustWrite(t, filepath.Join(app, "preview-dirty.txt"), "dirty preview payload")
 	e.simpleVPS(t, app, nil, "deploy")
-	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", "feat-x"))
+	featEnv := previewEnvForBranch(t, e, "branchapi", "feat/x")
+	assertPreviewEnvName(t, featEnv, "feat-x")
+	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", featEnv))
 	rawStatus := e.simpleVPS(t, app, nil, "status", "--json", "--branch", "feat/x")
 	var status struct {
 		Release struct {
@@ -346,7 +350,7 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	if !strings.HasPrefix(status.Release.Release, baseShort+"-dirty-") {
 		t.Fatalf("dirty release id %q should start with %s-dirty-", status.Release.Release, baseShort)
 	}
-	releaseMetadata := e.ssh(t, "cat "+identity.ReleaseMetadataFile("branchapi", "feat-x", status.Release.Release))
+	releaseMetadata := e.ssh(t, "cat "+identity.ReleaseMetadataFile("branchapi", featEnv, status.Release.Release))
 	assertContains(t, releaseMetadata, `"dirty": true`)
 	assertContains(t, releaseMetadata, `"base_commit": "`+baseCommit+`"`)
 	textStatus := e.simpleVPS(t, app, nil, "status", "--branch", "feat/x")
@@ -365,15 +369,101 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	}
 	assertContains(t, detachedWithoutBranch.stdout+detachedWithoutBranch.stderr, "detached_head_requires_branch")
 	e.simpleVPS(t, app, nil, "deploy", "--branch", "feat/x")
+	if again := previewEnvForBranch(t, e, "branchapi", "feat/x"); again != featEnv {
+		t.Fatalf("re-ship should keep preview env stable: first=%s second=%s", featEnv, again)
+	}
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "mañana/Über")
 	e.simpleVPS(t, app, nil, "deploy")
-	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", "ma-ana-ber"))
+	accentEnv := previewEnvForBranch(t, e, "branchapi", "mañana/Über")
+	assertPreviewEnvName(t, accentEnv, "ma-ana-ber")
+	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", accentEnv))
 
 	longBranch := "feature/abcdefghijklmnopqrstuvwxyz0123456789"
 	e.mustRun(t, app, nil, "git", "checkout", "-B", longBranch)
 	e.simpleVPS(t, app, nil, "deploy")
-	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", "feature-abcdefghijklmnopqrst"))
+	longEnv := previewEnvForBranch(t, e, "branchapi", longBranch)
+	assertPreviewEnvName(t, longEnv, "feature-abcdefghijklmnopqrst")
+	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", longEnv))
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feat/login", "main")
+	e.simpleVPS(t, app, nil, "deploy")
+	slashEnv := previewEnvForBranch(t, e, "branchapi", "feat/login")
+	assertPreviewEnvName(t, slashEnv, "feat-login")
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feat.login", "main")
+	e.simpleVPS(t, app, nil, "deploy")
+	dotEnv := previewEnvForBranch(t, e, "branchapi", "feat.login")
+	assertPreviewEnvName(t, dotEnv, "feat-login")
+	if slashEnv == dotEnv {
+		t.Fatalf("raw branches with colliding sanitized names should get distinct envs: %s", slashEnv)
+	}
+}
+
+func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
+	app := filepath.Join(e.tmp, "preview-api")
+	mustMkdir(t, app)
+	writePreviewLifecycleFixture(t, app)
+	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+
+	e.simpleVPS(t, app, nil, "deploy")
+	e.ssh(t, "test -f "+identity.IdentityFile("previewapi", "prod"))
+
+	unknown := e.runSimpleVPS(t, app, nil, "status", "--branch", "ghost/branch")
+	if unknown.err == nil {
+		t.Fatal("status for an unmapped preview branch should fail")
+	}
+	assertContains(t, unknown.stdout+unknown.stderr, "unknown_preview_branch")
+	assertContains(t, unknown.stdout+unknown.stderr, "next: ship deploy")
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/lifecycle")
+	e.simpleVPS(t, app, nil, "deploy")
+	previewEnv := previewEnvForBranch(t, e, "previewapi", "feature/lifecycle")
+	assertPreviewEnvName(t, previewEnv, "feature-lifecycle")
+	firstIdentity := readPreviewIdentity(t, e, "previewapi", previewEnv)
+	if firstIdentity.Preview == nil || firstIdentity.Preview.Pinned {
+		t.Fatalf("unexpected first preview identity: %+v", firstIdentity)
+	}
+	if firstIdentity.Preview.Branch != "feature/lifecycle" || firstIdentity.Preview.SanitizedBranch != "feature-lifecycle" {
+		t.Fatalf("preview mapping should store raw and sanitized branch names: %+v", firstIdentity.Preview)
+	}
+	firstExpiry := parseRemoteTime(t, *firstIdentity.Preview.ExpiresAt)
+
+	e.simpleVPS(t, app, []byte("throwaway"), "secret", "set", "cleanup_key", "--env", previewEnv)
+	time.Sleep(time.Second)
+	mustWrite(t, filepath.Join(app, "README.md"), "second preview ship\n")
+	e.mustRun(t, app, nil, "git", "add", ".")
+	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "second preview")
+	e.simpleVPS(t, app, nil, "deploy")
+	if again := previewEnvForBranch(t, e, "previewapi", "feature/lifecycle"); again != previewEnv {
+		t.Fatalf("same branch should keep suffix stable: first=%s second=%s", previewEnv, again)
+	}
+	refreshed := readPreviewIdentity(t, e, "previewapi", previewEnv)
+	refreshedExpiry := parseRemoteTime(t, *refreshed.Preview.ExpiresAt)
+	if !refreshedExpiry.After(firstExpiry) {
+		t.Fatalf("expiry should refresh on re-ship: before=%s after=%s", firstExpiry, refreshedExpiry)
+	}
+
+	e.simpleVPS(t, app, nil, "pin", "feature/lifecycle")
+	pinned := readPreviewIdentity(t, e, "previewapi", previewEnv)
+	if pinned.Preview == nil || !pinned.Preview.Pinned || pinned.Preview.ExpiresAt != nil {
+		t.Fatalf("pin should clear expiry: %+v", pinned.Preview)
+	}
+	e.dockerExec(t, "/usr/local/bin/ship server env reap")
+	e.dockerExec(t, "test -d "+identity.EnvRoot("previewapi", previewEnv))
+
+	e.simpleVPS(t, app, nil, "unpin", "feature/lifecycle")
+	unpinned := readPreviewIdentity(t, e, "previewapi", previewEnv)
+	if unpinned.Preview == nil || unpinned.Preview.Pinned || unpinned.Preview.ExpiresAt == nil {
+		t.Fatalf("unpin should restore expiry: %+v", unpinned.Preview)
+	}
+	forcePreviewExpired(t, e, "previewapi", previewEnv)
+	reapOutput := e.dockerExec(t, "/usr/local/bin/ship server env reap")
+	assertContains(t, reapOutput, "Reaped preview previewapi ("+previewEnv+") branch=feature/lifecycle")
+	e.dockerExec(t, "test ! -e "+identity.EnvRoot("previewapi", previewEnv))
+	e.dockerExec(t, "test ! -e /etc/simple-vps/secrets/previewapi/"+previewEnv)
+	e.dockerExec(t, "test -e "+identity.EnvRoot("previewapi", "prod"))
 }
 
 func (e *smokeEnv) testBackupRestore(t *testing.T) {
@@ -1078,6 +1168,24 @@ web = { port = 3000 }
 `)
 }
 
+func writePreviewLifecycleFixture(t *testing.T, app string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "previewapi"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"preview.example.com" = "web"
+`)
+}
+
 func writeReleaseFailFixture(t *testing.T, app string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
@@ -1211,4 +1319,77 @@ func currentProcessContainer(t *testing.T, e *smokeEnv, app string, process stri
 	}
 	t.Fatalf("status --json missing %s process:\n%s", process, rawJSON)
 	return ""
+}
+
+type previewIdentityPayload struct {
+	Version int `json:"version"`
+	App     string
+	Env     string
+	Preview *struct {
+		Branch          string  `json:"branch"`
+		SanitizedBranch string  `json:"sanitized_branch"`
+		Env             string  `json:"env"`
+		Suffix          string  `json:"suffix"`
+		LastShipAt      string  `json:"last_ship_at"`
+		ExpiresAt       *string `json:"expires_at"`
+		Pinned          bool    `json:"pinned"`
+	} `json:"preview"`
+}
+
+func previewEnvForBranch(t *testing.T, e *smokeEnv, app, branch string) string {
+	t.Helper()
+	out := e.ssh(t, "sudo -n /usr/local/bin/ship server app preview resolve "+app+" "+shellQuote(branch))
+	return strings.TrimSpace(out)
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func assertPreviewEnvName(t *testing.T, env, sanitizedBranch string) {
+	t.Helper()
+	prefix := sanitizedBranch + "-"
+	if !strings.HasPrefix(env, prefix) || len(strings.TrimPrefix(env, prefix)) != 4 {
+		t.Fatalf("preview env %q should be %s plus a 4-char suffix", env, prefix)
+	}
+	for _, r := range strings.TrimPrefix(env, prefix) {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+			t.Fatalf("preview suffix in %q is not [a-z0-9]", env)
+		}
+	}
+}
+
+func readPreviewIdentity(t *testing.T, e *smokeEnv, app, env string) previewIdentityPayload {
+	t.Helper()
+	raw := e.ssh(t, "cat "+identity.IdentityFile(app, env))
+	var payload previewIdentityPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatalf("preview identity is not JSON: %v\n%s", err, raw)
+	}
+	return payload
+}
+
+func parseRemoteTime(t *testing.T, raw string) time.Time {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		t.Fatalf("parse remote time %q: %v", raw, err)
+	}
+	return parsed
+}
+
+func forcePreviewExpired(t *testing.T, e *smokeEnv, app, env string) {
+	t.Helper()
+	path := identity.IdentityFile(app, env)
+	e.dockerExec(t, fmt.Sprintf(`python3 - <<'PY'
+import json
+path = %q
+with open(path) as f:
+    data = json.load(f)
+data["preview"]["pinned"] = False
+data["preview"]["expires_at"] = "2000-01-01T00:00:00Z"
+with open(path, "w") as f:
+    json.dump(data, f)
+    f.write("\n")
+PY`, path))
 }

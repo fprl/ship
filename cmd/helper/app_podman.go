@@ -14,6 +14,11 @@ import (
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
+const (
+	previewDefaultMemory = "512m"
+	previewDefaultCPUs   = 0.5
+)
+
 func podmanBuildArgs(app, env, imageTag, release, dockerfile, ctxDir string, rebuild bool) []string {
 	args := []string{"build"}
 	if rebuild {
@@ -61,10 +66,11 @@ func hostUserIDs(name string) (string, string, error) {
 // No --publish: Caddy reaches the process over the shared `ingress`
 // network by container DNS. Manifest-declared memory and CPU limits
 // render to the closed set of runtime flags.
-func buildPodmanRunArgs(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, envFileExists bool) []string {
+func buildPodmanRunArgs(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, envFileExists bool, previewEnv bool) []string {
 	dataDir := identity.DataDir(app, env)
 	appNet := identity.Network(app, env)
 	envFile := identity.EnvFile(app, env)
+	resources := effectiveProcessResources(proc, previewEnv)
 
 	args := []string{
 		"run", "-d",
@@ -89,11 +95,11 @@ func buildPodmanRunArgs(app, env, processName string, proc config.Process, image
 		"--label", "simple-vps.infra_id=" + identity.InfraID(app, env),
 		"--label", "simple-vps.release=" + release,
 	}
-	if proc.Resources.Memory != nil {
-		args = append(args, "--memory", *proc.Resources.Memory)
+	if resources.Memory != nil {
+		args = append(args, "--memory", *resources.Memory)
 	}
-	if proc.Resources.CPUs != nil {
-		args = append(args, "--cpus", strconv.FormatFloat(*proc.Resources.CPUs, 'f', -1, 64))
+	if resources.CPUs != nil {
+		args = append(args, "--cpus", strconv.FormatFloat(*resources.CPUs, 'f', -1, 64))
 	}
 	if envFileExists {
 		args = append(args, "--env-file", envFile)
@@ -107,7 +113,23 @@ func buildPodmanRunArgs(app, env, processName string, proc config.Process, image
 	return args
 }
 
-func startProcess(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, probe string) error {
+func effectiveProcessResources(proc config.Process, previewEnv bool) config.Resources {
+	resources := proc.Resources
+	if !previewEnv {
+		return resources
+	}
+	if resources.Memory == nil {
+		memory := previewDefaultMemory
+		resources.Memory = &memory
+	}
+	if resources.CPUs == nil {
+		cpus := previewDefaultCPUs
+		resources.CPUs = &cpus
+	}
+	return resources
+}
+
+func startProcess(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, probe string, previewEnv bool) error {
 	envFile := identity.EnvFile(app, env)
 
 	_, _ = utils.RunChecked("podman", []string{"rm", "-f", containerName}, "")
@@ -116,7 +138,7 @@ func startProcess(app, env, processName string, proc config.Process, imageTag, u
 	if _, err := os.Stat(envFile); err == nil {
 		envFileExists = true
 	}
-	args := buildPodmanRunArgs(app, env, processName, proc, imageTag, userID, groupID, release, containerName, envFileExists)
+	args := buildPodmanRunArgs(app, env, processName, proc, imageTag, userID, groupID, release, containerName, envFileExists, previewEnv)
 
 	if _, err := utils.RunChecked("podman", args, ""); err != nil {
 		return fmt.Errorf("podman run %s: %v", containerName, err)

@@ -7,6 +7,7 @@ import (
 	"syscall"
 
 	"github.com/fprl/simple-vps/internal/identity"
+	"github.com/fprl/simple-vps/internal/names"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -27,11 +28,28 @@ func appEnvLockPath(app, env string) string {
 	return filepath.Join(appEnvLockDir(), fmt.Sprintf("%s.lock", identity.InfraID(app, env)))
 }
 
+func appNamedLockPath(app, name string) string {
+	return filepath.Join(appEnvLockDir(), fmt.Sprintf("app-%s-%s.lock", app, name))
+}
+
 func acquireAppEnvLock(app, env string) (*appEnvLock, error) {
 	if err := validateAppEnv(app, env); err != nil {
 		return nil, err
 	}
-	path := appEnvLockPath(app, env)
+	return acquireLockFile(appEnvLockPath(app, env))
+}
+
+func acquireAppNamedLock(app, name string) (*appEnvLock, error) {
+	if !names.AppRe.MatchString(app) {
+		return nil, fmt.Errorf("invalid app name: %q", app)
+	}
+	if !names.EnvRe.MatchString(name) {
+		return nil, fmt.Errorf("invalid lock name: %q", name)
+	}
+	return acquireLockFile(appNamedLockPath(app, name))
+}
+
+func acquireLockFile(path string) (*appEnvLock, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, fmt.Errorf("create lock dir: %w", err)
 	}
@@ -67,6 +85,19 @@ func withAppEnvLock(app, env string, fn func()) {
 	defer func() {
 		if err := lock.Release(); err != nil {
 			utils.Die(fmt.Sprintf("release lock for %s (%s): %v", app, env, err), 1)
+		}
+	}()
+	fn()
+}
+
+func withAppNamedLock(app, name string, fn func()) {
+	lock, err := acquireAppNamedLock(app, name)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer func() {
+		if err := lock.Release(); err != nil {
+			utils.Die(fmt.Sprintf("release lock for %s (%s): %v", app, name, err), 1)
 		}
 	}()
 	fn()

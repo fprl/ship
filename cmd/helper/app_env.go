@@ -40,29 +40,38 @@ func (c appSetupEnvCmd) Run() error {
 		utils.Die(err.Error(), 1)
 	}
 	withAppEnvLock(c.App, c.Env, func() {
-		c.runLocked()
+		c.runLocked(true)
 	})
 	return nil
 }
 
-func (c appSetupEnvCmd) runLocked() {
-	user := identity.SystemUser(c.App, c.Env)
-	network := identity.Network(c.App, c.Env)
-	envRoot := identity.EnvRoot(c.App, c.Env)
-	dataDir := identity.DataDir(c.App, c.Env)
-	runtimeDir := identity.RuntimeDir(c.App, c.Env)
-	staticDir := identity.StaticDir(c.App, c.Env)
-	releaseDir := identity.ReleaseDir(c.App, c.Env)
+func (c appSetupEnvCmd) runLocked(printSummary bool) {
+	if err := setupEnv(c.App, c.Env); err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	if printSummary {
+		fmt.Printf("App %s (%s) is ready at %s\n", c.App, c.Env, identity.EnvRoot(c.App, c.Env))
+	}
+}
+
+func setupEnv(app, env string) error {
+	user := identity.SystemUser(app, env)
+	network := identity.Network(app, env)
+	envRoot := identity.EnvRoot(app, env)
+	dataDir := identity.DataDir(app, env)
+	runtimeDir := identity.RuntimeDir(app, env)
+	staticDir := identity.StaticDir(app, env)
+	releaseDir := identity.ReleaseDir(app, env)
 
 	// 0. Make sure the deploy tmp dir exists with sticky +
 	// world-writable perms. The client uploads tarballs and manifests
 	// here before handing them to the privileged helper.
 	deployTmp := host.DeployTmpDir()
 	if err := os.MkdirAll(deployTmp, 0755); err != nil {
-		utils.Die(fmt.Sprintf("mkdir %s: %v", deployTmp, err), 1)
+		return fmt.Errorf("mkdir %s: %v", deployTmp, err)
 	}
 	if err := os.Chmod(deployTmp, os.ModeSticky|0777); err != nil {
-		utils.Die(fmt.Sprintf("chmod %s: %v", deployTmp, err), 1)
+		return fmt.Errorf("chmod %s: %v", deployTmp, err)
 	}
 
 	// 1. Ensure the per-env system user exists.
@@ -71,7 +80,7 @@ func (c appSetupEnvCmd) runLocked() {
 			[]string{"--system", "--no-create-home", "--shell", "/usr/sbin/nologin", "--user-group", user},
 			"",
 		); err != nil {
-			utils.Die(fmt.Sprintf("useradd %s: %v", user, err), 1)
+			return fmt.Errorf("useradd %s: %v", user, err)
 		}
 	}
 
@@ -80,59 +89,59 @@ func (c appSetupEnvCmd) runLocked() {
 	// land with the right ownership.
 	deployUser, err := host.DeployUserFromSudo()
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		return err
 	}
 	if deployUser != "" {
 		if _, err := utils.RunChecked("usermod", []string{"-aG", user, deployUser}, ""); err != nil {
-			utils.Die(fmt.Sprintf("usermod -aG %s %s: %v", user, deployUser, err), 1)
+			return fmt.Errorf("usermod -aG %s %s: %v", user, deployUser, err)
 		}
 	}
 
 	// 3. Create the on-disk layout.
 	for _, dir := range []string{envRoot, dataDir, runtimeDir, staticDir, releaseDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			utils.Die(err.Error(), 1)
+			return err
 		}
 	}
 	if _, err := utils.RunChecked("chown", []string{"root:root", envRoot}, ""); err != nil {
-		utils.Die(fmt.Sprintf("chown %s: %v", envRoot, err), 1)
+		return fmt.Errorf("chown %s: %v", envRoot, err)
 	}
 	if _, err := utils.RunChecked("chmod", []string{"0755", envRoot}, ""); err != nil {
-		utils.Die(fmt.Sprintf("chmod 0755 %s: %v", envRoot, err), 1)
+		return fmt.Errorf("chmod 0755 %s: %v", envRoot, err)
 	}
 	for _, dir := range []string{dataDir, staticDir} {
 		if _, err := utils.RunChecked("chown", []string{"-R", user + ":" + user, dir}, ""); err != nil {
-			utils.Die(fmt.Sprintf("chown %s: %v", dir, err), 1)
+			return fmt.Errorf("chown %s: %v", dir, err)
 		}
 		if _, err := utils.RunChecked("chmod", []string{"2775", dir}, ""); err != nil {
-			utils.Die(fmt.Sprintf("chmod 2775 %s: %v", dir, err), 1)
+			return fmt.Errorf("chmod 2775 %s: %v", dir, err)
 		}
 	}
 	if _, err := utils.RunChecked("chown", []string{"-R", "root:root", releaseDir}, ""); err != nil {
-		utils.Die(fmt.Sprintf("chown %s: %v", releaseDir, err), 1)
+		return fmt.Errorf("chown %s: %v", releaseDir, err)
 	}
 	if _, err := utils.RunChecked("chmod", []string{"0755", releaseDir}, ""); err != nil {
-		utils.Die(fmt.Sprintf("chmod 0755 %s: %v", releaseDir, err), 1)
+		return fmt.Errorf("chmod 0755 %s: %v", releaseDir, err)
 	}
 	if _, err := utils.RunChecked("chown", []string{"root:" + user, runtimeDir}, ""); err != nil {
-		utils.Die(fmt.Sprintf("chown %s: %v", runtimeDir, err), 1)
+		return fmt.Errorf("chown %s: %v", runtimeDir, err)
 	}
 	if _, err := utils.RunChecked("chmod", []string{"0750", runtimeDir}, ""); err != nil {
-		utils.Die(fmt.Sprintf("chmod 0750 %s: %v", runtimeDir, err), 1)
+		return fmt.Errorf("chmod 0750 %s: %v", runtimeDir, err)
 	}
-	if err := writeEnvIdentity(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+	if err := writeEnvIdentity(app, env); err != nil {
+		return err
 	}
 
 	// 4. Ensure the per-env Podman network exists. Containers join this
 	// for intra-app DNS in addition to the shared `ingress` network.
 	if !host.CommandSucceeds("podman", "network", "exists", network) {
 		if _, err := utils.RunChecked("podman", []string{"network", "create", network}, ""); err != nil {
-			utils.Die(fmt.Sprintf("podman network create %s: %v", network, err), 1)
+			return fmt.Errorf("podman network create %s: %v", network, err)
 		}
 	}
 
-	fmt.Printf("App %s (%s) is ready at %s\n", c.App, c.Env, envRoot)
+	return nil
 }
 
 // appDestroyEnvCmd removes one env's containers, files, user, and network.
@@ -147,13 +156,22 @@ func (c appDestroyEnvCmd) Run() error {
 		utils.Die(err.Error(), 1)
 	}
 	withAppEnvLock(c.App, c.Env, func() {
-		c.runLocked()
+		c.runLocked(true)
 	})
 	return nil
 }
 
-func (c appDestroyEnvCmd) runLocked() {
-	app, env := c.App, c.Env
+func (c appDestroyEnvCmd) runLocked(printSummary bool) {
+	summary, err := destroyEnv(c.App, c.Env, c.Purge)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	if printSummary {
+		fmt.Print(renderDestroyText(c.App, c.Env, summary))
+	}
+}
+
+func destroyEnv(app, env string, purge bool) (destroySummary, error) {
 	user := identity.SystemUser(app, env)
 	network := identity.Network(app, env)
 	envRoot := identity.EnvRoot(app, env)
@@ -164,13 +182,13 @@ func (c appDestroyEnvCmd) runLocked() {
 	// could be lost on a later reload even though destroy failed.
 	caddyRemoved, err := removeAppCaddyfile(app, env)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		return destroySummary{}, err
 	}
 
 	// 2. Stop and remove any containers belonging to this (app, env).
 	containers, err := podmanPSContainers(app, env)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		return destroySummary{}, err
 	}
 	removedContainers := destroyContainerNames(containersToProcesses(containers))
 	for _, name := range removedContainers {
@@ -180,7 +198,7 @@ func (c appDestroyEnvCmd) runLocked() {
 	// 3. Drop the env directory.
 	if _, err := os.Stat(envRoot); err == nil {
 		if err := os.RemoveAll(envRoot); err != nil {
-			utils.Die(err.Error(), 1)
+			return destroySummary{}, err
 		}
 	}
 
@@ -198,10 +216,10 @@ func (c appDestroyEnvCmd) runLocked() {
 	}
 
 	secretsPurged := false
-	if c.Purge {
+	if purge {
 		secretDir := secrets.EnvDir(app, env)
 		if err := os.RemoveAll(secretDir); err != nil {
-			utils.Die(fmt.Sprintf("remove secrets for %s (%s): %v", app, env, err), 1)
+			return destroySummary{}, fmt.Errorf("remove secrets for %s (%s): %v", app, env, err)
 		}
 		secretsPurged = true
 		if appSecretDir := filepath.Dir(secretDir); dirEmpty(appSecretDir) {
@@ -209,11 +227,11 @@ func (c appDestroyEnvCmd) runLocked() {
 		}
 	}
 
-	fmt.Print(renderDestroyText(app, env, destroySummary{
+	return destroySummary{
 		Containers:    removedContainers,
 		CaddyFragment: caddyRemoved,
 		SecretsPurged: secretsPurged,
-	}))
+	}, nil
 }
 
 type destroySummary struct {
@@ -284,21 +302,20 @@ func dirEmpty(path string) bool {
 	return err == nil && len(entries) == 0
 }
 
-type envIdentityFile struct {
-	Version int    `json:"version"`
-	App     string `json:"app"`
-	Env     string `json:"env"`
-	InfraID string `json:"infra_id"`
+func writeEnvIdentity(app, env string) error {
+	existing, _ := readEnvIdentity(app, env)
+	return writeEnvIdentityWithPreview(app, env, existing.Preview)
 }
 
-func writeEnvIdentity(app, env string) error {
+func writeEnvIdentityWithPreview(app, env string, preview *identity.PreviewIdentity) error {
 	path := identity.IdentityFile(app, env)
 	dir := filepath.Dir(path)
-	file := envIdentityFile{
+	file := identity.EnvIdentity{
 		Version: 1,
 		App:     app,
 		Env:     env,
 		InfraID: identity.InfraID(app, env),
+		Preview: preview,
 	}
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
@@ -337,4 +354,23 @@ func writeEnvIdentity(app, env string) error {
 	}
 	cleanup = false
 	return nil
+}
+
+func readEnvIdentity(app, env string) (identity.EnvIdentity, error) {
+	return readEnvIdentityFile(identity.IdentityFile(app, env))
+}
+
+func readEnvIdentityFile(path string) (identity.EnvIdentity, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return identity.EnvIdentity{}, err
+	}
+	var file identity.EnvIdentity
+	if err := json.Unmarshal(data, &file); err != nil {
+		return identity.EnvIdentity{}, err
+	}
+	if file.App == "" || file.Env == "" || file.InfraID != identity.InfraID(file.App, file.Env) {
+		return identity.EnvIdentity{}, fmt.Errorf("invalid env identity %s", path)
+	}
+	return file, nil
 }

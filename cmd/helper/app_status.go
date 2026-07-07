@@ -591,25 +591,25 @@ func parsePodmanPSJSON(out []byte) ([]containerEntry, error) {
 	return entries, nil
 }
 
-var envIdentityGlob = "/var/apps/*/simple-vps.json"
+var envIdentityGlob string
+
+func identityGlob() string {
+	if envIdentityGlob != "" {
+		return envIdentityGlob
+	}
+	return filepath.Join(identity.AppsRoot(), "*", "simple-vps.json")
+}
 
 func identityAppEnvs() ([]appEnvStatus, error) {
-	paths, err := filepath.Glob(envIdentityGlob)
+	paths, err := filepath.Glob(identityGlob())
 	if err != nil {
 		return nil, err
 	}
 	out := make([]appEnvStatus, 0, len(paths))
 	for _, path := range paths {
-		data, err := os.ReadFile(path)
+		file, err := readEnvIdentityFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %v", path, err)
-		}
-		var file envIdentityFile
-		if err := json.Unmarshal(data, &file); err != nil {
-			return nil, fmt.Errorf("parse %s: %v", path, err)
-		}
-		if file.App == "" || file.Env == "" || file.InfraID != identity.InfraID(file.App, file.Env) {
-			return nil, fmt.Errorf("invalid env identity %s", path)
 		}
 		out = append(out, appEnvStatus{App: file.App, Env: file.Env})
 	}

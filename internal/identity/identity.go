@@ -10,7 +10,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -82,9 +85,18 @@ func ImageTag(app, env, sha string) string {
 	return fmt.Sprintf("%s:%s", ImageRepo(app, env), sha)
 }
 
+// AppsRoot is the host root containing every app environment. Tests can
+// override it with SHIP_APPS_DIR, mirroring the secrets package's test hook.
+func AppsRoot() string {
+	if v := os.Getenv("SHIP_APPS_DIR"); v != "" {
+		return v
+	}
+	return "/var/apps"
+}
+
 // EnvRoot is the host root for one `(app, env)` lifecycle unit.
 func EnvRoot(app, env string) string {
-	return fmt.Sprintf("/var/apps/%s.%s", app, env)
+	return filepath.Join(AppsRoot(), fmt.Sprintf("%s.%s", app, env))
 }
 
 // DataDir is mounted into container apps as /data and is included in backups.
@@ -136,4 +148,24 @@ func IdentityFile(app, env string) string {
 // CaddyFragmentFile is the generated ingress fragment for one `(app, env)`.
 func CaddyFragmentFile(app, env string) string {
 	return "/etc/caddy/conf.d/simple-vps-" + InfraID(app, env) + ".caddy"
+}
+
+// EnvIdentity is the durable identity anchor stored at IdentityFile(app, env).
+type EnvIdentity struct {
+	Version int              `json:"version"`
+	App     string           `json:"app"`
+	Env     string           `json:"env"`
+	InfraID string           `json:"infra_id"`
+	Preview *PreviewIdentity `json:"preview,omitempty"`
+}
+
+// PreviewIdentity stores the branch mapping for one preview environment.
+type PreviewIdentity struct {
+	Branch          string     `json:"branch"`
+	SanitizedBranch string     `json:"sanitized_branch"`
+	Env             string     `json:"env"`
+	Suffix          string     `json:"suffix"`
+	LastShipAt      time.Time  `json:"last_ship_at"`
+	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
+	Pinned          bool       `json:"pinned"`
 }

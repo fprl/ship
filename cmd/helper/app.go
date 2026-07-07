@@ -14,4 +14,5 @@ type appCmd struct {
 	Backup     appBackupCmd     `cmd:"backup" help:"Create, list, remove, and restore app backups."`
 	Logs       appLogsCmd       `cmd:"logs" help:"Tail logs for one process via podman logs."`
 	Secret     appSecretCmd     `cmd:"secret" help:"Manage the per-(app, env, key) secret store."`
+	Preview    appPreviewCmd    `cmd:"preview" help:"Manage preview branch mappings."`
 }
