@@ -57,9 +57,16 @@ feature creep into the current shape.
   the community, by a future paid offering, or by us if it ever
   earns its way in — not the answer to bare-CLI UX gaps.
 - **Database/add-on provisioning** (Postgres, Redis, object storage).
-  simple-vps v1 does not own their containers, volumes, upgrades, or
-  backup order. Use external/managed services, or operate them separately
-  and pass connection URLs as secrets.
+  This is doctrine, not a missing feature: state on the box has exactly
+  two shapes — **SQLite files in the app's data dir** (backed up as
+  files, per ADR-0007) **or a URL to a managed service**. The box never
+  runs a database server; running durable Postgres on one box is the
+  hardest ops problem in this space, and refusing it deletes the biggest
+  failure mode this tool could own. A 1–5 team gets very far on
+  SQLite-everywhere (the Rails 8 one-box pattern) — that is the default
+  path we optimize for; managed URLs are fully supported and never
+  punished. See docs/rfd/0001. Users may run their own DB container
+  outside simple-vps; it is not managed or backed up.
 - **Built-in recurring scheduler / jobs primitive.** Framework
   schedulers (Sidekiq, Oban, Celery beat, BullMQ, Laravel scheduler)
   cover recurring work inside app stacks. System cron, systemd timers,
