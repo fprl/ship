@@ -103,7 +103,7 @@ func writeTestBackupTarWithRelease(t *testing.T, dir, name string, addRelease fu
 	if err := addJSON(tw, "secrets.json", map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTarFile(tw, "simple-vps.toml", []byte("name = \"api\"\n"), 0644); err != nil {
+	if err := writeTarFile(tw, "ship.toml", []byte("name = \"api\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := tw.WriteHeader(&tar.Header{Name: "data/", Mode: 0755, Typeflag: tar.TypeDir}); err != nil {

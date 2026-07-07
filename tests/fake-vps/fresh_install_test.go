@@ -13,8 +13,8 @@ import (
 const freshHostImage = "simple-vps-fresh-host:local"
 
 func TestFreshHostInstall(t *testing.T) {
-	if os.Getenv("SIMPLE_VPS_RUN_FAKE_VPS_SMOKE") != "1" {
-		t.Skip("set SIMPLE_VPS_RUN_FAKE_VPS_SMOKE=1 to run Docker-backed fake VPS smoke")
+	if os.Getenv("SHIP_RUN_FAKE_VPS_SMOKE") != "1" {
+		t.Skip("set SHIP_RUN_FAKE_VPS_SMOKE=1 to run Docker-backed fake VPS smoke")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
@@ -70,7 +70,7 @@ func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {
 	// the test fails and is invisible on a green run.
 	t.Logf("install stdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	if result.err != nil {
-		t.Fatalf("simple-vps host install failed: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
+		t.Fatalf("ship host install failed: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
 	}
 	assertContains(t, result.stdout, "Provisioning complete")
 	// Read operations-changed from /etc/simple-vps/host.json on the
@@ -82,12 +82,12 @@ func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {
 
 func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	t.Helper()
-	e.ssh(t, "test -x /usr/local/bin/simple-vps")
+	e.ssh(t, "test -x /usr/local/bin/ship")
 	e.ssh(t, "getent passwd operator >/dev/null")
 	e.ssh(t, "getent passwd deploy >/dev/null")
 	assertContains(t, e.ssh(t, "id -nG operator"), "sudo")
 	e.ssh(t, "grep -q 'operator ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/operator")
-	e.ssh(t, "grep -Fq 'deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server app *, /usr/local/bin/simple-vps server status, /usr/local/bin/simple-vps server status *, /usr/local/bin/simple-vps server doctor, /usr/local/bin/simple-vps server doctor *' /etc/sudoers.d/simple-vps")
+	e.ssh(t, "grep -Fq 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server status, /usr/local/bin/ship server status *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *' /etc/sudoers.d/ship")
 	e.ssh(t, "grep -q 'ssh-ed25519 AAAAoperator test-operator' /home/operator/.ssh/authorized_keys")
 	e.ssh(t, "grep -q 'ssh-ed25519 AAAAoperator test-operator' /home/deploy/.ssh/authorized_keys")
 
@@ -187,7 +187,7 @@ func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {
 func (e *smokeEnv) assertHostDoctorHealthy(t *testing.T) {
 	t.Helper()
 	output := e.simpleVPS(t, e.repoRoot, nil, "host", "doctor", "--server", "fake-vps")
-	assertContains(t, output, "Simple VPS doctor")
+	assertContains(t, output, "ship doctor")
 	assertContains(t, output, "state: healthy")
 	assertContains(t, output, "services: healthy")
 	assertContains(t, output, "identity: healthy")

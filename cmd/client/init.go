@@ -419,9 +419,9 @@ func renderInitResult(result InitResult) {
 	}
 	steps = append(steps,
 		gitPrefix+"add .",
-		gitPrefix+"commit -m \"initial simple-vps app\"",
-		fmt.Sprintf("simple-vps check%s --env %s", configFlag, result.Env),
-		fmt.Sprintf("simple-vps deploy%s --env %s", configFlag, result.Env),
+		gitPrefix+"commit -m \"initial ship app\"",
+		fmt.Sprintf("ship check%s --env %s", configFlag, result.Env),
+		fmt.Sprintf("ship deploy%s --env %s", configFlag, result.Env),
 	)
 	fmt.Println("Next:")
 	for i, step := range steps {
@@ -580,7 +580,7 @@ func staticIndexHTML(name string) string {
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>%s on simple-vps</title>
+    <title>%s on ship</title>
   </head>
   <body>
     <main>

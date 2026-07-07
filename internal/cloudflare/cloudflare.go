@@ -18,14 +18,14 @@ import (
 var ErrNotConfigured = errors.New("Cloudflare integration is not configured")
 
 func CloudflareApiTokenPath() string {
-	if p := os.Getenv("SIMPLE_VPS_CLOUDFLARE_API_TOKEN_PATH"); p != "" {
+	if p := os.Getenv("SHIP_CLOUDFLARE_API_TOKEN_PATH"); p != "" {
 		return p
 	}
 	return "/etc/simple-vps/cloudflare-api-token"
 }
 
 func CloudflaredTunnelTokenPath() string {
-	if p := os.Getenv("SIMPLE_VPS_CLOUDFLARED_TUNNEL_TOKEN_PATH"); p != "" {
+	if p := os.Getenv("SHIP_CLOUDFLARED_TUNNEL_TOKEN_PATH"); p != "" {
 		return p
 	}
 	return "/etc/cloudflared/tunnel-token"

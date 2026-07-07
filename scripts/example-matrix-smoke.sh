@@ -4,25 +4,25 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/example-matrix-smoke.sh --host 128.140.3.159 [--client ./dist/simple-vps]
+  scripts/example-matrix-smoke.sh --host 128.140.3.159 [--client ./dist/ship]
 
-Deploys the checked-in examples against an already installed Simple VPS host:
+Deploys the checked-in examples against an already installed ship host:
   - php-plain
   - hono-bun-api
   - mixed-api-docs
   - astro-static (runs npm install + npm run build locally)
-  - django-sqlite when SIMPLE_VPS_EXAMPLE_MATRIX_INCLUDE_DJANGO=1
+  - django-sqlite when SHIP_EXAMPLE_MATRIX_INCLUDE_DJANGO=1
 
 Environment:
-  SIMPLE_VPS_DEPLOY_SSH_KEY
-      defaults to ~/.ssh/simple-vps-deploy
-  SIMPLE_VPS_EXAMPLE_MATRIX_WORKDIR
+  SHIP_DEPLOY_SSH_KEY
+      defaults to ~/.ssh/ship-deploy
+  SHIP_EXAMPLE_MATRIX_WORKDIR
       defaults to a temp dir under /tmp
-  SIMPLE_VPS_EXAMPLE_MATRIX_SKIP_DESTROY=1
+  SHIP_EXAMPLE_MATRIX_SKIP_DESTROY=1
       leave deployed example envs on the host for debugging
-  SIMPLE_VPS_EXAMPLE_MATRIX_INCLUDE_DJANGO=1
+  SHIP_EXAMPLE_MATRIX_INCLUDE_DJANGO=1
       include the heavier Django + SQLite + migration example
-  SIMPLE_VPS_EXAMPLE_MATRIX_REFRESH_KNOWN_HOSTS=0
+  SHIP_EXAMPLE_MATRIX_REFRESH_KNOWN_HOSTS=0
       do not refresh ~/.ssh/known_hosts for the disposable VPS
 USAGE
 }
@@ -38,13 +38,13 @@ require_cmd() {
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-client="${SIMPLE_VPS_CLIENT:-$repo_root/dist/simple-vps}"
-host="${SIMPLE_VPS_EXAMPLE_MATRIX_HOST:-}"
-workdir="${SIMPLE_VPS_EXAMPLE_MATRIX_WORKDIR:-$(mktemp -d /tmp/simple-vps-example-matrix-XXXXXX)}"
-deploy_key="${SIMPLE_VPS_DEPLOY_SSH_KEY:-$HOME/.ssh/simple-vps-deploy}"
-skip_destroy="${SIMPLE_VPS_EXAMPLE_MATRIX_SKIP_DESTROY:-0}"
-include_django="${SIMPLE_VPS_EXAMPLE_MATRIX_INCLUDE_DJANGO:-0}"
-refresh_known_hosts="${SIMPLE_VPS_EXAMPLE_MATRIX_REFRESH_KNOWN_HOSTS:-1}"
+client="${SHIP_CLIENT:-$repo_root/dist/ship}"
+host="${SHIP_EXAMPLE_MATRIX_HOST:-}"
+workdir="${SHIP_EXAMPLE_MATRIX_WORKDIR:-$(mktemp -d /tmp/ship-example-matrix-XXXXXX)}"
+deploy_key="${SHIP_DEPLOY_SSH_KEY:-$HOME/.ssh/ship-deploy}"
+skip_destroy="${SHIP_EXAMPLE_MATRIX_SKIP_DESTROY:-0}"
+include_django="${SHIP_EXAMPLE_MATRIX_INCLUDE_DJANGO:-0}"
+refresh_known_hosts="${SHIP_EXAMPLE_MATRIX_REFRESH_KNOWN_HOSTS:-1}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -68,7 +68,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$host" ]] || die "--host or SIMPLE_VPS_EXAMPLE_MATRIX_HOST is required"
+[[ -n "$host" ]] || die "--host or SHIP_EXAMPLE_MATRIX_HOST is required"
 if [[ "$client" != /* ]]; then
   client="$(cd "$(dirname "$client")" && pwd)/$(basename "$client")"
 fi
@@ -86,9 +86,9 @@ if [[ "$refresh_known_hosts" == "1" ]]; then
   ssh-keygen -R "$host" >/dev/null 2>&1 || true
   ssh-keyscan -T 10 -t ed25519,rsa,ecdsa "$host" >>"$HOME/.ssh/known_hosts"
 fi
-if [[ "$deploy_key" != "$HOME/.ssh/simple-vps-deploy" ]]; then
-  SIMPLE_VPS_SSH_KEY="$(cat "$deploy_key")"
-  export SIMPLE_VPS_SSH_KEY
+if [[ "$deploy_key" != "$HOME/.ssh/ship-deploy" ]]; then
+  SHIP_SSH_KEY="$(cat "$deploy_key")"
+  export SHIP_SSH_KEY
 fi
 
 mkdir -p "$workdir"
@@ -104,7 +104,7 @@ cleanup() {
   for item in "${deployed[@]:-}"; do
     local_app="${item%%|*}"
     local_dir="${item#*|}"
-    if ! "$client" destroy --config "$local_dir/simple-vps.toml" --env production --confirm "$local_app" --purge >>"$log" 2>&1; then
+    if ! "$client" destroy --config "$local_dir/ship.toml" --env production --confirm "$local_app" --purge >>"$log" 2>&1; then
       failed=1
       printf 'cleanup failed for %s; see %s\n' "$local_app" "$log" >&2
     fi
@@ -123,7 +123,7 @@ patch_manifest() {
     s/server = "deploy\@example\.com"/server = "$ENV{SVPS_SERVER}"/g;
     s/host = "[^"]+"/host = "$ENV{SVPS_ROUTE_HOST}"/g;
     s/(host = "[^"]+"\n)(?!tls = )/${1}tls = "internal"\n/g;
-  ' simple-vps.toml
+  ' ship.toml
 }
 
 commit_example() {
@@ -165,19 +165,19 @@ run_example() {
   fi
 
   commit_example
-  "$client" check --config "$app_dir/simple-vps.toml" --env production
-  "$client" setup --config "$app_dir/simple-vps.toml" --env production
+  "$client" check --config "$app_dir/ship.toml" --env production
+  "$client" setup --config "$app_dir/ship.toml" --env production
   deployed+=("$app|$app_dir")
 
   if [[ "$key" == "php" ]]; then
-    printf 'matrix-secret' | "$client" secret set --config "$app_dir/simple-vps.toml" APP_SECRET --env production
+    printf 'matrix-secret' | "$client" secret set --config "$app_dir/ship.toml" APP_SECRET --env production
   fi
   if [[ "$key" == "django" ]]; then
-    printf 'matrix-django-secret' | "$client" secret set --config "$app_dir/simple-vps.toml" DJANGO_SECRET_KEY --env production
+    printf 'matrix-django-secret' | "$client" secret set --config "$app_dir/ship.toml" DJANGO_SECRET_KEY --env production
   fi
 
-  "$client" deploy --config "$app_dir/simple-vps.toml" --env production
-  "$client" status --config "$app_dir/simple-vps.toml" --env production
+  "$client" deploy --config "$app_dir/ship.toml" --env production
+  "$client" status --config "$app_dir/ship.toml" --env production
   curl_route "$route_host" "$probe_path" "$body"
   grep -q "$expected" "$body"
   printf '%s%s -> %s\n' "$route_host" "$probe_path" "$(tr -d '\n' <"$body")"

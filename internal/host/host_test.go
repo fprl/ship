@@ -5,7 +5,7 @@ import (
 )
 
 func TestDeployTmpDirDefaultMatchesServerAPI(t *testing.T) {
-	t.Setenv("SIMPLE_VPS_DEPLOY_TMP_DIR", "")
+	t.Setenv("SHIP_DEPLOY_TMP_DIR", "")
 	if got := DeployTmpDir(); got != "/tmp/simple-vps-deploy" {
 		t.Fatalf("unexpected deploy temp dir: %s", got)
 	}

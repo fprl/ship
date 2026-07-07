@@ -107,7 +107,7 @@ func TestRenderStatusTextEmpty(t *testing.T) {
 	if !strings.Contains(out, "no processes running") {
 		t.Fatalf("missing empty-state hint:\n%s", out)
 	}
-	if !strings.Contains(out, "simple-vps deploy --env production") {
+	if !strings.Contains(out, "ship deploy --env production") {
 		t.Fatalf("empty-state hint should point at deploy:\n%s", out)
 	}
 }
@@ -117,7 +117,7 @@ func TestRenderStatusTextKnownEnvWithoutProcesses(t *testing.T) {
 	if !strings.Contains(out, "no processes running") {
 		t.Fatalf("missing empty process state:\n%s", out)
 	}
-	if strings.Contains(out, "run `simple-vps deploy --env production`") {
+	if strings.Contains(out, "run `ship deploy --env production`") {
 		t.Fatalf("known env should not print deploy hint:\n%s", out)
 	}
 }

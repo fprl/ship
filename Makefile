@@ -39,31 +39,31 @@ shell-test:
 	bash scripts/install-smoke.sh
 
 fake-vps-smoke:
-	SIMPLE_VPS_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestContainerSmoke -count=1 -timeout 20m
+	SHIP_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestContainerSmoke -count=1 -timeout 20m
 
 fake-vps-install-smoke:
 	rm -rf $(DIST_DIR) # ensure host install smoke builds fresh helper binaries
-	SIMPLE_VPS_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestFreshHostInstall -count=1 -timeout 20m
+	SHIP_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestFreshHostInstall -count=1 -timeout 20m
 
 init-template-builds:
-	SIMPLE_VPS_TEST_INIT_BUILDS=1 $(GO) test ./cmd/client -run TestRunInitGeneratedContainerTemplatesBuildWhenRequested -count=1 -timeout 20m
+	SHIP_TEST_INIT_BUILDS=1 $(GO) test ./cmd/client -run TestRunInitGeneratedContainerTemplatesBuildWhenRequested -count=1 -timeout 20m
 
 build:
 	mkdir -p $(DIST_DIR)
-	$(GO) build -trimpath -ldflags="$(VERSION_LDFLAGS)" -o $(DIST_DIR)/simple-vps .
+	$(GO) build -trimpath -ldflags="$(VERSION_LDFLAGS)" -o $(DIST_DIR)/ship .
 
 build-linux:
 	mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w $(VERSION_LDFLAGS)" -o $(DIST_DIR)/simple-vps-linux-amd64 .
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w $(VERSION_LDFLAGS)" -o $(DIST_DIR)/simple-vps-linux-arm64 .
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w $(VERSION_LDFLAGS)" -o $(DIST_DIR)/ship-linux-amd64 .
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w $(VERSION_LDFLAGS)" -o $(DIST_DIR)/ship-linux-arm64 .
 
 build-darwin:
 	mkdir -p $(DIST_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w $(VERSION_LDFLAGS)" -o $(DIST_DIR)/simple-vps-darwin-amd64 .
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w $(VERSION_LDFLAGS)" -o $(DIST_DIR)/simple-vps-darwin-arm64 .
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags="-s -w $(VERSION_LDFLAGS)" -o $(DIST_DIR)/ship-darwin-amd64 .
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w $(VERSION_LDFLAGS)" -o $(DIST_DIR)/ship-darwin-arm64 .
 
 checksum:
-	cd $(DIST_DIR) && if command -v sha256sum >/dev/null 2>&1; then sha256sum simple-vps-* > SHA256SUMS; else shasum -a 256 simple-vps-* > SHA256SUMS; fi
+	cd $(DIST_DIR) && if command -v sha256sum >/dev/null 2>&1; then sha256sum ship-* > SHA256SUMS; else shasum -a 256 ship-* > SHA256SUMS; fi
 
 build-release: build-linux build-darwin checksum
 

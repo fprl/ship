@@ -16,12 +16,12 @@ import (
 
 func TestPrepareRemoteHelperUsesConfiguredHelperDir(t *testing.T) {
 	dir := t.TempDir()
-	helper := filepath.Join(dir, "simple-vps-linux-amd64")
+	helper := filepath.Join(dir, "ship-linux-amd64")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	installer := NewInstaller()
-	installer.Env = map[string]string{"SIMPLE_VPS_HELPER_DIR": dir}
+	installer.Env = map[string]string{"SHIP_HELPER_DIR": dir}
 
 	got, cleanup, err := installer.prepareRemoteHelperBinary("amd64")
 	defer cleanup()
@@ -41,10 +41,10 @@ func TestPrepareRemoteHelperDownloadsReleaseAsset(t *testing.T) {
 	helper := []byte("downloaded-helper")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v9.9.9/simple-vps-linux-arm64":
+		case "/v9.9.9/ship-linux-arm64":
 			_, _ = w.Write(helper)
 		case "/v9.9.9/SHA256SUMS":
-			_, _ = w.Write([]byte(sha256SumLine("simple-vps-linux-arm64", helper)))
+			_, _ = w.Write([]byte(sha256SumLine("ship-linux-arm64", helper)))
 		default:
 			t.Fatalf("unexpected release asset path: %s", r.URL.Path)
 		}
@@ -52,7 +52,7 @@ func TestPrepareRemoteHelperDownloadsReleaseAsset(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	installer := NewInstaller()
-	installer.Env = map[string]string{"SIMPLE_VPS_RELEASE_BASE_URL": server.URL}
+	installer.Env = map[string]string{"SHIP_RELEASE_BASE_URL": server.URL}
 
 	got, cleanup, err := installer.prepareRemoteHelperBinary("arm64")
 	defer cleanup()
@@ -84,7 +84,7 @@ func TestPrepareRemoteHelperReleaseBuildPrefersDownloadOverRepoRoot(t *testing.T
 	if err := os.WriteFile(filepath.Join(sourceDir, "go.mod"), []byte("module invalid.example/simple-vps\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SIMPLE_VPS_REPO_ROOT", sourceDir)
+	t.Setenv("SHIP_REPO_ROOT", sourceDir)
 	previousWorkingDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -101,10 +101,10 @@ func TestPrepareRemoteHelperReleaseBuildPrefersDownloadOverRepoRoot(t *testing.T
 	helper := []byte("downloaded-helper")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v9.9.9/simple-vps-linux-amd64":
+		case "/v9.9.9/ship-linux-amd64":
 			_, _ = w.Write(helper)
 		case "/v9.9.9/SHA256SUMS":
-			_, _ = w.Write([]byte(sha256SumLine("simple-vps-linux-amd64", helper)))
+			_, _ = w.Write([]byte(sha256SumLine("ship-linux-amd64", helper)))
 		default:
 			t.Fatalf("unexpected release asset path: %s", r.URL.Path)
 		}
@@ -112,7 +112,7 @@ func TestPrepareRemoteHelperReleaseBuildPrefersDownloadOverRepoRoot(t *testing.T
 	t.Cleanup(server.Close)
 
 	installer := NewInstaller()
-	installer.Env = map[string]string{"SIMPLE_VPS_RELEASE_BASE_URL": server.URL}
+	installer.Env = map[string]string{"SHIP_RELEASE_BASE_URL": server.URL}
 
 	got, cleanup, err := installer.prepareRemoteHelperBinary("amd64")
 	defer cleanup()
@@ -139,10 +139,10 @@ func TestPrepareRemoteHelperUsesReleaseToken(t *testing.T) {
 			t.Fatalf("unexpected authorization header: %q", got)
 		}
 		switch r.URL.Path {
-		case "/v9.9.9/simple-vps-linux-amd64":
+		case "/v9.9.9/ship-linux-amd64":
 			_, _ = w.Write(helper)
 		case "/v9.9.9/SHA256SUMS":
-			_, _ = w.Write([]byte(sha256SumLine("simple-vps-linux-amd64", helper)))
+			_, _ = w.Write([]byte(sha256SumLine("ship-linux-amd64", helper)))
 		default:
 			t.Fatalf("unexpected release asset path: %s", r.URL.Path)
 		}
@@ -151,8 +151,8 @@ func TestPrepareRemoteHelperUsesReleaseToken(t *testing.T) {
 
 	installer := NewInstaller()
 	installer.Env = map[string]string{
-		"SIMPLE_VPS_RELEASE_BASE_URL": server.URL,
-		"GH_TOKEN":                    "test-token",
+		"SHIP_RELEASE_BASE_URL": server.URL,
+		"GH_TOKEN":              "test-token",
 	}
 
 	_, cleanup, err := installer.prepareRemoteHelperBinary("amd64")
@@ -175,11 +175,11 @@ func TestPrepareRemoteHelperFallsBackToGitHubAssetAPI(t *testing.T) {
 		}
 
 		switch r.URL.Path {
-		case "/v9.9.9/simple-vps-linux-amd64", "/v9.9.9/SHA256SUMS":
+		case "/v9.9.9/ship-linux-amd64", "/v9.9.9/SHA256SUMS":
 			http.NotFound(w, r)
 		case "/releases/tags/v9.9.9":
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprintf(w, `{"assets":[{"name":"simple-vps-linux-amd64","url":%q},{"name":"SHA256SUMS","url":%q}]}`, serverURL+"/assets/1", serverURL+"/assets/2")
+			fmt.Fprintf(w, `{"assets":[{"name":"ship-linux-amd64","url":%q},{"name":"SHA256SUMS","url":%q}]}`, serverURL+"/assets/1", serverURL+"/assets/2")
 		case "/assets/1":
 			if got := r.Header.Get("Accept"); got != "application/octet-stream" {
 				t.Fatalf("unexpected accept header: %q", got)
@@ -189,7 +189,7 @@ func TestPrepareRemoteHelperFallsBackToGitHubAssetAPI(t *testing.T) {
 			if got := r.Header.Get("Accept"); got != "application/octet-stream" {
 				t.Fatalf("unexpected accept header: %q", got)
 			}
-			_, _ = w.Write([]byte(sha256SumLine("simple-vps-linux-amd64", helper)))
+			_, _ = w.Write([]byte(sha256SumLine("ship-linux-amd64", helper)))
 		default:
 			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
@@ -199,9 +199,9 @@ func TestPrepareRemoteHelperFallsBackToGitHubAssetAPI(t *testing.T) {
 
 	installer := NewInstaller()
 	installer.Env = map[string]string{
-		"SIMPLE_VPS_RELEASE_BASE_URL":     server.URL,
-		"SIMPLE_VPS_RELEASE_API_BASE_URL": server.URL,
-		"GH_TOKEN":                        "test-token",
+		"SHIP_RELEASE_BASE_URL":     server.URL,
+		"SHIP_RELEASE_API_BASE_URL": server.URL,
+		"GH_TOKEN":                  "test-token",
 	}
 
 	got, cleanup, err := installer.prepareRemoteHelperBinary("amd64")
@@ -225,10 +225,10 @@ func TestPrepareRemoteHelperRejectsChecksumMismatch(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v9.9.9/simple-vps-linux-amd64":
+		case "/v9.9.9/ship-linux-amd64":
 			_, _ = w.Write([]byte("downloaded-helper"))
 		case "/v9.9.9/SHA256SUMS":
-			_, _ = w.Write([]byte("0000000000000000000000000000000000000000000000000000000000000000  simple-vps-linux-amd64\n"))
+			_, _ = w.Write([]byte("0000000000000000000000000000000000000000000000000000000000000000  ship-linux-amd64\n"))
 		default:
 			t.Fatalf("unexpected release asset path: %s", r.URL.Path)
 		}
@@ -236,7 +236,7 @@ func TestPrepareRemoteHelperRejectsChecksumMismatch(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	installer := NewInstaller()
-	installer.Env = map[string]string{"SIMPLE_VPS_RELEASE_BASE_URL": server.URL}
+	installer.Env = map[string]string{"SHIP_RELEASE_BASE_URL": server.URL}
 
 	_, cleanup, err := installer.prepareRemoteHelperBinary("amd64")
 	defer cleanup()

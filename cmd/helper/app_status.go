@@ -326,7 +326,7 @@ func renderStatusText(app, env string, processes []processStatus, envKnown bool,
 		if envKnown {
 			b.WriteString("  no processes running\n")
 		} else {
-			b.WriteString("  no processes running — run `simple-vps deploy --env " + env + "`\n")
+			b.WriteString("  no processes running — run `ship deploy --env " + env + "`\n")
 		}
 		return b.String()
 	}

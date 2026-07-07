@@ -11,7 +11,7 @@ import (
 // in place via `podman restart`. Container config is preserved — same
 // image, same env vars, same mounts, same labels; the only effect is
 // the process inside is re-execed. To pick up manifest changes, use
-// `simple-vps deploy`.
+// `ship deploy`.
 //
 // If a process argument is given, only that one bounces. Otherwise
 // every container with matching app/env labels gets restarted, one at
@@ -19,7 +19,7 @@ import (
 // summary. After each restart the helper re-queries `podman ps` and
 // fails fast if the container didn't come back to `running` — the
 // user finds out at restart time, not the next time they look at
-// `simple-vps status`.
+// `ship status`.
 //
 // Read-modify-write of container state happens on the host with no
 // new container started; the rolling order matches what `app apply`

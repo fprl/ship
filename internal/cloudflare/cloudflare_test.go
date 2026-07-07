@@ -10,7 +10,7 @@ import (
 )
 
 func TestCloudflaredTunnelTokenDefaultPathMatchesServerContract(t *testing.T) {
-	t.Setenv("SIMPLE_VPS_CLOUDFLARED_TUNNEL_TOKEN_PATH", "")
+	t.Setenv("SHIP_CLOUDFLARED_TUNNEL_TOKEN_PATH", "")
 	if got := CloudflaredTunnelTokenPath(); got != "/etc/cloudflared/tunnel-token" {
 		t.Fatalf("unexpected tunnel token path: %s", got)
 	}
@@ -82,8 +82,8 @@ func TestWithoutCloudflareHostnameKeepsCatchAll(t *testing.T) {
 
 func TestConfiguredCloudflareReportsNotConfiguredWithoutTokenOrTunnel(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("SIMPLE_VPS_STATE_DIR", root)
-	t.Setenv("SIMPLE_VPS_CLOUDFLARE_API_TOKEN_PATH", filepath.Join(root, "token"))
+	t.Setenv("SHIP_STATE_DIR", root)
+	t.Setenv("SHIP_CLOUDFLARE_API_TOKEN_PATH", filepath.Join(root, "token"))
 
 	_, _, _, _, err := ConfiguredCloudflare()
 	if !errors.Is(err, ErrNotConfigured) {
@@ -94,8 +94,8 @@ func TestConfiguredCloudflareReportsNotConfiguredWithoutTokenOrTunnel(t *testing
 func TestConfiguredCloudflareReadsADRProviderState(t *testing.T) {
 	root := t.TempDir()
 	tokenPath := filepath.Join(root, "token")
-	t.Setenv("SIMPLE_VPS_STATE_DIR", root)
-	t.Setenv("SIMPLE_VPS_CLOUDFLARE_API_TOKEN_PATH", tokenPath)
+	t.Setenv("SHIP_STATE_DIR", root)
+	t.Setenv("SHIP_CLOUDFLARE_API_TOKEN_PATH", tokenPath)
 
 	if err := os.WriteFile(tokenPath, []byte("token-test\n"), 0600); err != nil {
 		t.Fatal(err)

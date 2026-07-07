@@ -135,14 +135,14 @@ func TestDoctorServiceFindingsRequireConfiguredTunnelService(t *testing.T) {
 }
 
 func TestHelperSudoRegexRequiresServerSubtree(t *testing.T) {
-	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server app *, /usr/local/bin/simple-vps server status, /usr/local/bin/simple-vps server status *, /usr/local/bin/simple-vps server doctor, /usr/local/bin/simple-vps server doctor *"
+	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server status, /usr/local/bin/ship server status *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *"
 	if !HelperSudoRe.MatchString(good) {
 		t.Fatal("expected server subtree sudoers grant to match")
 	}
-	if HelperSudoRe.MatchString("deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps") {
-		t.Fatal("broad simple-vps sudoers grant must not match")
+	if HelperSudoRe.MatchString("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship") {
+		t.Fatal("broad ship sudoers grant must not match")
 	}
-	if HelperSudoRe.MatchString("deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server *") {
+	if HelperSudoRe.MatchString("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server *") {
 		t.Fatal("whole server subtree grant must not match")
 	}
 }

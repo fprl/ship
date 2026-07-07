@@ -23,21 +23,21 @@ func ShellEscape(value string) string {
 }
 
 func BackupDir() string {
-	if p := os.Getenv("SIMPLE_VPS_BACKUP_DIR"); p != "" {
+	if p := os.Getenv("SHIP_BACKUP_DIR"); p != "" {
 		return p
 	}
 	return "/etc/simple-vps/backups"
 }
 
 func CaddyBin() string {
-	if b := os.Getenv("SIMPLE_VPS_CADDY_BIN"); b != "" {
+	if b := os.Getenv("SHIP_CADDY_BIN"); b != "" {
 		return b
 	}
 	return "caddy"
 }
 
 func SystemctlBin() string {
-	if b := os.Getenv("SIMPLE_VPS_SYSTEMCTL_BIN"); b != "" {
+	if b := os.Getenv("SHIP_SYSTEMCTL_BIN"); b != "" {
 		return b
 	}
 	return "systemctl"

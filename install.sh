@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SIMPLE_VPS_VERSION="${SIMPLE_VPS_VERSION:-v0.7.0}"
-SIMPLE_VPS_RELEASE_BASE_URL="${SIMPLE_VPS_RELEASE_BASE_URL:-https://github.com/fprl/simple-vps/releases/download}"
-SIMPLE_VPS_RELEASE_API_BASE_URL="${SIMPLE_VPS_RELEASE_API_BASE_URL:-https://api.github.com/repos/fprl/simple-vps}"
-SIMPLE_VPS_INSTALL_DIR="${SIMPLE_VPS_INSTALL_DIR:-$HOME/.local/bin}"
+SHIP_VERSION="${SHIP_VERSION:-v0.7.0}"
+SHIP_RELEASE_BASE_URL="${SHIP_RELEASE_BASE_URL:-https://github.com/fprl/simple-vps/releases/download}"
+SHIP_RELEASE_API_BASE_URL="${SHIP_RELEASE_API_BASE_URL:-https://api.github.com/repos/fprl/simple-vps}"
+SHIP_INSTALL_DIR="${SHIP_INSTALL_DIR:-$HOME/.local/bin}"
 
 tmp_dir=""
 
@@ -15,19 +15,19 @@ Usage:
 
   install.sh [--version v0.7.0] [--bin-dir ~/.local/bin]
 
-Installs the simple-vps CLI on this machine. It does not provision a VPS.
+Installs the ship CLI on this machine. It does not provision a VPS.
 After this, run:
 
-  test -f ~/.ssh/simple-vps-deploy || ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/simple-vps-deploy
-  test -f ~/.ssh/simple-vps-deploy.pub || ssh-keygen -y -f ~/.ssh/simple-vps-deploy > ~/.ssh/simple-vps-deploy.pub
-  simple-vps host install --host <vps-ip> --ssh-key ~/.ssh/<root-key>
+  test -f ~/.ssh/ship-deploy || ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/ship-deploy
+  test -f ~/.ssh/ship-deploy.pub || ssh-keygen -y -f ~/.ssh/ship-deploy > ~/.ssh/ship-deploy.pub
+  ship host install --host <vps-ip> --ssh-key ~/.ssh/<root-key>
 
 Environment:
-  SIMPLE_VPS_VERSION
+  SHIP_VERSION
       release tag to install, default v0.7.0
-  SIMPLE_VPS_INSTALL_DIR
+  SHIP_INSTALL_DIR
       install directory, default ~/.local/bin
-  SIMPLE_VPS_RELEASE_TOKEN, GH_TOKEN, or GITHUB_TOKEN
+  SHIP_RELEASE_TOKEN, GH_TOKEN, or GITHUB_TOKEN
       optional token for private release assets
 USAGE
 }
@@ -52,12 +52,12 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
       [[ $# -ge 2 ]] || die "--version requires a value"
-      SIMPLE_VPS_VERSION="$2"
+      SHIP_VERSION="$2"
       shift 2
       ;;
     --bin-dir)
       [[ $# -ge 2 ]] || die "--bin-dir requires a value"
-      SIMPLE_VPS_INSTALL_DIR="$2"
+      SHIP_INSTALL_DIR="$2"
       shift 2
       ;;
     -h | --help)
@@ -90,11 +90,11 @@ platform_asset() {
     *) die "unsupported architecture: $arch" ;;
   esac
 
-  printf 'simple-vps-%s-%s\n' "$os" "$arch"
+  printf 'ship-%s-%s\n' "$os" "$arch"
 }
 
 token() {
-  printf '%s' "${SIMPLE_VPS_RELEASE_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
+  printf '%s' "${SHIP_RELEASE_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
 }
 
 curl_download_quiet() {
@@ -124,7 +124,7 @@ download_via_github_api() {
   curl -fsSL \
     -H "Authorization: Bearer $auth_token" \
     -H "Accept: application/vnd.github+json" \
-    "${SIMPLE_VPS_RELEASE_API_BASE_URL%/}/releases/tags/$SIMPLE_VPS_VERSION" \
+    "${SHIP_RELEASE_API_BASE_URL%/}/releases/tags/$SHIP_VERSION" \
     -o "$release_json"
 
   asset_url="$(python3 - "$asset_name" "$release_json" <<'PY'
@@ -141,7 +141,7 @@ for asset in release.get("assets", []):
         break
 PY
 )"
-  [[ -n "$asset_url" ]] || die "release $SIMPLE_VPS_VERSION does not contain $asset_name"
+  [[ -n "$asset_url" ]] || die "release $SHIP_VERSION does not contain $asset_name"
 
   curl -fsSL \
     -H "Authorization: Bearer $auth_token" \
@@ -154,7 +154,7 @@ download_release_asset() {
   local asset_name="$1"
   local output="$2"
   local url
-  url="${SIMPLE_VPS_RELEASE_BASE_URL%/}/$SIMPLE_VPS_VERSION/$asset_name"
+  url="${SHIP_RELEASE_BASE_URL%/}/$SHIP_VERSION/$asset_name"
 
   if curl_download_quiet "$url" "$output"; then
     return 0
@@ -190,29 +190,29 @@ main() {
 
   asset="$(platform_asset)"
   tmp_dir="$(mktemp -d)"
-  binary="$tmp_dir/simple-vps"
+  binary="$tmp_dir/ship"
   sums="$tmp_dir/SHA256SUMS"
-  target="$SIMPLE_VPS_INSTALL_DIR/simple-vps"
+  target="$SHIP_INSTALL_DIR/ship"
 
-  info "Installing simple-vps $SIMPLE_VPS_VERSION for $asset"
+  info "Installing ship $SHIP_VERSION for $asset"
   download_release_asset "$asset" "$binary"
   download_release_asset "SHA256SUMS" "$sums"
   verify_checksum "$binary" "$asset" "$sums"
 
-  mkdir -p "$SIMPLE_VPS_INSTALL_DIR"
+  mkdir -p "$SHIP_INSTALL_DIR"
   install -m 0755 "$binary" "$target"
 
   info "Installed $target"
-  resolved="$(command -v simple-vps 2>/dev/null || true)"
+  resolved="$(command -v ship 2>/dev/null || true)"
   if [[ "$resolved" != "$target" ]]; then
     if [[ -n "$resolved" ]]; then
-      printf '%s\n' "Your shell currently resolves simple-vps to:" >&2
+      printf '%s\n' "Your shell currently resolves ship to:" >&2
       printf '%s\n' "  $resolved" >&2
     fi
     printf '%s\n' "Add this to your shell profile so this install wins first:" >&2
-    printf '%s\n' "  export PATH=\"$SIMPLE_VPS_INSTALL_DIR:\$PATH\"" >&2
+    printf '%s\n' "  export PATH=\"$SHIP_INSTALL_DIR:\$PATH\"" >&2
     printf '%s\n' "Run this now for the current shell:" >&2
-    printf '%s\n' "  export PATH=\"$SIMPLE_VPS_INSTALL_DIR:\$PATH\"" >&2
+    printf '%s\n' "  export PATH=\"$SHIP_INSTALL_DIR:\$PATH\"" >&2
   fi
   "$target" version
 }

@@ -12,7 +12,7 @@ import (
 )
 
 func TestResolveEnvMergesLiteralsAndSecrets(t *testing.T) {
-	t.Setenv("SIMPLE_VPS_SECRETS_DIR", t.TempDir())
+	t.Setenv("SHIP_SECRETS_DIR", t.TempDir())
 	if err := secrets.Put("api", "production", "db_url", []byte("postgres://x")); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestResolveEnvMergesLiteralsAndSecrets(t *testing.T) {
 }
 
 func TestResolveEnvFailsOnMissingSecretBeforeAnyContainerStarts(t *testing.T) {
-	t.Setenv("SIMPLE_VPS_SECRETS_DIR", t.TempDir())
+	t.Setenv("SHIP_SECRETS_DIR", t.TempDir())
 	_, err := resolveEnv("api", "production", nil, map[string]string{"DATABASE_URL": "db_url"})
 	if err == nil {
 		t.Fatal("expected error for missing @secret reference")
@@ -37,13 +37,13 @@ func TestResolveEnvFailsOnMissingSecretBeforeAnyContainerStarts(t *testing.T) {
 	if !strings.Contains(err.Error(), "DATABASE_URL") || !strings.Contains(err.Error(), "db_url") {
 		t.Fatalf("error should name the missing env-var and secret key, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "simple-vps secret set") {
-		t.Fatalf("error should point at `simple-vps secret set`, got: %v", err)
+	if !strings.Contains(err.Error(), "ship secret set") {
+		t.Fatalf("error should point at `ship secret set`, got: %v", err)
 	}
 }
 
 func TestResolveEnvDoesNotMutateInputMaps(t *testing.T) {
-	t.Setenv("SIMPLE_VPS_SECRETS_DIR", t.TempDir())
+	t.Setenv("SHIP_SECRETS_DIR", t.TempDir())
 	_ = secrets.Put("api", "production", "k", []byte("v"))
 	literals := map[string]string{"L": "lit"}
 	refs := map[string]string{"R": "k"}
@@ -118,7 +118,7 @@ func TestApplyRejectsManifestForDifferentApp(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "Dockerfile"), []byte("FROM scratch\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "simple-vps.toml"), []byte(`name = "other"
+	if err := os.WriteFile(filepath.Join(root, "ship.toml"), []byte(`name = "other"
 
 [env.production]
 server = "deploy@example.com"

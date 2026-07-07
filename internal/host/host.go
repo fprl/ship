@@ -18,7 +18,7 @@ import (
 // uploads source tarballs and manifests to. The provisioner creates
 // it at host install; setup-env re-creates it as a safety net.
 func DeployTmpDir() string {
-	if p := os.Getenv("SIMPLE_VPS_DEPLOY_TMP_DIR"); p != "" {
+	if p := os.Getenv("SHIP_DEPLOY_TMP_DIR"); p != "" {
 		return p
 	}
 	return "/tmp/simple-vps-deploy"

@@ -12,7 +12,7 @@ import (
 func withRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	t.Setenv("SIMPLE_VPS_SECRETS_DIR", root)
+	t.Setenv("SHIP_SECRETS_DIR", root)
 	return root
 }
 

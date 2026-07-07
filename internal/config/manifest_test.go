@@ -10,7 +10,7 @@ import (
 
 func writeManifest(t *testing.T, root string, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(root, "simple-vps.toml"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "ship.toml"), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 }

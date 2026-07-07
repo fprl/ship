@@ -272,14 +272,14 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 		return backupMetadata{}, fmt.Errorf("chmod %s: %v", dataDir, err)
 	}
 	currentManifest := identity.ManifestFile(app, env)
-	if err := copyFilePath(filepath.Join(tmp, "simple-vps.toml"), currentManifest, 0644); err != nil {
+	if err := copyFilePath(filepath.Join(tmp, "ship.toml"), currentManifest, 0644); err != nil {
 		return backupMetadata{}, err
 	}
 	if _, err := utils.RunChecked("chown", []string{"root:root", currentManifest}, ""); err != nil {
 		return backupMetadata{}, fmt.Errorf("chown applied manifest: %v", err)
 	}
 	releaseManifest := identity.ReleaseManifestFile(app, env, meta.Release)
-	if err := copyFilePath(filepath.Join(tmp, "simple-vps.toml"), releaseManifest, 0644); err != nil {
+	if err := copyFilePath(filepath.Join(tmp, "ship.toml"), releaseManifest, 0644); err != nil {
 		return backupMetadata{}, err
 	}
 	if _, err := utils.RunChecked("chown", []string{"root:root", releaseManifest}, ""); err != nil {
@@ -430,7 +430,7 @@ func writeBackupTar(path, app, env, manifestPath string, payload backupPayload, 
 	if err := addJSON(tw, "secrets.json", payload.Secrets); err != nil {
 		return err
 	}
-	if err := addFile(tw, manifestPath, "simple-vps.toml"); err != nil {
+	if err := addFile(tw, manifestPath, "ship.toml"); err != nil {
 		return err
 	}
 	if err := addFile(tw, identity.ReleaseMetadataFile(app, env, payload.Metadata.Release), "release.json"); err != nil {

@@ -16,7 +16,7 @@ import (
 // purpose; host mutation goes through the privileged helper and runtime
 // truth comes from manifest snapshots, identity files, and Podman labels.
 type cli struct {
-	Init     initCmd          `cmd:"" group:"project" help:"Create local project files and a simple-vps.toml manifest."`
+	Init     initCmd          `cmd:"" group:"project" help:"Create local project files and a ship.toml manifest."`
 	Check    checkCmd         `cmd:"" group:"project" help:"Validate the current project manifest."`
 	Setup    setupCmd         `cmd:"" hidden:"" group:"project" help:"Repair or prepare one app environment on the host."`
 	Deploy   deployCmd        `cmd:"" group:"project" help:"Deploy the current project to one app environment."`
@@ -30,8 +30,8 @@ type cli struct {
 	Secret   secretCmd        `cmd:"" group:"project" help:"Manage secrets for the current app environment."`
 	SSH      sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the current app environment."`
 	App      appCmd           `cmd:"" group:"host" help:"List app environments on a host."`
-	Host     hostCmd          `cmd:"" group:"host" help:"Install or inspect a Simple VPS host."`
-	Version  versionCmd       `cmd:"" group:"global" help:"Print the Simple VPS version."`
+	Host     hostCmd          `cmd:"" group:"host" help:"Install or inspect a ship host."`
+	Version  versionCmd       `cmd:"" group:"global" help:"Print the ship version."`
 	Server   helper.ServerCmd `cmd:"" hidden:"" group:"global" help:"Privileged host API."`
 }
 
@@ -73,7 +73,7 @@ func projectAppRoot(configPath string) (string, error) {
 	manifest := filepath.Join(root, client.ManifestFile)
 	info, err := os.Stat(manifest)
 	if os.IsNotExist(err) {
-		return "", fmt.Errorf("this is a project command, but %s was not found.\nRun it from a directory containing %s, or pass --config path/to/%s.\nTo start a new project, run `simple-vps init`.", manifest, client.ManifestFile, client.ManifestFile)
+		return "", fmt.Errorf("this is a project command, but %s was not found.\nRun it from a directory containing %s, or pass --config path/to/%s.\nTo start a new project, run `ship init`.", manifest, client.ManifestFile, client.ManifestFile)
 	}
 	if err != nil {
 		return "", err
@@ -85,7 +85,7 @@ func projectAppRoot(configPath string) (string, error) {
 }
 
 type initCmd struct {
-	Config   string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config   string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Template string `name:"template" enum:"container,static,php,hono" default:"container" help:"Scaffold template."`
 	Name     string `name:"name" help:"App name. Defaults to package.json name or directory name."`
 	Env      string `name:"env" short:"e" default:"production" help:"Environment block to create."`
@@ -113,7 +113,7 @@ func (c initCmd) Run() error {
 }
 
 type checkCmd struct {
-	Config string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Env    string `name:"env" short:"e" help:"Environment to validate. Omit to validate all envs."`
 }
 
@@ -127,7 +127,7 @@ func (c checkCmd) Run() error {
 }
 
 type setupCmd struct {
-	Config string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Env    string `name:"env" short:"e" required:"" help:"Environment to set up."`
 }
 
@@ -141,7 +141,7 @@ func (c setupCmd) Run() error {
 }
 
 type deployCmd struct {
-	Config        string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config        string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Env           string `name:"env" short:"e" required:"" help:"Environment to deploy."`
 	Dirty         bool   `help:"Allow deploying a dirty worktree."`
 	Rebuild       bool   `help:"Refresh base images and bypass Podman's build cache."`
@@ -158,7 +158,7 @@ func (c deployCmd) Run() error {
 }
 
 type sshCmd struct {
-	Config string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Env    string `name:"env" short:"e" required:"" help:"Environment to connect to."`
 }
 
@@ -172,7 +172,7 @@ func (c sshCmd) Run() error {
 }
 
 type statusCmd struct {
-	Config string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Env    string `name:"env" short:"e" required:"" help:"Environment to inspect."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text table."`
 }
@@ -187,7 +187,7 @@ func (c statusCmd) Run() error {
 }
 
 type logsCmd struct {
-	Config  string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Process string `arg:"" optional:"" help:"Process name. Optional when only one process runs."`
 	Env     string `name:"env" short:"e" required:"" help:"Environment containing the process."`
 	Follow  bool   `name:"follow" short:"f" help:"Stream new log lines."`
@@ -218,7 +218,7 @@ func (c appListCmd) Run() error {
 }
 
 type restartCmd struct {
-	Config  string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Process string `arg:"" optional:"" help:"Process to bounce. Omitted = all processes."`
 	Env     string `name:"env" short:"e" required:"" help:"Environment to restart."`
 }
@@ -233,7 +233,7 @@ func (c restartCmd) Run() error {
 }
 
 type rollbackCmd struct {
-	Config  string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Release string `arg:"" optional:"" help:"Release to run. Omitted = previous local release."`
 	Env     string `name:"env" short:"e" required:"" help:"Environment to roll back."`
 }
@@ -254,7 +254,7 @@ type backupCmd struct {
 }
 
 type backupCreateCmd struct {
-	Config string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Env    string `name:"env" short:"e" required:"" help:"Environment to back up."`
 	To     string `name:"to" help:"Destination directory on the host. Supports plain paths and file:// URLs."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
@@ -270,7 +270,7 @@ func (c backupCreateCmd) Run() error {
 }
 
 type backupListCmd struct {
-	Config string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Env    string `name:"env" short:"e" required:"" help:"Environment to list backups for."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of plain backup IDs."`
 }
@@ -285,7 +285,7 @@ func (c backupListCmd) Run() error {
 }
 
 type backupRmCmd struct {
-	Config string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	ID     string `arg:"" help:"Backup ID to remove."`
 	Env    string `name:"env" short:"e" required:"" help:"Environment to remove a backup from."`
 }
@@ -300,7 +300,7 @@ func (c backupRmCmd) Run() error {
 }
 
 type restoreCmd struct {
-	Config string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	From   string `name:"from" required:"" help:"Backup ID or path on the host."`
 	Env    string `name:"env" short:"e" required:"" help:"Environment to restore."`
 	DryRun bool   `name:"dry-run" help:"Show what would be restored without writing."`
@@ -316,10 +316,10 @@ func (c restoreCmd) Run() error {
 }
 
 type destroyCmd struct {
-	Config  string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Env     string `name:"env" short:"e" required:"" help:"Environment to destroy."`
-	App     string `name:"app" help:"App name. Required with --server when the env is no longer in simple-vps.toml."`
-	Server  string `name:"server" help:"SSH target like deploy@example.com. Required with --app when the env is no longer in simple-vps.toml."`
+	App     string `name:"app" help:"App name. Required with --server when the env is no longer in ship.toml."`
+	Server  string `name:"server" help:"SSH target like deploy@example.com. Required with --app when the env is no longer in ship.toml."`
 	Confirm string `name:"confirm" help:"Required app-name confirmation unless --yes is passed."`
 	Yes     bool   `name:"yes" help:"Skip confirmation. Intended for automation."`
 	Purge   bool   `name:"purge" help:"Also delete secrets for this app/env."`
@@ -345,7 +345,7 @@ type secretCmd struct {
 }
 
 type secretSetCmd struct {
-	Config string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Key    string `arg:"" help:"Env-var name (e.g., DATABASE_URL)."`
 	Env    string `name:"env" short:"e" required:"" help:"Environment to write the secret into."`
 }
@@ -360,7 +360,7 @@ func (c secretSetCmd) Run() error {
 }
 
 type secretListCmd struct {
-	Config string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Env    string `name:"env" short:"e" required:"" help:"Environment to list."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of plain key lines."`
 }
@@ -375,7 +375,7 @@ func (c secretListCmd) Run() error {
 }
 
 type secretRmCmd struct {
-	Config string `name:"config" type:"path" default:"simple-vps.toml" help:"Path to simple-vps.toml."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Key    string `arg:"" help:"Env-var name to remove."`
 	Env    string `name:"env" short:"e" required:"" help:"Environment to update."`
 }
@@ -528,7 +528,7 @@ func main() {
 	args := cliArgs(os.Args[1:])
 	parser, err := kong.New(
 		&cli{},
-		kong.Name("simple-vps"),
+		kong.Name("ship"),
 		kong.Description("Deploy containerized apps to a single hardened VPS."),
 		kong.ExplicitGroups(cliCommandGroups()),
 		kong.ConfigureHelp(kong.HelpOptions{NoExpandSubcommands: true}),

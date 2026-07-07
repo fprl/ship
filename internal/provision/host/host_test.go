@@ -368,7 +368,7 @@ func TestEnsureSudoersFileValidatesBeforeWriting(t *testing.T) {
 	apply := Apply{Context: context.Background(), Runner: runner}
 
 	sudoers := testDeploySudoers()
-	changed, err := EnsureSudoersFile(apply, "simple-vps", sudoers)
+	changed, err := EnsureSudoersFile(apply, "ship", sudoers)
 	if err == nil {
 		t.Fatal("expected validation failure")
 	}
@@ -380,14 +380,14 @@ func TestEnsureSudoersFileValidatesBeforeWriting(t *testing.T) {
 	}
 
 	runner.validateErr = nil
-	changed, err = EnsureSudoersFile(apply, "simple-vps", sudoers)
+	changed, err = EnsureSudoersFile(apply, "ship", sudoers)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changed {
 		t.Fatal("expected sudoers file to be written")
 	}
-	got := runner.files["/etc/sudoers.d/simple-vps"]
+	got := runner.files["/etc/sudoers.d/ship"]
 	if string(got.Content) != string(sudoers)+"\n" {
 		t.Fatalf("unexpected sudoers content: %q", string(got.Content))
 	}
@@ -410,7 +410,7 @@ func TestEnsureSudoersFileRejectsUnsafeName(t *testing.T) {
 }
 
 func testDeploySudoers() []byte {
-	return []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server app *, /usr/local/bin/simple-vps server status, /usr/local/bin/simple-vps server status *, /usr/local/bin/simple-vps server doctor, /usr/local/bin/simple-vps server doctor *")
+	return []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server status, /usr/local/bin/ship server status *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *")
 }
 
 func TestEnsureDirectoryRejectsExistingNonDirectory(t *testing.T) {
@@ -511,7 +511,7 @@ func TestEnsureSystemdUnitCheckModeDoesNotWriteOrRunCommands(t *testing.T) {
 
 	changed, err := EnsureSystemdUnit(apply, SystemdUnit{
 		Name:    "simple-vps.service",
-		Content: []byte("[Service]\nExecStart=/usr/local/bin/simple-vps server\n"),
+		Content: []byte("[Service]\nExecStart=/usr/local/bin/ship server\n"),
 		Action:  Restarted,
 	})
 	if err != nil {
@@ -616,7 +616,7 @@ func TestEnsureUserSkipsAlreadyConvergedUser(t *testing.T) {
 func TestEnsureBlockInFileReplacesMarkedBlock(t *testing.T) {
 	runner := newFakeRunner()
 	runner.files["/etc/example.conf"] = FileState{
-		Content: []byte("one\n# BEGIN Simple VPS\nold\n# END Simple VPS\nlast\n"),
+		Content: []byte("one\n# BEGIN ship\nold\n# END ship\nlast\n"),
 		Owner:   "root",
 		Group:   "root",
 		Mode:    0644,
@@ -625,7 +625,7 @@ func TestEnsureBlockInFileReplacesMarkedBlock(t *testing.T) {
 
 	changed, err := EnsureBlockInFile(apply, BlockInFile{
 		Path:       "/etc/example.conf",
-		MarkerName: "Simple VPS",
+		MarkerName: "ship",
 		Block:      "new",
 		Owner:      "root",
 		Group:      "root",
@@ -638,14 +638,14 @@ func TestEnsureBlockInFileReplacesMarkedBlock(t *testing.T) {
 		t.Fatal("expected block replacement to change file")
 	}
 	got := string(runner.files["/etc/example.conf"].Content)
-	want := "one\n# BEGIN Simple VPS\nnew\n# END Simple VPS\nlast\n"
+	want := "one\n# BEGIN ship\nnew\n# END ship\nlast\n"
 	if got != want {
 		t.Fatalf("unexpected content:\nwant %q\n got %q", want, got)
 	}
 
 	changed, err = EnsureBlockInFile(apply, BlockInFile{
 		Path:       "/etc/example.conf",
-		MarkerName: "Simple VPS",
+		MarkerName: "ship",
 		Block:      "new",
 		Owner:      "root",
 		Group:      "root",

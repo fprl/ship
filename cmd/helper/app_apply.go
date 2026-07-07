@@ -29,7 +29,7 @@ type appApplyCmd struct {
 	App        string `arg:"" help:"App name."`
 	Env        string `arg:"" help:"Env name."`
 	Tarball    string `name:"tarball" required:"" help:"Path to the streamed source tarball."`
-	Manifest   string `name:"manifest" required:"" help:"Path to the uploaded simple-vps.toml."`
+	Manifest   string `name:"manifest" required:"" help:"Path to the uploaded ship.toml."`
 	SHA        string `name:"sha" required:"" help:"Release identifier."`
 	Dirty      bool   `name:"dirty" help:"Mark this release as built from a dirty worktree snapshot."`
 	BaseCommit string `name:"base-commit" required:"" help:"Git commit the release is based on."`
@@ -108,7 +108,7 @@ func (c appApplyCmd) runLockedE() error {
 	if err != nil {
 		return err
 	}
-	if err := persistReleaseSnapshot(c.App, c.Env, c.SHA, filepath.Join(ctxDir, "simple-vps.toml"), meta); err != nil {
+	if err := persistReleaseSnapshot(c.App, c.Env, c.SHA, filepath.Join(ctxDir, "ship.toml"), meta); err != nil {
 		return err
 	}
 	releaseSnapshotActive := false
@@ -173,7 +173,7 @@ func (c appApplyCmd) prepareApplyContext() (string, error) {
 	}
 	// The uploaded manifest is authoritative — overwrite any manifest
 	// that might have been in the tarball.
-	if _, err := utils.RunChecked("install", []string{"-m", "0644", manifestPath, filepath.Join(ctxDir, "simple-vps.toml")}, ""); err != nil {
+	if _, err := utils.RunChecked("install", []string{"-m", "0644", manifestPath, filepath.Join(ctxDir, "ship.toml")}, ""); err != nil {
 		_ = os.RemoveAll(ctxDir)
 		return "", fmt.Errorf("install manifest: %v", err)
 	}
@@ -605,7 +605,7 @@ func resolveEnv(app, env string, literals map[string]string, refs map[string]str
 		out[envKey] = string(val)
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("unresolved @secret references: %s — run `simple-vps secret set <key> --env %s` for each", strings.Join(missing, ", "), env)
+		return nil, fmt.Errorf("unresolved @secret references: %s — run `ship secret set <key> --env %s` for each", strings.Join(missing, ", "), env)
 	}
 	return out, nil
 }

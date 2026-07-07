@@ -416,7 +416,7 @@ func loadAppContextFromManifest(app, env, manifestPath, missingHint string) (*co
 		cleanup()
 		return nil, func() {}, err
 	}
-	if err := os.WriteFile(filepath.Join(tmp, "simple-vps.toml"), data, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "ship.toml"), data, 0644); err != nil {
 		cleanup()
 		return nil, func() {}, err
 	}

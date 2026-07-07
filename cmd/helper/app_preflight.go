@@ -94,7 +94,7 @@ func appPreflightIssues(app, env string, requiredSecrets []string) []appPrefligh
 	if installed, err := stateStore.HostInstalled(); err != nil {
 		addIssue(appPreflightHostInvalid, fmt.Sprintf("cannot read host install state: %v", err))
 	} else if !installed {
-		addIssue(appPreflightHostNotInstalled, "host is not installed; run `simple-vps host install`")
+		addIssue(appPreflightHostNotInstalled, "host is not installed; run `ship host install`")
 	} else if _, err := stateStore.ReadHost(); err != nil {
 		addIssue(appPreflightHostInvalid, fmt.Sprintf("host install state is invalid: %v", err))
 	}
@@ -105,7 +105,7 @@ func appPreflightIssues(app, env string, requiredSecrets []string) []appPrefligh
 	}
 	deployTmp := host.DeployTmpDir()
 	if info, err := os.Stat(deployTmp); err != nil {
-		addIssue(appPreflightDeployTmpMissing, fmt.Sprintf("deploy tmp dir is missing: %s; run `simple-vps host install`", deployTmp))
+		addIssue(appPreflightDeployTmpMissing, fmt.Sprintf("deploy tmp dir is missing: %s; run `ship host install`", deployTmp))
 	} else if !info.IsDir() {
 		addIssue(appPreflightDeployTmpInvalid, fmt.Sprintf("expected %s to be a directory", deployTmp))
 	} else {
@@ -146,7 +146,7 @@ func appPreflightIssues(app, env string, requiredSecrets []string) []appPrefligh
 	if err != nil {
 		addIssue(appPreflightIngressInvalid, fmt.Sprintf("cannot inspect ingress container caddy: %v", err))
 	} else if !caddyRunning {
-		addIssue(appPreflightIngressInvalid, "ingress container caddy is not running; run host install or inspect `simple-vps host doctor`")
+		addIssue(appPreflightIngressInvalid, "ingress container caddy is not running; run host install or inspect `ship host doctor`")
 	} else if err := validateCaddyConfigReadOnly(); err != nil {
 		addIssue(appPreflightIngressInvalid, fmt.Sprintf("caddy config does not validate: %v", err))
 	}
@@ -156,7 +156,7 @@ func appPreflightIssues(app, env string, requiredSecrets []string) []appPrefligh
 			continue
 		}
 		if _, err := secrets.Get(app, env, key); errors.Is(err, secrets.ErrNotFound) {
-			addIssue(appPreflightSecretMissing, fmt.Sprintf("missing secret %s; run `simple-vps secret set %s --env %s`", key, key, env))
+			addIssue(appPreflightSecretMissing, fmt.Sprintf("missing secret %s; run `ship secret set %s --env %s`", key, key, env))
 		} else if err != nil {
 			addIssue(appPreflightSecretReadError, fmt.Sprintf("read secret %s: %v", key, err))
 		}

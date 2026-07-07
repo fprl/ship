@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	ManifestFile       = "simple-vps.toml"
+	ManifestFile       = "ship.toml"
 	RemoteDeployTmpDir = "/tmp/simple-vps-deploy"
 )
 
@@ -33,7 +33,7 @@ type CommandRunner struct {
 
 func NewCommandRunner() (*CommandRunner, error) {
 	sshOpts := []string{"-o", "BatchMode=yes"}
-	key := os.Getenv("SIMPLE_VPS_SSH_KEY")
+	key := os.Getenv("SHIP_SSH_KEY")
 	if key == "" {
 		if defaultKey, ok := defaultDeployKeyPath(); ok {
 			sshOpts = append(sshOpts,
@@ -46,7 +46,7 @@ func NewCommandRunner() (*CommandRunner, error) {
 			RsyncRemoteShell: sshRemoteShell(sshOpts),
 		}, nil
 	}
-	dir, err := os.MkdirTemp("", "simple-vps-ssh-")
+	dir, err := os.MkdirTemp("", "ship-ssh-")
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func defaultDeployKeyPath() (string, bool) {
 	if err != nil || home == "" {
 		return "", false
 	}
-	path := filepath.Join(home, ".ssh", "simple-vps-deploy")
+	path := filepath.Join(home, ".ssh", "ship-deploy")
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
 		return "", false
@@ -116,7 +116,7 @@ func (r *CommandRunner) RunSSH(server string, command string) (string, string, i
 }
 
 // RunSSHWithStdin pipes `stdin` to the remote command and captures
-// stdout/stderr/exit. Used by `simple-vps secret set` so the secret
+// stdout/stderr/exit. Used by `ship secret set` so the secret
 // value never lands in argv, the host process table, or shell
 // history — it crosses the wire on the helper's stdin and goes
 // straight to disk on the other side.
@@ -227,7 +227,7 @@ func runSSHChecked(runner sshRunner, server string, command string, errMsg strin
 }
 
 func serverCommand(args ...string) string {
-	parts := []string{"sudo", "-n", "/usr/local/bin/simple-vps", "server"}
+	parts := []string{"sudo", "-n", "/usr/local/bin/ship", "server"}
 	for _, arg := range args {
 		parts = append(parts, utils.ShellEscape(arg))
 	}
@@ -408,7 +408,7 @@ func CmdCheck(root string, envName string) {
 	if envName != "" {
 		fmt.Printf("Local deploy checks passed for env %s.\n", envName)
 	} else {
-		fmt.Println("Manifest simple-vps.toml is valid.")
+		fmt.Println("Manifest ship.toml is valid.")
 	}
 }
 
@@ -428,13 +428,13 @@ func CmdSetup(root string, envName string) {
 
 	// 2. check required server tools. Per ADR-0005 language runtimes
 	// live in the container image, not on the host. The host supplies
-	// simple-vps + rsync only; Podman/Caddy are checked by the
+	// ship + rsync only; Podman/Caddy are checked by the
 	// installer, not per-deploy.
-	runSSHChecked(runner, ctx.Server, "test -x /usr/local/bin/simple-vps", "missing Simple VPS server API at /usr/local/bin/simple-vps; rerun the Simple VPS install")
+	runSSHChecked(runner, ctx.Server, "test -x /usr/local/bin/ship", "missing ship server API at /usr/local/bin/ship; rerun `ship host install`")
 	runSSHChecked(runner, ctx.Server, "command -v rsync", "missing required server tool: rsync")
 
 	// 3. create per-env user, dirs, and Podman network
-	runSSHChecked(runner, ctx.Server, serverAppSetupEnvCommand(ctx.AppName, envName), "simple-vps server app setup-env failed")
+	runSSHChecked(runner, ctx.Server, serverAppSetupEnvCommand(ctx.AppName, envName), "ship server app setup-env failed")
 	fmt.Printf("Setup complete for %s (%s)\n", ctx.AppName, envName)
 }
 
@@ -709,7 +709,7 @@ func CmdSecretSet(root string, envName string, key string) {
 	}
 	// Don't echo stdout — it'd carry the helper's confirmation
 	// (which already names the key but not the value). Print our own.
-	fmt.Printf("Stored secret %s for %s (%s). Run `simple-vps deploy --env %s` to apply.\n", key, ctx.AppName, envName, envName)
+	fmt.Printf("Stored secret %s for %s (%s). Run `ship deploy --env %s` to apply.\n", key, ctx.AppName, envName, envName)
 }
 
 func CmdSecretList(root string, envName string, jsonFlag bool) {
@@ -842,14 +842,14 @@ func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDot
 	}
 
 	// 1. Tar source locally (git archive for clean tree, working tree for --dirty).
-	tarDir, err := os.MkdirTemp("", "simple-vps-deploy-")
+	tarDir, err := os.MkdirTemp("", "ship-deploy-")
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
 	defer os.RemoveAll(tarDir)
 
 	localTar := filepath.Join(tarDir, "source.tar")
-	localManifest := filepath.Join(tarDir, "simple-vps.toml")
+	localManifest := filepath.Join(tarDir, "ship.toml")
 	if err := writeSourceTar(root, localTar, plan.Dirty, plan.ServeDirs); err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -872,14 +872,14 @@ func CmdDeploy(root string, envName string, dirty bool, rebuild bool, includeDot
 	if err := runner.Upload(localTar, remoteDir+"/source.tar", ctx.Server); err != nil {
 		failAfterRemoteDir(fmt.Sprintf("failed to upload source: %v", err))
 	}
-	if err := runner.Upload(localManifest, remoteDir+"/simple-vps.toml", ctx.Server); err != nil {
+	if err := runner.Upload(localManifest, remoteDir+"/ship.toml", ctx.Server); err != nil {
 		failAfterRemoteDir(fmt.Sprintf("failed to upload manifest: %v", err))
 	}
 
 	// 3. Helper builds the image or snapshots static assets, then reloads Caddy.
 	applyCmd := serverAppApplyCommand(ctx.AppName, envName,
 		remoteDir+"/source.tar",
-		remoteDir+"/simple-vps.toml",
+		remoteDir+"/ship.toml",
 		plan,
 		rebuild,
 	)

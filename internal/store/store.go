@@ -19,7 +19,7 @@ type hostFileRaw struct {
 }
 
 func DefaultRoot() string {
-	if root := os.Getenv("SIMPLE_VPS_STATE_DIR"); root != "" {
+	if root := os.Getenv("SHIP_STATE_DIR"); root != "" {
 		return root
 	}
 	return "/etc/simple-vps"

@@ -114,7 +114,7 @@ func ReleaseDir(app, env string) string {
 
 // ReleaseManifestFile is the manifest snapshot that produced one release.
 func ReleaseManifestFile(app, env, release string) string {
-	return ReleaseDir(app, env) + "/" + release + "/simple-vps.toml"
+	return ReleaseDir(app, env) + "/" + release + "/ship.toml"
 }
 
 // ReleaseMetadataFile stores mandatory release details such as dirty state,
@@ -125,7 +125,7 @@ func ReleaseMetadataFile(app, env, release string) string {
 
 // ManifestFile is the last manifest successfully applied for one `(app, env)`.
 func ManifestFile(app, env string) string {
-	return EnvRoot(app, env) + "/simple-vps.toml"
+	return EnvRoot(app, env) + "/ship.toml"
 }
 
 // IdentityFile is the durable env identity anchor.

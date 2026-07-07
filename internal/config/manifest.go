@@ -137,10 +137,10 @@ func ValidateSshTarget(target string) bool {
 }
 
 func ReadManifest(root string) (*Manifest, error) {
-	path := filepath.Join(root, "simple-vps.toml")
+	path := filepath.Join(root, "ship.toml")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("simple-vps.toml not found")
+		return nil, fmt.Errorf("ship.toml not found")
 	}
 	var manifest Manifest
 	// Strict decoding: removed fields (`runtime`, `[build]`, `[services]`,
@@ -148,7 +148,7 @@ func ReadManifest(root string) (*Manifest, error) {
 	// check time instead of silently becoming no-ops.
 	dec := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
 	if err := dec.Decode(&manifest); err != nil {
-		return nil, fmt.Errorf("failed to parse simple-vps.toml: %s", strictErrorMessage(err))
+		return nil, fmt.Errorf("failed to parse ship.toml: %s", strictErrorMessage(err))
 	}
 	return &manifest, nil
 }

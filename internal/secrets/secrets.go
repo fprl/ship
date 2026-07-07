@@ -38,12 +38,12 @@ import (
 // before reaching the filesystem.
 var SecretKeyRe = names.EnvKeyRe
 
-// Default location. Override with SIMPLE_VPS_SECRETS_DIR for tests so
+// Default location. Override with SHIP_SECRETS_DIR for tests so
 // they don't need root to exercise the real path layout.
 const defaultRoot = "/etc/simple-vps/secrets"
 
 func root() string {
-	if v := os.Getenv("SIMPLE_VPS_SECRETS_DIR"); v != "" {
+	if v := os.Getenv("SHIP_SECRETS_DIR"); v != "" {
 		return v
 	}
 	return defaultRoot

@@ -70,7 +70,7 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 		Version:    CurrentVersion,
 		AccountID:  "account-test",
 		TunnelID:   "tunnel-test",
-		TunnelName: "simple-vps-prod-1",
+		TunnelName: "ship-prod-1",
 		Routes: map[string]CloudflareRoute{
 			"api.example.com": {
 				App:         "api",

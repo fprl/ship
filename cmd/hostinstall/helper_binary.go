@@ -26,7 +26,7 @@ const (
 var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$`)
 
 func (i *Installer) prepareRemoteHelperBinary(arch string) (string, func(), error) {
-	name := "simple-vps-linux-" + arch
+	name := "ship-linux-" + arch
 	if helper, ok, err := i.localHelperBinary(name); err != nil {
 		return "", func() {}, err
 	} else if ok {
@@ -47,23 +47,23 @@ func (i *Installer) prepareRemoteHelperBinary(arch string) (string, func(), erro
 			return helper, cleanup, nil
 		}
 		cleanup()
-		return "", func() {}, fmt.Errorf("Simple VPS helper binary not found for target architecture %s: %s", arch, helper)
+		return "", func() {}, fmt.Errorf("ship helper binary not found for target architecture %s: %s", arch, helper)
 	}
 
-	return "", func() {}, fmt.Errorf("Simple VPS Linux helper binary %q is required for remote install. Run from a checkout, place %q beside this binary, set SIMPLE_VPS_HELPER_DIR, or use a tagged release build that can download the matching helper asset", name, name)
+	return "", func() {}, fmt.Errorf("ship Linux helper binary %q is required for remote install. Run from a checkout, place %q beside this binary, set SHIP_HELPER_DIR, or use a tagged release build that can download the matching helper asset", name, name)
 }
 
 func (i *Installer) localHelperBinary(name string) (string, bool, error) {
-	if exact := strings.TrimSpace(i.Env["SIMPLE_VPS_LINUX_HELPER"]); exact != "" {
+	if exact := strings.TrimSpace(i.Env["SHIP_LINUX_HELPER"]); exact != "" {
 		if fileExists(exact) {
-			i.info("Using Simple VPS Linux helper binary from %s", exact)
+			i.info("Using ship Linux helper binary from %s", exact)
 			return exact, true, nil
 		}
-		return "", false, fmt.Errorf("SIMPLE_VPS_LINUX_HELPER does not exist or is not executable: %s", exact)
+		return "", false, fmt.Errorf("SHIP_LINUX_HELPER does not exist or is not executable: %s", exact)
 	}
 
 	var candidates []string
-	if dir := strings.TrimSpace(i.Env["SIMPLE_VPS_HELPER_DIR"]); dir != "" {
+	if dir := strings.TrimSpace(i.Env["SHIP_HELPER_DIR"]); dir != "" {
 		candidates = append(candidates, filepath.Join(dir, name))
 	}
 	if cwd, err := os.Getwd(); err == nil {
@@ -76,7 +76,7 @@ func (i *Installer) localHelperBinary(name string) (string, bool, error) {
 
 	for _, candidate := range candidates {
 		if fileExists(candidate) {
-			i.info("Using Simple VPS Linux helper binary from %s", candidate)
+			i.info("Using ship Linux helper binary from %s", candidate)
 			return candidate, true, nil
 		}
 	}
@@ -84,9 +84,9 @@ func (i *Installer) localHelperBinary(name string) (string, bool, error) {
 }
 
 func (i *Installer) downloadReleaseHelperBinary(tag string, name string) (string, func(), error) {
-	baseURL := strings.TrimRight(envDefault(i.Env, "SIMPLE_VPS_RELEASE_BASE_URL", defaultReleaseBaseURL), "/")
+	baseURL := strings.TrimRight(envDefault(i.Env, "SHIP_RELEASE_BASE_URL", defaultReleaseBaseURL), "/")
 	downloadURL := baseURL + "/" + tag + "/" + name
-	i.info("Downloading Simple VPS Linux helper binary from %s", downloadURL)
+	i.info("Downloading ship Linux helper binary from %s", downloadURL)
 
 	client := http.Client{Timeout: 2 * time.Minute}
 	token := releaseDownloadToken(i.Env)
@@ -133,7 +133,7 @@ func (i *Installer) downloadReleaseAsset(client *http.Client, tag string, name s
 }
 
 func (i *Installer) downloadGitHubReleaseAsset(client *http.Client, tag string, name string, token string) ([]byte, error) {
-	apiBaseURL := strings.TrimRight(envDefault(i.Env, "SIMPLE_VPS_RELEASE_API_BASE_URL", defaultReleaseAPIURL), "/")
+	apiBaseURL := strings.TrimRight(envDefault(i.Env, "SHIP_RELEASE_API_BASE_URL", defaultReleaseAPIURL), "/")
 	releaseURL := apiBaseURL + "/releases/tags/" + url.PathEscape(tag)
 
 	req, err := http.NewRequest(http.MethodGet, releaseURL, nil)
@@ -222,7 +222,7 @@ func checksumForAsset(name string, sums []byte) (string, error) {
 }
 
 func writeExecutableTempFile(name string, reader io.Reader) (string, func(), error) {
-	dir, err := os.MkdirTemp("", "simple-vps-helper-")
+	dir, err := os.MkdirTemp("", "ship-helper-")
 	if err != nil {
 		return "", func() {}, err
 	}
@@ -246,11 +246,11 @@ func writeExecutableTempFile(name string, reader io.Reader) (string, func(), err
 }
 
 func canUseReleaseAPI(env map[string]string, baseURL string) bool {
-	return strings.TrimSpace(env["SIMPLE_VPS_RELEASE_API_BASE_URL"]) != "" || baseURL == defaultReleaseBaseURL
+	return strings.TrimSpace(env["SHIP_RELEASE_API_BASE_URL"]) != "" || baseURL == defaultReleaseBaseURL
 }
 
 func releaseDownloadToken(env map[string]string) string {
-	for _, key := range []string{"SIMPLE_VPS_RELEASE_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"} {
+	for _, key := range []string{"SHIP_RELEASE_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"} {
 		if token := strings.TrimSpace(env[key]); token != "" {
 			return token
 		}

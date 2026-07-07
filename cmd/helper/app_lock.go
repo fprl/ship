@@ -17,7 +17,7 @@ type appEnvLock struct {
 }
 
 func appEnvLockDir() string {
-	if dir := os.Getenv("SIMPLE_VPS_LOCK_DIR"); dir != "" {
+	if dir := os.Getenv("SHIP_LOCK_DIR"); dir != "" {
 		return dir
 	}
 	return defaultAppEnvLockDir

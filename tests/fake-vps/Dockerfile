@@ -22,21 +22,21 @@ RUN useradd -m -s /bin/bash -g operator operator \
   && chown deploy:deploy /home/deploy/.ssh \
   && chmod 700 /home/deploy/.ssh
 
-COPY .fake-vps-bin/simple-vps-linux-amd64 /usr/local/bin/simple-vps
+COPY .fake-vps-bin/ship-linux-amd64 /usr/local/bin/ship
 COPY tests/fake-vps/fake-systemctl /usr/local/bin/systemctl
 COPY tests/fake-vps/fake-caddy /usr/local/bin/caddy
 COPY tests/fake-vps/fake-podman /usr/local/bin/podman
 COPY tests/fake-vps/fake-podman.app.py /usr/local/bin/fake-podman.app.py
 COPY tests/fake-vps/fake-podman.caddy.py /usr/local/bin/fake-podman.caddy.py
 
-RUN chmod 0755 /usr/local/bin/simple-vps /usr/local/bin/systemctl /usr/local/bin/caddy /usr/local/bin/podman \
+RUN chmod 0755 /usr/local/bin/ship /usr/local/bin/systemctl /usr/local/bin/caddy /usr/local/bin/podman \
   && chmod 0644 /usr/local/bin/fake-podman.app.py /usr/local/bin/fake-podman.caddy.py \
   && mkdir -p /etc/simple-vps/providers \
   && printf '%s\n' '{"routes":{},"version":1}' > /etc/simple-vps/providers/cloudflare.json \
   && printf '%s\n' 'operator ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/operator \
-  && printf '%s\n' 'deploy ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server app *, /usr/local/bin/simple-vps server status, /usr/local/bin/simple-vps server status *, /usr/local/bin/simple-vps server doctor, /usr/local/bin/simple-vps server doctor *' > /etc/sudoers.d/simple-vps \
+  && printf '%s\n' 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server status, /usr/local/bin/ship server status *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *' > /etc/sudoers.d/ship \
   && chmod 0600 /etc/simple-vps/providers/cloudflare.json \
-  && chmod 0440 /etc/sudoers.d/operator /etc/sudoers.d/simple-vps
+  && chmod 0440 /etc/sudoers.d/operator /etc/sudoers.d/ship
 
 EXPOSE 22
 

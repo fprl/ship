@@ -20,20 +20,20 @@ func TestRunInitTemplatesCreateValidManifests(t *testing.T) {
 	}{
 		{
 			template: "container",
-			want:     []string{"simple-vps.toml", "Dockerfile", "server.py"},
+			want:     []string{"ship.toml", "Dockerfile", "server.py"},
 		},
 		{
 			template: "static",
-			want:     []string{"simple-vps.toml", "dist/index.html"},
+			want:     []string{"ship.toml", "dist/index.html"},
 			notWant:  []string{"Dockerfile"},
 		},
 		{
 			template: "php",
-			want:     []string{"simple-vps.toml", "Dockerfile", "public/index.php"},
+			want:     []string{"ship.toml", "Dockerfile", "public/index.php"},
 		},
 		{
 			template: "hono",
-			want:     []string{"simple-vps.toml", "Dockerfile", "package.json", "src/server.ts"},
+			want:     []string{"ship.toml", "Dockerfile", "package.json", "src/server.ts"},
 		},
 	}
 
@@ -87,7 +87,7 @@ func TestRunInitUsesPackageJSONName(t *testing.T) {
 		t.Fatalf("AppName = %q", result.AppName)
 	}
 
-	manifest, err := os.ReadFile(filepath.Join(root, "simple-vps.toml"))
+	manifest, err := os.ReadFile(filepath.Join(root, "ship.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestRunInitPreflightsBeforeWritingFiles(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "src/server.ts already exists and is a directory") {
 		t.Fatalf("expected preflight error, got %v", err)
 	}
-	for _, path := range []string{"simple-vps.toml", "Dockerfile", "package.json"} {
+	for _, path := range []string{"ship.toml", "Dockerfile", "package.json"} {
 		if _, err := os.Stat(filepath.Join(root, path)); err == nil {
 			t.Fatalf("%s should not be written after preflight failure", path)
 		}
@@ -150,7 +150,7 @@ func TestRunInitRejectsSymlinkScaffoldPaths(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "server.py already exists and is a symlink") {
 			t.Fatalf("expected symlink error, got %v", err)
 		}
-		if _, err := os.Stat(filepath.Join(root, "simple-vps.toml")); err == nil {
+		if _, err := os.Stat(filepath.Join(root, "ship.toml")); err == nil {
 			t.Fatal("manifest should not be written after symlink preflight failure")
 		}
 	})
@@ -165,7 +165,7 @@ func TestRunInitRejectsSymlinkScaffoldPaths(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "src already exists and is a symlink") {
 			t.Fatalf("expected parent symlink error, got %v", err)
 		}
-		if _, err := os.Stat(filepath.Join(root, "simple-vps.toml")); err == nil {
+		if _, err := os.Stat(filepath.Join(root, "ship.toml")); err == nil {
 			t.Fatal("manifest should not be written after parent symlink preflight failure")
 		}
 	})
@@ -189,9 +189,9 @@ func TestRenderInitResultIncludesConfigPathOutsideCwd(t *testing.T) {
 	for _, want := range []string{
 		"git -C " + result.Root + " init",
 		"git -C " + result.Root + " add .",
-		"git -C " + result.Root + " commit -m \"initial simple-vps app\"",
-		"simple-vps check --config " + result.ConfigPath + " --env production",
-		"simple-vps deploy --config " + result.ConfigPath + " --env production",
+		"git -C " + result.Root + " commit -m \"initial ship app\"",
+		"ship check --config " + result.ConfigPath + " --env production",
+		"ship deploy --config " + result.ConfigPath + " --env production",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected output to include %q:\n%s", want, out)
@@ -214,8 +214,8 @@ func TestRenderInitResultDoesNotCreateNestedGitRepoInMonorepo(t *testing.T) {
 	}
 	for _, want := range []string{
 		"git -C " + result.Root + " add .",
-		"git -C " + result.Root + " commit -m \"initial simple-vps app\"",
-		"simple-vps check --config " + result.ConfigPath + " --env production",
+		"git -C " + result.Root + " commit -m \"initial ship app\"",
+		"ship check --config " + result.ConfigPath + " --env production",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected output to include %q:\n%s", want, out)
@@ -244,7 +244,7 @@ func TestInitFirstRunFlowRequiresCommitBeforeCheck(t *testing.T) {
 
 	runGit(t, root, "init")
 	runGit(t, root, "add", ".")
-	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "initial simple-vps app")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "initial ship app")
 
 	diags, err = checkDiagnostics(root, "production")
 	if err != nil {
@@ -257,11 +257,11 @@ func TestInitFirstRunFlowRequiresCommitBeforeCheck(t *testing.T) {
 
 func TestRunInitRejectsExistingManifest(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "simple-vps.toml"), []byte("name = \"api\"\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "ship.toml"), []byte("name = \"api\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	_, err := RunInit(root, InitOptions{Template: "static", Server: "deploy@example.com"})
-	if err == nil || !strings.Contains(err.Error(), "simple-vps.toml already exists") {
+	if err == nil || !strings.Contains(err.Error(), "ship.toml already exists") {
 		t.Fatalf("expected existing manifest error, got %v", err)
 	}
 }
@@ -284,7 +284,7 @@ func TestRunInitCanSetInternalTLS(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := os.ReadFile(filepath.Join(root, "simple-vps.toml"))
+	manifest, err := os.ReadFile(filepath.Join(root, "ship.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,8 +294,8 @@ func TestRunInitCanSetInternalTLS(t *testing.T) {
 }
 
 func TestRunInitGeneratedContainerTemplatesBuildWhenRequested(t *testing.T) {
-	if os.Getenv("SIMPLE_VPS_TEST_INIT_BUILDS") != "1" {
-		t.Skip("set SIMPLE_VPS_TEST_INIT_BUILDS=1 to build generated container templates")
+	if os.Getenv("SHIP_TEST_INIT_BUILDS") != "1" {
+		t.Skip("set SHIP_TEST_INIT_BUILDS=1 to build generated container templates")
 	}
 	builder := initTemplateBuilder(t)
 	for _, template := range []string{"container", "php", "hono"} {
@@ -327,10 +327,10 @@ func TestRunInitGeneratedContainerTemplatesBuildWhenRequested(t *testing.T) {
 
 func initTemplateBuilder(t *testing.T) string {
 	t.Helper()
-	if requested := os.Getenv("SIMPLE_VPS_TEST_INIT_BUILDER"); requested != "" {
+	if requested := os.Getenv("SHIP_TEST_INIT_BUILDER"); requested != "" {
 		path, err := exec.LookPath(requested)
 		if err != nil {
-			t.Fatalf("SIMPLE_VPS_TEST_INIT_BUILDER=%s not found", requested)
+			t.Fatalf("SHIP_TEST_INIT_BUILDER=%s not found", requested)
 		}
 		return path
 	}

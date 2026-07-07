@@ -1,6 +1,6 @@
 package helper
 
-// Public surface for the `simple-vps server app` namespace.
+// Public surface for the `ship server app` namespace.
 
 type appCmd struct {
 	SetupEnv   appSetupEnvCmd   `cmd:"setup-env" help:"Create the per-env Linux user, directories, and Podman network."`

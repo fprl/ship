@@ -14,7 +14,7 @@ func parseServerCommand(t *testing.T, args ...string) *ServerCmd {
 	t.Cleanup(func() { requireRoot = previousRequireRoot })
 
 	cli := &ServerCmd{}
-	parser, err := kong.New(cli, kong.Name("simple-vps"))
+	parser, err := kong.New(cli, kong.Name("ship"))
 	if err != nil {
 		t.Fatalf("parser setup failed: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"status", "--json"},
 		{"doctor"},
 		{"doctor", "--json"},
-		{"cloudflare", "setup-tunnel", "--name", "simple-vps", "--account-id", "account-test", "--token-file", "/tmp/token"},
+		{"cloudflare", "setup-tunnel", "--name", "ship", "--account-id", "account-test", "--token-file", "/tmp/token"},
 		{"cloudflare", "publish", "--app", "api", "api.example.com"},
 		{"cloudflare", "remove", "--app", "api"},
 		{"app", "setup-env", "api", "production"},
@@ -88,7 +88,7 @@ func TestServerCLIRejectsRemovedCompatibilityCommands(t *testing.T) {
 			t.Cleanup(func() { requireRoot = previousRequireRoot })
 
 			cli := &ServerCmd{}
-			parser, err := kong.New(cli, kong.Name("simple-vps"))
+			parser, err := kong.New(cli, kong.Name("ship"))
 			if err != nil {
 				t.Fatalf("parser setup failed: %v", err)
 			}

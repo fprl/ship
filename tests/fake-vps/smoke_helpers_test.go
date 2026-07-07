@@ -58,8 +58,8 @@ func newSmokeEnvWithImage(t *testing.T, ctx context.Context, image string, docke
 		dockerfile: dockerfile,
 		tmp:        tmp,
 		binDir:     filepath.Join(repoRoot, ".fake-vps-bin"),
-		goBin:      filepath.Join(tmp, "simple-vps"),
-		linuxBin:   filepath.Join(repoRoot, ".fake-vps-bin", "simple-vps-linux-amd64"),
+		goBin:      filepath.Join(tmp, "ship"),
+		linuxBin:   filepath.Join(repoRoot, ".fake-vps-bin", "ship-linux-amd64"),
 	}
 	t.Cleanup(func() {
 		if os.Getenv("KEEP_FAKE_VPS") == "1" {
@@ -212,7 +212,7 @@ func (e *smokeEnv) simpleVPS(t *testing.T, dir string, stdin []byte, args ...str
 	t.Helper()
 	result := e.runSimpleVPS(t, dir, stdin, args...)
 	if result.err != nil {
-		t.Fatalf("simple-vps %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), result.err, result.stdout, result.stderr)
+		t.Fatalf("ship %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), result.err, result.stdout, result.stderr)
 	}
 	return result.stdout
 }
@@ -234,7 +234,7 @@ func (e *smokeEnv) ssh(t *testing.T, command string) string {
 // dockerExec runs a shell command inside the fake VPS container as
 // root via `docker exec`. The smoke's normal SSH session lands as the
 // `deploy` user, which only has passwordless sudo for
-// /usr/local/bin/simple-vps; fixture setup that has to call `podman`
+// /usr/local/bin/ship; fixture setup that has to call `podman`
 // directly (creating the ingress network, starting the Caddy
 // container, seeding /etc/caddy/Caddyfile) goes through this instead.
 func (e *smokeEnv) dockerExec(t *testing.T, command string) string {

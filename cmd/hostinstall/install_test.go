@@ -52,9 +52,9 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 		t.Fatalf("unexpected cloudflare mode: %s", plan.CloudflareServiceMode)
 	}
 
-	command := remoteLocalInstallCommand("/tmp/simple-vps-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub")
+	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub")
 	for _, want := range []string{
-		`/tmp/simple-vps-host-install host install --mode local`,
+		`/tmp/ship-host-install host install --mode local`,
 		`--operator-user ops`,
 		`--deploy-user deployer`,
 		`--ingress cloudflare`,
@@ -77,7 +77,7 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 func TestBuildPlanDefaultsDeployPublicKey(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	defaultPub := filepath.Join(home, ".ssh", "simple-vps-deploy.pub")
+	defaultPub := filepath.Join(home, ".ssh", "ship-deploy.pub")
 	if err := os.MkdirAll(filepath.Dir(defaultPub), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestRemoteLocalInstallCommandEnablesLitestreamExplicitly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := remoteLocalInstallCommand("/tmp/simple-vps-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub")
+	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub")
 	if !strings.Contains(command, "--litestream") {
 		t.Fatalf("expected command to explicitly enable litestream:\n%s", command)
 	}
@@ -141,18 +141,18 @@ func TestPrintNextStepsForRemoteInstall(t *testing.T) {
 
 	text := out.String()
 	for _, want := range []string{
-		`export SIMPLE_VPS_SSH_KEY="$(cat /keys/deploy)"`,
-		"simple-vps host status --server deploy@203.0.113.12",
-		"simple-vps init --server deploy@203.0.113.12 --host <app-domain>",
+		`export SHIP_SSH_KEY="$(cat /keys/deploy)"`,
+		"ship host status --server deploy@203.0.113.12",
+		"ship init --server deploy@203.0.113.12 --host <app-domain>",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected next steps to contain %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "SIMPLE_VPS_KNOWN_HOSTS") {
+	if strings.Contains(text, "SHIP_KNOWN_HOSTS") {
 		t.Fatalf("next steps should use normal SSH known_hosts, got:\n%s", text)
 	}
-	if strings.Index(text, "export SIMPLE_VPS_SSH_KEY") > strings.Index(text, "simple-vps host status") {
+	if strings.Index(text, "export SHIP_SSH_KEY") > strings.Index(text, "ship host status") {
 		t.Fatalf("deploy key export should be printed before host status:\n%s", text)
 	}
 }
@@ -160,7 +160,7 @@ func TestPrintNextStepsForRemoteInstall(t *testing.T) {
 func TestPrintNextStepsOmitsDefaultDeployKeyEnv(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	defaultPub := filepath.Join(home, ".ssh", "simple-vps-deploy.pub")
+	defaultPub := filepath.Join(home, ".ssh", "ship-deploy.pub")
 
 	var out bytes.Buffer
 	installer := NewInstaller()
@@ -173,10 +173,10 @@ func TestPrintNextStepsOmitsDefaultDeployKeyEnv(t *testing.T) {
 	})
 
 	text := out.String()
-	if strings.Contains(text, "SIMPLE_VPS_SSH_KEY") || strings.Contains(text, "SIMPLE_VPS_KNOWN_HOSTS") {
+	if strings.Contains(text, "SHIP_SSH_KEY") || strings.Contains(text, "SHIP_KNOWN_HOSTS") {
 		t.Fatalf("default deploy key should not require env exports:\n%s", text)
 	}
-	if !strings.Contains(text, "1. simple-vps host status --server deploy@203.0.113.12") {
+	if !strings.Contains(text, "1. ship host status --server deploy@203.0.113.12") {
 		t.Fatalf("expected host status to be first step:\n%s", text)
 	}
 }

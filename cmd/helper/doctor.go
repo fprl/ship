@@ -16,7 +16,7 @@ import (
 
 var (
 	BroadSudoRe  = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\((?:ALL|ALL:ALL)\)\s+NOPASSWD:\s*ALL$`)
-	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/simple-vps\s+server\s+app\s+\*,\s*/usr/local/bin/simple-vps\s+server\s+status,\s*/usr/local/bin/simple-vps\s+server\s+status\s+\*,\s*/usr/local/bin/simple-vps\s+server\s+doctor,\s*/usr/local/bin/simple-vps\s+server\s+doctor\s+\*$`)
+	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/ship\s+server\s+app\s+\*,\s*/usr/local/bin/ship\s+server\s+status,\s*/usr/local/bin/ship\s+server\s+status\s+\*,\s*/usr/local/bin/ship\s+server\s+doctor,\s*/usr/local/bin/ship\s+server\s+doctor\s+\*$`)
 )
 
 type doctorCmd struct {
@@ -29,7 +29,7 @@ func (c doctorCmd) Run() error {
 }
 
 func SudoersDir() string {
-	if p := os.Getenv("SIMPLE_VPS_SUDOERS_DIR"); p != "" {
+	if p := os.Getenv("SHIP_SUDOERS_DIR"); p != "" {
 		return p
 	}
 	return "/etc/sudoers.d"
@@ -93,7 +93,7 @@ func allSudoersUsersMatching(pattern *regexp.Regexp) map[string]bool {
 func doctorIdentityFindings() []string {
 	dir := SudoersDir()
 	operatorFile := filepath.Join(dir, "operator")
-	helperFile := filepath.Join(dir, "simple-vps")
+	helperFile := filepath.Join(dir, "ship")
 
 	broadUsers := allSudoersUsersMatching(BroadSudoRe)
 
@@ -201,7 +201,7 @@ func doctorSectionFor(findings []string) doctorSection {
 
 func renderDoctorText(report doctorReport) string {
 	var b strings.Builder
-	b.WriteString("Simple VPS doctor\n")
+	b.WriteString("ship doctor\n")
 	writeDoctorSectionText(&b, "state", report.State)
 	writeDoctorSectionText(&b, "services", report.Services)
 	writeDoctorSectionText(&b, "identity", report.Identity)

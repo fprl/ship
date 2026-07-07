@@ -14,7 +14,7 @@ func newTestParser(t *testing.T) *kong.Kong {
 	t.Helper()
 	parser, err := kong.New(
 		&cli{},
-		kong.Name("simple-vps"),
+		kong.Name("ship"),
 		kong.ExplicitGroups(cliCommandGroups()),
 		kong.ConfigureHelp(kong.HelpOptions{NoExpandSubcommands: true}),
 	)
@@ -27,13 +27,13 @@ func newTestParser(t *testing.T) *kong.Kong {
 func TestPublicCLIParsesV1Contract(t *testing.T) {
 	tests := [][]string{
 		{"init"},
-		{"init", "--config", "apps/api/simple-vps.toml"},
+		{"init", "--config", "apps/api/ship.toml"},
 		{"check"},
 		{"check", "--env", "production"},
 		{"check", "-e", "production"},
 		{"deploy", "--env", "production"},
 		{"deploy", "--env", "production", "--include-dotenv"},
-		{"deploy", "-e", "production", "--config", "apps/api/simple-vps.toml"},
+		{"deploy", "-e", "production", "--config", "apps/api/ship.toml"},
 		{"status", "--env", "production", "--json"},
 		{"logs", "web", "--env", "production", "--follow", "--tail", "100"},
 		{"restart", "web", "--env", "production"},
@@ -111,7 +111,7 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	parser, err := kong.New(
 		&cli{},
-		kong.Name("simple-vps"),
+		kong.Name("ship"),
 		kong.Description("Deploy containerized apps to a single hardened VPS."),
 		kong.ExplicitGroups(cliCommandGroups()),
 		kong.ConfigureHelp(kong.HelpOptions{NoExpandSubcommands: true}),
@@ -153,7 +153,7 @@ func TestCLIArgsKeepsExplicitArgs(t *testing.T) {
 
 func TestAppRootUsesManifestDirectory(t *testing.T) {
 	root := t.TempDir()
-	configPath := filepath.Join(root, "apps", "api", "simple-vps.toml")
+	configPath := filepath.Join(root, "apps", "api", "ship.toml")
 	got, err := appRoot(configPath)
 	if err != nil {
 		t.Fatal(err)
@@ -166,22 +166,22 @@ func TestAppRootUsesManifestDirectory(t *testing.T) {
 
 func TestAppRootRequiresCanonicalManifestFilename(t *testing.T) {
 	_, err := appRoot(filepath.Join(t.TempDir(), "deploy.toml"))
-	if err == nil || !strings.Contains(err.Error(), "simple-vps.toml") {
+	if err == nil || !strings.Contains(err.Error(), "ship.toml") {
 		t.Fatalf("expected canonical manifest filename error, got %v", err)
 	}
 }
 
 func TestProjectAppRootExplainsMissingManifest(t *testing.T) {
-	_, err := projectAppRoot(filepath.Join(t.TempDir(), "simple-vps.toml"))
+	_, err := projectAppRoot(filepath.Join(t.TempDir(), "ship.toml"))
 	if err == nil {
 		t.Fatal("expected missing manifest error")
 	}
 	text := err.Error()
 	for _, want := range []string{
 		"this is a project command",
-		"simple-vps.toml was not found",
-		"--config path/to/simple-vps.toml",
-		"simple-vps init",
+		"ship.toml was not found",
+		"--config path/to/ship.toml",
+		"ship init",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing manifest error should contain %q, got:\n%s", want, text)
@@ -191,10 +191,10 @@ func TestProjectAppRootExplainsMissingManifest(t *testing.T) {
 
 func TestProjectAppRootRejectsManifestDirectory(t *testing.T) {
 	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, "simple-vps.toml"), 0755); err != nil {
+	if err := os.Mkdir(filepath.Join(root, "ship.toml"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	_, err := projectAppRoot(filepath.Join(root, "simple-vps.toml"))
+	_, err := projectAppRoot(filepath.Join(root, "ship.toml"))
 	if err == nil || !strings.Contains(err.Error(), "got directory") {
 		t.Fatalf("expected directory error, got %v", err)
 	}

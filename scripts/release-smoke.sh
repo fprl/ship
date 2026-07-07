@@ -11,29 +11,29 @@ Runs a release-artifact smoke against one VPS:
   - install the local CLI through that installer
   - run remote host install
   - run host status/doctor
-  - generate a PHP app with simple-vps init
+  - generate a PHP app with ship init
   - setup, deploy, curl, destroy
 
 Environment:
-  SIMPLE_VPS_RELEASE_TOKEN, GH_TOKEN, or GITHUB_TOKEN
+  SHIP_RELEASE_TOKEN, GH_TOKEN, or GITHUB_TOKEN
       optional for public releases, required for private release assets
-  SIMPLE_VPS_BOOTSTRAP_USER
+  SHIP_BOOTSTRAP_USER
       defaults to root
-  SIMPLE_VPS_BOOTSTRAP_SSH_KEY
+  SHIP_BOOTSTRAP_SSH_KEY
       defaults to ~/.ssh/hetzner
-  SIMPLE_VPS_OPERATOR_PUBKEY
+  SHIP_OPERATOR_PUBKEY
       defaults to ~/.ssh/hetzner.pub
-  SIMPLE_VPS_DEPLOY_PUBKEY
-      defaults to ~/.ssh/simple-vps-deploy.pub
-  SIMPLE_VPS_DEPLOY_SSH_KEY
-      defaults to ~/.ssh/simple-vps-deploy
-  SIMPLE_VPS_SMOKE_APP
+  SHIP_DEPLOY_PUBKEY
+      defaults to ~/.ssh/ship-deploy.pub
+  SHIP_DEPLOY_SSH_KEY
+      defaults to ~/.ssh/ship-deploy
+  SHIP_SMOKE_APP
       defaults to svps-smoke-<utc time>
-  SIMPLE_VPS_SMOKE_ROUTE_HOST
+  SHIP_SMOKE_ROUTE_HOST
       defaults to <app>.<host>.nip.io
-  SIMPLE_VPS_SMOKE_SKIP_INSTALL=1
+  SHIP_SMOKE_SKIP_INSTALL=1
       skip host install and only run the app smoke
-  SIMPLE_VPS_SMOKE_REFRESH_KNOWN_HOSTS=0
+  SHIP_SMOKE_REFRESH_KNOWN_HOSTS=0
       do not refresh ~/.ssh/known_hosts for the disposable VPS
 USAGE
 }
@@ -71,9 +71,9 @@ download_installer() {
 }
 
 version="${VERSION:-}"
-host="${SIMPLE_VPS_SMOKE_HOST:-}"
-skip_install="${SIMPLE_VPS_SMOKE_SKIP_INSTALL:-0}"
-refresh_known_hosts="${SIMPLE_VPS_SMOKE_REFRESH_KNOWN_HOSTS:-1}"
+host="${SHIP_SMOKE_HOST:-}"
+skip_install="${SHIP_SMOKE_SKIP_INSTALL:-0}"
+refresh_known_hosts="${SHIP_SMOKE_REFRESH_KNOWN_HOSTS:-1}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -102,7 +102,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$version" ]] || die "--version or VERSION is required"
-[[ -n "$host" ]] || die "--host or SIMPLE_VPS_SMOKE_HOST is required"
+[[ -n "$host" ]] || die "--host or SHIP_SMOKE_HOST is required"
 
 require_cmd curl
 require_cmd git
@@ -110,17 +110,17 @@ require_cmd jq
 require_cmd ssh-keygen
 require_cmd ssh-keyscan
 
-token="${SIMPLE_VPS_RELEASE_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
+token="${SHIP_RELEASE_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
 auth_args=()
 if [[ -n "$token" ]]; then
   auth_args=(-H "Authorization: Bearer $token")
 fi
 
-bootstrap_user="${SIMPLE_VPS_BOOTSTRAP_USER:-root}"
-bootstrap_key="${SIMPLE_VPS_BOOTSTRAP_SSH_KEY:-$HOME/.ssh/hetzner}"
-operator_pubkey="${SIMPLE_VPS_OPERATOR_PUBKEY:-$HOME/.ssh/hetzner.pub}"
-deploy_pubkey="${SIMPLE_VPS_DEPLOY_PUBKEY:-$HOME/.ssh/simple-vps-deploy.pub}"
-deploy_key="${SIMPLE_VPS_DEPLOY_SSH_KEY:-$HOME/.ssh/simple-vps-deploy}"
+bootstrap_user="${SHIP_BOOTSTRAP_USER:-root}"
+bootstrap_key="${SHIP_BOOTSTRAP_SSH_KEY:-$HOME/.ssh/hetzner}"
+operator_pubkey="${SHIP_OPERATOR_PUBKEY:-$HOME/.ssh/hetzner.pub}"
+deploy_pubkey="${SHIP_DEPLOY_PUBKEY:-$HOME/.ssh/ship-deploy.pub}"
+deploy_key="${SHIP_DEPLOY_SSH_KEY:-$HOME/.ssh/ship-deploy}"
 
 if [[ "$skip_install" != "1" ]]; then
   [[ -r "$bootstrap_key" ]] || die "bootstrap SSH key not readable: $bootstrap_key"
@@ -129,17 +129,17 @@ if [[ "$skip_install" != "1" ]]; then
 fi
 [[ -r "$deploy_key" ]] || die "deploy SSH key not readable: $deploy_key"
 
-app="${SIMPLE_VPS_SMOKE_APP:-svps-smoke-$(date -u +%H%M%S)}"
-route_host="${SIMPLE_VPS_SMOKE_ROUTE_HOST:-$app.$host.nip.io}"
+app="${SHIP_SMOKE_APP:-svps-smoke-$(date -u +%H%M%S)}"
+route_host="${SHIP_SMOKE_ROUTE_HOST:-$app.$host.nip.io}"
 server="deploy@$host"
-workdir="${SIMPLE_VPS_SMOKE_WORKDIR:-$(mktemp -d /tmp/simple-vps-release-smoke-XXXXXX)}"
-client="$workdir/bin/simple-vps"
+workdir="${SHIP_SMOKE_WORKDIR:-$(mktemp -d /tmp/ship-release-smoke-XXXXXX)}"
+client="$workdir/bin/ship"
 app_dir="$workdir/app"
 log="$workdir/release-smoke.log"
 
 cleanup() {
-  if [[ -x "$client" && -f "$app_dir/simple-vps.toml" ]]; then
-    "$client" destroy --config "$app_dir/simple-vps.toml" --env production --confirm "$app" --purge >>"$log" 2>&1 || true
+  if [[ -x "$client" && -f "$app_dir/ship.toml" ]]; then
+    "$client" destroy --config "$app_dir/ship.toml" --env production --confirm "$app" --purge >>"$log" 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -156,9 +156,9 @@ run_smoke() {
 
   download_installer
   mkdir -p "$workdir/bin"
-  SIMPLE_VPS_VERSION="$version" \
-    SIMPLE_VPS_INSTALL_DIR="$workdir/bin" \
-    SIMPLE_VPS_RELEASE_TOKEN="$token" \
+  SHIP_VERSION="$version" \
+    SHIP_INSTALL_DIR="$workdir/bin" \
+    SHIP_RELEASE_TOKEN="$token" \
     ./install.sh
   "$client" version
 
@@ -181,9 +181,9 @@ run_smoke() {
     printf 'skipping host install\n'
   fi
 
-  if [[ "$deploy_key" != "$HOME/.ssh/simple-vps-deploy" ]]; then
-    SIMPLE_VPS_SSH_KEY="$(cat "$deploy_key")"
-    export SIMPLE_VPS_SSH_KEY
+  if [[ "$deploy_key" != "$HOME/.ssh/ship-deploy" ]]; then
+    SHIP_SSH_KEY="$(cat "$deploy_key")"
+    export SHIP_SSH_KEY
   fi
 
   "$client" host status --json --server "$server" >/dev/null

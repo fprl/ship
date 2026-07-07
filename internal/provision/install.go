@@ -309,7 +309,7 @@ func ufwActive(apply host.Apply) (bool, error) {
 }
 
 func addHelper(ops *[]operation, opts InstallOptions) {
-	*ops = append(*ops, operation{name: "install simple-vps helper", run: func(apply host.Apply) (bool, error) {
+	*ops = append(*ops, operation{name: "install ship helper", run: func(apply host.Apply) (bool, error) {
 		path := opts.HelperBinaryPath
 		if path == "" {
 			var err error
@@ -322,10 +322,10 @@ func addHelper(ops *[]operation, opts InstallOptions) {
 		if err != nil {
 			return false, err
 		}
-		return host.EnsureFile(apply, host.File{Path: "/usr/local/bin/simple-vps", Content: data, Owner: "root", Group: "root", Mode: 0755})
+		return host.EnsureFile(apply, host.File{Path: "/usr/local/bin/ship", Content: data, Owner: "root", Group: "root", Mode: 0755})
 	}})
-	*ops = append(*ops, operation{name: "simple-vps sudoers", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureSudoersFile(apply, "simple-vps", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/simple-vps server app *, /usr/local/bin/simple-vps server status, /usr/local/bin/simple-vps server status *, /usr/local/bin/simple-vps server doctor, /usr/local/bin/simple-vps server doctor *\n", opts.DeployUser)))
+	*ops = append(*ops, operation{name: "ship sudoers", run: func(apply host.Apply) (bool, error) {
+		return host.EnsureSudoersFile(apply, "ship", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server status, /usr/local/bin/ship server status *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *\n", opts.DeployUser)))
 	}})
 }
 
@@ -349,7 +349,7 @@ func addPodman(ops *[]operation) {
 
 // addDeployTmpDir creates /tmp/simple-vps-deploy with mode 1777 (sticky
 // world-writable) so the unprivileged deploy user can drop the source
-// tarball and manifest under it during `simple-vps deploy`, while still
+// tarball and manifest under it during `ship deploy`, while still
 // preventing other local users from deleting another user's files mid-
 // deploy. The helper's `server app apply` reads from this directory via
 // systemd.ValidateDeployTmpSource, which also enforces ownership via
@@ -646,7 +646,7 @@ func caddyUnit(mode string) string {
 	}
 	return strings.Join([]string{
 		"[Unit]",
-		"Description=Caddy (Simple VPS managed, podman)",
+		"Description=Caddy (ship managed, podman)",
 		"Wants=network-online.target",
 		"After=network-online.target",
 		"",
@@ -902,7 +902,7 @@ func addCloudflare(ops *[]operation, opts InstallOptions) {
 		*ops = append(*ops, operation{name: "cloudflare api token", run: func(apply host.Apply) (bool, error) {
 			return host.EnsureFile(apply, host.File{Path: "/etc/simple-vps/cloudflare-api-token", Content: []byte(strings.TrimSpace(opts.CloudflareAPIToken) + "\n"), Owner: "root", Group: "root", Mode: 0600})
 		}})
-		args := []string{"server", "cloudflare", "setup-tunnel", "--token-file", "/etc/simple-vps/cloudflare-api-token", "--name", "simple-vps-" + hostname()}
+		args := []string{"server", "cloudflare", "setup-tunnel", "--token-file", "/etc/simple-vps/cloudflare-api-token", "--name", "ship-" + hostname()}
 		if opts.CloudflareAccountID != "" {
 			args = append(args, "--account-id", opts.CloudflareAccountID)
 		}
@@ -914,7 +914,7 @@ func addCloudflare(ops *[]operation, opts InstallOptions) {
 			if ready {
 				return false, nil
 			}
-			changed, err := runCommand("simple-vps", args...)(apply)
+			changed, err := runCommand("ship", args...)(apply)
 			if changed {
 				cloudflaredRuntimeChanged = true
 			}

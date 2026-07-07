@@ -1,5 +1,5 @@
 {
-  "name": "simple-vps-hono-bun-api",
+  "name": "ship-hono-bun-api",
   "private": true,
   "type": "module",
   "scripts": {

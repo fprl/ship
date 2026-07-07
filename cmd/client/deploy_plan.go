@@ -92,7 +92,7 @@ func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localD
 		diags = append(diags, diagnostic{
 			Level:   diagnosticError,
 			Message: "working tree is dirty",
-			Hint:    fmt.Sprintf("Commit changes, or run `simple-vps deploy --env %s --dirty` to deploy the current filesystem snapshot.", envName),
+			Hint:    fmt.Sprintf("Commit changes, or run `ship deploy --env %s --dirty` to deploy the current filesystem snapshot.", envName),
 		})
 		return plan, diags, nil
 	}
@@ -161,9 +161,9 @@ func gitCommit(root string) (short string, full string, err error) {
 func gitCommitHint(err error) string {
 	switch err.Error() {
 	case "git repository not found":
-		return "simple-vps uses Git commits to name reproducible releases.\nRun:\n  git init\n  git add .\n  git commit -m \"initial simple-vps app\""
+		return "ship uses Git commits to name reproducible releases.\nRun:\n  git init\n  git add .\n  git commit -m \"initial ship app\""
 	case "git repository has no commits":
-		return "Create the first release identity:\n  git add .\n  git commit -m \"initial simple-vps app\""
+		return "Create the first release identity:\n  git add .\n  git commit -m \"initial ship app\""
 	default:
 		return "Run this from a committed Git checkout. Dirty deploys still need a base commit."
 	}
@@ -179,7 +179,7 @@ func secretReferenceDiagnostics(ctx *config.AppContext) diagnostics {
 		out = append(out, diagnostic{
 			Level:   diagnosticWarning,
 			Message: fmt.Sprintf("secret %s must be set before deploy", key),
-			Hint:    fmt.Sprintf("Run:\n  printf '%%s' \"$%s\" | simple-vps secret set %s --env %s", key, key, ctx.EnvName),
+			Hint:    fmt.Sprintf("Run:\n  printf '%%s' \"$%s\" | ship secret set %s --env %s", key, key, ctx.EnvName),
 		})
 	}
 	return out

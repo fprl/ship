@@ -56,7 +56,7 @@ RUN printf '%s\n' \
     'DEFAULT_FORWARD_POLICY="DROP"' \
     > /etc/default/ufw
 
-COPY .fake-vps-bin/simple-vps-linux-amd64 /usr/local/bin/simple-vps
+COPY .fake-vps-bin/ship-linux-amd64 /usr/local/bin/ship
 COPY tests/fake-vps/fake-caddy /usr/local/bin/caddy
 COPY tests/fake-vps/fake-install-apt-get /usr/local/bin/apt-get
 COPY tests/fake-vps/fake-install-curl /usr/local/bin/curl
@@ -73,7 +73,7 @@ COPY tests/fake-vps/fake-install-ufw /usr/local/bin/ufw
 COPY tests/fake-vps/fake-podman /usr/local/bin/podman
 
 RUN chmod 0755 \
-    /usr/local/bin/simple-vps \
+    /usr/local/bin/ship \
     /usr/local/bin/caddy \
     /usr/local/bin/apt-get \
     /usr/local/bin/curl \

@@ -73,11 +73,11 @@ func (d diagnostics) print() {
 func manifestHint(message string) string {
 	switch {
 	case strings.Contains(message, "missing a Dockerfile"):
-		return "Add a Dockerfile next to simple-vps.toml, or remove process routes for a static-only app."
+		return "Add a Dockerfile next to ship.toml, or remove process routes for a static-only app."
 	case strings.Contains(message, ".serve directory"):
 		return "Run the framework build that creates the configured static directory, then retry."
 	case strings.Contains(message, "env not found"):
-		return "Check the [env.<name>] blocks in simple-vps.toml and pass one with --env."
+		return "Check the [env.<name>] blocks in ship.toml and pass one with --env."
 	default:
 		return ""
 	}

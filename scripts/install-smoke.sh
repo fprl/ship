@@ -22,7 +22,7 @@ platform_asset() {
     *) die "unsupported architecture: $arch" ;;
   esac
 
-  printf 'simple-vps-%s-%s\n' "$os" "$arch"
+  printf 'ship-%s-%s\n' "$os" "$arch"
 }
 
 sha256_file() {
@@ -38,7 +38,7 @@ sha256_file() {
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
-tmp_dir="$(mktemp -d /tmp/simple-vps-install-smoke-XXXXXX)"
+tmp_dir="$(mktemp -d /tmp/ship-install-smoke-XXXXXX)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 version="v-test"
@@ -54,11 +54,11 @@ SH
 
 printf '%s  %s\n' "$(sha256_file "$release_dir/$asset")" "$asset" > "$release_dir/SHA256SUMS"
 
-SIMPLE_VPS_RELEASE_BASE_URL="file://$tmp_dir/release" \
-  SIMPLE_VPS_INSTALL_DIR="$install_dir" \
-  bash "$repo_root/install.sh" --version "$version" >/tmp/simple-vps-install-smoke.out
+SHIP_RELEASE_BASE_URL="file://$tmp_dir/release" \
+  SHIP_INSTALL_DIR="$install_dir" \
+  bash "$repo_root/install.sh" --version "$version" >/tmp/ship-install-smoke.out
 
-got="$("$install_dir/simple-vps" version)"
+got="$("$install_dir/ship" version)"
 if [[ "$got" != "v-test" ]]; then
   die "installed binary returned $got"
 fi

@@ -6,7 +6,7 @@ import (
 )
 
 func TestAppEnvLockBlocksSameAppEnv(t *testing.T) {
-	t.Setenv("SIMPLE_VPS_LOCK_DIR", t.TempDir())
+	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
 
 	first, err := acquireAppEnvLock("api", "production")
 	if err != nil {
@@ -52,7 +52,7 @@ func TestAppEnvLockBlocksSameAppEnv(t *testing.T) {
 }
 
 func TestAppEnvLockAllowsDifferentEnv(t *testing.T) {
-	t.Setenv("SIMPLE_VPS_LOCK_DIR", t.TempDir())
+	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
 
 	first, err := acquireAppEnvLock("api", "production")
 	if err != nil {

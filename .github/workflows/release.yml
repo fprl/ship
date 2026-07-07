@@ -84,10 +84,10 @@ jobs:
           fi
 
           gh release upload "$TAG" \
-            dist/simple-vps-linux-amd64 \
-            dist/simple-vps-linux-arm64 \
-            dist/simple-vps-darwin-amd64 \
-            dist/simple-vps-darwin-arm64 \
+            dist/ship-linux-amd64 \
+            dist/ship-linux-arm64 \
+            dist/ship-darwin-amd64 \
+            dist/ship-darwin-arm64 \
             dist/SHA256SUMS \
             install.sh \
             --clobber

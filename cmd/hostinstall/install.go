@@ -105,11 +105,11 @@ func (i *Installer) RunOptions(opts Options) error {
 		return err
 	}
 
-	if envBool(i.Env, "SIMPLE_VPS_INSTALLER_DUMP_PLAN", false) {
+	if envBool(i.Env, "SHIP_INSTALLER_DUMP_PLAN", false) {
 		return i.dumpInstallPlan(plan)
 	}
 
-	i.info("Simple VPS installer starting")
+	i.info("ship installer starting")
 	i.info("Mode: %s", plan.Mode)
 	i.info("Operator user: %s", plan.OperatorUser)
 	i.info("Deploy user: %s", plan.DeployUser)
@@ -158,24 +158,24 @@ func DefaultOptions(env map[string]string) Options {
 	return Options{
 		Mode:                     "auto",
 		BootstrapUser:            "root",
-		OperatorSSHPublicKeyFile: env["SIMPLE_VPS_OPERATOR_SSH_PUBLIC_KEY_FILE"],
-		DeploySSHPublicKeyFile:   env["SIMPLE_VPS_DEPLOY_SSH_PUBLIC_KEY_FILE"],
-		OperatorUser:             envDefault(env, "SIMPLE_VPS_OPERATOR_USER", "operator"),
-		DeployUser:               envDefault(env, "SIMPLE_VPS_DEPLOY_USER", "deploy"),
-		Timezone:                 envDefault(env, "SIMPLE_VPS_TIMEZONE", "UTC"),
-		Locale:                   envDefault(env, "SIMPLE_VPS_LOCALE", "en_US.UTF-8"),
-		Ingress:                  env["SIMPLE_VPS_INGRESS"],
-		Admin:                    env["SIMPLE_VPS_ADMIN"],
+		OperatorSSHPublicKeyFile: env["SHIP_OPERATOR_SSH_PUBLIC_KEY_FILE"],
+		DeploySSHPublicKeyFile:   env["SHIP_DEPLOY_SSH_PUBLIC_KEY_FILE"],
+		OperatorUser:             envDefault(env, "SHIP_OPERATOR_USER", "operator"),
+		DeployUser:               envDefault(env, "SHIP_DEPLOY_USER", "deploy"),
+		Timezone:                 envDefault(env, "SHIP_TIMEZONE", "UTC"),
+		Locale:                   envDefault(env, "SHIP_LOCALE", "en_US.UTF-8"),
+		Ingress:                  env["SHIP_INGRESS"],
+		Admin:                    env["SHIP_ADMIN"],
 		Tailscale:                false,
-		TailscaleAuthKey:         env["SIMPLE_VPS_TAILSCALE_AUTH_KEY"],
-		TailscaleHostname:        env["SIMPLE_VPS_TAILSCALE_HOSTNAME"],
+		TailscaleAuthKey:         env["SHIP_TAILSCALE_AUTH_KEY"],
+		TailscaleHostname:        env["SHIP_TAILSCALE_HOSTNAME"],
 		CloudflareTunnel:         false,
-		CloudflareAPIToken:       env["SIMPLE_VPS_CLOUDFLARE_API_TOKEN"],
-		CloudflareAccountID:      env["SIMPLE_VPS_CLOUDFLARE_ACCOUNT_ID"],
-		CloudflareTunnelToken:    env["SIMPLE_VPS_CLOUDFLARE_TUNNEL_TOKEN"],
-		CloudflareTunnelConfig:   env["SIMPLE_VPS_CLOUDFLARE_TUNNEL_CONFIG"],
-		InstallDocker:            envBool(env, "SIMPLE_VPS_INSTALL_DOCKER", false),
-		InstallLitestream:        envBool(env, "SIMPLE_VPS_INSTALL_LITESTREAM", false),
+		CloudflareAPIToken:       env["SHIP_CLOUDFLARE_API_TOKEN"],
+		CloudflareAccountID:      env["SHIP_CLOUDFLARE_ACCOUNT_ID"],
+		CloudflareTunnelToken:    env["SHIP_CLOUDFLARE_TUNNEL_TOKEN"],
+		CloudflareTunnelConfig:   env["SHIP_CLOUDFLARE_TUNNEL_CONFIG"],
+		InstallDocker:            envBool(env, "SHIP_INSTALL_DOCKER", false),
+		InstallLitestream:        envBool(env, "SHIP_INSTALL_LITESTREAM", false),
 	}
 }
 
@@ -346,7 +346,7 @@ func (i *Installer) runRemote(plan Plan) error {
 	}
 	defer cleanupHelper()
 
-	remoteHelper := "/tmp/simple-vps-host-install"
+	remoteHelper := "/tmp/ship-host-install"
 	if err := i.copyRemote(plan, helper, remoteHelper); err != nil {
 		return err
 	}
@@ -443,7 +443,7 @@ func (i *Installer) dumpInstallPlan(plan Plan) error {
 	fmt.Fprintf(i.Stdout, "plan.deploy_key=%s\n", presentOrMissing(keyPlan.Deploy, "present", "missing"))
 	if plan.Mode == "remote" {
 		fmt.Fprintln(i.Stdout, "--- remote-local-command ---")
-		fmt.Fprintln(i.Stdout, remoteLocalInstallCommand("/tmp/simple-vps-host-install", plan, "/tmp/simple-vps-operator.pub", "/tmp/simple-vps-deploy.pub"))
+		fmt.Fprintln(i.Stdout, remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/ship-operator.pub", "/tmp/ship-deploy.pub"))
 	}
 	return nil
 }
@@ -451,27 +451,27 @@ func (i *Installer) dumpInstallPlan(plan Plan) error {
 func (i *Installer) prepareGoHelperBinaries(repoRoot string) (string, func(), error) {
 	distDir := filepath.Join(repoRoot, "dist")
 	if helperBinariesExist(distDir) {
-		i.info("Using prebuilt Simple VPS Go helper binaries from %s", distDir)
+		i.info("Using prebuilt ship Go helper binaries from %s", distDir)
 		return distDir, func() {}, nil
 	}
 
 	if _, err := i.look("go"); err != nil {
-		return "", func() {}, errors.New("Simple VPS Go helper binaries are required, but no prebuilt dist/ binaries were found and Go is not installed")
+		return "", func() {}, errors.New("ship Go helper binaries are required, but no prebuilt dist/ binaries were found and Go is not installed")
 	}
 
 	if !fileExists(filepath.Join(repoRoot, "go.mod")) {
-		return "", func() {}, fmt.Errorf("Simple VPS Go module not found at %s; cannot prepare helper binaries", repoRoot)
+		return "", func() {}, fmt.Errorf("ship Go module not found at %s; cannot prepare helper binaries", repoRoot)
 	}
 
-	outputDir, err := os.MkdirTemp("", "simple-vps-helper-")
+	outputDir, err := os.MkdirTemp("", "ship-helper-")
 	if err != nil {
 		return "", func() {}, err
 	}
 
-	i.info("Building Simple VPS Go helper binaries")
+	i.info("Building ship Go helper binaries")
 	for _, arch := range []string{"amd64", "arm64"} {
 		env := append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
-		cmd := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w", "-o", filepath.Join(outputDir, "simple-vps-linux-"+arch), ".")
+		cmd := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w", "-o", filepath.Join(outputDir, "ship-linux-"+arch), ".")
 		cmd.Dir = repoRoot
 		cmd.Env = env
 		cmd.Stdout = i.Stdout
@@ -556,7 +556,7 @@ func (i *Installer) writeRemoteKeyFiles(plan Plan, keys keyPlan) (string, string
 		if key == "" {
 			return "", nil
 		}
-		path := "/tmp/simple-vps-" + name + ".pub"
+		path := "/tmp/ship-" + name + ".pub"
 		cmd := "printf '%s\n' " + utils.ShellEscape(key) + " > " + utils.ShellEscape(path) + " && chmod 0600 " + utils.ShellEscape(path)
 		if err := i.remoteCommand(plan, cmd); err != nil {
 			return "", err
@@ -688,7 +688,7 @@ func resolveSSHKeyPlan(plan Plan, requireOperator bool, rootKeysPath string) (ke
 
 func locateRepoRoot() (string, error) {
 	var candidates []string
-	if envDir := os.Getenv("SIMPLE_VPS_REPO_ROOT"); envDir != "" {
+	if envDir := os.Getenv("SHIP_REPO_ROOT"); envDir != "" {
 		candidates = append(candidates, envDir)
 	}
 	if cwd, err := os.Getwd(); err == nil {
@@ -709,7 +709,7 @@ func locateRepoRoot() (string, error) {
 			return abs, nil
 		}
 	}
-	return "", errors.New("Simple VPS Go module was not found; run from a checkout or set SIMPLE_VPS_REPO_ROOT")
+	return "", errors.New("ship Go module was not found; run from a checkout or set SHIP_REPO_ROOT")
 }
 
 func repoLooksValid(dir string) bool {
@@ -743,8 +743,8 @@ func cloudflareServiceMode(opts Options) string {
 }
 
 func helperBinariesExist(dir string) bool {
-	return fileExists(filepath.Join(dir, "simple-vps-linux-amd64")) &&
-		fileExists(filepath.Join(dir, "simple-vps-linux-arm64"))
+	return fileExists(filepath.Join(dir, "ship-linux-amd64")) &&
+		fileExists(filepath.Join(dir, "ship-linux-arm64"))
 }
 
 func readPublicKeyFile(path string) (string, error) {
@@ -833,12 +833,12 @@ func (i *Installer) printNextSteps(plan Plan) {
 	fmt.Fprintln(i.Stdout, "Next:")
 	step := 1
 	if privateKey := deployPrivateKeyHint(plan); privateKey != "" && !isDefaultDeployPrivateKey(privateKey) {
-		fmt.Fprintf(i.Stdout, "%d. export SIMPLE_VPS_SSH_KEY=\"$(cat %s)\"\n", step, utils.ShellEscape(privateKey))
+		fmt.Fprintf(i.Stdout, "%d. export SHIP_SSH_KEY=\"$(cat %s)\"\n", step, utils.ShellEscape(privateKey))
 		step++
 	}
-	fmt.Fprintf(i.Stdout, "%d. simple-vps host status --server %s\n", step, server)
+	fmt.Fprintf(i.Stdout, "%d. ship host status --server %s\n", step, server)
 	step++
-	fmt.Fprintf(i.Stdout, "%d. simple-vps init --server %s --host <app-domain>\n", step, server)
+	fmt.Fprintf(i.Stdout, "%d. ship init --server %s --host <app-domain>\n", step, server)
 }
 
 func deployPrivateKeyHint(plan Plan) string {
@@ -863,9 +863,9 @@ func defaultDeployPublicKeyPath() (string, bool) {
 func defaultDeployPrivateKeyCandidate() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return "~/.ssh/simple-vps-deploy"
+		return "~/.ssh/ship-deploy"
 	}
-	return filepath.Join(home, ".ssh", "simple-vps-deploy")
+	return filepath.Join(home, ".ssh", "ship-deploy")
 }
 
 func isDefaultDeployPrivateKey(path string) bool {

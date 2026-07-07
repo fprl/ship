@@ -99,7 +99,7 @@ func hostStatusReportFor(stateStore store.Store, serviceStatus func(string) stri
 
 func renderHostStatusText(report hostStatusReport) string {
 	var b strings.Builder
-	b.WriteString("Simple VPS\n")
+	b.WriteString("ship\n")
 	for _, line := range hostStatusStateLines(report.State) {
 		b.WriteString(line)
 		b.WriteByte('\n')
@@ -123,7 +123,7 @@ func hostStatusStateLines(state hostStateStatus) []string {
 }
 
 // statusStateLines reports the host-install state only. App/env inventory
-// belongs to `simple-vps app list`, which merges env identity files with
+// belongs to `ship app list`, which merges env identity files with
 // live Podman labels.
 func statusStateLines(stateStore store.Store) ([]string, error) {
 	installed, err := stateStore.HostInstalled()

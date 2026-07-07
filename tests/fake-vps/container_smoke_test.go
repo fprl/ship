@@ -16,7 +16,7 @@ import (
 // TestContainerSmoke exercises the new container-deploy lifecycle (ADR-0005
 // + ADR-0006 Cut 2) end-to-end against the fake-vps fixture:
 //
-//   - `simple-vps deploy --env production` prepares the app env on first
+//   - `ship deploy --env production` prepares the app env on first
 //     deploy, tars the working tree, uploads the manifest, calls
 //     `server app apply`, which runs `podman build` + `podman run`
 //     (§7 hardening subset) without any host-port publish — the app
@@ -27,8 +27,8 @@ import (
 //   - End-to-end: `curl -H 'Host: api.example.com' http://127.0.0.1/health`
 //     reaches the app container through the fake Caddy proxy.
 func TestContainerSmoke(t *testing.T) {
-	if os.Getenv("SIMPLE_VPS_RUN_FAKE_VPS_SMOKE") != "1" {
-		t.Skip("set SIMPLE_VPS_RUN_FAKE_VPS_SMOKE=1 to run Docker-backed fake VPS smoke")
+	if os.Getenv("SHIP_RUN_FAKE_VPS_SMOKE") != "1" {
+		t.Skip("set SHIP_RUN_FAKE_VPS_SMOKE=1 to run Docker-backed fake VPS smoke")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -66,10 +66,10 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	e.commitFixture(t, app)
 
 	// The shared `ingress` Podman network and the host-side Caddy
-	// container would normally come from `simple-vps host install`.
+	// container would normally come from `ship host install`.
 	// The smoke skips the installer, so seed both here the same way
 	// the provisioner does. These need root and the deploy user only
-	// has passwordless sudo for /usr/local/bin/simple-vps — use
+	// has passwordless sudo for /usr/local/bin/ship — use
 	// docker exec instead.
 	e.dockerExec(t, `cat > /etc/simple-vps/host.json <<'EOF'
 {"version":1,"desired":{"users":{"operator":"operator","deploy":"deploy"},"ingress":{"expose":"public","tunnel":"none"},"features":{},"packages":{"podman":{"source":"apt"},"rsync":{"source":"apt"},"caddy":{"source":"container"}}},"observed":{"packages":{},"ingress":{}},"meta":{}}
@@ -200,7 +200,7 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	stableFragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("releasefail", "production"))
 	stableContainer := currentWebContainer(t, e, app)
 
-	manifestPath := filepath.Join(app, "simple-vps.toml")
+	manifestPath := filepath.Join(app, "ship.toml")
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
@@ -245,7 +245,7 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 	stableStaticCurrent := e.dockerExec(t, "readlink "+filepath.Join(identity.StaticDir("caddyfail", "production"), "current"))
 	e.dockerExec(t, "test -f /run/fake-podman/listeners/"+stableWorker+".pid")
 
-	manifestPath := filepath.Join(app, "simple-vps.toml")
+	manifestPath := filepath.Join(app, "ship.toml")
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
@@ -405,7 +405,7 @@ func (e *smokeEnv) testRollback(t *testing.T) {
 	app := filepath.Join(e.tmp, "container-api")
 	oldRelease := strings.TrimSpace(e.mustRun(t, app, nil, "git", "rev-parse", "--short=12", "HEAD"))
 
-	manifestPath := filepath.Join(app, "simple-vps.toml")
+	manifestPath := filepath.Join(app, "ship.toml")
 	manifestBytes, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
@@ -493,7 +493,7 @@ func (e *smokeEnv) testRemovedProcessReconciliation(t *testing.T) {
 	oldWorker := identity.ContainerName("prune", "production", "worker", oldRelease)
 	e.dockerExec(t, "test -f /run/fake-podman/containers/"+oldWorker+".labels")
 
-	manifestPath := filepath.Join(app, "simple-vps.toml")
+	manifestPath := filepath.Join(app, "ship.toml")
 	manifestBytes, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
@@ -656,7 +656,7 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/health", "ok")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
 
-	manifestPath := filepath.Join(app, "simple-vps.toml")
+	manifestPath := filepath.Join(app, "ship.toml")
 	manifestBytes, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
@@ -685,12 +685,12 @@ serve = "docs-dist"
 // against the helper-side store under /etc/simple-vps/secrets/:
 //
 //  1. setup the app/env baseline
-//  2. `simple-vps secret set` over SSH-stdin (value never on argv)
-//  3. `simple-vps secret list` shows the key (NOT the value)
+//  2. `ship secret set` over SSH-stdin (value never on argv)
+//  3. `ship secret list` shows the key (NOT the value)
 //  4. deploy a manifest that references @secret:db_url
 //  5. the on-host env file contains the literal env values AND the
 //     resolved secret, with mode 0600 owned by the per-env user
-//  6. `simple-vps secret rm` removes the key
+//  6. `ship secret rm` removes the key
 //  7. a subsequent deploy with the ref still present fails fast at
 //     `app apply` with the unresolved-ref error
 func (e *smokeEnv) testSecretLifecycle(t *testing.T) {
@@ -699,7 +699,7 @@ func (e *smokeEnv) testSecretLifecycle(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
-	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "sec"
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "sec"
 
 [env.production]
 server = "fake-vps"
@@ -726,7 +726,7 @@ process = "web"
 	// 2. file lands at the expected path, root-owned, mode 0600,
 	// containing the value verbatim (no trailing newline — the client
 	// trims one if present). Read as root via dockerExec because the
-	// deploy user only has passwordless sudo for /usr/local/bin/simple-vps.
+	// deploy user only has passwordless sudo for /usr/local/bin/ship.
 	listing := strings.TrimSpace(e.dockerExec(t, "ls -l /etc/simple-vps/secrets/sec/production"))
 	if !strings.Contains(listing, " db_url") {
 		t.Fatalf("expected db_url in /etc/simple-vps/secrets/sec/production listing:\n%s", listing)
@@ -793,7 +793,7 @@ process = "web"
 		t.Fatal("expected deploy to fail with unresolved @secret reference")
 	}
 	if !strings.Contains(result.stderr+result.stdout, "missing secret db_url") ||
-		!strings.Contains(result.stderr+result.stdout, "simple-vps secret set db_url --env production") {
+		!strings.Contains(result.stderr+result.stdout, "ship secret set db_url --env production") {
 		t.Fatalf("preflight error must name the missing secret and set command, got:\nstdout: %s\nstderr: %s", result.stdout, result.stderr)
 	}
 }
@@ -893,7 +893,7 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 	}
 }
 
-// testRestart covers `simple-vps restart` against the live container
+// testRestart covers `ship restart` against the live container
 // flow. Assumes the earlier `testContainerAppLifecycle` subtest has
 // already deployed the `api` container app and left its `web`
 // process running on the fake VPS.
@@ -936,7 +936,7 @@ func (e *smokeEnv) testRestart(t *testing.T) {
 	}
 }
 
-// testDestroy covers the public `simple-vps destroy` wrapper and the
+// testDestroy covers the public `ship destroy` wrapper and the
 // privileged `server app destroy-env` teardown path. It intentionally
 // runs after status/logs/restart because it removes the
 // container-api fixture from the fake VPS.
@@ -993,7 +993,7 @@ func writeContainerFixture(t *testing.T, app string) {
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
-	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "api"
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "api"
 
 [env.production]
 server = "fake-vps"
@@ -1014,7 +1014,7 @@ func writeDirtyFixture(t *testing.T, app string) {
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
-	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "dirtyapi"
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "dirtyapi"
 
 [env.production]
 server = "fake-vps"
@@ -1034,7 +1034,7 @@ func writeReleaseFailFixture(t *testing.T, app string) {
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
-	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "releasefail"
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "releasefail"
 
 [env.production]
 server = "fake-vps"
@@ -1062,7 +1062,7 @@ func writeCaddyFailFixture(t *testing.T, app string) {
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
-	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "caddyfail"
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "caddyfail"
 
 [env.production]
 server = "fake-vps"
@@ -1093,7 +1093,7 @@ func writePruneFixture(t *testing.T, app string) {
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
-	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "prune"
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "prune"
 
 [env.production]
 server = "fake-vps"
@@ -1115,7 +1115,7 @@ func writeStaticFixture(t *testing.T, app string) {
 	t.Helper()
 	mustMkdir(t, filepath.Join(app, "dist"))
 	mustWrite(t, filepath.Join(app, "dist", "index.html"), "static-ok")
-	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "site"
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "site"
 
 [env.production]
 server = "fake-vps"
@@ -1133,7 +1133,7 @@ func writeMixedFixture(t *testing.T, app string) {
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
-	mustWrite(t, filepath.Join(app, "simple-vps.toml"), `name = "mix"
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "mix"
 
 [env.production]
 server = "fake-vps"
