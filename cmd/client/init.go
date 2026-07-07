@@ -175,7 +175,7 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 		server = "deploy@example.com"
 	}
 	if !config.ValidateSshTarget(server) {
-		return normalizedInit{}, fmt.Errorf("--server must be an SSH target like deploy@example.com")
+		return normalizedInit{}, fmt.Errorf("--box must be an SSH target like deploy@example.com")
 	}
 
 	host := strings.ToLower(strings.TrimSpace(opts.Host))
@@ -386,7 +386,6 @@ func renderInitResult(result InitResult) {
 	for _, path := range result.Kept {
 		fmt.Printf("Kept existing %s\n", initDisplayPath(result.Root, path))
 	}
-	configFlag := initConfigFlag(result.ConfigPath)
 	gitPrefix := initGitPrefix(result.Root)
 	steps := []string{
 		"review " + initDisplayPath(result.Root, ManifestFile),
@@ -397,31 +396,12 @@ func renderInitResult(result InitResult) {
 	steps = append(steps,
 		gitPrefix+"add .",
 		gitPrefix+"commit -m \"initial ship app\"",
-		fmt.Sprintf("ship check%s --env %s", configFlag, result.Env),
-		fmt.Sprintf("ship deploy%s --env %s", configFlag, result.Env),
 	)
-	fmt.Println("Next:")
+	fmt.Fprintln(os.Stderr, "Next:")
 	for i, step := range steps {
-		fmt.Printf("%d. %s\n", i+1, step)
+		fmt.Fprintf(os.Stderr, "%d. %s\n", i+1, step)
 	}
-}
-
-func initConfigFlag(configPath string) string {
-	if configPath == "" {
-		return ""
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return " --config " + utils.ShellEscape(configPath)
-	}
-	absCwd, err := filepath.Abs(cwd)
-	if err != nil {
-		return " --config " + utils.ShellEscape(configPath)
-	}
-	if filepath.Dir(configPath) == absCwd {
-		return ""
-	}
-	return " --config " + utils.ShellEscape(configPath)
+	fmt.Fprintln(os.Stderr, "next: ship")
 }
 
 func initGitPrefix(root string) string {

@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/alecthomas/kong"
+	"github.com/fprl/simple-vps/cmd/client"
 )
 
 func newTestParser(t *testing.T) *kong.Kong {
@@ -24,36 +26,38 @@ func newTestParser(t *testing.T) *kong.Kong {
 	return parser
 }
 
-func TestPublicCLIParsesV1Contract(t *testing.T) {
+func TestPublicCLIParsesV2Contract(t *testing.T) {
 	tests := [][]string{
+		{},
+		{"--json"},
+		{"--branch", "feat/x"},
 		{"init"},
+		{"init", "--box", "deploy@example.com"},
 		{"init", "--config", "apps/api/ship.toml"},
-		{"check"},
-		{"check", "--env", "production"},
-		{"check", "-e", "production"},
-		{"deploy"},
-		{"deploy", "--branch", "feat/x"},
-		{"deploy", "--env", "production"},
-		{"deploy", "--env", "production", "--include-dotenv"},
-		{"deploy", "-e", "production", "--config", "apps/api/ship.toml"},
-		{"status", "--branch", "feat/x"},
-		{"status", "--env", "production", "--json"},
-		{"logs", "--branch", "feat/x"},
-		{"logs", "web", "--env", "production", "--follow", "--tail", "100"},
-		{"restart", "web", "--env", "production"},
-		{"rollback", "abc1234", "--env", "production"},
-		{"backup", "create", "--env", "production", "--json"},
-		{"backup", "list", "--env", "production", "--json"},
-		{"backup", "rm", "backup-id", "--env", "production"},
-		{"restore", "--from", "backup-id", "--env", "production", "--dry-run"},
-		{"secret", "set", "DATABASE_URL", "--env", "production"},
-		{"secret", "list", "--env", "production", "--json"},
-		{"secret", "rm", "DATABASE_URL", "--env", "production"},
-		{"destroy", "--env", "production", "--confirm", "api", "--purge"},
-		{"ssh", "--env", "production"},
-		{"app", "list", "--server", "deploy@example.com"},
-		{"host", "status", "--server", "deploy@example.com"},
-		{"host", "doctor", "--server", "deploy@example.com", "--json"},
+		{"status"},
+		{"status", "--json"},
+		{"logs"},
+		{"logs", "--json"},
+		{"logs", "web", "--follow", "--tail", "100"},
+		{"rollback"},
+		{"rollback", "abc1234"},
+		{"rm", "feat/x"},
+		{"rm", "main", "--confirm", "api"},
+		{"pin", "feat/x"},
+		{"unpin", "feat/x"},
+		{"save"},
+		{"save", "--to", "/tmp/backups"},
+		{"restore", "--from", "backup-id"},
+		{"secret", "set", "DATABASE_URL"},
+		{"secret", "ls"},
+		{"secret", "ls", "--json"},
+		{"secret", "rm", "DATABASE_URL"},
+		{"ssh"},
+		{"box", "init", "deploy@example.com"},
+		{"box", "doctor", "deploy@example.com"},
+		{"box", "doctor", "deploy@example.com", "--json"},
+		{"box", "ls", "deploy@example.com"},
+		{"box", "ls", "deploy@example.com", "--json"},
 		{"version"},
 	}
 	for _, tt := range tests {
@@ -67,19 +71,32 @@ func TestPublicCLIParsesV1Contract(t *testing.T) {
 
 func TestPublicCLIRejectsRemovedCompatibilityForms(t *testing.T) {
 	tests := [][]string{
-		{"setup", "production"},
+		{"setup", "--env", "production"},
+		{"check"},
 		{"init", "--tls", "internal"},
+		{"init", "--env", "production"},
+		{"init", "--server", "deploy@example.com"},
+		{"deploy"},
 		{"deploy", "production"},
+		{"deploy", "--env", "production"},
+		{"status", "--env", "production"},
+		{"status", "--branch", "feat/x"},
 		{"status", "production"},
 		{"backup", "production"},
 		{"backup", "list", "production"},
 		{"restore", "--from", "backup-id", "production"},
+		{"restore", "--from", "backup-id", "--env", "production"},
 		{"secret", "set", "production", "DATABASE_URL"},
+		{"secret", "set", "DATABASE_URL", "--env", "production"},
+		{"secret", "list"},
 		{"logs", "production", "web"},
+		{"logs", "web", "--env", "production"},
+		{"restart"},
 		{"restart", "production", "web"},
-		{"rollback", "production"},
+		{"destroy", "--env", "production"},
 		{"app", "list"},
 		{"host", "status"},
+		{"box", "doctor", "--server", "deploy@example.com"},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt, "_"), func(t *testing.T) {
@@ -90,24 +107,18 @@ func TestPublicCLIRejectsRemovedCompatibilityForms(t *testing.T) {
 	}
 }
 
-func TestHiddenSetupRepairCommandStillParses(t *testing.T) {
-	if _, err := newTestParser(t).Parse([]string{"setup", "--env", "production"}); err != nil {
-		t.Fatalf("hidden setup command should remain available for repair: %v", err)
-	}
-}
-
-func TestHostWithoutSubcommandShowsSubcommandHelp(t *testing.T) {
-	_, err := newTestParser(t).Parse([]string{"host"})
+func TestBoxWithoutSubcommandShowsSubcommandHelp(t *testing.T) {
+	_, err := newTestParser(t).Parse([]string{"box"})
 	if err == nil {
-		t.Fatal("parse host unexpectedly succeeded")
+		t.Fatal("parse box unexpectedly succeeded")
 	}
 	text := err.Error()
 	if strings.Contains(text, "--server") {
-		t.Fatalf("host without subcommand should not fall through to host status: %v", err)
+		t.Fatalf("box without subcommand should not mention removed --server: %v", err)
 	}
-	for _, want := range []string{"status", "doctor", "install"} {
+	for _, want := range []string{"init", "doctor", "ls"} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("host parse error should mention %q subcommand, got: %v", want, err)
+			t.Fatalf("box parse error should mention %q subcommand, got: %v", want, err)
 		}
 	}
 }
@@ -117,7 +128,7 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	parser, err := kong.New(
 		&cli{},
 		kong.Name("ship"),
-		kong.Description("Deploy containerized apps to a single hardened VPS."),
+		kong.Description("Run `ship` inside an app to deploy the current branch. Use commands below for reads, rollback, cleanup, secrets, and box management."),
 		kong.ExplicitGroups(cliCommandGroups()),
 		kong.ConfigureHelp(kong.HelpOptions{NoExpandSubcommands: true}),
 		kong.UsageOnError(),
@@ -129,30 +140,64 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	}
 	_, _ = parser.Parse([]string{"--help"})
 	text := stdout.String() + stderr.String()
-	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "backup <command>", "app <command>", "secret <command>", "host <command>"} {
+	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "rollback", "rm <branch>", "pin", "unpin", "save", "restore", "ssh", "secret <command>", "box <command>", "version"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("top-level help should mention %q, got:\n%s", want, text)
 		}
 	}
-	for _, legacy := range []string{"setup", "backup create", "app list", "secret set", "host status"} {
+	for _, legacy := range []string{"deploy <command>", "check", "restart", "backup <command>", "destroy", "app <command>", "host <command>", "--env", "--server", "--dirty"} {
 		if strings.Contains(text, legacy) {
 			t.Fatalf("top-level help should not expand %q, got:\n%s", legacy, text)
 		}
 	}
 }
 
-func TestCLIArgsShowsHelpForNoArgs(t *testing.T) {
+func TestCLIArgsShowsHelpForNoArgsOutsideApp(t *testing.T) {
 	got := cliArgs(nil)
 	if len(got) != 1 || got[0] != "--help" {
 		t.Fatalf("cliArgs(nil) = %v, want [--help]", got)
 	}
 }
 
+func TestCLIArgsKeepsBareShipInsideApp(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, client.ManifestFile), []byte("name = \"api\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(old)
+	})
+	if err := os.Chdir(root); err != nil {
+		t.Fatal(err)
+	}
+
+	got := cliArgs(nil)
+	if len(got) != 0 {
+		t.Fatalf("cliArgs(nil) inside app = %v, want []", got)
+	}
+}
+
 func TestCLIArgsKeepsExplicitArgs(t *testing.T) {
-	got := cliArgs([]string{"deploy", "--env", "production"})
-	want := []string{"deploy", "--env", "production"}
+	got := cliArgs([]string{"status", "--json"})
+	want := []string{"status", "--json"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("cliArgs kept args = %v, want %v", got, want)
+	}
+}
+
+func TestCommandErrorExitCodeSeparatesUsageManifestFromOperations(t *testing.T) {
+	if got := commandErrorExitCode(os.ErrNotExist); got != 1 {
+		t.Fatalf("operation exit code = %d, want 1", got)
+	}
+	if got := commandErrorExitCode(filepath.ErrBadPattern); got != 1 {
+		t.Fatalf("ordinary error exit code = %d, want 1", got)
+	}
+	if got := commandErrorExitCode(errors.New("ship.toml not found")); got != 2 {
+		t.Fatalf("manifest exit code = %d, want 2", got)
 	}
 }
 

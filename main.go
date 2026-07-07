@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/alecthomas/kong"
 	"github.com/fprl/simple-vps/cmd/client"
@@ -16,23 +17,19 @@ import (
 // purpose; host mutation goes through the privileged helper and runtime
 // truth comes from manifest snapshots, identity files, and Podman labels.
 type cli struct {
+	Ship     shipCmd          `cmd:"" default:"withargs" hidden:"" group:"project" help:"Deploy the current branch."`
 	Init     initCmd          `cmd:"" group:"project" help:"Create local project files and a ship.toml manifest."`
-	Check    checkCmd         `cmd:"" group:"project" help:"Validate the current project manifest."`
-	Setup    setupCmd         `cmd:"" hidden:"" group:"project" help:"Repair or prepare one app environment on the host."`
-	Deploy   deployCmd        `cmd:"" group:"project" help:"Deploy the current project to one app environment."`
-	Status   statusCmd        `cmd:"" group:"project" help:"Show host-observed status for the current app environment."`
-	Restart  restartCmd       `cmd:"" group:"project" help:"Restart processes for the current app environment."`
-	Rollback rollbackCmd      `cmd:"" group:"project" help:"Run an older release for the current app environment."`
-	Backup   backupCmd        `cmd:"" group:"project" help:"Manage backups for the current app environment."`
-	Restore  restoreCmd       `cmd:"" group:"project" help:"Restore the current app environment from a backup."`
-	Destroy  destroyCmd       `cmd:"" group:"project" help:"Destroy the current app environment on the host."`
-	Logs     logsCmd          `cmd:"" group:"project" help:"Tail process logs for the current app environment."`
+	Status   statusCmd        `cmd:"" group:"project" help:"Show all live environments for this app."`
+	Logs     logsCmd          `cmd:"" group:"project" help:"Tail logs for the current branch environment."`
+	Rollback rollbackCmd      `cmd:"" group:"project" help:"Roll back the current branch environment."`
+	Rm       rmCmd            `cmd:"rm" group:"project" help:"Remove an environment by branch name."`
 	Pin      pinCmd           `cmd:"" group:"project" help:"Pin a preview environment so the reaper leaves it running."`
 	Unpin    unpinCmd         `cmd:"" group:"project" help:"Unpin a preview environment so normal expiry applies."`
-	Secret   secretCmd        `cmd:"" group:"project" help:"Manage secrets for the current app environment."`
-	SSH      sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the current app environment."`
-	App      appCmd           `cmd:"" group:"host" help:"List app environments on a host."`
-	Host     hostCmd          `cmd:"" group:"host" help:"Install or inspect a ship host."`
+	Save     saveCmd          `cmd:"" group:"project" help:"Create a backup for the current branch environment."`
+	Restore  restoreCmd       `cmd:"" group:"project" help:"Restore the current branch environment from a backup."`
+	SSH      sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the current branch environment."`
+	Secret   secretCmd        `cmd:"" group:"project" help:"Manage secrets for the current branch environment."`
+	Box      boxCmd           `cmd:"" group:"host" help:"Install or inspect a ship box."`
 	Version  versionCmd       `cmd:"" group:"global" help:"Print the ship version."`
 	Server   helper.ServerCmd `cmd:"" hidden:"" group:"global" help:"Privileged host API."`
 }
@@ -90,8 +87,7 @@ type initCmd struct {
 	Config   string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Template string `name:"template" enum:"container,static,php,hono" default:"container" help:"Scaffold template."`
 	Name     string `name:"name" help:"App name. Defaults to package.json name or directory name."`
-	Env      string `name:"env" short:"e" default:"production" help:"Environment block to create."`
-	Server   string `name:"server" default:"deploy@example.com" help:"SSH target for the env."`
+	Box      string `name:"box" default:"deploy@example.com" help:"SSH target for the box."`
 	Host     string `name:"host" help:"Route host. Defaults to <app>.example.com."`
 	Port     int    `name:"port" help:"Internal process port for container templates."`
 }
@@ -104,63 +100,32 @@ func (c initCmd) Run() error {
 	client.CmdInit(root, client.InitOptions{
 		Template: c.Template,
 		Name:     c.Name,
-		Env:      c.Env,
-		Server:   c.Server,
+		Server:   c.Box,
 		Host:     c.Host,
 		Port:     c.Port,
 	})
 	return nil
 }
 
-type checkCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Env    string `name:"env" short:"e" help:"Environment to validate. Omit to validate all envs."`
-}
-
-func (c checkCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
-	if err != nil {
-		return err
-	}
-	client.CmdCheck(root, c.Env)
-	return nil
-}
-
-type setupCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Env    string `name:"env" short:"e" required:"" help:"Environment to set up."`
-}
-
-func (c setupCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
-	if err != nil {
-		return err
-	}
-	client.CmdSetup(root, c.Env)
-	return nil
-}
-
-type deployCmd struct {
+type shipCmd struct {
 	Config        string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Env           string `name:"env" short:"e" help:"Environment to deploy. Omit to derive it from the current branch."`
-	Branch        string `name:"branch" help:"Branch name to use when HEAD is detached."`
-	Dirty         bool   `help:"Allow deploying a dirty worktree."`
-	Rebuild       bool   `help:"Refresh base images and bypass Podman's build cache."`
-	IncludeDotenv bool   `name:"include-dotenv" help:"Include .env-style files in the uploaded release artifact."`
+	Branch        string `name:"branch" hidden:"" help:"Branch name to use when HEAD is detached."`
+	JSON          bool   `name:"json" help:"Emit structured deployment JSON instead of the URL."`
+	Rebuild       bool   `name:"rebuild" hidden:"" help:"Refresh base images and bypass Podman's build cache."`
+	IncludeDotenv bool   `name:"include-dotenv" hidden:"" help:"Include .env-style files in the uploaded release artifact."`
 }
 
-func (c deployCmd) Run() error {
+func (c shipCmd) Run() error {
 	root, err := projectAppRoot(c.Config)
 	if err != nil {
 		return err
 	}
-	client.CmdDeploy(root, c.Env, c.Branch, c.Dirty, c.Rebuild, c.IncludeDotenv)
+	client.CmdShip(root, c.Branch, c.JSON, c.Rebuild, c.IncludeDotenv)
 	return nil
 }
 
 type sshCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Env    string `name:"env" short:"e" required:"" help:"Environment to connect to."`
 }
 
 func (c sshCmd) Run() error {
@@ -168,14 +133,12 @@ func (c sshCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdSSH(root, c.Env)
+	client.CmdSSHCurrent(root)
 	return nil
 }
 
 type statusCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Env    string `name:"env" short:"e" help:"Environment to inspect. Omit to derive it from the current branch."`
-	Branch string `name:"branch" help:"Branch name to inspect instead of the current branch."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text table."`
 }
 
@@ -184,17 +147,16 @@ func (c statusCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdStatus(root, c.Env, c.Branch, c.JSON)
+	client.CmdStatus(root, c.JSON)
 	return nil
 }
 
 type logsCmd struct {
 	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Process string `arg:"" optional:"" help:"Process name. Optional when only one process runs."`
-	Env     string `name:"env" short:"e" help:"Environment containing the process. Omit to derive it from the current branch."`
-	Branch  string `name:"branch" help:"Branch name to inspect instead of the current branch."`
 	Follow  bool   `name:"follow" short:"f" help:"Stream new log lines."`
 	Tail    int    `name:"tail" default:"100" help:"How many trailing lines to show. Ignored in --follow mode."`
+	JSON    bool   `name:"json" help:"Emit log lines as JSON instead of plain text."`
 }
 
 func (c logsCmd) Run() error {
@@ -202,7 +164,7 @@ func (c logsCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdLogs(root, c.Env, c.Branch, c.Process, c.Follow, c.Tail)
+	client.CmdLogs(root, c.Process, c.Follow, c.Tail, c.JSON)
 	return nil
 }
 
@@ -234,39 +196,9 @@ func (c unpinCmd) Run() error {
 	return nil
 }
 
-type appCmd struct {
-	List appListCmd `cmd:"" help:"List app environments visible on a host."`
-}
-
-type appListCmd struct {
-	Server string `name:"server" required:"" help:"SSH target like deploy@example.com."`
-	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text table."`
-}
-
-func (c appListCmd) Run() error {
-	client.CmdAppList(c.Server, c.JSON)
-	return nil
-}
-
-type restartCmd struct {
-	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Process string `arg:"" optional:"" help:"Process to bounce. Omitted = all processes."`
-	Env     string `name:"env" short:"e" required:"" help:"Environment to restart."`
-}
-
-func (c restartCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
-	if err != nil {
-		return err
-	}
-	client.CmdRestart(root, c.Env, c.Process)
-	return nil
-}
-
 type rollbackCmd struct {
 	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Release string `arg:"" optional:"" help:"Release to run. Omitted = previous local release."`
-	Env     string `name:"env" short:"e" required:"" help:"Environment to roll back."`
 }
 
 func (c rollbackCmd) Run() error {
@@ -274,67 +206,27 @@ func (c rollbackCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdRollback(root, c.Env, c.Release)
+	client.CmdRollback(root, c.Release)
 	return nil
 }
 
-type backupCmd struct {
-	Create backupCreateCmd `cmd:"" help:"Create a backup for one environment."`
-	List   backupListCmd   `cmd:"" help:"List backups for one environment."`
-	Rm     backupRmCmd     `cmd:"rm" help:"Remove one backup."`
-}
-
-type backupCreateCmd struct {
+type saveCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Env    string `name:"env" short:"e" required:"" help:"Environment to back up."`
 	To     string `name:"to" help:"Destination directory on the host. Supports plain paths and file:// URLs."`
-	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
 }
 
-func (c backupCreateCmd) Run() error {
+func (c saveCmd) Run() error {
 	root, err := projectAppRoot(c.Config)
 	if err != nil {
 		return err
 	}
-	client.CmdBackup(root, c.Env, c.To, c.JSON)
-	return nil
-}
-
-type backupListCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Env    string `name:"env" short:"e" required:"" help:"Environment to list backups for."`
-	JSON   bool   `name:"json" help:"Emit structured JSON instead of plain backup IDs."`
-}
-
-func (c backupListCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
-	if err != nil {
-		return err
-	}
-	client.CmdBackupList(root, c.Env, c.JSON)
-	return nil
-}
-
-type backupRmCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	ID     string `arg:"" help:"Backup ID to remove."`
-	Env    string `name:"env" short:"e" required:"" help:"Environment to remove a backup from."`
-}
-
-func (c backupRmCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
-	if err != nil {
-		return err
-	}
-	client.CmdBackupRm(root, c.Env, c.ID)
+	client.CmdSave(root, c.To)
 	return nil
 }
 
 type restoreCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	From   string `name:"from" required:"" help:"Backup ID or path on the host."`
-	Env    string `name:"env" short:"e" required:"" help:"Environment to restore."`
-	DryRun bool   `name:"dry-run" help:"Show what would be restored without writing."`
 }
 
 func (c restoreCmd) Run() error {
@@ -342,43 +234,34 @@ func (c restoreCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdRestore(root, c.Env, c.From, c.DryRun)
+	client.CmdRestore(root, c.From)
 	return nil
 }
 
-type destroyCmd struct {
+type rmCmd struct {
 	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Env     string `name:"env" short:"e" required:"" help:"Environment to destroy."`
-	App     string `name:"app" help:"App name. Required with --server when the env is no longer in ship.toml."`
-	Server  string `name:"server" help:"SSH target like deploy@example.com. Required with --app when the env is no longer in ship.toml."`
-	Confirm string `name:"confirm" help:"Required app-name confirmation unless --yes is passed."`
-	Yes     bool   `name:"yes" help:"Skip confirmation. Intended for automation."`
-	Purge   bool   `name:"purge" help:"Also delete secrets for this app/env."`
+	Branch  string `arg:"" help:"Branch name whose environment should be removed."`
+	Confirm string `name:"confirm" help:"Required app-name confirmation for Production."`
 }
 
-func (c destroyCmd) Run() error {
-	root := "."
-	if c.App == "" && c.Server == "" {
-		var err error
-		root, err = projectAppRoot(c.Config)
-		if err != nil {
-			return err
-		}
+func (c rmCmd) Run() error {
+	root, err := projectAppRoot(c.Config)
+	if err != nil {
+		return err
 	}
-	client.CmdDestroy(root, c.Env, c.Confirm, c.Yes, c.Purge, c.App, c.Server)
+	client.CmdRm(root, c.Branch, c.Confirm)
 	return nil
 }
 
 type secretCmd struct {
-	Set  secretSetCmd  `cmd:"" help:"Read a secret value from stdin and store it on the host."`
-	List secretListCmd `cmd:"" help:"List secret keys for an environment (keys only; values are never printed)."`
-	Rm   secretRmCmd   `cmd:"rm" help:"Remove a secret key from an environment."`
+	Set secretSetCmd  `cmd:"" help:"Read a secret value from stdin and store it on the host."`
+	Ls  secretListCmd `cmd:"ls" help:"List secret keys for the current branch environment (keys only; values are never printed)."`
+	Rm  secretRmCmd   `cmd:"rm" help:"Remove a secret key from an environment."`
 }
 
 type secretSetCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Key    string `arg:"" help:"Env-var name (e.g., DATABASE_URL)."`
-	Env    string `name:"env" short:"e" required:"" help:"Environment to write the secret into."`
 }
 
 func (c secretSetCmd) Run() error {
@@ -386,13 +269,12 @@ func (c secretSetCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdSecretSet(root, c.Env, c.Key)
+	client.CmdSecretSet(root, c.Key)
 	return nil
 }
 
 type secretListCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Env    string `name:"env" short:"e" required:"" help:"Environment to list."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of plain key lines."`
 }
 
@@ -401,14 +283,13 @@ func (c secretListCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdSecretList(root, c.Env, c.JSON)
+	client.CmdSecretList(root, c.JSON)
 	return nil
 }
 
 type secretRmCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Key    string `arg:"" help:"Env-var name to remove."`
-	Env    string `name:"env" short:"e" required:"" help:"Environment to update."`
 }
 
 func (c secretRmCmd) Run() error {
@@ -416,39 +297,50 @@ func (c secretRmCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdSecretRm(root, c.Env, c.Key)
+	client.CmdSecretRm(root, c.Key)
 	return nil
 }
 
-type hostCmd struct {
-	Status  hostStatusCmd  `cmd:"" help:"Show host status."`
-	Doctor  hostDoctorCmd  `cmd:"" help:"Run host diagnostics."`
-	Install hostInstallCmd `cmd:"" help:"Install or converge a host."`
+type boxCmd struct {
+	Init   boxInitCmd   `cmd:"" help:"Install or converge a box."`
+	Doctor boxDoctorCmd `cmd:"" help:"Run box diagnostics."`
+	Ls     boxLsCmd     `cmd:"ls" help:"List app environments visible on a box."`
 }
 
-type hostStatusCmd struct {
-	Server string `name:"server" required:"" help:"SSH target like deploy@example.com."`
+type boxLsCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Target string `arg:"" optional:"" help:"SSH target. Defaults to ship.toml box when run in an app dir."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
 }
 
-func (c hostStatusCmd) Run() error {
-	client.CmdHostStatus(c.Server, c.JSON)
+func (c boxLsCmd) Run() error {
+	target, err := boxTarget(c.Config, c.Target)
+	if err != nil {
+		return err
+	}
+	client.CmdBoxLs(target, c.JSON)
 	return nil
 }
 
-type hostDoctorCmd struct {
-	Server string `name:"server" required:"" help:"SSH target like deploy@example.com."`
+type boxDoctorCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Target string `arg:"" optional:"" help:"SSH target. Defaults to ship.toml box when run in an app dir."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
 }
 
-func (c hostDoctorCmd) Run() error {
-	client.CmdHostDoctor(c.Server, c.JSON)
+func (c boxDoctorCmd) Run() error {
+	target, err := boxTarget(c.Config, c.Target)
+	if err != nil {
+		return err
+	}
+	client.CmdBoxDoctor(target, c.JSON)
 	return nil
 }
 
-type hostInstallCmd struct {
+type boxInitCmd struct {
+	Target                   string `arg:"" help:"SSH target like deploy@example.com."`
 	Mode                     string `enum:"auto,local,remote" default:"auto" help:"Execution mode."`
-	TargetHost               string `name:"host" help:"Target VPS host for remote mode."`
+	TargetHost               string `name:"host" hidden:"" help:"Target VPS host for remote mode."`
 	BootstrapUser            string `help:"SSH user for remote bootstrap."`
 	SSHKey                   string `name:"ssh-key" help:"SSH private key for remote mode."`
 	OperatorSSHPublicKeyFile string `help:"SSH public key file for operator access."`
@@ -474,8 +366,9 @@ type hostInstallCmd struct {
 	AssumeYes                bool   `name:"yes" help:"Non-interactive mode."`
 }
 
-func (c hostInstallCmd) Run() error {
+func (c boxInitCmd) Run() error {
 	opts := hostinstall.DefaultOptions(nil)
+	opts.TargetHost = c.Target
 	if c.Mode != "" {
 		opts.Mode = c.Mode
 	}
@@ -550,9 +443,23 @@ func (c hostInstallCmd) Run() error {
 
 func cliArgs(args []string) []string {
 	if len(args) == 0 {
+		if _, err := os.Stat(client.ManifestFile); err == nil {
+			return args
+		}
 		return []string{"--help"}
 	}
 	return args
+}
+
+func boxTarget(configPath, target string) (string, error) {
+	if target != "" {
+		return target, nil
+	}
+	root, err := projectAppRoot(configPath)
+	if err != nil {
+		return "", fmt.Errorf("box target is required outside an app dir")
+	}
+	return client.BoxTarget(root)
 }
 
 func main() {
@@ -560,7 +467,7 @@ func main() {
 	parser, err := kong.New(
 		&cli{},
 		kong.Name("ship"),
-		kong.Description("Deploy containerized apps to a single hardened VPS."),
+		kong.Description("Run `ship` inside an app to deploy the current branch. Use commands below for reads, rollback, cleanup, secrets, and box management."),
 		kong.ExplicitGroups(cliCommandGroups()),
 		kong.ConfigureHelp(kong.HelpOptions{NoExpandSubcommands: true}),
 		kong.UsageOnError(),
@@ -569,6 +476,28 @@ func main() {
 		panic(err)
 	}
 	ctx, err := parser.Parse(args)
-	parser.FatalIfErrorf(err)
-	parser.FatalIfErrorf(ctx.Run())
+	if err != nil {
+		parser.Errorf("%s", err)
+		os.Exit(2)
+	}
+	if err := ctx.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		os.Exit(commandErrorExitCode(err))
+	}
+}
+
+func commandErrorExitCode(err error) int {
+	text := err.Error()
+	switch {
+	case strings.Contains(text, client.ManifestFile),
+		strings.Contains(text, "--config"),
+		strings.Contains(text, "manifest"),
+		strings.Contains(text, "invalid app name"),
+		strings.Contains(text, "invalid env name"),
+		strings.Contains(text, "invalid template"),
+		strings.Contains(text, "box target is required"):
+		return 2
+	default:
+		return 1
+	}
 }

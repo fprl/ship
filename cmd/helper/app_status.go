@@ -140,10 +140,11 @@ type appListPayload struct {
 }
 
 type appEnvStatus struct {
-	App       string          `json:"app"`
-	Env       string          `json:"env"`
-	Processes []processStatus `json:"processes"`
-	Static    *staticStatus   `json:"static,omitempty"`
+	App       string                    `json:"app"`
+	Env       string                    `json:"env"`
+	Preview   *identity.PreviewIdentity `json:"preview,omitempty"`
+	Processes []processStatus           `json:"processes"`
+	Static    *staticStatus             `json:"static,omitempty"`
 }
 
 type processStatus struct {
@@ -294,10 +295,15 @@ func mergeAppEnvs(identityApps, processApps []appEnvStatus) []appEnvStatus {
 	}
 	grouped := map[key]appEnvStatus{}
 	for _, app := range identityApps {
-		grouped[key{app: app.App, env: app.Env}] = appEnvStatus{App: app.App, Env: app.Env}
+		grouped[key{app: app.App, env: app.Env}] = app
 	}
 	for _, app := range processApps {
-		grouped[key{app: app.App, env: app.Env}] = app
+		k := key{app: app.App, env: app.Env}
+		if existing, ok := grouped[k]; ok {
+			app.Preview = existing.Preview
+			app.Static = existing.Static
+		}
+		grouped[k] = app
 	}
 	keys := make([]key, 0, len(grouped))
 	for k := range grouped {
@@ -326,7 +332,7 @@ func renderStatusText(app, env string, processes []processStatus, envKnown bool,
 		if envKnown {
 			b.WriteString("  no processes running\n")
 		} else {
-			b.WriteString("  no processes running — run `ship deploy --env " + env + "`\n")
+			b.WriteString("  no processes running — run `ship`\n")
 		}
 		return b.String()
 	}
@@ -611,7 +617,7 @@ func identityAppEnvs() ([]appEnvStatus, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %v", path, err)
 		}
-		out = append(out, appEnvStatus{App: file.App, Env: file.Env})
+		out = append(out, appEnvStatus{App: file.App, Env: file.Env, Preview: file.Preview})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].App != out[j].App {

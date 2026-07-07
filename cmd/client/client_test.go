@@ -1,7 +1,9 @@
 package client
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -245,6 +247,87 @@ func TestResolveDeployAddressReportsNotGitRepo(t *testing.T) {
 	}
 }
 
+func TestWriteShipResultOutputContracts(t *testing.T) {
+	result := ShipResult{
+		URL:        "https://api.example.com",
+		Env:        "prod",
+		Release:    "abc1234",
+		Processes:  []string{"web"},
+		DurationMs: 1234,
+	}
+
+	urlOut := captureClientStdout(t, func() {
+		writeShipResult(result, false)
+	})
+	if urlOut != "https://api.example.com\n" {
+		t.Fatalf("plain ship stdout = %q, want exactly URL newline", urlOut)
+	}
+
+	jsonOut := captureClientStdout(t, func() {
+		writeShipResult(result, true)
+	})
+	var payload ShipResult
+	if err := json.Unmarshal([]byte(jsonOut), &payload); err != nil {
+		t.Fatalf("ship --json stdout is not JSON: %v\n%s", err, jsonOut)
+	}
+	if payload.URL != result.URL || payload.Env != result.Env || payload.Release != result.Release || payload.DurationMs != result.DurationMs || len(payload.Processes) != 1 || payload.Processes[0] != "web" {
+		t.Fatalf("unexpected ship --json payload: %+v", payload)
+	}
+}
+
+func TestRewriteRollbackSummaryUsesSurfaceEnvironmentName(t *testing.T) {
+	read := readContext{
+		AppContext: &config.AppContext{AppName: "api", EnvName: "prod", ProductionBranch: "main"},
+		Address:    readAddress{EnvName: "prod", ProductionBranch: true},
+		EnvName:    "prod",
+	}
+	out := rewriteRollbackSummary("Rolled back api (prod) from def456 to abc123\n  web          running\n", read)
+	if !strings.Contains(out, "Rolled back Production main from def456 to abc123") {
+		t.Fatalf("rollback summary leaked internal env:\n%s", out)
+	}
+	if !strings.Contains(out, "web") {
+		t.Fatalf("rollback process lines should be preserved:\n%s", out)
+	}
+}
+
+func TestRewriteRestoreSummaryUsesSurfaceEnvironmentName(t *testing.T) {
+	read := readContext{
+		AppContext: &config.AppContext{AppName: "api", EnvName: "feat-x-ab12"},
+		Address:    readAddress{EnvName: "feat-x", PreviewBranch: "feat/x"},
+		EnvName:    "feat-x-ab12",
+	}
+	out := rewriteRestoreSummary("Restored api (feat-x-ab12) from backup-id at release abc123\n", read)
+	if !strings.Contains(out, "Restored Preview feat/x from backup-id at release abc123") {
+		t.Fatalf("restore summary leaked internal env:\n%s", out)
+	}
+}
+
+func TestDeploymentURLFallsBackToShipAddressWithoutRoutes(t *testing.T) {
+	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@example.com"}
+	got := deploymentURL(ctx, "prod")
+	want := "ship://example.com/api/prod"
+	if got != want {
+		t.Fatalf("fallback URL = %q, want %q", got, want)
+	}
+}
+
+func TestDeploymentURLPrefersRootWebRoute(t *testing.T) {
+	ctx := &config.AppContext{
+		AppName: "api",
+		EnvName: "prod",
+		Server:  "deploy@example.com",
+		Routes: map[string]config.Route{
+			"api.example.com/docs": {Host: "api.example.com", Path: "/docs", Process: "web"},
+			"api.example.com":      {Host: "api.example.com", Process: "web"},
+		},
+	}
+	got := deploymentURL(ctx, "prod")
+	want := "https://api.example.com"
+	if got != want {
+		t.Fatalf("routed URL = %q, want %q", got, want)
+	}
+}
+
 func TestResolveDeployAddressDetectsStagedAndUnstagedDirtyState(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
@@ -330,14 +413,14 @@ func TestResolveReadPreviewEnvPropagatesUnknownBranchError(t *testing.T) {
 	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@example.com"}
 	command := serverAppPreviewResolveCommand("api", "feat/x")
 	runner := &fakeSSHRunner{failures: map[string]string{
-		command: "Error: unknown_preview_branch: no preview environment is mapped for branch \"feat/x\"\nnext: ship deploy\n",
+		command: "Error: unknown_preview_branch: no preview environment is mapped for branch \"feat/x\"\nnext: ship\n",
 	}}
 
 	_, err := resolveReadPreviewEnv(runner, ctx, readAddress{PreviewBranch: "feat/x"})
 	if err == nil {
 		t.Fatal("expected unknown preview branch error")
 	}
-	want := "unknown_preview_branch: no preview environment is mapped for branch \"feat/x\"\nnext: ship deploy"
+	want := "unknown_preview_branch: no preview environment is mapped for branch \"feat/x\"\nnext: ship"
 	if err.Error() != want {
 		t.Fatalf("unexpected error:\nwant: %q\n got: %q", want, err.Error())
 	}
@@ -480,7 +563,7 @@ web = { port = 3000 }
 	if !strings.Contains(diags[0].Message, "secret DATABASE_URL must be set before deploy") {
 		t.Fatalf("unexpected secret message: %q", diags[0].Message)
 	}
-	if !strings.Contains(diags[0].Hint, "ship secret set DATABASE_URL --env production") {
+	if !strings.Contains(diags[0].Hint, "ship secret set DATABASE_URL") {
 		t.Fatalf("unexpected secret hint: %q", diags[0].Hint)
 	}
 }
@@ -734,6 +817,29 @@ func assertSSHOptionSequence(t *testing.T, opts []string, first string, second s
 	t.Fatalf("expected SSH option sequence %q %q in %v", first, second, opts)
 }
 
+func captureClientStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", false)
 	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, false)
@@ -833,21 +939,6 @@ func TestServerAppBackupCommands(t *testing.T) {
 			want: "sudo -n /usr/local/bin/ship server app backup create --to /tmp/backups api production",
 		},
 		{
-			name: "list",
-			got:  serverAppBackupListCommand("api", "production", false),
-			want: "sudo -n /usr/local/bin/ship server app backup list api production",
-		},
-		{
-			name: "list json",
-			got:  serverAppBackupListCommand("api", "production", true),
-			want: "sudo -n /usr/local/bin/ship server app backup list --json api production",
-		},
-		{
-			name: "rm",
-			got:  serverAppBackupRmCommand("api", "production", "backup-id"),
-			want: "sudo -n /usr/local/bin/ship server app backup rm api production backup-id",
-		},
-		{
 			name: "restore",
 			got:  serverAppRestoreCommand("api", "production", "backup-id", false),
 			want: "sudo -n /usr/local/bin/ship server app backup restore --from backup-id api production",
@@ -917,22 +1008,12 @@ func TestServerAppPreviewCommands(t *testing.T) {
 	}
 }
 
-func TestServerHostReadCommandsSupportJSON(t *testing.T) {
+func TestServerDoctorCommandSupportsJSON(t *testing.T) {
 	tests := []struct {
 		name string
 		got  string
 		want string
 	}{
-		{
-			name: "status text",
-			got:  serverStatusCommand(false),
-			want: "sudo -n /usr/local/bin/ship server status",
-		},
-		{
-			name: "status json",
-			got:  serverStatusCommand(true),
-			want: "sudo -n /usr/local/bin/ship server status --json",
-		},
 		{
 			name: "doctor text",
 			got:  serverDoctorCommand(false),
@@ -1035,11 +1116,11 @@ func TestDeployRemotePreflightFailsMissingSecrets(t *testing.T) {
 		"test -x /usr/local/bin/ship": "",
 		"command -v rsync >/dev/null": "",
 	}, failures: map[string]string{
-		serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"}): `{"app":"api","env":"production","healthy":false,"issues":[{"code":"secret_missing","message":"missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL --env production` + "`" + `"}],"findings":["missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL --env production` + "`" + `"]}`,
+		serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"}): `{"app":"api","env":"production","healthy":false,"issues":[{"code":"secret_missing","message":"missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL` + "`" + `"}],"findings":["missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL` + "`" + `"]}`,
 	}}
 
 	err := deployRemotePreflight(runner, ctx)
-	if err == nil || !strings.Contains(err.Error(), "missing secret DATABASE_URL") || !strings.Contains(err.Error(), "ship secret set DATABASE_URL --env production") {
+	if err == nil || !strings.Contains(err.Error(), "missing secret DATABASE_URL") || !strings.Contains(err.Error(), "ship secret set DATABASE_URL") {
 		t.Fatalf("expected missing secret hint, got %v", err)
 	}
 	if !strings.Contains(err.Error(), "No remote files, routes, or containers were changed.") {
@@ -1093,7 +1174,7 @@ func TestEnsureRemoteEnvReadyDoesNotPrepareWhenSecretsAreMissing(t *testing.T) {
 			"command -v rsync >/dev/null": "",
 		},
 		failures: map[string]string{
-			preflightCmd: `{"app":"api","env":"production","healthy":false,"issues":[{"code":"env_missing","message":"app env is not prepared: missing /var/apps/api.production"},{"code":"secret_missing","message":"missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL --env production` + "`" + `"}],"findings":["app env is not prepared: missing /var/apps/api.production","missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL --env production` + "`" + `"]}`,
+			preflightCmd: `{"app":"api","env":"production","healthy":false,"issues":[{"code":"env_missing","message":"app env is not prepared: missing /var/apps/api.production"},{"code":"secret_missing","message":"missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL` + "`" + `"}],"findings":["app env is not prepared: missing /var/apps/api.production","missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL` + "`" + `"]}`,
 		},
 	}
 
@@ -1138,34 +1219,5 @@ func TestEnsureRemoteEnvReadyUsesPostPrepareBoundaryForSecondPreflightFailure(t 
 	}
 	if strings.Contains(err.Error(), "No remote files, routes, or containers were changed.") {
 		t.Fatalf("post-prepare failure must not claim no remote files changed, got %v", err)
-	}
-}
-
-func TestValidateDestroyConfirmation(t *testing.T) {
-	if err := validateDestroyConfirmation("api", "api", false); err != nil {
-		t.Fatalf("confirming the app name should pass: %v", err)
-	}
-	if err := validateDestroyConfirmation("api", "", true); err != nil {
-		t.Fatalf("--yes should pass without confirm: %v", err)
-	}
-	if err := validateDestroyConfirmation("api", "wrong", false); err == nil || !strings.Contains(err.Error(), "--confirm api") {
-		t.Fatalf("expected confirmation error naming the app, got %v", err)
-	}
-}
-
-func TestDestroyTargetSupportsManifestFreeTargeting(t *testing.T) {
-	app, server, err := destroyTarget(t.TempDir(), "production", "api", "deploy@example.com")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if app != "api" || server != "deploy@example.com" {
-		t.Fatalf("unexpected target: app=%s server=%s", app, server)
-	}
-
-	if _, _, err := destroyTarget(t.TempDir(), "production", "api", ""); err == nil || !strings.Contains(err.Error(), "both --app and --server") {
-		t.Fatalf("expected paired flag error, got %v", err)
-	}
-	if _, _, err := destroyTarget(t.TempDir(), "production", "Api", "deploy@example.com"); err == nil || !strings.Contains(err.Error(), "invalid app name") {
-		t.Fatalf("expected app validation error, got %v", err)
 	}
 }

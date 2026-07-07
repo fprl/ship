@@ -54,10 +54,10 @@ func deployHostPreflight(runner sshRunner, ctx *config.AppContext) error {
 	if _, err := runSSHRequired(runner, ctx.Server, "true", fmt.Sprintf("SSH failed for %s", ctx.Server)); err != nil {
 		return deployPreflightError(err.Error())
 	}
-	if _, err := runSSHRequired(runner, ctx.Server, "test -x /usr/local/bin/ship", "missing ship server API at /usr/local/bin/ship; run `ship host install` for this VPS"); err != nil {
+	if _, err := runSSHRequired(runner, ctx.Server, "test -x /usr/local/bin/ship", "missing ship server API at /usr/local/bin/ship; run `ship box init "+ctx.Server+"` for this VPS"); err != nil {
 		return deployPreflightError(err.Error())
 	}
-	if _, err := runSSHRequired(runner, ctx.Server, "command -v rsync >/dev/null", "missing required server tool: rsync; rerun `ship host install`"); err != nil {
+	if _, err := runSSHRequired(runner, ctx.Server, "command -v rsync >/dev/null", "missing required server tool: rsync; rerun `ship box init "+ctx.Server+"`"); err != nil {
 		return deployPreflightError(err.Error())
 	}
 	return nil

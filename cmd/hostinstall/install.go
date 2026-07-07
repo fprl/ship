@@ -836,9 +836,9 @@ func (i *Installer) printNextSteps(plan Plan) {
 		fmt.Fprintf(i.Stdout, "%d. export SHIP_SSH_KEY=\"$(cat %s)\"\n", step, utils.ShellEscape(privateKey))
 		step++
 	}
-	fmt.Fprintf(i.Stdout, "%d. ship host status --server %s\n", step, server)
+	fmt.Fprintf(i.Stdout, "%d. ship box doctor %s\n", step, server)
 	step++
-	fmt.Fprintf(i.Stdout, "%d. ship init --server %s --host <app-domain>\n", step, server)
+	fmt.Fprintf(i.Stdout, "%d. ship init --box %s --host <app-domain>\n", step, server)
 }
 
 func deployPrivateKeyHint(plan Plan) string {

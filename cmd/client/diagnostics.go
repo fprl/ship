@@ -2,6 +2,7 @@ package client
 
 import (
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -50,22 +51,22 @@ func (d diagnostics) errorMessages() []string {
 	return out
 }
 
-func (d diagnostics) print() {
+func (d diagnostics) printTo(w io.Writer) {
 	for _, item := range d {
 		label := "Error"
 		if item.Level == diagnosticWarning {
 			label = "Warning"
 		}
-		fmt.Printf("%s: %s\n", label, item.Message)
+		fmt.Fprintf(w, "%s: %s\n", label, item.Message)
 		if item.Hint == "" {
 			continue
 		}
 		for _, line := range strings.Split(item.Hint, "\n") {
 			if line == "" {
-				fmt.Println()
+				fmt.Fprintln(w)
 				continue
 			}
-			fmt.Printf("  %s\n", line)
+			fmt.Fprintf(w, "  %s\n", line)
 		}
 	}
 }
@@ -77,7 +78,7 @@ func manifestHint(message string) string {
 	case strings.Contains(message, ".serve directory"):
 		return "Run the framework build that creates the configured static directory, then retry."
 	case strings.Contains(message, "env not found"):
-		return "Check the [env.<name>] blocks in ship.toml and pass one with --env."
+		return "Check ship.toml and retry from the branch you want to ship."
 	default:
 		return ""
 	}

@@ -92,7 +92,7 @@ func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localD
 		diags = append(diags, diagnostic{
 			Level:   diagnosticError,
 			Message: "working tree is dirty",
-			Hint:    fmt.Sprintf("Commit changes, or run `ship deploy --env %s --dirty` to deploy the current filesystem snapshot.", envName),
+			Hint:    "Commit changes before shipping Production. Preview branches can ship dirty worktrees.",
 		})
 		return plan, diags, nil
 	}
@@ -179,7 +179,7 @@ func secretReferenceDiagnostics(ctx *config.AppContext) diagnostics {
 		out = append(out, diagnostic{
 			Level:   diagnosticWarning,
 			Message: fmt.Sprintf("secret %s must be set before deploy", key),
-			Hint:    fmt.Sprintf("Run:\n  printf '%%s' \"$%s\" | ship secret set %s --env %s", key, key, ctx.EnvName),
+			Hint:    fmt.Sprintf("Run:\n  printf '%%s' \"$%s\" | ship secret set %s", key, key),
 		})
 	}
 	return out

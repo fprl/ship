@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/names"
@@ -250,13 +251,6 @@ func serverCommand(args ...string) string {
 	return strings.Join(parts, " ")
 }
 
-func serverStatusCommand(jsonFlag bool) string {
-	if jsonFlag {
-		return serverCommand("status", "--json")
-	}
-	return serverCommand("status")
-}
-
 func serverDoctorCommand(jsonFlag bool) string {
 	if jsonFlag {
 		return serverCommand("doctor", "--json")
@@ -336,15 +330,6 @@ func serverAppLogsCommand(appName, envName, process string, follow bool, tail in
 	return serverCommand(args...)
 }
 
-func serverAppRestartCommand(appName, envName, process string) string {
-	args := []string{"app", "restart"}
-	args = append(args, appName, envName)
-	if process != "" {
-		args = append(args, process)
-	}
-	return serverCommand(args...)
-}
-
 func serverAppRollbackCommand(appName, envName, release string) string {
 	args := []string{"app", "rollback"}
 	args = append(args, appName, envName)
@@ -364,19 +349,6 @@ func serverAppBackupCommand(appName, envName, dest string, jsonFlag bool) string
 	}
 	args = append(args, appName, envName)
 	return serverCommand(args...)
-}
-
-func serverAppBackupListCommand(appName, envName string, jsonFlag bool) string {
-	args := []string{"app", "backup", "list"}
-	if jsonFlag {
-		args = append(args, "--json")
-	}
-	args = append(args, appName, envName)
-	return serverCommand(args...)
-}
-
-func serverAppBackupRmCommand(appName, envName, id string) string {
-	return serverCommand("app", "backup", "rm", appName, envName, id)
 }
 
 func serverAppRestoreCommand(appName, envName, from string, dryRun bool) string {
@@ -428,60 +400,14 @@ func serverAppSecretRmCommand(appName, envName, key string) string {
 	return serverCommand("app", "secret", "rm", appName, envName, key)
 }
 
-func CmdCheck(root string, envName string) {
-	diags, err := checkDiagnostics(root, envName)
+func CmdSSHCurrent(root string) {
+	read, err := currentReadContext(root, "ssh")
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	diags.print()
-	if diags.hasErrors() {
-		os.Exit(1)
-	}
-	if envName != "" {
-		fmt.Printf("Local deploy checks passed for env %s.\n", envName)
-	} else {
-		fmt.Println("Manifest ship.toml is valid.")
-	}
-}
+	defer read.Runner.Close()
 
-func CmdSetup(root string, envName string) {
-	ctx, err := config.LoadAppContext(root, envName)
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
-
-	// 1. check SSH
-	runSSHChecked(runner, ctx.Server, "true", fmt.Sprintf("SSH failed for %s", ctx.Server))
-
-	// 2. check required server tools. Per ADR-0005 language runtimes
-	// live in the container image, not on the host. The host supplies
-	// ship + rsync only; Podman/Caddy are checked by the
-	// installer, not per-deploy.
-	runSSHChecked(runner, ctx.Server, "test -x /usr/local/bin/ship", "missing ship server API at /usr/local/bin/ship; rerun `ship host install`")
-	runSSHChecked(runner, ctx.Server, "command -v rsync", "missing required server tool: rsync")
-
-	// 3. create per-env user, dirs, and Podman network
-	runSSHChecked(runner, ctx.Server, serverAppSetupEnvCommand(ctx.AppName, envName), "ship server app setup-env failed")
-	fmt.Printf("Setup complete for %s (%s)\n", ctx.AppName, envName)
-}
-
-func CmdSSH(root string, envName string) {
-	ctx, err := config.LoadAppContext(root, envName)
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
-
-	err = runner.RunSSHPassthrough(ctx.Server, "")
+	err = read.Runner.RunSSHPassthrough(read.AppContext.Server, "")
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -517,16 +443,111 @@ func resolveReadPreviewEnv(runner sshRunner, ctx *config.AppContext, address rea
 	return env, nil
 }
 
-func CmdStatus(root string, envName string, branchName string, jsonFlag bool) {
-	address, err := resolveReadAddress(root, envName, branchName, "status")
+type readContext struct {
+	AppContext *config.AppContext
+	Address    readAddress
+	EnvName    string
+	Runner     *CommandRunner
+}
+
+func BoxTarget(root string) (string, error) {
+	ctx, err := config.LoadAppContext(root, productionEnvName)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		return "", err
+	}
+	return ctx.Server, nil
+}
+
+func currentReadContext(root, command string) (readContext, error) {
+	address, err := resolveReadAddress(root, "", "", command)
+	if err != nil {
+		return readContext{}, err
 	}
 	baseEnv := address.EnvName
 	if address.PreviewBranch != "" {
 		baseEnv = productionEnvName
 	}
 	ctx, err := config.LoadAppContext(root, baseEnv)
+	if err != nil {
+		return readContext{}, err
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		return readContext{}, err
+	}
+	resolvedEnv, err := resolveReadPreviewEnv(runner, ctx, address)
+	if err != nil {
+		runner.Close()
+		return readContext{}, err
+	}
+	ctx, err = config.LoadAppContext(root, resolvedEnv)
+	if err != nil {
+		runner.Close()
+		return readContext{}, err
+	}
+	return readContext{AppContext: ctx, Address: address, EnvName: resolvedEnv, Runner: runner}, nil
+}
+
+type appListJSON struct {
+	Apps []appListEnvJSON `json:"apps"`
+}
+
+type appListEnvJSON struct {
+	App       string             `json:"app"`
+	Env       string             `json:"env"`
+	Preview   *previewStatusJSON `json:"preview,omitempty"`
+	Processes []processJSON      `json:"processes"`
+	Static    *staticJSON        `json:"static,omitempty"`
+}
+
+type previewStatusJSON struct {
+	Branch     string `json:"branch"`
+	ExpiresAt  string `json:"expires_at,omitempty"`
+	Pinned     bool   `json:"pinned"`
+	LastShipAt string `json:"last_ship_at,omitempty"`
+}
+
+type processJSON struct {
+	Process    string `json:"process"`
+	Container  string `json:"container"`
+	State      string `json:"state"`
+	Image      string `json:"image,omitempty"`
+	Release    string `json:"release,omitempty"`
+	Dirty      bool   `json:"dirty,omitempty"`
+	BaseCommit string `json:"base_commit,omitempty"`
+	CreatedAt  string `json:"created_at,omitempty"`
+	Status     string `json:"status,omitempty"`
+}
+
+type staticJSON struct {
+	Release    string   `json:"release"`
+	Routes     []string `json:"routes"`
+	Dirty      bool     `json:"dirty,omitempty"`
+	BaseCommit string   `json:"base_commit,omitempty"`
+	CreatedAt  string   `json:"created_at,omitempty"`
+}
+
+type statusPayload struct {
+	App  string          `json:"app"`
+	Envs []statusEnvJSON `json:"envs"`
+}
+
+type statusEnvJSON struct {
+	Kind       string        `json:"kind"`
+	Branch     string        `json:"branch"`
+	URL        string        `json:"url"`
+	Env        string        `json:"env"`
+	Release    string        `json:"release,omitempty"`
+	Health     string        `json:"health"`
+	AgeSeconds int64         `json:"ageSeconds,omitempty"`
+	ExpiresAt  string        `json:"expiresAt,omitempty"`
+	Pinned     bool          `json:"pinned,omitempty"`
+	Dirty      bool          `json:"dirty,omitempty"`
+	Processes  []processJSON `json:"processes"`
+}
+
+func CmdStatus(root string, jsonFlag bool) {
+	ctx, err := config.LoadAppContext(root, productionEnvName)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -535,28 +556,143 @@ func CmdStatus(root string, envName string, branchName string, jsonFlag bool) {
 		utils.Die(err.Error(), 1)
 	}
 	defer runner.Close()
-	resolvedEnv, err := resolveReadPreviewEnv(runner, ctx, address)
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	envName = resolvedEnv
-	ctx, err = config.LoadAppContext(root, envName)
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
 
-	out := runSSHChecked(runner, ctx.Server, serverAppStatusCommand(ctx.AppName, envName, jsonFlag), "status failed")
-	// Pass the helper's output through unchanged so `--json` produces
-	// pipeable JSON and the text mode keeps its line breaks.
-	fmt.Print(out)
+	out := runSSHChecked(runner, ctx.Server, serverAppListCommand(true), "status failed")
+	payload, err := statusFromAppList(ctx, out)
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	if jsonFlag {
+		buf, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			utils.Die(err.Error(), 1)
+		}
+		fmt.Println(string(buf))
+		return
+	}
+	fmt.Print(renderStatusSummary(payload))
 }
 
-func CmdAppList(server string, jsonFlag bool) {
+func statusFromAppList(ctx *config.AppContext, raw string) (statusPayload, error) {
+	var list appListJSON
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &list); err != nil {
+		return statusPayload{}, fmt.Errorf("status failed: invalid app list JSON: %v", err)
+	}
+	payload := statusPayload{App: ctx.AppName}
+	for _, item := range list.Apps {
+		if item.App != ctx.AppName {
+			continue
+		}
+		payload.Envs = append(payload.Envs, statusEnvFromAppListItem(ctx, item))
+	}
+	sort.Slice(payload.Envs, func(i, j int) bool {
+		if payload.Envs[i].Kind != payload.Envs[j].Kind {
+			return payload.Envs[i].Kind == "Production"
+		}
+		return payload.Envs[i].Branch < payload.Envs[j].Branch
+	})
+	return payload, nil
+}
+
+func statusEnvFromAppListItem(ctx *config.AppContext, item appListEnvJSON) statusEnvJSON {
+	kind := "Preview"
+	branch := item.Env
+	if item.Env == productionEnvName {
+		kind = "Production"
+		branch = ctx.ProductionBranch
+	}
+	expiresAt := ""
+	pinned := false
+	if item.Preview != nil {
+		branch = item.Preview.Branch
+		expiresAt = item.Preview.ExpiresAt
+		pinned = item.Preview.Pinned
+	}
+	release, dirty, createdAt := appListActiveRelease(item)
+	return statusEnvJSON{
+		Kind:       kind,
+		Branch:     branch,
+		URL:        deploymentURL(ctx, item.Env),
+		Env:        item.Env,
+		Release:    release,
+		Health:     appListHealth(item),
+		AgeSeconds: ageSeconds(createdAt),
+		ExpiresAt:  expiresAt,
+		Pinned:     pinned,
+		Dirty:      dirty,
+		Processes:  item.Processes,
+	}
+}
+
+func appListActiveRelease(item appListEnvJSON) (string, bool, string) {
+	if item.Static != nil && item.Static.Release != "" {
+		return item.Static.Release, item.Static.Dirty, item.Static.CreatedAt
+	}
+	for _, proc := range item.Processes {
+		if proc.Release != "" {
+			return proc.Release, proc.Dirty, proc.CreatedAt
+		}
+	}
+	return "", false, ""
+}
+
+func appListHealth(item appListEnvJSON) string {
+	if len(item.Processes) == 0 {
+		if item.Static != nil {
+			return "healthy"
+		}
+		return "stopped"
+	}
+	for _, proc := range item.Processes {
+		if proc.State != "running" {
+			return "degraded"
+		}
+	}
+	return "healthy"
+}
+
+func ageSeconds(createdAt string) int64 {
+	if createdAt == "" {
+		return 0
+	}
+	t, err := time.Parse(timeRFC3339UTC, createdAt)
+	if err != nil {
+		return 0
+	}
+	return int64(time.Since(t).Seconds())
+}
+
+func renderStatusSummary(payload statusPayload) string {
+	if len(payload.Envs) == 0 {
+		return fmt.Sprintf("No live envs for %s\n", payload.App)
+	}
+	var b strings.Builder
+	for _, env := range payload.Envs {
+		release := env.Release
+		if release == "" {
+			release = "-"
+		}
+		if env.Dirty {
+			release += " (dirty)"
+		}
+		lifecycle := ""
+		switch {
+		case env.Kind == "Preview" && env.Pinned:
+			lifecycle = " pinned"
+		case env.Kind == "Preview" && env.ExpiresAt != "":
+			lifecycle = " expires=" + env.ExpiresAt
+		}
+		fmt.Fprintf(&b, "%s %s  %s  release=%s  health=%s%s\n", env.Kind, env.Branch, env.URL, release, env.Health, lifecycle)
+	}
+	return b.String()
+}
+
+func CmdBoxLs(server string, jsonFlag bool) {
 	if server == "" {
-		utils.Die("--server is required", 1)
+		utils.Die("box target is required", 1)
 	}
 	if !config.ValidateSshTarget(server) {
-		utils.Die("--server must be an SSH target like deploy@example.com", 1)
+		utils.Die("box target must be an SSH target like deploy@example.com", 1)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -568,8 +704,60 @@ func CmdAppList(server string, jsonFlag bool) {
 	fmt.Print(out)
 }
 
-func CmdRestart(root string, envName string, process string) {
-	ctx, err := config.LoadAppContext(root, envName)
+func CmdRollback(root string, release string) {
+	read, err := currentReadContext(root, "rollback")
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer read.Runner.Close()
+
+	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppRollbackCommand(read.AppContext.AppName, read.EnvName, release), "rollback failed")
+	fmt.Print(rewriteRollbackSummary(out, read))
+}
+
+func rewriteRollbackSummary(out string, read readContext) string {
+	kind, branch := readSurface(read)
+	prefix := fmt.Sprintf("Rolled back %s (%s) ", read.AppContext.AppName, read.EnvName)
+	replacement := fmt.Sprintf("Rolled back %s %s ", kind, branch)
+	return strings.Replace(out, prefix, replacement, 1)
+}
+
+func CmdSave(root string, dest string) {
+	read, err := currentReadContext(root, "save")
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer read.Runner.Close()
+
+	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppBackupCommand(read.AppContext.AppName, read.EnvName, dest, false), "save failed")
+	fmt.Print(out)
+}
+
+func CmdRestore(root string, from string) {
+	read, err := currentReadContext(root, "restore")
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	defer read.Runner.Close()
+
+	runSSHChecked(read.Runner, read.AppContext.Server, serverAppSetupEnvCommand(read.AppContext.AppName, read.EnvName), "restore setup failed")
+	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppRestoreCommand(read.AppContext.AppName, read.EnvName, from, false), "restore failed")
+	fmt.Print(rewriteRestoreSummary(out, read))
+}
+
+func rewriteRestoreSummary(out string, read readContext) string {
+	kind, branch := readSurface(read)
+	prefix := fmt.Sprintf("Restored %s (%s) ", read.AppContext.AppName, read.EnvName)
+	replacement := fmt.Sprintf("Restored %s %s ", kind, branch)
+	return strings.Replace(out, prefix, replacement, 1)
+}
+
+func CmdRm(root string, branch string, confirm string) {
+	address, err := resolveReadAddress(root, "", branch, "rm")
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	baseCtx, err := config.LoadAppContext(root, productionEnvName)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -579,179 +767,76 @@ func CmdRestart(root string, envName string, process string) {
 	}
 	defer runner.Close()
 
-	// Restart shares status's plumbing: helper does the work and prints
-	// the summary, so pass its text output through unchanged.
-	out := runSSHChecked(runner, ctx.Server, serverAppRestartCommand(ctx.AppName, envName, process), "restart failed")
-	fmt.Print(out)
-}
-
-func CmdRollback(root string, envName string, release string) {
-	ctx, err := config.LoadAppContext(root, envName)
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
-
-	out := runSSHChecked(runner, ctx.Server, serverAppRollbackCommand(ctx.AppName, envName, release), "rollback failed")
-	fmt.Print(out)
-}
-
-func CmdBackup(root string, envName string, dest string, jsonFlag bool) {
-	ctx, err := config.LoadAppContext(root, envName)
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
-
-	out := runSSHChecked(runner, ctx.Server, serverAppBackupCommand(ctx.AppName, envName, dest, jsonFlag), "backup failed")
-	fmt.Print(out)
-}
-
-func CmdBackupList(root string, envName string, jsonFlag bool) {
-	ctx, err := config.LoadAppContext(root, envName)
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
-
-	out := runSSHChecked(runner, ctx.Server, serverAppBackupListCommand(ctx.AppName, envName, jsonFlag), "backup list failed")
-	fmt.Print(out)
-}
-
-func CmdBackupRm(root string, envName string, id string) {
-	ctx, err := config.LoadAppContext(root, envName)
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
-
-	out := runSSHChecked(runner, ctx.Server, serverAppBackupRmCommand(ctx.AppName, envName, id), "backup rm failed")
-	fmt.Print(out)
-}
-
-func CmdRestore(root string, envName string, from string, dryRun bool) {
-	ctx, err := config.LoadAppContext(root, envName)
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
-
-	runSSHChecked(runner, ctx.Server, serverAppSetupEnvCommand(ctx.AppName, envName), "restore setup failed")
-	out := runSSHChecked(runner, ctx.Server, serverAppRestoreCommand(ctx.AppName, envName, from, dryRun), "restore failed")
-	fmt.Print(out)
-}
-
-func CmdDestroy(root string, envName string, confirm string, yes bool, purge bool, appOverride string, serverOverride string) {
-	appName, server, err := destroyTarget(root, envName, appOverride, serverOverride)
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	if err := validateDestroyConfirmation(appName, confirm, yes); err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
-
-	out := runSSHChecked(runner, server, serverAppDestroyEnvCommand(appName, envName, purge), "destroy failed")
-	fmt.Print(out)
-}
-
-func destroyTarget(root, envName, appOverride, serverOverride string) (string, string, error) {
-	if appOverride == "" && serverOverride == "" {
-		ctx, err := config.LoadAppContext(root, envName)
-		if err != nil {
-			return "", "", err
-		}
-		return ctx.AppName, ctx.Server, nil
-	}
-	if appOverride == "" || serverOverride == "" {
-		return "", "", errors.New("destroy with manifest-free targeting requires both --app and --server")
-	}
-	if !names.AppRe.MatchString(appOverride) {
-		return "", "", fmt.Errorf("invalid app name: %q", appOverride)
-	}
-	if !names.EnvRe.MatchString(envName) {
-		return "", "", fmt.Errorf("invalid env name: %q", envName)
-	}
-	if !config.ValidateSshTarget(serverOverride) {
-		return "", "", errors.New("--server must be an SSH target like deploy@example.com")
-	}
-	return appOverride, serverOverride, nil
-}
-
-func validateDestroyConfirmation(appName, confirm string, yes bool) error {
-	if yes {
-		return nil
-	}
-	if confirm == appName {
-		return nil
-	}
-	return fmt.Errorf("destroy requires --confirm %s or --yes", appName)
-}
-
-func CmdLogs(root string, envName string, branchName string, process string, follow bool, tail int) {
-	address, err := resolveReadAddress(root, envName, branchName, "logs")
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	baseEnv := address.EnvName
+	envName := address.EnvName
+	kind := "Production"
+	displayBranch := baseCtx.ProductionBranch
 	if address.PreviewBranch != "" {
-		baseEnv = productionEnvName
+		kind = "Preview"
+		displayBranch = address.PreviewBranch
+		envName, err = resolveReadPreviewEnv(runner, baseCtx, address)
+		if err != nil {
+			utils.Die(err.Error(), 1)
+		}
+	} else if confirm != baseCtx.AppName {
+		utils.Die(fmt.Sprintf("Production rm requires --confirm %s", baseCtx.AppName), 1)
 	}
-	ctx, err := config.LoadAppContext(root, baseEnv)
+
+	if _, err := runSSHRequired(runner, baseCtx.Server, serverAppDestroyEnvCommand(baseCtx.AppName, envName, true), "rm failed"); err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	fmt.Printf("Removed %s %s\n", kind, displayBranch)
+}
+
+func CmdLogs(root string, process string, follow bool, tail int, jsonFlag bool) {
+	if follow && jsonFlag {
+		utils.Die("logs --json cannot be combined with --follow", 2)
+	}
+	read, err := currentReadContext(root, "logs")
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
-	resolvedEnv, err := resolveReadPreviewEnv(runner, ctx, address)
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	envName = resolvedEnv
-	ctx, err = config.LoadAppContext(root, envName)
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
+	defer read.Runner.Close()
 
 	// Follow mode needs interactive stdout/stderr passthrough so the
 	// user sees the stream as it arrives. Non-follow mode reads a
 	// bounded amount and prints once.
-	cmdStr := serverAppLogsCommand(ctx.AppName, envName, process, follow, tail)
+	cmdStr := serverAppLogsCommand(read.AppContext.AppName, read.EnvName, process, follow, tail)
 	if follow {
-		if err := runner.RunSSHPassthrough(ctx.Server, cmdStr); err != nil {
+		if err := read.Runner.RunSSHPassthrough(read.AppContext.Server, cmdStr); err != nil {
 			utils.Die(err.Error(), 1)
 		}
 		return
 	}
-	out := runSSHChecked(runner, ctx.Server, cmdStr, "logs failed")
-	fmt.Print(out)
+	out := runSSHChecked(read.Runner, read.AppContext.Server, cmdStr, "logs failed")
+	if !jsonFlag {
+		fmt.Print(out)
+		return
+	}
+	lines := splitLogLines(out)
+	payload := struct {
+		App     string   `json:"app"`
+		Env     string   `json:"env"`
+		Process string   `json:"process,omitempty"`
+		Lines   []string `json:"lines"`
+	}{
+		App:     read.AppContext.AppName,
+		Env:     read.EnvName,
+		Process: process,
+		Lines:   lines,
+	}
+	buf, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		utils.Die(err.Error(), 1)
+	}
+	fmt.Println(string(buf))
+}
+
+func splitLogLines(out string) []string {
+	out = strings.TrimSuffix(out, "\n")
+	if out == "" {
+		return nil
+	}
+	return strings.Split(out, "\n")
 }
 
 // secretValueFromStdin reads the secret value from this process's
@@ -770,11 +855,12 @@ func secretValueFromStdin() ([]byte, error) {
 	return data, nil
 }
 
-func CmdSecretSet(root string, envName string, key string) {
-	ctx, err := config.LoadAppContext(root, envName)
+func CmdSecretSet(root string, key string) {
+	read, err := currentReadContext(root, "secret set")
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
+	defer read.Runner.Close()
 	if err := envKeyValid(key); err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -783,16 +869,10 @@ func CmdSecretSet(root string, envName string, key string) {
 		utils.Die(err.Error(), 1)
 	}
 
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
-
 	// Pipe the value over the helper's stdin — never argv, never a
 	// file on disk between hops. The helper writes it straight to
 	// /etc/simple-vps/secrets/<app>/<env>/<key>.
-	stdout, stderr, code, err := runner.RunSSHWithStdin(ctx.Server, serverAppSecretSetCommand(ctx.AppName, envName, key), value)
+	stdout, stderr, code, err := read.Runner.RunSSHWithStdin(read.AppContext.Server, serverAppSecretSetCommand(read.AppContext.AppName, read.EnvName, key), value)
 	if err != nil || code != 0 {
 		detail := strings.TrimSpace(stderr)
 		if detail == "" {
@@ -805,21 +885,19 @@ func CmdSecretSet(root string, envName string, key string) {
 	}
 	// Don't echo stdout — it'd carry the helper's confirmation
 	// (which already names the key but not the value). Print our own.
-	fmt.Printf("Stored secret %s for %s (%s). Run `ship deploy --env %s` to apply.\n", key, ctx.AppName, envName, envName)
+	kind, branch := readSurface(read)
+	fmt.Printf("Stored secret %s for %s %s.\n", key, kind, branch)
+	fmt.Fprintln(os.Stderr, "next: ship")
 }
 
-func CmdSecretList(root string, envName string, jsonFlag bool) {
-	ctx, err := config.LoadAppContext(root, envName)
+func CmdSecretList(root string, jsonFlag bool) {
+	read, err := currentReadContext(root, "secret ls")
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
+	defer read.Runner.Close()
 
-	out := runSSHChecked(runner, ctx.Server, serverAppSecretListCommand(ctx.AppName, envName, jsonFlag), "secret list failed")
+	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppSecretListCommand(read.AppContext.AppName, read.EnvName, jsonFlag), "secret list failed")
 	if jsonFlag {
 		fmt.Print(out)
 		return
@@ -833,25 +911,30 @@ func CmdSecretList(root string, envName string, jsonFlag bool) {
 	fmt.Println(out)
 }
 
-func CmdSecretRm(root string, envName string, key string) {
-	ctx, err := config.LoadAppContext(root, envName)
+func CmdSecretRm(root string, key string) {
+	read, err := currentReadContext(root, "secret rm")
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
+	defer read.Runner.Close()
 	if err := envKeyValid(key); err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
 
-	out := runSSHChecked(runner, ctx.Server, serverAppSecretRmCommand(ctx.AppName, envName, key), "secret rm failed")
-	// The helper prints either "Removed secret X for ..." or
-	// "Secret X was not set for ..."; pass it through directly so
-	// the user sees the difference.
-	fmt.Print(out)
+	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppSecretRmCommand(read.AppContext.AppName, read.EnvName, key), "secret rm failed")
+	kind, branch := readSurface(read)
+	if strings.Contains(out, "was not set") {
+		fmt.Printf("Secret %s was not set for %s %s.\n", key, kind, branch)
+		return
+	}
+	fmt.Printf("Removed secret %s for %s %s.\n", key, kind, branch)
+}
+
+func readSurface(read readContext) (string, string) {
+	if read.Address.ProductionBranch {
+		return "Production", read.AppContext.ProductionBranch
+	}
+	return "Preview", read.Address.PreviewBranch
 }
 
 func CmdPreviewPin(root string, branch string, pinned bool) {
@@ -888,7 +971,12 @@ func CmdPreviewPin(root string, branch string, pinned bool) {
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	fmt.Print(out)
+	_ = out
+	if pinned {
+		fmt.Printf("Pinned Preview %s\n", branch)
+		return
+	}
+	fmt.Printf("Unpinned Preview %s\n", branch)
 }
 
 // envKeyValid mirrors `secrets.SecretKeyRe` without taking a dep on
@@ -901,30 +989,12 @@ func envKeyValid(key string) error {
 	return nil
 }
 
-func CmdHostStatus(server string, jsonFlag bool) {
+func CmdBoxDoctor(server string, jsonFlag bool) {
 	if server == "" {
-		utils.Die("--server is required", 1)
+		utils.Die("box target is required", 1)
 	}
 	if !config.ValidateSshTarget(server) {
-		utils.Die("--server must be an SSH target like deploy@example.com", 1)
-	}
-
-	runner, err := NewCommandRunner()
-	if err != nil {
-		utils.Die(err.Error(), 1)
-	}
-	defer runner.Close()
-
-	out := runSSHChecked(runner, server, serverStatusCommand(jsonFlag), "failed to read server status")
-	fmt.Print(out)
-}
-
-func CmdHostDoctor(server string, jsonFlag bool) {
-	if server == "" {
-		utils.Die("--server is required", 1)
-	}
-	if !config.ValidateSshTarget(server) {
-		utils.Die("--server must be an SSH target like deploy@example.com", 1)
+		utils.Die("box target must be an SSH target like deploy@example.com", 1)
 	}
 
 	runner, err := NewCommandRunner()
@@ -951,17 +1021,71 @@ func CmdHostDoctor(server string, jsonFlag bool) {
 	fmt.Print(stdout)
 }
 
-func CmdDeploy(root string, envName string, branchName string, dirty bool, rebuild bool, includeDotenv bool) {
-	address, err := resolveDeployAddress(root, envName, branchName)
+type ShipResult struct {
+	URL        string   `json:"url"`
+	Env        string   `json:"env"`
+	Release    string   `json:"release"`
+	Processes  []string `json:"processes"`
+	DurationMs int64    `json:"durationMs"`
+}
+
+type shipProgress struct {
+	last time.Time
+}
+
+func newShipProgress() shipProgress {
+	return shipProgress{last: time.Now()}
+}
+
+func (p *shipProgress) timed(name string) {
+	now := time.Now()
+	fmt.Fprintf(os.Stderr, "%s %s\n", name, formatPhaseDuration(now.Sub(p.last)))
+	p.last = now
+}
+
+func (p *shipProgress) line(line string) {
+	fmt.Fprintln(os.Stderr, line)
+	p.last = time.Now()
+}
+
+func formatPhaseDuration(d time.Duration) string {
+	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+func CmdShip(root string, branchName string, jsonFlag bool, rebuild bool, includeDotenv bool) {
+	start := time.Now()
+	progress := newShipProgress()
+	result, err := runShip(root, branchName, rebuild, includeDotenv, &progress)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
+	result.DurationMs = time.Since(start).Milliseconds()
+	writeShipResult(result, jsonFlag)
+}
+
+func writeShipResult(result ShipResult, jsonFlag bool) {
+	if jsonFlag {
+		buf, err := json.Marshal(result)
+		if err != nil {
+			utils.Die(err.Error(), 1)
+		}
+		fmt.Println(string(buf))
+		return
+	}
+	fmt.Println(result.URL)
+}
+
+func runShip(root string, branchName string, rebuild bool, includeDotenv bool, progress *shipProgress) (ShipResult, error) {
+	address, err := resolveDeployAddress(root, "", branchName)
+	if err != nil {
+		return ShipResult{}, err
+	}
 	if address.ProductionBranch && address.Dirty {
-		utils.Die(codedNextError(
+		return ShipResult{}, codedNextError(
 			"dirty_worktree",
 			fmt.Sprintf("production branch %q has uncommitted changes", address.Branch),
 			"git commit",
-		).Error(), 1)
+		)
 	}
 	baseEnv := address.EnvName
 	if address.PreviewBranch != "" {
@@ -969,61 +1093,62 @@ func CmdDeploy(root string, envName string, branchName string, dirty bool, rebui
 	}
 	ctx, err := config.LoadAppContext(root, baseEnv)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		return ShipResult{}, err
 	}
 
 	runner, err := NewCommandRunner()
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		return ShipResult{}, err
 	}
 	defer runner.Close()
 	if address.ProductionBranch {
 		if err := deployHostPreflight(runner, ctx); err != nil {
-			utils.Die(err.Error(), 1)
+			return ShipResult{}, err
 		}
 	}
 	resolvedEnv, err := resolveDeployPreviewEnv(runner, ctx, address)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		return ShipResult{}, err
 	}
 	address.EnvName = resolvedEnv
-	envName = address.EnvName
+	envName := address.EnvName
+	progress.timed("preflight")
 
 	plan, diags, err := buildLocalDeployPlan(root, envName, localDeployOptions{
-		AllowDirty:    dirty || !address.ProductionBranch,
+		AllowDirty:    !address.ProductionBranch,
 		IncludeDotenv: includeDotenv,
 	})
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		return ShipResult{}, err
 	}
-	diags.print()
+	diags.printTo(os.Stderr)
 	if diags.hasErrors() {
-		os.Exit(1)
+		return ShipResult{}, fmt.Errorf("deploy blocked by local checks")
 	}
 	ctx = plan.Context
 	if address.ProductionBranch {
 		if err := enforceProductionAncestry(root, runner, ctx, plan.BaseCommit); err != nil {
-			utils.Die(err.Error(), 1)
+			return ShipResult{}, err
 		}
 	}
 	if err := ensureRemoteEnvReadyForDeploy(runner, ctx); err != nil {
-		utils.Die(err.Error(), 1)
+		return ShipResult{}, err
 	}
 
 	// 1. Tar source locally (git archive for clean tree, working tree for --dirty).
 	tarDir, err := os.MkdirTemp("", "ship-deploy-")
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		return ShipResult{}, err
 	}
 	defer os.RemoveAll(tarDir)
 
 	localTar := filepath.Join(tarDir, "source.tar")
 	localManifest := filepath.Join(tarDir, "ship.toml")
 	if err := writeSourceTar(root, localTar, plan.Dirty, plan.ServeDirs); err != nil {
-		utils.Die(err.Error(), 1)
+		return ShipResult{}, err
 	}
 	if err := copyFile(filepath.Join(root, ManifestFile), localManifest); err != nil {
-		utils.Die(fmt.Sprintf("copy manifest: %v", err), 1)
+		return ShipResult{}, fmt.Errorf("copy manifest: %v", err)
 	}
 
 	// 2. Upload tarball + manifest to a per-deploy temp dir on the host.
@@ -1031,19 +1156,20 @@ func CmdDeploy(root string, envName string, branchName string, dirty bool, rebui
 	cleanupRemoteDir := func() {
 		_, _, _, _ = runner.RunSSH(ctx.Server, fmt.Sprintf("rm -rf %s", utils.ShellEscape(remoteDir)))
 	}
-	failAfterRemoteDir := func(message string) {
+	failAfterRemoteDir := func(message string) (ShipResult, error) {
 		cleanupRemoteDir()
-		utils.Die(message, 1)
+		return ShipResult{}, fmt.Errorf("%s", message)
 	}
 	if _, err := runSSHRequired(runner, ctx.Server, fmt.Sprintf("mkdir -p %s && chmod 0700 %s", utils.ShellEscape(remoteDir), utils.ShellEscape(remoteDir)), "failed to create remote deploy dir"); err != nil {
-		failAfterRemoteDir(err.Error())
+		return failAfterRemoteDir(err.Error())
 	}
 	if err := runner.Upload(localTar, remoteDir+"/source.tar", ctx.Server); err != nil {
-		failAfterRemoteDir(fmt.Sprintf("failed to upload source: %v", err))
+		return failAfterRemoteDir(fmt.Sprintf("failed to upload source: %v", err))
 	}
 	if err := runner.Upload(localManifest, remoteDir+"/ship.toml", ctx.Server); err != nil {
-		failAfterRemoteDir(fmt.Sprintf("failed to upload manifest: %v", err))
+		return failAfterRemoteDir(fmt.Sprintf("failed to upload manifest: %v", err))
 	}
+	progress.timed("build")
 
 	// 3. Helper builds the image or snapshots static assets, then reloads Caddy.
 	applyCmd := serverAppApplyCommand(ctx.AppName, envName,
@@ -1053,13 +1179,84 @@ func CmdDeploy(root string, envName string, branchName string, dirty bool, rebui
 		rebuild,
 	)
 	if _, err := runSSHRequired(runner, ctx.Server, applyCmd, "deploy failed"); err != nil {
-		failAfterRemoteDir(err.Error())
+		return failAfterRemoteDir(err.Error())
 	}
+	progress.timed("release")
+	progress.line("probe ok")
 
 	// 4. Best-effort cleanup of the upload dir.
 	cleanupRemoteDir()
+	progress.line("live")
 
-	fmt.Printf("Deployed %s (%s) at %s\n", ctx.AppName, envName, plan.Release)
+	return ShipResult{
+		URL:       deploymentURL(ctx, envName),
+		Env:       envName,
+		Release:   plan.Release,
+		Processes: processNames(plan.Context.Processes),
+	}, nil
+}
+
+func processNames(processes map[string]config.Process) []string {
+	out := make([]string, 0, len(processes))
+	for name := range processes {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func deploymentURL(ctx *config.AppContext, envName string) string {
+	if url := routedDeploymentURL(ctx); url != "" {
+		return url
+	}
+	return fmt.Sprintf("ship://%s/%s/%s", boxHost(ctx.Server), ctx.AppName, envName)
+}
+
+type routeCandidate struct {
+	rank int
+	url  string
+}
+
+func routedDeploymentURL(ctx *config.AppContext) string {
+	var candidates []routeCandidate
+	for _, route := range ctx.Routes {
+		if route.Host == "" {
+			continue
+		}
+		rank := 3
+		switch {
+		case route.Process == "web" && route.Path == "":
+			rank = 0
+		case route.Path == "":
+			rank = 1
+		case route.Process == "web":
+			rank = 2
+		}
+		candidates = append(candidates, routeCandidate{
+			rank: rank,
+			url:  "https://" + route.Host + route.Path,
+		})
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].rank != candidates[j].rank {
+			return candidates[i].rank < candidates[j].rank
+		}
+		return candidates[i].url < candidates[j].url
+	})
+	return candidates[0].url
+}
+
+func boxHost(target string) string {
+	if _, host, ok := strings.Cut(target, "@"); ok {
+		return host
+	}
+	if target == "" {
+		return "box"
+	}
+	return target
 }
 
 func writeSourceTar(root string, dest string, dirty bool, staticDirs []string) error {

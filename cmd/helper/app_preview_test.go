@@ -223,7 +223,7 @@ func TestReapExpiredPreviewsDestroysUnpinnedPurgesSecretsAndSkipsPinnedAndProd(t
 
 func TestUnknownPreviewBranchErrorText(t *testing.T) {
 	got := unknownPreviewBranchError("feat/x").Error()
-	want := "unknown_preview_branch: no preview environment is mapped for branch \"feat/x\"\nnext: ship deploy"
+	want := "unknown_preview_branch: no preview environment is mapped for branch \"feat/x\"\nnext: ship"
 	if got != want {
 		t.Fatalf("unexpected error:\nwant: %q\n got: %q", want, got)
 	}

@@ -44,8 +44,26 @@ func SystemctlBin() string {
 }
 
 func Die(message string, code int) {
+	if code == 1 && usageOrManifestFailure(message) {
+		code = 2
+	}
 	fmt.Fprintf(os.Stderr, "Error: %s\n", message)
 	os.Exit(code)
+}
+
+func usageOrManifestFailure(message string) bool {
+	switch {
+	case strings.Contains(message, "ship.toml"),
+		strings.Contains(message, "manifest"),
+		strings.Contains(message, "--config"),
+		strings.Contains(message, "invalid app name"),
+		strings.Contains(message, "invalid env name"),
+		strings.Contains(message, "invalid template"),
+		strings.Contains(message, "box target is required"):
+		return true
+	default:
+		return false
+	}
 }
 
 func RunChecked(name string, args []string, cwd string) ([]byte, error) {

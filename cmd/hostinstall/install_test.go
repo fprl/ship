@@ -142,8 +142,8 @@ func TestPrintNextStepsForRemoteInstall(t *testing.T) {
 	text := out.String()
 	for _, want := range []string{
 		`export SHIP_SSH_KEY="$(cat /keys/deploy)"`,
-		"ship host status --server deploy@203.0.113.12",
-		"ship init --server deploy@203.0.113.12 --host <app-domain>",
+		"ship box doctor deploy@203.0.113.12",
+		"ship init --box deploy@203.0.113.12 --host <app-domain>",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected next steps to contain %q:\n%s", want, text)
@@ -152,8 +152,8 @@ func TestPrintNextStepsForRemoteInstall(t *testing.T) {
 	if strings.Contains(text, "SHIP_KNOWN_HOSTS") {
 		t.Fatalf("next steps should use normal SSH known_hosts, got:\n%s", text)
 	}
-	if strings.Index(text, "export SHIP_SSH_KEY") > strings.Index(text, "ship host status") {
-		t.Fatalf("deploy key export should be printed before host status:\n%s", text)
+	if strings.Index(text, "export SHIP_SSH_KEY") > strings.Index(text, "ship box doctor") {
+		t.Fatalf("deploy key export should be printed before box doctor:\n%s", text)
 	}
 }
 
@@ -176,8 +176,8 @@ func TestPrintNextStepsOmitsDefaultDeployKeyEnv(t *testing.T) {
 	if strings.Contains(text, "SHIP_SSH_KEY") || strings.Contains(text, "SHIP_KNOWN_HOSTS") {
 		t.Fatalf("default deploy key should not require env exports:\n%s", text)
 	}
-	if !strings.Contains(text, "1. ship host status --server deploy@203.0.113.12") {
-		t.Fatalf("expected host status to be first step:\n%s", text)
+	if !strings.Contains(text, "1. ship box doctor deploy@203.0.113.12") {
+		t.Fatalf("expected box doctor to be first step:\n%s", text)
 	}
 }
 

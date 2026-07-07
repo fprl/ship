@@ -347,5 +347,5 @@ func randomPreviewSuffix() (string, error) {
 }
 
 func unknownPreviewBranchError(branch string) error {
-	return fmt.Errorf("unknown_preview_branch: no preview environment is mapped for branch %q\nnext: ship deploy", branch)
+	return fmt.Errorf("unknown_preview_branch: no preview environment is mapped for branch %q\nnext: ship", branch)
 }

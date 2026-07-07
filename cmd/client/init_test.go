@@ -190,8 +190,7 @@ func TestRenderInitResultIncludesConfigPathOutsideCwd(t *testing.T) {
 		"git -C " + result.Root + " init",
 		"git -C " + result.Root + " add .",
 		"git -C " + result.Root + " commit -m \"initial ship app\"",
-		"ship check --config " + result.ConfigPath + " --env production",
-		"ship deploy --config " + result.ConfigPath + " --env production",
+		"next: ship",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected output to include %q:\n%s", want, out)
@@ -215,7 +214,7 @@ func TestRenderInitResultDoesNotCreateNestedGitRepoInMonorepo(t *testing.T) {
 	for _, want := range []string{
 		"git -C " + result.Root + " add .",
 		"git -C " + result.Root + " commit -m \"initial ship app\"",
-		"ship check --config " + result.ConfigPath + " --env production",
+		"next: ship",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected output to include %q:\n%s", want, out)
@@ -362,14 +361,17 @@ func contains(items []string, needle string) bool {
 
 func captureInitOutput(t *testing.T, result InitResult) string {
 	t.Helper()
-	old := os.Stdout
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	os.Stdout = w
+	os.Stderr = w
 	defer func() {
-		os.Stdout = old
+		os.Stdout = oldStdout
+		os.Stderr = oldStderr
 	}()
 	renderInitResult(result)
 	if err := w.Close(); err != nil {

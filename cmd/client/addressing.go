@@ -125,14 +125,14 @@ func envNameForBranch(branch, productionBranch string) (string, error) {
 func deployBranch(state gitState, branchFlag string) (string, error) {
 	if state.Detached {
 		if branchFlag == "" {
-			return "", detachedHeadRequiresBranchError("deploy")
+			return "", detachedHeadRequiresBranchError("ship")
 		}
 		return branchFlag, nil
 	}
 	if branchFlag != "" {
 		return "", codedNextError(
 			"branch_flag_requires_detached_head",
-			"--branch is only accepted on deploy when HEAD is detached",
+			"--branch is only accepted on ship when HEAD is detached",
 			"remove --branch or check out the branch before deploying",
 		)
 	}
@@ -179,10 +179,14 @@ func notAGitRepoError() error {
 }
 
 func detachedHeadRequiresBranchError(command string) error {
+	next := fmt.Sprintf("ship %s --branch <name>", command)
+	if command == "ship" {
+		next = "ship --branch <name>"
+	}
 	return codedNextError(
 		"detached_head_requires_branch",
 		"HEAD is detached; pass --branch <name> so ship can resolve the environment",
-		fmt.Sprintf("ship %s --branch <name>", command),
+		next,
 	)
 }
 
