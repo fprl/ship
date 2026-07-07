@@ -458,7 +458,7 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	assertContains(t, why, "old release ")
 	assertContains(t, why, "kept serving; no traffic was switched.")
 	assertContains(t, why, "shipped by: Smoke <smoke@example.com> (ssh key: fake-vps-smoke)")
-	assertContains(t, why, "next: ship")
+	assertContains(t, why, "next: fix the release command in ship.toml, then ship")
 
 	var whyJSON smokeWhyEntry
 	rawWhyJSON := e.simpleVPS(t, app, nil, "why", "--json")
@@ -521,7 +521,7 @@ func (e *smokeEnv) testProbeFailureWhy(t *testing.T) {
 	assertContains(t, why, "old release ")
 	assertContains(t, why, "kept serving; failed probes never receive traffic with the current engine.")
 	assertContains(t, why, "shipped by: Smoke <smoke@example.com> (ssh key: fake-vps-smoke)")
-	assertContains(t, why, "next: ship")
+	assertContains(t, why, "next: fix the process port or probe path in ship.toml, then ship")
 
 	var whyJSON smokeWhyEntry
 	rawWhyJSON := e.simpleVPS(t, app, nil, "why", "--json")

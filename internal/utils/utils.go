@@ -117,6 +117,9 @@ func normalizeExitError(err error, code int) *errcat.Error {
 		return coded
 	}
 	if details, ok := config.ManifestErrorDetails(err); ok {
+		if dockerfileMissingDetails(details) {
+			return errcat.New(errcat.CodeDockerfileMissing, nil)
+		}
 		return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
 			"details": manifestDetailsCause(details),
 			"command": manifestNextCommand(details),
@@ -128,6 +131,9 @@ func normalizeExitError(err error, code int) *errcat.Error {
 	}
 	if code == 2 {
 		if manifestFailure(message) {
+			if dockerfileMissingMessage(message) {
+				return errcat.New(errcat.CodeDockerfileMissing, nil)
+			}
 			return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
 				"details": message,
 				"command": manifestCommandFromMessage(message),
@@ -139,6 +145,9 @@ func normalizeExitError(err error, code int) *errcat.Error {
 		})
 	}
 	if manifestFailure(message) {
+		if dockerfileMissingMessage(message) {
+			return errcat.New(errcat.CodeDockerfileMissing, nil)
+		}
 		return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
 			"details": message,
 			"command": manifestCommandFromMessage(message),
@@ -178,6 +187,19 @@ func manifestCommandFromMessage(message string) string {
 		return "ship init"
 	}
 	return "fix ship.toml"
+}
+
+func dockerfileMissingDetails(details []string) bool {
+	for _, detail := range details {
+		if dockerfileMissingMessage(detail) {
+			return true
+		}
+	}
+	return false
+}
+
+func dockerfileMissingMessage(message string) bool {
+	return strings.Contains(message, "missing a Dockerfile")
 }
 
 func manifestMissing(message string) bool {

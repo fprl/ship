@@ -1143,7 +1143,7 @@ func TestRenderWhyReleaseFailure(t *testing.T) {
 		"fake release command failed\n" +
 		"traffic: old release aaa111 kept serving; no traffic was switched.\n" +
 		"shipped by: Smoke <smoke@example.com> (ssh key: fake-vps-smoke)\n" +
-		"next: ship\n"
+		"next: fix the release command in ship.toml, then ship\n"
 	if got != want {
 		t.Fatalf("unexpected why output:\nwant:\n%s\ngot:\n%s", want, got)
 	}
@@ -1174,9 +1174,29 @@ func TestRenderWhyProbeFailure(t *testing.T) {
 		"HTTP status 502: upstream web listens on 3000, probed 3999\n" +
 		"traffic: old release aaa111 kept serving; failed probes never receive traffic with the current engine.\n" +
 		"shipped by: Smoke <smoke@example.com> (ssh key: fake-vps-smoke)\n" +
-		"next: ship\n"
+		"next: fix the process port or probe path in ship.toml, then ship\n"
 	if got != want {
 		t.Fatalf("unexpected why output:\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestFailDeployAfterRemoteDirPreservesSingleCodedErrorShape(t *testing.T) {
+	cleaned := false
+	_, err := failDeployAfterRemoteDir(func() { cleaned = true }, errcat.New(errcat.CodeProbeFailed, errcat.Fields{
+		"detail": "health check failed for web",
+	}))
+	if !cleaned {
+		t.Fatal("cleanup was not called")
+	}
+	if !errcat.Is(err, errcat.CodeProbeFailed) {
+		t.Fatalf("expected probe_failed to survive cleanup, got %v", err)
+	}
+	text := err.Error()
+	if count := strings.Count(text, "next:"); count != 1 {
+		t.Fatalf("expected exactly one next line, got %d:\n%s", count, text)
+	}
+	if strings.Contains(text, "operation failed\noperation failed") {
+		t.Fatalf("coded deploy error was double-wrapped:\n%s", text)
 	}
 }
 

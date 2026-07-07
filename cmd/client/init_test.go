@@ -254,14 +254,29 @@ func TestInitFirstRunFlowRequiresCommitBeforeCheck(t *testing.T) {
 	}
 }
 
-func TestRunInitRejectsExistingManifest(t *testing.T) {
+func TestRunInitKeepsExistingManifestAndScaffoldsMissingFiles(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "ship.toml"), []byte("name = \"api\"\n"), 0644); err != nil {
+	manifestPath := filepath.Join(root, "ship.toml")
+	manifest := []byte("name = \"api\"\nbox = \"fake-vps\"\n")
+	if err := os.WriteFile(manifestPath, manifest, 0644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := RunInit(root, InitOptions{Template: "static", Server: "deploy@example.com"})
-	if err == nil || !strings.Contains(err.Error(), "ship.toml already exists") {
-		t.Fatalf("expected existing manifest error, got %v", err)
+	result, err := RunInit(root, InitOptions{Template: "container", Server: "deploy@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(result.Kept, "ship.toml") {
+		t.Fatalf("expected ship.toml to be kept, result=%+v", result)
+	}
+	if !contains(result.Created, "Dockerfile") {
+		t.Fatalf("expected Dockerfile to be created, result=%+v", result)
+	}
+	got, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(manifest) {
+		t.Fatalf("manifest was overwritten:\n%s", got)
 	}
 }
 

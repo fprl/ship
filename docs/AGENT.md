@@ -66,7 +66,7 @@ Secret scoping:
 - `--json` stdout schema: `{"url":"https://...","env":"prod","release":"abc123","processes":["web"],"durationMs":1234}`
 - Notes: Successful non-JSON stdout is exactly one URL plus a trailing newline; all phase lines go to stderr. Production refuses dirty worktrees and stale checkouts; Preview accepts dirty worktrees and creates the preview mapping if needed.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `not_a_git_repo`, `detached_head_requires_branch`, `branch_flag_requires_detached_head`, `unmappable_branch_name`, `dirty_worktree`, `behind_production`, `manifest_invalid`, `multi_process_no_web_route`, `secret_missing`, `remote_preflight_failed`, `remote_preflight_after_prepare_failed`, `deploy_blocked_local_checks`, `dotenv_rejected`
+- Common error codes: `not_a_git_repo`, `detached_head_requires_branch`, `branch_flag_requires_detached_head`, `unmappable_branch_name`, `dirty_worktree`, `behind_production`, `manifest_invalid`, `dockerfile_missing`, `multi_process_no_web_route`, `secret_missing`, `remote_preflight_failed`, `remote_preflight_after_prepare_failed`, `deploy_blocked_local_checks`, `release_command_failed`, `probe_failed`, `dotenv_rejected`
 
 ### `init`
 - Purpose: Create local project files and a ship.toml manifest.
@@ -266,6 +266,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `deploy_tmp_missing`: host preflight failed; cause: deploy tmp dir is missing: {path}; remediation: `ship box init <ssh-target>`.
 - `detached_head_requires_branch`: branch resolution failed; cause: HEAD is detached; pass --branch <name> so ship can resolve the environment; remediation: `{command}`.
 - `dirty_worktree`: Production ship failed; cause: production branch {branch} has uncommitted changes; remediation: `git add . && git commit -m "<message>"`.
+- `dockerfile_missing`: Dockerfile is missing; cause: manifest declares processes but is missing a Dockerfile; remediation: `ship init`.
 - `dotenv_rejected`: deploy artifact contains dotenv files; cause: refusing to deploy dotenv file: {files}; remediation: `ship --include-dotenv`.
 - `env_invalid`: app environment preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `env_missing`: app environment preflight failed; cause: {detail}; remediation: `ship`.
@@ -281,7 +282,9 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `no_deploys`: deploy journal lookup failed; cause: no deploys recorded for {app} ({env}); remediation: `ship`.
 - `not_a_git_repo`: git worktree required; cause: current directory is not inside a Git worktree; remediation: `git init && git add . && git commit -m "initial ship app"`.
 - `operation_failed`: operation failed; cause: {detail}; remediation: `{command}`; defaults: `command="ship status"`.
+- `probe_failed`: probe failed; cause: {detail}; remediation: `ship why`.
 - `production_branch_not_preview`: preview command failed; cause: branch {branch} maps to Production; remediation: `{command}`; defaults: `command="ship pin <preview-branch>"`.
+- `release_command_failed`: release command failed; cause: {detail}; remediation: `ship why`.
 - `remote_preflight_after_prepare_failed`: deploy preflight failed after preparing the app environment; cause: {detail}; remediation: `ship box doctor`.
 - `remote_preflight_failed`: deploy preflight failed before upload/build/mutation; cause: {detail}; remediation: `ship box doctor`.
 - `rm_confirmation_required`: Production rm confirmation failed; cause: Production rm requires --confirm {app}; remediation: `ship rm {branch} --confirm {app}`.

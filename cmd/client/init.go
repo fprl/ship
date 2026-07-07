@@ -75,13 +75,17 @@ func RunInit(root string, opts InitOptions) (InitResult, error) {
 	if err != nil {
 		return InitResult{}, err
 	}
+	manifestExists := false
 	if info, exists, err := lstatInitPath(absRoot, ManifestFile); err != nil {
 		return InitResult{}, err
 	} else if exists {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return InitResult{}, fmt.Errorf("%s already exists and is a symlink", ManifestFile)
 		}
-		return InitResult{}, fmt.Errorf("%s already exists", ManifestFile)
+		if info.IsDir() {
+			return InitResult{}, fmt.Errorf("%s already exists and is a directory", ManifestFile)
+		}
+		manifestExists = true
 	}
 	manifestPath := filepath.Join(absRoot, ManifestFile)
 
@@ -114,6 +118,9 @@ func RunInit(root string, opts InitOptions) (InitResult, error) {
 	if err := preflightInitFiles(absRoot, files); err != nil {
 		return InitResult{}, err
 	}
+	if manifestExists {
+		result.Kept = append(result.Kept, ManifestFile)
+	}
 	for _, file := range files {
 		created, err := writeInitFile(absRoot, file)
 		if err != nil {
@@ -126,11 +133,13 @@ func RunInit(root string, opts InitOptions) (InitResult, error) {
 		}
 	}
 
-	manifest := initManifest(normalized)
-	if err := writeNewInitFile(manifestPath, manifest); err != nil {
-		return InitResult{}, err
+	if !manifestExists {
+		manifest := initManifest(normalized)
+		if err := writeNewInitFile(manifestPath, manifest); err != nil {
+			return InitResult{}, err
+		}
+		result.Created = append([]string{ManifestFile}, result.Created...)
 	}
-	result.Created = append([]string{ManifestFile}, result.Created...)
 	return result, nil
 }
 

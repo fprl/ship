@@ -1,4 +1,4 @@
-.PHONY: test go-test go-build go-vet shell-test fake-vps-smoke fake-vps-install-smoke init-template-builds build build-linux build-darwin checksum build-release release-smoke example-matrix-smoke clean
+.PHONY: test go-test go-build go-vet shell-test fake-vps-smoke fake-vps-install-smoke agent-evals agent-evals-oracle init-template-builds build build-linux build-darwin checksum build-release release-smoke example-matrix-smoke clean
 
 GO ?= go
 DIST_DIR ?= dist
@@ -40,10 +40,18 @@ shell-test:
 
 fake-vps-smoke:
 	SHIP_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestContainerSmoke -count=1 -timeout 20m
+	SHIP_RUN_FAKE_VPS_SMOKE=1 SHIP_EVAL_RUNNER=oracle $(GO) test ./tests/agent-evals -run TestAgentEvalScenarios -count=1 -timeout 30m
 
 fake-vps-install-smoke:
 	rm -rf $(DIST_DIR) # ensure host install smoke builds fresh helper binaries
 	SHIP_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestFreshHostInstall -count=1 -timeout 20m
+
+agent-evals:
+	@test -n "$$SHIP_EVAL_AGENT_CMD" || (echo "SHIP_EVAL_AGENT_CMD is required" >&2; exit 2)
+	SHIP_RUN_FAKE_VPS_SMOKE=1 SHIP_EVAL_RUNNER=agent $(GO) test ./tests/agent-evals -run TestAgentEvalScenarios -count=1 -timeout 30m
+
+agent-evals-oracle:
+	SHIP_RUN_FAKE_VPS_SMOKE=1 SHIP_EVAL_RUNNER=oracle $(GO) test ./tests/agent-evals -run TestAgentEvalScenarios -count=1 -timeout 30m
 
 init-template-builds:
 	SHIP_TEST_INIT_BUILDS=1 $(GO) test ./cmd/client -run TestRunInitGeneratedContainerTemplatesBuildWhenRequested -count=1 -timeout 20m

@@ -63,3 +63,14 @@ func TestInvalidManifestRemediatesFixShipToml(t *testing.T) {
 		t.Fatalf("remediation = %q, want fix ship.toml", coded.Remediation())
 	}
 }
+
+func TestMissingDockerfileHasDistinctCodeAndInitRemediation(t *testing.T) {
+	err := errors.New("manifest declares processes but is missing a Dockerfile")
+	coded := normalizeExitError(err, 2)
+	if coded.Code() != errcat.CodeDockerfileMissing {
+		t.Fatalf("code = %s, want %s", coded.Code(), errcat.CodeDockerfileMissing)
+	}
+	if coded.Remediation() != "ship init" {
+		t.Fatalf("remediation = %q, want ship init", coded.Remediation())
+	}
+}

@@ -6,3 +6,5 @@ node_modules/
 packages/*/pnpm-lock.yaml
 dist/
 .fake-vps-bin/
+tests/agent-evals/.fake-vps-bin/
+tests/agent-evals/transcripts/

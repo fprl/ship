@@ -314,9 +314,10 @@ var verbs = []Verb{
 		ExitCodes: normalExit,
 		Errors: []string{
 			"not_a_git_repo", "detached_head_requires_branch", "branch_flag_requires_detached_head",
-			"unmappable_branch_name", "dirty_worktree", "behind_production", "manifest_invalid",
+			"unmappable_branch_name", "dirty_worktree", "behind_production", "manifest_invalid", "dockerfile_missing",
 			"multi_process_no_web_route", "secret_missing", "remote_preflight_failed",
-			"remote_preflight_after_prepare_failed", "deploy_blocked_local_checks", "dotenv_rejected",
+			"remote_preflight_after_prepare_failed", "deploy_blocked_local_checks", "release_command_failed",
+			"probe_failed", "dotenv_rejected",
 		},
 		Notes: []string{
 			"Successful non-JSON stdout is exactly one URL plus a trailing newline; all phase lines go to stderr.",

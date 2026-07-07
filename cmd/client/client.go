@@ -803,9 +803,20 @@ func renderWhy(entry whyJournalEntry, read readContext) string {
 		}
 		fmt.Fprintf(&b, "traffic: %s\n", trafficImpact(entry))
 		fmt.Fprintf(&b, "shipped by: %s (ssh key: %s)\n", entry.Identity.GitAuthor, entry.Identity.SSHKeyComment)
-		b.WriteString("next: ship\n")
+		fmt.Fprintf(&b, "next: %s\n", whyRemediation(entry))
 	}
 	return b.String()
+}
+
+func whyRemediation(entry whyJournalEntry) string {
+	switch entry.Outcome {
+	case "aborted_release":
+		return "fix the release command in ship.toml, then ship"
+	case "aborted_probe":
+		return "fix the process port or probe path in ship.toml, then ship"
+	default:
+		return "ship"
+	}
 }
 
 func probableCause(entry whyJournalEntry) string {
@@ -1574,18 +1585,14 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, inclu
 	cleanupRemoteDir := func() {
 		_, _, _, _ = runner.RunSSH(ctx.Server, fmt.Sprintf("rm -rf %s", utils.ShellEscape(remoteDir)))
 	}
-	failAfterRemoteDir := func(message string) (ShipResult, error) {
-		cleanupRemoteDir()
-		return ShipResult{}, fmt.Errorf("%s", message)
-	}
 	if _, err := runSSHRequired(runner, ctx.Server, fmt.Sprintf("mkdir -p %s && chmod 0700 %s", utils.ShellEscape(remoteDir), utils.ShellEscape(remoteDir)), "failed to create remote deploy dir"); err != nil {
-		return failAfterRemoteDir(err.Error())
+		return failDeployAfterRemoteDir(cleanupRemoteDir, err)
 	}
 	if err := runner.Upload(localTar, remoteDir+"/source.tar", ctx.Server); err != nil {
-		return failAfterRemoteDir(fmt.Sprintf("failed to upload source: %v", err))
+		return failDeployAfterRemoteDir(cleanupRemoteDir, fmt.Errorf("failed to upload source: %v", err))
 	}
 	if err := runner.Upload(localManifest, remoteDir+"/ship.toml", ctx.Server); err != nil {
-		return failAfterRemoteDir(fmt.Sprintf("failed to upload manifest: %v", err))
+		return failDeployAfterRemoteDir(cleanupRemoteDir, fmt.Errorf("failed to upload manifest: %v", err))
 	}
 	progress.timed("build")
 
@@ -1598,7 +1605,7 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, inclu
 		rebuild,
 	)
 	if _, err := runSSHRequired(runner, ctx.Server, applyCmd, "deploy failed"); err != nil {
-		return failAfterRemoteDir(err.Error())
+		return failDeployAfterRemoteDir(cleanupRemoteDir, err)
 	}
 	progress.timed("release")
 	progress.line("probe ok")
@@ -1618,8 +1625,16 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, inclu
 	}, nil
 }
 
+func failDeployAfterRemoteDir(cleanup func(), err error) (ShipResult, error) {
+	cleanup()
+	return ShipResult{}, err
+}
+
 func deployDiagnosticsError(diags diagnostics) error {
 	messages := diags.errorMessages()
+	if dockerfileMissingDiagnostic(messages) {
+		return errcat.New(errcat.CodeDockerfileMissing, nil)
+	}
 	if localDeployDiagnostic(messages) {
 		return errcat.New(errcat.CodeDeployBlockedLocalChecks, errcat.Fields{
 			"detail":  strings.Join(messages, "\n"),
@@ -1630,6 +1645,15 @@ func deployDiagnosticsError(diags diagnostics) error {
 		"details": manifestDetailsForError(messages),
 		"command": "fix ship.toml",
 	})
+}
+
+func dockerfileMissingDiagnostic(messages []string) bool {
+	for _, message := range messages {
+		if strings.Contains(message, "missing a Dockerfile") {
+			return true
+		}
+	}
+	return false
 }
 
 func localDeployRemediation(messages []string) string {

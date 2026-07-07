@@ -67,7 +67,22 @@ func (c appApplyCmd) Run() error {
 
 func (c appApplyCmd) runLocked() {
 	if err := c.runLockedE(); err != nil {
-		utils.DieError(err, 1)
+		utils.DieError(applyExitError(err), 1)
+	}
+}
+
+func applyExitError(err error) error {
+	var stepErr *journalStepError
+	if !errors.As(err, &stepErr) {
+		return err
+	}
+	switch stepErr.Step {
+	case "probe":
+		return errcat.New(errcat.CodeProbeFailed, errcat.Fields{"detail": stepErr.Err.Error()})
+	case "release":
+		return errcat.New(errcat.CodeReleaseCommandFailed, errcat.Fields{"detail": stepErr.Err.Error()})
+	default:
+		return err
 	}
 }
 

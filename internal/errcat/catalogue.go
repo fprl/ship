@@ -14,6 +14,7 @@ type Code string
 const (
 	CodeUsageError                        Code = "usage_error"
 	CodeManifestInvalid                   Code = "manifest_invalid"
+	CodeDockerfileMissing                 Code = "dockerfile_missing"
 	CodeOperationFailed                   Code = "operation_failed"
 	CodeNotAGitRepo                       Code = "not_a_git_repo"
 	CodeDetachedHeadRequiresBranch        Code = "detached_head_requires_branch"
@@ -33,6 +34,8 @@ const (
 	CodeRemotePreflightFailed             Code = "remote_preflight_failed"
 	CodeRemotePreflightAfterPrepareFailed Code = "remote_preflight_after_prepare_failed"
 	CodeDeployBlockedLocalChecks          Code = "deploy_blocked_local_checks"
+	CodeReleaseCommandFailed              Code = "release_command_failed"
+	CodeProbeFailed                       Code = "probe_failed"
 	CodeInvalidSecretKey                  Code = "invalid_secret_key"
 	CodeLogsFollowJSONConflict            Code = "logs_follow_json_conflict"
 	CodeBoxTargetRequired                 Code = "box_target_required"
@@ -75,6 +78,12 @@ var catalogue = map[Code]Entry{
 		CauseTemplate:       "{details}",
 		RemediationTemplate: "{command}",
 		Defaults:            Fields{"command": "fix ship.toml"},
+	},
+	CodeDockerfileMissing: {
+		Code:                CodeDockerfileMissing,
+		MessageTemplate:     "Dockerfile is missing",
+		CauseTemplate:       "manifest declares processes but is missing a Dockerfile",
+		RemediationTemplate: "ship init",
 	},
 	CodeOperationFailed: {
 		Code:                CodeOperationFailed,
@@ -194,6 +203,18 @@ var catalogue = map[Code]Entry{
 		CauseTemplate:       "{detail}",
 		RemediationTemplate: "{command}",
 		Defaults:            Fields{"command": "fix local checks", "detail": "local checks reported errors; see stderr above"},
+	},
+	CodeReleaseCommandFailed: {
+		Code:                CodeReleaseCommandFailed,
+		MessageTemplate:     "release command failed",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "ship why",
+	},
+	CodeProbeFailed: {
+		Code:                CodeProbeFailed,
+		MessageTemplate:     "probe failed",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "ship why",
 	},
 	CodeInvalidSecretKey: {
 		Code:                CodeInvalidSecretKey,
