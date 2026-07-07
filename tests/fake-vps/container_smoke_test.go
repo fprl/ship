@@ -498,9 +498,7 @@ func (e *smokeEnv) testRemovedProcessReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nextManifest := strings.Replace(string(manifestBytes), `
-[processes.worker]
-command = "sleep 3600"
+	nextManifest := strings.Replace(string(manifestBytes), `worker = "sleep 3600"
 `, "", 1)
 	if nextManifest == string(manifestBytes) {
 		t.Fatal("test fixture did not contain worker process")
@@ -526,7 +524,7 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	e.simpleVPS(t, app, nil, "deploy", "--env", "production")
 	oldRelease := currentStaticReleaseFor(t, e, "site", "production")
 	staticReleaseManifest := e.ssh(t, "cat "+identity.ReleaseManifestFile("site", "production", oldRelease))
-	assertContains(t, staticReleaseManifest, `serve = "dist"`)
+	assertContains(t, staticReleaseManifest, `static = "dist"`)
 
 	status := e.simpleVPS(t, app, nil, "status", "--env", "production")
 	assertContains(t, status, "site (production)")
@@ -661,11 +659,7 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nextManifest := strings.Replace(string(manifestBytes), `
-[routes.docs]
-host = "mixed.example.com"
-path = "/docs"
-serve = "docs-dist"
+	nextManifest := strings.Replace(string(manifestBytes), `"mixed.example.com/docs" = { static = "docs-dist" }
 `, "", 1)
 	if nextManifest == string(manifestBytes) {
 		t.Fatal("test fixture did not contain docs route")
@@ -700,21 +694,18 @@ func (e *smokeEnv) testSecretLifecycle(t *testing.T) {
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
 	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "sec"
+box = "fake-vps"
+probe = "/health"
 
-[env.production]
-server = "fake-vps"
-
-[vars]
+[env]
 LOG_LEVEL = "info"
 DATABASE_URL = "@secret:db_url"
 
-[processes.web]
-port = 3000
-health = "/health"
+[processes]
+web = { port = 3000 }
 
-[routes.app]
-host = "sec.example.com"
-process = "web"
+[routes]
+"sec.example.com" = "web"
 `)
 	e.commitFixture(t, app)
 
@@ -994,18 +985,14 @@ func writeContainerFixture(t *testing.T, app string) {
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
 	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "api"
+box = "fake-vps"
+probe = "/health"
 
-[env.production]
-server = "fake-vps"
+[processes]
+web = { port = 3000, resources = { memory = "512m", cpus = 0.5 } }
 
-[processes.web]
-port = 3000
-health = "/health"
-resources = { memory = "512m", cpus = 0.5 }
-
-[routes.app]
-host = "api.example.com"
-process = "web"
+[routes]
+"api.example.com" = "web"
 	`)
 }
 
@@ -1015,17 +1002,14 @@ func writeDirtyFixture(t *testing.T, app string) {
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
 	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "dirtyapi"
+box = "fake-vps"
+probe = "/health"
 
-[env.production]
-server = "fake-vps"
+[processes]
+web = { port = 3000 }
 
-[processes.web]
-port = 3000
-health = "/health"
-
-[routes.app]
-host = "dirty.example.com"
-process = "web"
+[routes]
+"dirty.example.com" = "web"
 `)
 }
 
@@ -1035,23 +1019,18 @@ func writeReleaseFailFixture(t *testing.T, app string) {
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
 	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "releasefail"
+box = "fake-vps"
+release = "touch /data/release-ok"
+probe = "/health"
 
-[env.production]
-server = "fake-vps"
-
-[vars]
+[env]
 MARKER = "stable"
 
-[deploy]
-release = "touch /data/release-ok"
+[processes]
+web = { port = 3000 }
 
-[processes.web]
-port = 3000
-health = "/health"
-
-[routes.app]
-host = "release-fail.example.com"
-process = "web"
+[routes]
+"release-fail.example.com" = "web"
 	`)
 }
 
@@ -1063,28 +1042,19 @@ func writeCaddyFailFixture(t *testing.T, app string) {
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
 	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "caddyfail"
+box = "fake-vps"
+probe = "/health"
 
-[env.production]
-server = "fake-vps"
-
-[vars]
+[env]
 MARKER = "stable"
 
-[processes.web]
-port = 3000
-health = "/health"
+[processes]
+web = { port = 3000 }
+worker = "sleep 3600"
 
-[processes.worker]
-command = "sleep 3600"
-
-[routes.app]
-host = "caddy-fail.example.com"
-process = "web"
-
-[routes.docs]
-host = "caddy-fail.example.com"
-path = "/docs"
-serve = "docs-dist"
+[routes]
+"caddy-fail.example.com" = "web"
+"caddy-fail.example.com/docs" = { static = "docs-dist" }
 `)
 }
 
@@ -1094,20 +1064,15 @@ func writePruneFixture(t *testing.T, app string) {
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
 	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "prune"
+box = "fake-vps"
+probe = "/health"
 
-[env.production]
-server = "fake-vps"
+[processes]
+web = { port = 3000 }
+worker = "sleep 3600"
 
-[processes.web]
-port = 3000
-health = "/health"
-
-[processes.worker]
-command = "sleep 3600"
-
-[routes.app]
-host = "prune.example.com"
-process = "web"
+[routes]
+"prune.example.com" = "web"
 `)
 }
 
@@ -1116,13 +1081,10 @@ func writeStaticFixture(t *testing.T, app string) {
 	mustMkdir(t, filepath.Join(app, "dist"))
 	mustWrite(t, filepath.Join(app, "dist", "index.html"), "static-ok")
 	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "site"
+box = "fake-vps"
 
-[env.production]
-server = "fake-vps"
-
-[routes.home]
-host = "static.example.com"
-serve = "dist"
+[routes]
+"static.example.com" = { static = "dist" }
 `)
 }
 
@@ -1134,22 +1096,15 @@ func writeMixedFixture(t *testing.T, app string) {
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
 	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "mix"
+box = "fake-vps"
+probe = "/health"
 
-[env.production]
-server = "fake-vps"
+[processes]
+web = { port = 3000 }
 
-[processes.web]
-port = 3000
-health = "/health"
-
-[routes.docs]
-host = "mixed.example.com"
-path = "/docs"
-serve = "docs-dist"
-
-[routes.app]
-host = "mixed.example.com"
-process = "web"
+[routes]
+"mixed.example.com/docs" = { static = "docs-dist" }
+"mixed.example.com" = "web"
 `)
 }
 

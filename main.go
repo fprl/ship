@@ -91,7 +91,6 @@ type initCmd struct {
 	Env      string `name:"env" short:"e" default:"production" help:"Environment block to create."`
 	Server   string `name:"server" default:"deploy@example.com" help:"SSH target for the env."`
 	Host     string `name:"host" help:"Route host. Defaults to <app>.example.com."`
-	TLS      string `name:"tls" enum:"auto,internal" default:"auto" help:"Route TLS mode."`
 	Port     int    `name:"port" help:"Internal process port for container templates."`
 }
 
@@ -106,7 +105,6 @@ func (c initCmd) Run() error {
 		Env:      c.Env,
 		Server:   c.Server,
 		Host:     c.Host,
-		TLS:      c.TLS,
 		Port:     c.Port,
 	})
 	return nil

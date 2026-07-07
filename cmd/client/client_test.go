@@ -26,6 +26,33 @@ func writeClientDockerfile(t *testing.T, root string) {
 	}
 }
 
+func clientContainerManifest() string {
+	return `name = "api"
+box = "deploy@example.com"
+probe = "/health"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"api.example.com" = "web"
+`
+}
+
+func clientMixedManifest() string {
+	return `name = "api"
+box = "deploy@example.com"
+probe = "/health"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"api.example.com" = "web"
+"api.example.com/docs" = { static = "dist" }
+`
+}
+
 func TestDefaultAppNameUsesCurrentDirectoryBase(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "simple-vps-local-demo")
 	if err := os.Mkdir(root, 0755); err != nil {
@@ -100,19 +127,7 @@ func TestDirtyReleaseIDIncludesBaseCommit(t *testing.T) {
 func TestCheckAndDeployShareDirtyWorktreeDiagnostic(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
-	writeClientManifest(t, root, `name = "api"
-
-[env.production]
-server = "deploy@example.com"
-
-[processes.web]
-port = 3000
-health = "/health"
-
-[routes.app]
-host = "api.example.com"
-process = "web"
-`)
+	writeClientManifest(t, root, clientContainerManifest())
 	runGit(t, root, "init")
 	runGit(t, root, "add", ".")
 	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
@@ -195,19 +210,7 @@ func TestCommandRunnerEnvKeyUsesNormalKnownHosts(t *testing.T) {
 func TestCheckDiagnosticsExplainsMissingGitRepo(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
-	writeClientManifest(t, root, `name = "api"
-
-[env.production]
-server = "deploy@example.com"
-
-[processes.web]
-port = 3000
-health = "/health"
-
-[routes.app]
-host = "api.example.com"
-process = "web"
-`)
+	writeClientManifest(t, root, clientContainerManifest())
 
 	diags, err := checkDiagnostics(root, "production")
 	if err != nil {
@@ -226,20 +229,17 @@ func TestCheckDiagnosticsListsRequiredSecretsWithoutFailing(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
 	writeClientManifest(t, root, `name = "api"
+box = "deploy@example.com"
+probe = "/health"
 
-[env.production]
-server = "deploy@example.com"
-
-[vars]
+[env]
 DATABASE_URL = "@secret:DATABASE_URL"
 
-[processes.web]
-port = 3000
-health = "/health"
+[processes]
+web = { port = 3000 }
 
-[routes.app]
-host = "api.example.com"
-process = "web"
+[routes]
+"api.example.com" = "web"
 `)
 	runGit(t, root, "init")
 	runGit(t, root, "add", ".")
@@ -270,19 +270,7 @@ func TestGitWorktreeDirtyIsScopedToAppRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeClientDockerfile(t, appRoot)
-	writeClientManifest(t, appRoot, `name = "api"
-
-[env.production]
-server = "deploy@example.com"
-
-[processes.web]
-port = 3000
-health = "/health"
-
-[routes.app]
-host = "api.example.com"
-process = "web"
-`)
+	writeClientManifest(t, appRoot, clientContainerManifest())
 	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("root"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -316,19 +304,7 @@ process = "web"
 func TestBuildLocalDeployPlanAllowsIgnoredDotenvOutsideCleanArtifact(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
-	writeClientManifest(t, root, `name = "api"
-
-[env.production]
-server = "deploy@example.com"
-
-[processes.web]
-port = 3000
-health = "/health"
-
-[routes.app]
-host = "api.example.com"
-process = "web"
-`)
+	writeClientManifest(t, root, clientContainerManifest())
 	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".env\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -351,24 +327,7 @@ process = "web"
 func TestBuildLocalDeployPlanAllowsUntrackedServeDir(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
-	writeClientManifest(t, root, `name = "api"
-
-[env.production]
-server = "deploy@example.com"
-
-[processes.web]
-port = 3000
-health = "/health"
-
-[routes.app]
-host = "api.example.com"
-process = "web"
-
-[routes.docs]
-host = "api.example.com"
-path = "/docs"
-serve = "dist"
-`)
+	writeClientManifest(t, root, clientMixedManifest())
 	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -394,24 +353,7 @@ serve = "dist"
 func TestBuildLocalDeployPlanRejectsDotenvInsideServeDir(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
-	writeClientManifest(t, root, `name = "api"
-
-[env.production]
-server = "deploy@example.com"
-
-[processes.web]
-port = 3000
-health = "/health"
-
-[routes.app]
-host = "api.example.com"
-process = "web"
-
-[routes.docs]
-host = "api.example.com"
-path = "/docs"
-serve = "dist"
-`)
+	writeClientManifest(t, root, clientMixedManifest())
 	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -464,19 +406,7 @@ func TestWriteSourceTarUsesAppRootInMonorepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeClientDockerfile(t, appRoot)
-	writeClientManifest(t, appRoot, `name = "api"
-
-[env.production]
-server = "deploy@example.com"
-
-[processes.web]
-port = 3000
-health = "/health"
-
-[routes.app]
-host = "api.example.com"
-process = "web"
-`)
+	writeClientManifest(t, appRoot, clientContainerManifest())
 	if err := os.WriteFile(filepath.Join(repo, "root-only.txt"), []byte("should not deploy"), 0644); err != nil {
 		t.Fatal(err)
 	}

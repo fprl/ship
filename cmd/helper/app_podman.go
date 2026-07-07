@@ -107,7 +107,7 @@ func buildPodmanRunArgs(app, env, processName string, proc config.Process, image
 	return args
 }
 
-func startProcess(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string) error {
+func startProcess(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, probe string) error {
 	envFile := identity.EnvFile(app, env)
 
 	_, _ = utils.RunChecked("podman", []string{"rm", "-f", containerName}, "")
@@ -122,8 +122,8 @@ func startProcess(app, env, processName string, proc config.Process, imageTag, u
 		return fmt.Errorf("podman run %s: %v", containerName, err)
 	}
 
-	if proc.Port != nil && proc.Health != "" {
-		if err := waitHealthy(containerName, *proc.Port, proc.Health, 30*time.Second); err != nil {
+	if proc.Port != nil && probe != "" {
+		if err := waitHealthy(containerName, *proc.Port, probe, 30*time.Second); err != nil {
 			// Surface logs on failure so the user can see why.
 			out, _ := exec.Command("podman", "logs", "--tail", "50", containerName).CombinedOutput()
 			os.Stderr.Write(out)

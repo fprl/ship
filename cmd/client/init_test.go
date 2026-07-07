@@ -273,14 +273,13 @@ func TestRunInitRejectsStaticPort(t *testing.T) {
 	}
 }
 
-func TestRunInitCanSetInternalTLS(t *testing.T) {
+func TestRunInitUsesManifestV2Schema(t *testing.T) {
 	root := t.TempDir()
 	if _, err := RunInit(root, InitOptions{
 		Template: "php",
 		Name:     "api",
 		Server:   "deploy@example.com",
 		Host:     "api.example.com",
-		TLS:      "internal",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -288,8 +287,16 @@ func TestRunInitCanSetInternalTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(manifest), `tls = "internal"`) {
-		t.Fatalf("manifest missing internal TLS:\n%s", manifest)
+	body := string(manifest)
+	for _, want := range []string{`box = "deploy@example.com"`, `[env]`, `[processes]`, `[routes]`, `"api.example.com" = "web"`, `probe = "/health"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("manifest missing %q:\n%s", want, body)
+		}
+	}
+	for _, notWant := range []string{"[vars]", "[deploy]", "[env.production]", "[routes.app]", "health =", "tls ="} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("manifest should not contain %q:\n%s", notWant, body)
+		}
 	}
 }
 

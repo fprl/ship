@@ -403,6 +403,7 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 	var started []string
 	var stopped []string
 	processNames := map[string]string{}
+	routed := routedProcessNames(app.Routes)
 	containersToRemove := containersForRemovedProcesses(existing, app.Processes)
 	for _, processName := range sortedKeys(app.Processes) {
 		proc := app.Processes[processName]
@@ -421,7 +422,7 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		if proc.Port != nil {
 			processNames[processName] = containerName
 		}
-		if err := startProcess(c.App, c.Env, processName, proc, imageTag, userID, groupID, c.SHA, containerName); err != nil {
+		if err := startProcess(c.App, c.Env, processName, proc, imageTag, userID, groupID, c.SHA, containerName, processProbe(routed, processName, app.Probe)); err != nil {
 			removeContainers(started)
 			startContainers(stopped)
 			return containerApplyResult{}, err
@@ -448,6 +449,23 @@ func nextProcessContainerName(entries []containerEntry, app, env, processName, r
 		}
 	}
 	return base
+}
+
+func routedProcessNames(routes map[string]config.Route) map[string]bool {
+	out := map[string]bool{}
+	for _, route := range routes {
+		if route.Process != "" {
+			out[route.Process] = true
+		}
+	}
+	return out
+}
+
+func processProbe(routed map[string]bool, processName string, probe string) string {
+	if routed[processName] {
+		return probe
+	}
+	return ""
 }
 
 func containersForRemovedProcesses(entries []containerEntry, next map[string]config.Process) []string {
@@ -539,7 +557,7 @@ func (c appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string,
 			continue
 		}
 		src := filepath.Join(ctxDir, route.Serve)
-		dst := filepath.Join(stageDir, routeName)
+		dst := filepath.Join(stageDir, config.RouteStorageName(routeName))
 		if err := os.MkdirAll(dst, 0755); err != nil {
 			return "", false, err
 		}

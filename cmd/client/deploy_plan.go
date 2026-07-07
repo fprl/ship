@@ -126,7 +126,7 @@ func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localD
 			diags = append(diags, diagnostic{
 				Level:   diagnosticError,
 				Message: err.Error(),
-				Hint:    "Use [vars] and @secret references instead. Pass --include-dotenv only when you intentionally want dotenv files in the deploy artifact.",
+				Hint:    "Use [env] and @secret references instead. Pass --include-dotenv only when you intentionally want dotenv files in the deploy artifact.",
 			})
 		}
 	}

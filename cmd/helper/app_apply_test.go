@@ -119,17 +119,14 @@ func TestApplyRejectsManifestForDifferentApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "ship.toml"), []byte(`name = "other"
+box = "deploy@example.com"
+probe = "/health"
 
-[env.production]
-server = "deploy@example.com"
+[processes]
+web = { port = 3000 }
 
-[processes.web]
-port = 3000
-health = "/health"
-
-[routes.app]
-host = "api.example.com"
-process = "web"
+[routes]
+"api.example.com" = "web"
 `), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -395,14 +392,14 @@ func TestRenderAppCaddyfileGroupsEmptyTLSWithAuto(t *testing.T) {
 func TestRenderAppCaddyfileRedirectRouteQuotesTarget(t *testing.T) {
 	ctx := &config.AppContext{
 		Routes: map[string]config.Route{
-			"r": {Host: "old.example.com", Redirect: "https://new.example.com"},
+			"r": {Host: "old.example.com", Redirect: "new.example.com"},
 		},
 	}
 	got, err := renderAppCaddyfile("api", "production", ctx, "abc123")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, `redir "https://new.example.com" permanent`) {
+	if !strings.Contains(got, `redir "https://new.example.com{uri}" permanent`) {
 		t.Fatalf("expected quoted redir directive, got:\n%s", got)
 	}
 }

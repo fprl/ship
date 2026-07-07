@@ -64,6 +64,7 @@ func TestPublicCLIParsesV1Contract(t *testing.T) {
 func TestPublicCLIRejectsRemovedCompatibilityForms(t *testing.T) {
 	tests := [][]string{
 		{"setup", "production"},
+		{"init", "--tls", "internal"},
 		{"deploy", "production"},
 		{"status", "production"},
 		{"backup", "production"},

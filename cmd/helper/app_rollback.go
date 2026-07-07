@@ -133,6 +133,7 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 			return rollbackPayload{}, err
 		}
 		imageTag := identity.ImageTag(c.App, c.Env, targetRelease)
+		routed := routedProcessNames(app.Routes)
 		for _, procName := range sortedKeys(app.Processes) {
 			proc := app.Processes[procName]
 			if proc.Port == nil {
@@ -142,7 +143,7 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 			}
 			containerName := identity.ContainerName(c.App, c.Env, procName, targetRelease)
 			started = append(started, containerName)
-			if err := startProcess(c.App, c.Env, procName, proc, imageTag, userID, groupID, targetRelease, containerName); err != nil {
+			if err := startProcess(c.App, c.Env, procName, proc, imageTag, userID, groupID, targetRelease, containerName, processProbe(routed, procName, app.Probe)); err != nil {
 				cleanupStarted()
 				_ = restoreEnvFile(c.App, c.Env, envSnapshot)
 				_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
@@ -558,11 +559,6 @@ func createStaticServePlaceholders(root, env string) error {
 	}
 	if err := create(manifest.Routes); err != nil {
 		return err
-	}
-	if block, ok := manifest.Env[env]; ok {
-		if err := create(block.Routes); err != nil {
-			return err
-		}
 	}
 	return nil
 }

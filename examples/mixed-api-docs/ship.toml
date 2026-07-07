@@ -1,18 +1,10 @@
 name = "mixed-app"
+box = "deploy@example.com"
+probe = "/health"
 
-[env.production]
-server = "deploy@example.com"
+[processes]
+web = { port = 3000, resources = { memory = "256m", cpus = 0.5 } }
 
-[processes.web]
-port = 3000
-health = "/health"
-resources = { memory = "256m", cpus = 0.5 }
-
-[routes.docs]
-host = "mixed.example.com"
-path = "/docs"
-serve = "docs-dist"
-
-[routes.app]
-host = "mixed.example.com"
-process = "web"
+[routes]
+"mixed.example.com/docs" = { static = "docs-dist" }
+"mixed.example.com" = "web"

@@ -1,18 +1,13 @@
 name = "php-plain"
+box = "deploy@example.com"
+probe = "/health"
 
-[env.production]
-server = "deploy@example.com"
-
-[vars]
-APP_ENV = "production"
+[env]
 APP_SECRET = "@secret:APP_SECRET"
 DATABASE_PATH = "/data/app.sqlite"
 
-[processes.web]
-port = 8080
-health = "/health"
-resources = { memory = "256m", cpus = 0.5 }
+[processes]
+web = { port = 8080, resources = { memory = "256m", cpus = 0.5 } }
 
-[routes.app]
-host = "php.example.com"
-process = "web"
+[routes]
+"php.example.com" = "web"

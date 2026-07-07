@@ -1,8 +1,5 @@
 name = "astro-site"
+box = "deploy@example.com"
 
-[env.production]
-server = "deploy@example.com"
-
-[routes.site]
-host = "site.example.com"
-serve = "dist"
+[routes]
+"site.example.com" = { static = "dist" }

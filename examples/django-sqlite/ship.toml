@@ -1,22 +1,15 @@
 name = "django-sqlite"
+box = "deploy@example.com"
+release = "python manage.py migrate --noinput"
+probe = "/health"
 
-[env.production]
-server = "deploy@example.com"
-
-[vars]
+[env]
 DJANGO_SETTINGS_MODULE = "app.settings"
 DJANGO_SECRET_KEY = "@secret:DJANGO_SECRET_KEY"
 DATABASE_PATH = "/data/db.sqlite3"
 
-[deploy]
-release = "python manage.py migrate --noinput"
+[processes]
+web = { port = 8000, resources = { memory = "512m", cpus = 0.5 } }
 
-[processes.web]
-port = 8000
-health = "/health"
-resources = { memory = "512m", cpus = 0.5 }
-
-[routes.app]
-host = "django.example.com"
-process = "web"
-
+[routes]
+"django.example.com" = "web"

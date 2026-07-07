@@ -2,13 +2,17 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/fprl/simple-vps/internal/names"
@@ -28,7 +32,10 @@ var (
 	EnvKeyRe     = names.EnvKeyRe
 )
 
-const secretPrefix = "@secret:"
+const (
+	secretBare   = "@secret"
+	secretPrefix = "@secret:"
+)
 
 type Resources struct {
 	Memory *string  `toml:"memory"`
@@ -36,18 +43,18 @@ type Resources struct {
 }
 
 type Process struct {
-	Command   string    `toml:"command"`
+	Command   string    `toml:"cmd"`
 	Port      *int      `toml:"port"`
-	Health    string    `toml:"health"`
+	Preview   bool      `toml:"preview"`
 	Resources Resources `toml:"resources"`
 }
 
 type Route struct {
-	Host     string `toml:"host"`
-	Path     string `toml:"path"`
-	Process  string `toml:"process"`
-	Serve    string `toml:"serve"`
-	Redirect string `toml:"redirect"`
+	Host     string `toml:"-"`
+	Path     string `toml:"-"`
+	Process  string `toml:"-"`
+	Serve    string `toml:"-"`
+	Redirect string `toml:"-"`
 	// TLS controls Caddy's automatic-HTTPS behavior for this route:
 	//   - ""         — same as "auto"
 	//   - "auto"     — emit nothing; Caddy provisions Let's Encrypt
@@ -63,39 +70,213 @@ type DeployConfig struct {
 	Release string `toml:"release"`
 }
 
-type EnvBlock struct {
-	Server    string             `toml:"server"`
-	Processes map[string]Process `toml:"processes"`
-	Routes    map[string]Route   `toml:"routes"`
-	Vars      map[string]any     `toml:"vars"`
-	Deploy    DeployConfig       `toml:"deploy"`
+type Manifest struct {
+	Name             string             `toml:"name"`
+	Box              string             `toml:"box"`
+	ProductionBranch string             `toml:"production_branch"`
+	Processes        map[string]Process `toml:"processes"`
+	Routes           map[string]Route   `toml:"routes"`
+	Env              map[string]any     `toml:"env"`
+	Release          string             `toml:"release"`
+	Probe            string             `toml:"probe"`
+	Notify           string             `toml:"notify"`
 }
 
-type Manifest struct {
-	Name      string              `toml:"name"`
-	Processes map[string]Process  `toml:"processes"`
-	Routes    map[string]Route    `toml:"routes"`
-	Vars      map[string]any      `toml:"vars"`
-	Deploy    DeployConfig        `toml:"deploy"`
-	Env       map[string]EnvBlock `toml:"env"`
+type rawManifest struct {
+	Name             string         `toml:"name"`
+	Box              string         `toml:"box"`
+	ProductionBranch string         `toml:"production_branch"`
+	Processes        map[string]any `toml:"processes"`
+	Routes           map[string]any `toml:"routes"`
+	Env              map[string]any `toml:"env"`
+	Release          string         `toml:"release"`
+	Probe            string         `toml:"probe"`
+	Notify           string         `toml:"notify"`
 }
 
 type AppContext struct {
-	AppName         string
-	EnvName         string
-	Server          string
-	Shape           string
-	NeedsImage      bool
-	HasStaticRoutes bool
-	Dockerfile      string
-	Processes       map[string]Process
-	Routes          map[string]Route
-	Deploy          DeployConfig
+	AppName          string
+	EnvName          string
+	Server           string
+	ProductionBranch string
+	Shape            string
+	NeedsImage       bool
+	HasStaticRoutes  bool
+	Dockerfile       string
+	Processes        map[string]Process
+	Routes           map[string]Route
+	Deploy           DeployConfig
+	Probe            string
+	Notify           string
 	// Vars holds resolved non-secret env values for this env.
 	Vars map[string]string
 	// SecretRefs maps env-var key -> secret key name. The helper resolves
 	// these against the per-(app, env, key) secret store before deploy.
 	SecretRefs map[string]string
+}
+
+func (p *Process) UnmarshalTOML(value any) error {
+	*p = Process{Preview: true}
+	switch v := value.(type) {
+	case string:
+		p.Command = v
+		return nil
+	case map[string]any:
+		for key, raw := range v {
+			switch key {
+			case "cmd":
+				s, ok := raw.(string)
+				if !ok {
+					return fmt.Errorf("[processes.<name>].cmd must be a string")
+				}
+				p.Command = s
+			case "port":
+				port, err := tomlInt(raw)
+				if err != nil {
+					return fmt.Errorf("[processes.<name>].port must be an integer")
+				}
+				p.Port = &port
+			case "preview":
+				b, ok := raw.(bool)
+				if !ok {
+					return fmt.Errorf("[processes.<name>].preview must be a boolean")
+				}
+				p.Preview = b
+			case "resources":
+				res, err := parseResources(raw)
+				if err != nil {
+					return err
+				}
+				p.Resources = res
+			case "health":
+				return fmt.Errorf("[processes.<name>].health is not supported; use top-level probe")
+			case "command":
+				return fmt.Errorf("[processes.<name>].command is not supported; use cmd")
+			default:
+				return fmt.Errorf("unknown process field %q", key)
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("[processes.<name>] must be a string command or a table")
+	}
+}
+
+func qualifyProcessError(name string, err error) error {
+	return errors.New(strings.ReplaceAll(err.Error(), "[processes.<name>]", fmt.Sprintf("[processes.%s]", name)))
+}
+
+func parseResources(raw any) (Resources, error) {
+	table, ok := raw.(map[string]any)
+	if !ok {
+		return Resources{}, fmt.Errorf("[processes.<name>].resources must be a table")
+	}
+	var res Resources
+	for key, value := range table {
+		switch key {
+		case "memory":
+			s, ok := value.(string)
+			if !ok {
+				return Resources{}, fmt.Errorf("[processes.<name>].resources.memory must be a string")
+			}
+			res.Memory = &s
+		case "cpus":
+			switch v := value.(type) {
+			case float64:
+				res.CPUs = &v
+			case int64:
+				f := float64(v)
+				res.CPUs = &f
+			default:
+				return Resources{}, fmt.Errorf("[processes.<name>].resources.cpus must be a number")
+			}
+		default:
+			return Resources{}, fmt.Errorf("unknown process resources field %q", key)
+		}
+	}
+	return res, nil
+}
+
+func tomlInt(raw any) (int, error) {
+	switch v := raw.(type) {
+	case int64:
+		return int(v), nil
+	case int:
+		return v, nil
+	default:
+		return 0, fmt.Errorf("not an integer")
+	}
+}
+
+func (r *Route) UnmarshalTOML(value any) error {
+	*r = Route{}
+	switch v := value.(type) {
+	case string:
+		r.Process = v
+		return nil
+	case map[string]any:
+		targets := 0
+		for key, raw := range v {
+			switch key {
+			case "static":
+				s, ok := raw.(string)
+				if !ok {
+					return fmt.Errorf("[routes.<host/path>].static must be a string")
+				}
+				r.Serve = s
+				targets++
+			case "redirect":
+				s, ok := raw.(string)
+				if !ok {
+					return fmt.Errorf("[routes.<host/path>].redirect must be a string")
+				}
+				r.Redirect = s
+				targets++
+			default:
+				return fmt.Errorf("unknown route target field %q", key)
+			}
+		}
+		if targets != 1 {
+			return fmt.Errorf("[routes.<host/path>] must set exactly one of static or redirect")
+		}
+		return nil
+	default:
+		return fmt.Errorf("[routes.<host/path>] must be a process string or a target table")
+	}
+}
+
+func qualifyRouteError(name string, err error) error {
+	return errors.New(strings.ReplaceAll(err.Error(), "[routes.<host/path>]", routeLabel(name)))
+}
+
+func parseProcessMap(raw map[string]any) (map[string]Process, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]Process, len(raw))
+	for name, value := range raw {
+		var proc Process
+		if err := proc.UnmarshalTOML(value); err != nil {
+			return nil, qualifyProcessError(name, err)
+		}
+		out[name] = proc
+	}
+	return out, nil
+}
+
+func parseRouteMap(raw map[string]any) (map[string]Route, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]Route, len(raw))
+	for name, value := range raw {
+		var route Route
+		if err := route.UnmarshalTOML(value); err != nil {
+			return nil, qualifyRouteError(name, err)
+		}
+		out[name] = route
+	}
+	return out, nil
 }
 
 // Validation helpers
@@ -142,13 +323,32 @@ func ReadManifest(root string) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ship.toml not found")
 	}
-	var manifest Manifest
+	var raw rawManifest
 	// Strict decoding: removed fields (`runtime`, `[build]`, `[services]`,
 	// `[env.*.env]`, `tmpfs`, route `type`, etc.) fail at
 	// check time instead of silently becoming no-ops.
 	dec := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
-	if err := dec.Decode(&manifest); err != nil {
+	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("failed to parse ship.toml: %s", strictErrorMessage(err))
+	}
+	processes, err := parseProcessMap(raw.Processes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ship.toml: %s", err)
+	}
+	routes, err := parseRouteMap(raw.Routes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse ship.toml: %s", err)
+	}
+	manifest := Manifest{
+		Name:             raw.Name,
+		Box:              raw.Box,
+		ProductionBranch: raw.ProductionBranch,
+		Processes:        processes,
+		Routes:           hydrateRouteKeys(routes),
+		Env:              raw.Env,
+		Release:          raw.Release,
+		Probe:            raw.Probe,
+		Notify:           raw.Notify,
 	}
 	return &manifest, nil
 }
@@ -169,6 +369,169 @@ func strictErrorMessage(err error) string {
 		msgs = append(msgs, fmt.Sprintf("unknown field %q at line %d:%d", key, row, col))
 	}
 	return strings.Join(msgs, "; ")
+}
+
+func hydrateRouteKeys(routes map[string]Route) map[string]Route {
+	if len(routes) == 0 {
+		return routes
+	}
+	out := make(map[string]Route, len(routes))
+	for key, route := range routes {
+		host, path := splitRouteKey(key)
+		route.Host = canonicalHost(host)
+		route.Path = path
+		out[key] = route
+	}
+	return out
+}
+
+func splitRouteKey(key string) (string, string) {
+	host, rawPath, found := strings.Cut(key, "/")
+	if !found {
+		return key, ""
+	}
+	return host, "/" + rawPath
+}
+
+func canonicalHost(host string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+}
+
+func routeLabel(routeName string) string {
+	return fmt.Sprintf("[routes.%q]", routeName)
+}
+
+func RouteStorageName(routeKey string) string {
+	if routeKey == "" {
+		routeKey = "route"
+	}
+	var b strings.Builder
+	prevDash := false
+	changed := false
+	for _, r := range routeKey {
+		valid := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-'
+		if valid {
+			b.WriteRune(r)
+			prevDash = false
+			continue
+		}
+		changed = true
+		if !prevDash {
+			b.WriteByte('-')
+			prevDash = true
+		}
+	}
+	name := strings.Trim(b.String(), "-")
+	if name == "" {
+		name = "route"
+		changed = true
+	}
+	if !changed {
+		return name
+	}
+	sum := sha256.Sum256([]byte(routeKey))
+	return name + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
+func defaultProductionBranch(root, configured string) string {
+	configured = strings.TrimSpace(configured)
+	if configured != "" {
+		return configured
+	}
+	if gitBranchExists(root, "main") {
+		return "main"
+	}
+	if gitBranchExists(root, "master") {
+		return "master"
+	}
+	return "main"
+}
+
+func gitBranchExists(root, branch string) bool {
+	gitDir := filepath.Join(root, ".git")
+	if info, err := os.Stat(filepath.Join(gitDir, "refs", "heads", branch)); err == nil && !info.IsDir() {
+		return true
+	}
+	packed, err := os.ReadFile(filepath.Join(gitDir, "packed-refs"))
+	if err != nil {
+		return false
+	}
+	needle := "refs/heads/" + branch
+	for _, line := range strings.Split(string(packed), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "^") {
+			continue
+		}
+		if strings.HasSuffix(line, " "+needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func applyProcessPortDefaults(root string, processes map[string]Process, routes map[string]Route) map[string]Process {
+	if len(processes) == 0 {
+		return processes
+	}
+	out := make(map[string]Process, len(processes))
+	for name, proc := range processes {
+		out[name] = proc
+	}
+	defaultPort := dockerfileDefaultPort(root)
+	for _, route := range routes {
+		if route.Process == "" {
+			continue
+		}
+		proc, ok := out[route.Process]
+		if !ok || proc.Port != nil {
+			continue
+		}
+		port := defaultPort
+		proc.Port = &port
+		out[route.Process] = proc
+	}
+	return out
+}
+
+func dockerfileDefaultPort(root string) int {
+	ports := exposedDockerfilePorts(filepath.Join(root, "Dockerfile"))
+	if len(ports) == 1 {
+		for port := range ports {
+			return port
+		}
+	}
+	return 3000
+}
+
+func exposedDockerfilePorts(path string) map[int]bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	ports := map[int]bool{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = stripDockerfileComment(line)
+		fields := strings.Fields(line)
+		if len(fields) == 0 || !strings.EqualFold(fields[0], "EXPOSE") {
+			continue
+		}
+		for _, field := range fields[1:] {
+			portToken, _, _ := strings.Cut(field, "/")
+			port, err := strconv.Atoi(portToken)
+			if err != nil || port < 1 || port > 65535 {
+				continue
+			}
+			ports[port] = true
+		}
+	}
+	return ports
+}
+
+func stripDockerfileComment(line string) string {
+	if idx := strings.IndexByte(line, '#'); idx >= 0 {
+		return line[:idx]
+	}
+	return line
 }
 
 func detectShape(root string, processes map[string]Process, routes map[string]Route) (string, string) {
@@ -211,60 +574,38 @@ func CheckManifest(root string, envName string) ([]string, []string, error) {
 		errors = append(errors, "name must match "+names.AppPattern)
 	}
 
-	if len(manifest.Env) == 0 {
-		errors = append(errors, "at least one [env.<name>] block is required")
-		return errors, warnings, nil
+	if manifest.Box == "" {
+		errors = append(errors, "box is required")
+	} else if !ValidateSshTarget(manifest.Box) {
+		errors = append(errors, "box must be an SSH target like deploy@example.com")
 	}
 
-	var envNames []string
-	for k := range manifest.Env {
-		envNames = append(envNames, k)
+	if manifest.ProductionBranch != "" && !validateProductionBranch(manifest.ProductionBranch) {
+		errors = append(errors, "production_branch must be a valid git branch name")
 	}
 
-	if envName != "" {
-		if _, ok := manifest.Env[envName]; !ok {
-			errors = append(errors, fmt.Sprintf("env not found: %s", envName))
-			return errors, warnings, nil
-		}
+	if envName != "" && !EnvRe.MatchString(envName) {
+		errors = append(errors, fmt.Sprintf("invalid env name: %s", envName))
 	}
 
-	selectedEnvNames := envNames
-	if envName != "" {
-		selectedEnvNames = []string{envName}
+	validateVarsBlock(manifest.Env, &errors)
+	validateProbe(manifest.Probe, &errors)
+	validateNotify(manifest.Notify, &errors)
+
+	routes := manifest.Routes
+	processes := applyProcessPortDefaults(root, manifest.Processes, routes)
+	validateProcesses(processes, &errors)
+	validateRoutes(root, routes, processes, &errors)
+
+	shape, shapeErr := detectShape(root, processes, routes)
+	if shapeErr != "" {
+		errors = append(errors, shapeErr)
 	}
-
-	for _, selected := range selectedEnvNames {
-		envBlock := manifest.Env[selected]
-		if !EnvRe.MatchString(selected) {
-			errors = append(errors, fmt.Sprintf("invalid env name: %s", selected))
-		}
-
-		if envBlock.Server == "" {
-			errors = append(errors, fmt.Sprintf("[env.%s].server is required", selected))
-		} else if !ValidateSshTarget(envBlock.Server) {
-			errors = append(errors, fmt.Sprintf("[env.%s].server must be an SSH target like deploy@example.com", selected))
-		}
-
-		mergedVars := mergeVars(manifest.Vars, envBlock.Vars)
-		validateVarsBlock(mergedVars, selected, &errors)
-
-		mergedProcesses := mergeProcesses(manifest.Processes, envBlock.Processes)
-		validateProcesses(mergedProcesses, &errors)
-
-		mergedRoutes := mergeRoutes(manifest.Routes, envBlock.Routes)
-		validateRoutes(root, mergedRoutes, mergedProcesses, &errors)
-
-		mergedDeploy := mergeDeploy(manifest.Deploy, envBlock.Deploy)
-		shape, shapeErr := detectShape(root, mergedProcesses, mergedRoutes)
-		if shapeErr != "" {
-			errors = append(errors, shapeErr)
-		}
-		if shape == ShapeStatic && mergedDeploy.Release != "" {
-			errors = append(errors, "[deploy].release is only supported for container apps")
-		}
-		if shape == ShapeStatic && len(mergedVars) > 0 {
-			errors = append(errors, "[vars] is only supported for container apps")
-		}
+	if shape == ShapeStatic && manifest.Release != "" {
+		errors = append(errors, "release is only supported for container apps")
+	}
+	if shape == ShapeStatic && len(manifest.Env) > 0 {
+		errors = append(errors, "[env] is only supported for container apps")
 	}
 
 	return errors, warnings, nil
@@ -283,34 +624,32 @@ func LoadAppContext(root string, envName string) (*AppContext, error) {
 		return nil, fmt.Errorf("%s", strings.Join(errors, "\n"))
 	}
 
-	envBlock, ok := manifest.Env[envName]
-	if !ok {
-		return nil, fmt.Errorf("env not found: %s", envName)
-	}
-
-	processes := mergeProcesses(manifest.Processes, envBlock.Processes)
-	routes := mergeRoutes(manifest.Routes, envBlock.Routes)
+	routes := manifest.Routes
+	processes := applyProcessPortDefaults(root, manifest.Processes, routes)
 	shape, _ := detectShape(root, processes, routes)
 	dockerfile := ""
 	if shape == ShapeContainer {
 		dockerfile = filepath.Join(root, "Dockerfile")
 	}
 
-	vars, secretRefs := splitVarsBlock(mergeVars(manifest.Vars, envBlock.Vars))
+	vars, secretRefs := splitVarsBlock(manifest.Env)
 
 	return &AppContext{
-		AppName:         manifest.Name,
-		EnvName:         envName,
-		Server:          envBlock.Server,
-		Shape:           shape,
-		NeedsImage:      shape == ShapeContainer,
-		HasStaticRoutes: hasServeRoutes(routes),
-		Dockerfile:      dockerfile,
-		Processes:       processes,
-		Routes:          routes,
-		Deploy:          mergeDeploy(manifest.Deploy, envBlock.Deploy),
-		Vars:            vars,
-		SecretRefs:      secretRefs,
+		AppName:          manifest.Name,
+		EnvName:          envName,
+		Server:           manifest.Box,
+		ProductionBranch: defaultProductionBranch(root, manifest.ProductionBranch),
+		Shape:            shape,
+		NeedsImage:       shape == ShapeContainer,
+		HasStaticRoutes:  hasServeRoutes(routes),
+		Dockerfile:       dockerfile,
+		Processes:        processes,
+		Routes:           routes,
+		Deploy:           DeployConfig{Release: manifest.Release},
+		Probe:            manifest.Probe,
+		Notify:           manifest.Notify,
+		Vars:             vars,
+		SecretRefs:       secretRefs,
 	}, nil
 }
 
@@ -340,6 +679,10 @@ func splitVarsBlock(vars map[string]any) (map[string]string, map[string]string) 
 		if !ok {
 			continue
 		}
+		if s == secretBare {
+			refs[k] = k
+			continue
+		}
 		if strings.HasPrefix(s, secretPrefix) {
 			key := strings.TrimPrefix(s, secretPrefix)
 			if EnvKeyRe.MatchString(key) {
@@ -352,19 +695,22 @@ func splitVarsBlock(vars map[string]any) (map[string]string, map[string]string) 
 	return literals, refs
 }
 
-func validateVarsBlock(vars map[string]any, envName string, errors *[]string) {
+func validateVarsBlock(vars map[string]any, errors *[]string) {
 	for key, raw := range vars {
-		label := fmt.Sprintf("[env.%s.vars].%s", envName, key)
+		label := fmt.Sprintf("[env].%s", key)
 		if !EnvKeyRe.MatchString(key) {
 			*errors = append(*errors, fmt.Sprintf("%s key must match ^[A-Za-z_][A-Za-z0-9_]*$", label))
 			continue
 		}
 		switch v := raw.(type) {
 		case string:
+			if v == secretBare {
+				continue
+			}
 			if strings.HasPrefix(v, secretPrefix) {
 				ref := strings.TrimPrefix(v, secretPrefix)
 				if !EnvKeyRe.MatchString(ref) {
-					*errors = append(*errors, fmt.Sprintf("%s value starts with reserved prefix '@secret:', use the secret store instead", label))
+					*errors = append(*errors, fmt.Sprintf("%s value starts with reserved prefix '@secret:', use a valid secret key", label))
 				}
 			}
 		case bool:
@@ -379,93 +725,49 @@ func validateVarsBlock(vars map[string]any, envName string, errors *[]string) {
 	}
 }
 
-func mergeVars(base map[string]any, override map[string]any) map[string]any {
-	res := make(map[string]any)
-	for k, v := range base {
-		res[k] = v
+func validateProductionBranch(branch string) bool {
+	if strings.TrimSpace(branch) != branch || branch == "" {
+		return false
 	}
-	for k, v := range override {
-		res[k] = v
+	if strings.HasPrefix(branch, "-") || strings.HasPrefix(branch, "/") || strings.HasSuffix(branch, "/") || strings.HasSuffix(branch, ".") {
+		return false
 	}
-	return res
+	if strings.Contains(branch, "..") || strings.Contains(branch, "@{") || strings.Contains(branch, "\\") {
+		return false
+	}
+	for _, part := range strings.Split(branch, "/") {
+		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+	}
+	return !strings.ContainsAny(branch, " \t\r\n~^:?*[")
 }
 
-func mergeProcesses(base map[string]Process, override map[string]Process) map[string]Process {
-	res := make(map[string]Process)
-	for k, v := range base {
-		res[k] = v
+func validateProbe(probe string, errors *[]string) {
+	if probe == "" {
+		return
 	}
-	for k, v := range override {
-		existing, ok := res[k]
-		if !ok {
-			res[k] = v
-			continue
-		}
-		if v.Command != "" {
-			existing.Command = v.Command
-		}
-		if v.Port != nil {
-			existing.Port = v.Port
-		}
-		if v.Health != "" {
-			existing.Health = v.Health
-		}
-		if v.Resources.Memory != nil {
-			existing.Resources.Memory = v.Resources.Memory
-		}
-		if v.Resources.CPUs != nil {
-			existing.Resources.CPUs = v.Resources.CPUs
-		}
-		res[k] = existing
+	if !strings.HasPrefix(probe, "/") {
+		*errors = append(*errors, "probe must start with /")
+		return
 	}
-	return res
+	if strings.ContainsAny(probe, " \t\r\n") {
+		*errors = append(*errors, "probe must not contain whitespace")
+	}
 }
 
-func mergeRoutes(base map[string]Route, override map[string]Route) map[string]Route {
-	res := make(map[string]Route)
-	for k, v := range base {
-		res[k] = v
+func validateNotify(raw string, errors *[]string) {
+	if raw == "" {
+		return
 	}
-	for k, v := range override {
-		existing, ok := res[k]
-		if !ok {
-			res[k] = v
-			continue
-		}
-		if v.Host != "" {
-			existing.Host = v.Host
-		}
-		if v.Path != "" {
-			existing.Path = v.Path
-		}
-		if v.Process != "" {
-			existing.Process = v.Process
-			existing.Serve = ""
-			existing.Redirect = ""
-		}
-		if v.Serve != "" {
-			existing.Serve = v.Serve
-			existing.Process = ""
-			existing.Redirect = ""
-		}
-		if v.Redirect != "" {
-			existing.Redirect = v.Redirect
-			existing.Process = ""
-			existing.Serve = ""
-		}
-		if v.TLS != "" {
-			existing.TLS = v.TLS
-		}
-		res[k] = existing
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		*errors = append(*errors, "notify must be a valid URL")
+		return
 	}
-	return res
-}
-
-func mergeDeploy(base DeployConfig, override DeployConfig) DeployConfig {
-	if override.Release != "" {
-		base.Release = override.Release
+	if u.Scheme != "http" && u.Scheme != "https" {
+		*errors = append(*errors, "notify must use http or https")
 	}
-	return base
 }
 
 func validateProcesses(processes map[string]Process, errors *[]string) {
@@ -488,9 +790,6 @@ func validateProcesses(processes map[string]Process, errors *[]string) {
 			} else {
 				ports[port] = name
 			}
-			if proc.Health == "" {
-				*errors = append(*errors, fmt.Sprintf("[processes.%s].health is required when port is set", name))
-			}
 		}
 		validateProcessResources(name, proc.Resources, errors)
 	}
@@ -512,17 +811,15 @@ func validateRoutes(root string, routes map[string]Route, processes map[string]P
 	hostTLS := map[string]string{}
 	for _, name := range sortedRouteNames(routes) {
 		route := routes[name]
-		if !ProcessRe.MatchString(name) {
-			*errors = append(*errors, fmt.Sprintf("invalid route name: %s", name))
-		}
+		label := routeLabel(name)
 		if route.Host == "" {
-			*errors = append(*errors, fmt.Sprintf("[routes.%s].host is required", name))
+			*errors = append(*errors, fmt.Sprintf("%s host is required", label))
 		} else if !ValidateHost(route.Host) {
-			*errors = append(*errors, fmt.Sprintf("[routes.%s].host is invalid", name))
+			*errors = append(*errors, fmt.Sprintf("%s host is invalid", label))
 		} else {
 			hostPathKey := route.Host + "\x00" + route.Path
 			if existing := seenHostPaths[hostPathKey]; existing != "" {
-				*errors = append(*errors, fmt.Sprintf("[routes.%s] conflicts with [routes.%s]: host/path already used", name, existing))
+				*errors = append(*errors, fmt.Sprintf("%s conflicts with %s: host/path already used", label, routeLabel(existing)))
 			} else {
 				seenHostPaths[hostPathKey] = name
 			}
@@ -531,7 +828,7 @@ func validateRoutes(root string, routes map[string]Route, processes map[string]P
 				tlsMode = "auto"
 			}
 			if existing := hostTLS[route.Host]; existing != "" && existing != tlsMode {
-				*errors = append(*errors, fmt.Sprintf("[routes.%s].tls conflicts with another route for host %s", name, route.Host))
+				*errors = append(*errors, fmt.Sprintf("%s tls conflicts with another route for host %s", label, route.Host))
 			} else {
 				hostTLS[route.Host] = tlsMode
 			}
@@ -549,14 +846,14 @@ func validateRoutes(root string, routes map[string]Route, processes map[string]P
 			targets++
 		}
 		if targets != 1 {
-			*errors = append(*errors, fmt.Sprintf("[routes.%s] must set exactly one of process, serve, or redirect", name))
+			*errors = append(*errors, fmt.Sprintf("%s must set exactly one target", label))
 		}
 
 		if route.Process != "" {
 			if proc, ok := processes[route.Process]; !ok {
-				*errors = append(*errors, fmt.Sprintf("[routes.%s].process references unknown process: %s", name, route.Process))
+				*errors = append(*errors, fmt.Sprintf("%s references unknown process: %s", label, route.Process))
 			} else if proc.Port == nil {
-				*errors = append(*errors, fmt.Sprintf("[routes.%s].process must reference a process with a port", name))
+				*errors = append(*errors, fmt.Sprintf("%s must reference a process with a port", label))
 			}
 		}
 
@@ -565,8 +862,8 @@ func validateRoutes(root string, routes map[string]Route, processes map[string]P
 		}
 
 		if route.Redirect != "" {
-			if !strings.HasPrefix(route.Redirect, "http://") && !strings.HasPrefix(route.Redirect, "https://") {
-				*errors = append(*errors, fmt.Sprintf("[routes.%s].redirect must start with http:// or https://", name))
+			if !ValidateHost(route.Redirect) {
+				*errors = append(*errors, fmt.Sprintf("%s redirect must be a hostname", label))
 			}
 		}
 
@@ -574,7 +871,7 @@ func validateRoutes(root string, routes map[string]Route, processes map[string]P
 		case "", "auto", "internal":
 			// OK
 		default:
-			*errors = append(*errors, fmt.Sprintf(`[routes.%s].tls must be "auto" or "internal"`, name))
+			*errors = append(*errors, fmt.Sprintf(`%s tls must be "auto" or "internal"`, label))
 		}
 	}
 }
@@ -592,7 +889,7 @@ func validateRoutePath(routeName, path string, errors *[]string) {
 	if path == "" {
 		return
 	}
-	label := fmt.Sprintf("[routes.%s].path", routeName)
+	label := routeLabel(routeName) + " path"
 	if !strings.HasPrefix(path, "/") {
 		*errors = append(*errors, label+" must start with /")
 		return
@@ -620,7 +917,7 @@ func validateRoutePath(routeName, path string, errors *[]string) {
 }
 
 func validateServeDir(root, routeName, dir string, errors *[]string) {
-	label := fmt.Sprintf("[routes.%s].serve", routeName)
+	label := routeLabel(routeName) + ".static"
 	if filepath.IsAbs(dir) {
 		*errors = append(*errors, label+" must be relative to the app root")
 		return

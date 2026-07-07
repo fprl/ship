@@ -25,7 +25,6 @@ type InitOptions struct {
 	Env      string
 	Server   string
 	Host     string
-	TLS      string
 	Port     int
 }
 
@@ -50,7 +49,6 @@ type normalizedInit struct {
 	env      string
 	server   string
 	host     string
-	tls      string
 	port     int
 }
 
@@ -189,20 +187,12 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 		return normalizedInit{}, fmt.Errorf("--host must be a valid hostname")
 	}
 
-	tls := strings.ToLower(strings.TrimSpace(opts.TLS))
-	if tls == "" {
-		tls = "auto"
-	}
-	if tls != "auto" && tls != "internal" {
-		return normalizedInit{}, fmt.Errorf("--tls must be auto or internal")
-	}
-
 	port := opts.Port
 	if template == initTemplateStatic {
 		if port != 0 {
 			return normalizedInit{}, fmt.Errorf("--port is not used with --template static")
 		}
-		return normalizedInit{template: template, name: name, env: env, server: server, host: host, tls: tls}, nil
+		return normalizedInit{template: template, name: name, env: env, server: server, host: host}, nil
 	}
 	if port == 0 {
 		port = 3000
@@ -220,7 +210,6 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 		env:      env,
 		server:   server,
 		host:     host,
-		tls:      tls,
 		port:     port,
 	}, nil
 }
@@ -366,40 +355,28 @@ func writeNewInitFile(path string, body string) error {
 }
 
 func initManifest(init normalizedInit) string {
-	tlsLine := ""
-	if init.tls == "internal" {
-		tlsLine = "tls = \"internal\"\n"
-	}
 	if init.template == initTemplateStatic {
 		return fmt.Sprintf(`name = "%s"
+box = "%s"
 
-[env.%s]
-server = "%s"
-
-[routes.site]
-host = "%s"
-%sserve = "dist"
-`, init.name, init.env, init.server, init.host, tlsLine)
+[routes]
+"%s" = { static = "dist" }
+`, init.name, init.server, init.host)
 	}
 
 	return fmt.Sprintf(`name = "%s"
+box = "%s"
+probe = "/health"
 
-[env.%s]
-server = "%s"
-
-[vars]
-APP_ENV = "%s"
+[env]
 DATABASE_PATH = "/data/app.sqlite"
 
-[processes.web]
-port = %d
-health = "/health"
-resources = { memory = "256m", cpus = 0.5 }
+[processes]
+web = { port = %d, resources = { memory = "256m", cpus = 0.5 } }
 
-[routes.app]
-host = "%s"
-%sprocess = "web"
-`, init.name, init.env, init.server, init.env, init.port, init.host, tlsLine)
+[routes]
+"%s" = "web"
+`, init.name, init.server, init.port, init.host)
 }
 
 func renderInitResult(result InitResult) {
