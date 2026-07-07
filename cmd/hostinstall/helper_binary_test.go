@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fprl/simple-vps/internal/version"
+	"github.com/fprl/ship/internal/version"
 )
 
 func TestPrepareRemoteHelperUsesConfiguredHelperDir(t *testing.T) {
@@ -81,7 +81,7 @@ func TestPrepareRemoteHelperReleaseBuildPrefersDownloadOverRepoRoot(t *testing.T
 	t.Cleanup(func() { version.Version = prev })
 
 	sourceDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(sourceDir, "go.mod"), []byte("module invalid.example/simple-vps\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(sourceDir, "go.mod"), []byte("module invalid.example/ship\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SHIP_REPO_ROOT", sourceDir)

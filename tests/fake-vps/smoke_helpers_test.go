@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	h "github.com/fprl/simple-vps/tests/harness"
+	h "github.com/fprl/ship/tests/harness"
 )
 
 // Shared harness for the fake-VPS smoke tests. Owns binary build,
@@ -17,7 +17,7 @@ import (
 // set of assert/run helpers each test file uses. No actual test
 // functions live here.
 
-const fakeVPSImage = "simple-vps-fake-vps:local"
+const fakeVPSImage = "ship-fake-vps:local"
 
 type smokeEnv struct {
 	ctx        context.Context
@@ -109,16 +109,16 @@ func (e *smokeEnv) commitFixture(t *testing.T, appDir string) {
 	e.mustRun(t, appDir, nil, "git", "commit", "-q", "-m", "fixture")
 }
 
-func (e *smokeEnv) simpleVPS(t *testing.T, dir string, stdin []byte, args ...string) string {
+func (e *smokeEnv) ship(t *testing.T, dir string, stdin []byte, args ...string) string {
 	t.Helper()
-	result := e.runSimpleVPS(t, dir, stdin, args...)
+	result := e.runShip(t, dir, stdin, args...)
 	if result.err != nil {
 		t.Fatalf("ship %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), result.err, result.stdout, result.stderr)
 	}
 	return result.stdout
 }
 
-func (e *smokeEnv) runSimpleVPS(t *testing.T, dir string, stdin []byte, args ...string) commandResult {
+func (e *smokeEnv) runShip(t *testing.T, dir string, stdin []byte, args ...string) commandResult {
 	t.Helper()
 	return e.runCommand(t, dir, nil, stdin, e.goBin, args...)
 }

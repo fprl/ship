@@ -17,7 +17,7 @@ func CloudflareApiTokenPath() string {
 	if p := os.Getenv("SHIP_CLOUDFLARE_API_TOKEN_PATH"); p != "" {
 		return p
 	}
-	return "/etc/simple-vps/cloudflare-api-token"
+	return "/etc/ship/cloudflare-api-token"
 }
 
 func CloudflaredTunnelTokenPath() string {

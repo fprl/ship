@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/errcat"
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/secrets"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/secrets"
 )
 
 func TestResolveEnvMergesLiteralsAndSecrets(t *testing.T) {
@@ -228,10 +228,10 @@ func TestPodmanBuildArgsLabelsWithDerivedIdentity(t *testing.T) {
 	for _, want := range []string{
 		"build",
 		"-t " + identity.ImageTag("api", "production", "abc123"),
-		"--label simple-vps.app=api",
-		"--label simple-vps.env=production",
-		"--label simple-vps.infra_id=" + identity.InfraID("api", "production"),
-		"--label simple-vps.release=abc123",
+		"--label ship.app=api",
+		"--label ship.env=production",
+		"--label ship.infra_id=" + identity.InfraID("api", "production"),
+		"--label ship.release=abc123",
 		"-f /tmp/Dockerfile",
 		"/tmp/ctx",
 	} {
@@ -243,9 +243,9 @@ func TestPodmanBuildArgsLabelsWithDerivedIdentity(t *testing.T) {
 
 func TestContainersForRemovedProcesses(t *testing.T) {
 	entries := []containerEntry{
-		{Names: []string{"web-old"}, Labels: map[string]string{"simple-vps.process": "web"}},
-		{Names: []string{"worker-old"}, Labels: map[string]string{"simple-vps.process": "worker"}},
-		{Names: []string{"release-job"}, Labels: map[string]string{"simple-vps.process": "release"}},
+		{Names: []string{"web-old"}, Labels: map[string]string{"ship.process": "web"}},
+		{Names: []string{"worker-old"}, Labels: map[string]string{"ship.process": "worker"}},
+		{Names: []string{"release-job"}, Labels: map[string]string{"ship.process": "release"}},
 	}
 	got := containersForRemovedProcesses(entries, map[string]config.Process{"web": {}})
 	if len(got) != 1 || got[0] != "worker-old" {
@@ -256,9 +256,9 @@ func TestContainersForRemovedProcesses(t *testing.T) {
 func TestContainersOutsideDesiredRelease(t *testing.T) {
 	desired := identity.ContainerName("api", "production", "web", "abc123")
 	entries := []containerEntry{
-		{Names: []string{desired}, Labels: map[string]string{"simple-vps.process": "web"}},
-		{Names: []string{"stale-web"}, Labels: map[string]string{"simple-vps.process": "web"}},
-		{Names: []string{"stale-worker"}, Labels: map[string]string{"simple-vps.process": "worker"}},
+		{Names: []string{desired}, Labels: map[string]string{"ship.process": "web"}},
+		{Names: []string{"stale-web"}, Labels: map[string]string{"ship.process": "web"}},
+		{Names: []string{"stale-worker"}, Labels: map[string]string{"ship.process": "worker"}},
 	}
 	got := containersOutsideDesiredRelease(entries, "api", "production", map[string]config.Process{"web": {}}, "abc123")
 	if len(got) != 2 || got[0] != "stale-web" || got[1] != "stale-worker" {
@@ -269,7 +269,7 @@ func TestContainersOutsideDesiredRelease(t *testing.T) {
 func TestNextProcessContainerNameUsesInstanceWhenDefaultExists(t *testing.T) {
 	base := identity.ContainerName("api", "production", "web", "abc123")
 	got := nextProcessContainerName([]containerEntry{
-		{Names: []string{base}, Labels: map[string]string{"simple-vps.process": "web", "simple-vps.release": "abc123"}},
+		{Names: []string{base}, Labels: map[string]string{"ship.process": "web", "ship.release": "abc123"}},
 	}, "api", "production", "web", "abc123", "20260530t143012000000000z")
 	want := identity.ContainerInstanceName("api", "production", "web", "abc123", "20260530t143012000000000z")
 	if got != want {
@@ -316,8 +316,8 @@ func TestBuildPodmanRunArgsEmitsHardeningDataMountResourcesAndLabels(t *testing.
 		"--env-file " + identity.EnvFile("api", "production"),
 		"--memory 512m",
 		"--cpus 0.5",
-		"--label simple-vps.process=web",
-		"--label simple-vps.release=abc123",
+		"--label ship.process=web",
+		"--label ship.release=abc123",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %q in args:\n%s", want, joined)

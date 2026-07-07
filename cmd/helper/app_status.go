@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/utils"
 )
 
 // appStatusCmd inspects what `podman ps` currently sees for one
@@ -194,10 +194,10 @@ type containerEntry struct {
 func containersToProcesses(entries []containerEntry) []processStatus {
 	out := make([]processStatus, 0, len(entries))
 	for _, e := range entries {
-		// `simple-vps.process` label is set by `server app apply` on every
+		// `ship.process` label is set by `server app apply` on every
 		// container it starts. Anything without it isn't ours and
 		// shouldn't surface in app status.
-		proc := e.Labels["simple-vps.process"]
+		proc := e.Labels["ship.process"]
 		if proc == "" || isEphemeralProcess(proc) {
 			continue
 		}
@@ -205,7 +205,7 @@ func containersToProcesses(entries []containerEntry) []processStatus {
 		if len(e.Names) > 0 {
 			name = e.Names[0]
 		}
-		release := e.Labels["simple-vps.release"]
+		release := e.Labels["ship.release"]
 		status := processStatus{
 			Process:   proc,
 			Container: name,
@@ -237,13 +237,13 @@ func containersToAppEnvs(entries []containerEntry) []appEnvStatus {
 	}
 	grouped := map[key][]containerEntry{}
 	for _, e := range entries {
-		app := e.Labels["simple-vps.app"]
-		env := e.Labels["simple-vps.env"]
-		process := e.Labels["simple-vps.process"]
+		app := e.Labels["ship.app"]
+		env := e.Labels["ship.env"]
+		process := e.Labels["ship.process"]
 		if app == "" || env == "" || process == "" || isEphemeralProcess(process) {
 			continue
 		}
-		if e.Labels["simple-vps.infra_id"] != identity.InfraID(app, env) {
+		if e.Labels["ship.infra_id"] != identity.InfraID(app, env) {
 			continue
 		}
 		k := key{app: app, env: env}
@@ -572,9 +572,9 @@ func podmanPSContainers(app, env string) ([]containerEntry, error) {
 	// `--format json` returns a JSON array of containers matching
 	// the label filters server-side. Empty array if nothing matches.
 	cmd := exec.Command("podman", "ps", "-a",
-		"--filter", "label=simple-vps.app="+app,
-		"--filter", "label=simple-vps.env="+env,
-		"--filter", "label=simple-vps.infra_id="+identity.InfraID(app, env),
+		"--filter", "label=ship.app="+app,
+		"--filter", "label=ship.env="+env,
+		"--filter", "label=ship.infra_id="+identity.InfraID(app, env),
 		"--format", "json",
 	)
 	out, err := cmd.Output()
@@ -611,7 +611,7 @@ func identityGlob() string {
 	if envIdentityGlob != "" {
 		return envIdentityGlob
 	}
-	return filepath.Join(identity.AppsRoot(), "*", "simple-vps.json")
+	return filepath.Join(identity.AppsRoot(), "*", "ship.json")
 }
 
 func identityAppEnvs() ([]appEnvStatus, error) {

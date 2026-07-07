@@ -7,13 +7,13 @@ import (
 
 func TestDestroyContainerNamesUsesLabelledProcesses(t *testing.T) {
 	processes := []processStatus{
-		{Process: "web", Container: "svps-a8f9b2-web-abc1234"},
-		{Process: "worker", Container: "svps-a8f9b2-worker-abc1234"},
+		{Process: "web", Container: "ship-a8f9b2-web-abc1234"},
+		{Process: "worker", Container: "ship-a8f9b2-worker-abc1234"},
 		{Process: "broken"},
 	}
 
 	got := destroyContainerNames(processes)
-	want := []string{"svps-a8f9b2-web-abc1234", "svps-a8f9b2-worker-abc1234"}
+	want := []string{"ship-a8f9b2-web-abc1234", "ship-a8f9b2-worker-abc1234"}
 	if len(got) != len(want) {
 		t.Fatalf("unexpected names:\nwant: %#v\n got: %#v", want, got)
 	}

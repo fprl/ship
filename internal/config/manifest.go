@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/fprl/simple-vps/internal/names"
+	"github.com/fprl/ship/internal/names"
 	"github.com/pelletier/go-toml/v2"
 )
 

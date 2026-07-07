@@ -6,8 +6,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/utils"
 )
 
 type envCmd struct {

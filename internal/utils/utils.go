@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/errcat"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/errcat"
 )
 
 var shellEscapeRe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
@@ -28,7 +28,7 @@ func BackupDir() string {
 	if p := os.Getenv("SHIP_BACKUP_DIR"); p != "" {
 		return p
 	}
-	return "/etc/simple-vps/backups"
+	return "/etc/ship/backups"
 }
 
 func SystemctlBin() string {

@@ -14,12 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/identity"
-	h "github.com/fprl/simple-vps/tests/harness"
+	"github.com/fprl/ship/internal/identity"
+	h "github.com/fprl/ship/tests/harness"
 )
 
 const (
-	evalImage         = "simple-vps-agent-evals:local"
+	evalImage         = "ship-agent-evals:local"
 	evalToolCallLimit = 6
 	productionEnv     = "prod"
 )
@@ -186,11 +186,10 @@ func (e *evalCase) waitForSSH(t *testing.T) {
 
 func (e *evalCase) ensureSmokeHostSeed(t *testing.T) {
 	t.Helper()
-	e.dockerExec(t, "cat > /etc/simple-vps/host.json <<'EOF'\n"+h.SeedHostJSON()+"EOF")
-	e.dockerExec(t, "mkdir -p /etc/caddy/simple-vps /etc/caddy/conf.d /var/lib/caddy /etc/systemd/system")
-	e.dockerExec(t, "mkdir -p /tmp/simple-vps-deploy && chmod 1777 /tmp/simple-vps-deploy")
+	e.dockerExec(t, "cat > /etc/ship/host.json <<'EOF'\n"+h.SeedHostJSON()+"EOF")
+	e.dockerExec(t, "mkdir -p /etc/caddy/conf.d /var/lib/caddy /etc/systemd/system")
+	e.dockerExec(t, "mkdir -p /tmp/ship-deploy && chmod 1777 /tmp/ship-deploy")
 	e.dockerExec(t, `cat > /etc/caddy/Caddyfile <<'EOF'
-import simple-vps/*.caddy
 import conf.d/*.caddy
 EOF`)
 	e.dockerExec(t, "podman network exists ingress || podman network create ingress")
@@ -310,7 +309,7 @@ func evalScenarios() []evalScenario {
 			CheckerSummary: "Production main serves the current HEAD release with MARKER=next-marker",
 			RetryCommand:   "ship",
 			FixGuidance:    "fix the release command in ship.toml, then ship",
-			FixCommand:     `python3 -c 'from pathlib import Path; p=Path("ship.toml"); s=p.read_text(); p.write_text(s.replace("simple-vps-fail-release", "touch /data/release-ok"))' && git add ship.toml && git commit -m 'fix release command'`,
+			FixCommand:     `python3 -c 'from pathlib import Path; p=Path("ship.toml"); s=p.read_text(); p.write_text(s.replace("ship-fail-release", "touch /data/release-ok"))' && git add ship.toml && git commit -m 'fix release command'`,
 			Setup:          setupFailingReleaseCommand,
 			Induce:         induceShip,
 			Check:          checkCurrentHeadProductionLive,
@@ -377,7 +376,7 @@ func setupFailingReleaseCommand(t *testing.T, e *evalCase) *evalProject {
 
 	manifestPath := filepath.Join(app, "ship.toml")
 	manifest := mustRead(t, manifestPath)
-	manifest = strings.Replace(manifest, `release = "touch /data/release-ok"`, `release = "simple-vps-fail-release"`, 1)
+	manifest = strings.Replace(manifest, `release = "touch /data/release-ok"`, `release = "ship-fail-release"`, 1)
 	manifest = strings.Replace(manifest, `MARKER = "stable"`, `MARKER = "next-marker"`, 1)
 	mustWrite(t, manifestPath, manifest)
 	mustWrite(t, filepath.Join(app, "README.md"), "failing release command\n")
@@ -566,7 +565,7 @@ production_branch = "main"
 probe = "/health"
 
 [processes]
-web = { port = %d, cmd = "simple-vps-listen-port=3000 sleep 3600" }
+web = { port = %d, cmd = "ship-listen-port=3000 sleep 3600" }
 
 [routes]
 "eval-probe.example.com" = "web"

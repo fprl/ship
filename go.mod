@@ -1,4 +1,4 @@
-module github.com/fprl/simple-vps
+module github.com/fprl/ship
 
 go 1.22
 

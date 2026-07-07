@@ -11,10 +11,10 @@ import (
 	"testing"
 
 	"github.com/alecthomas/kong"
-	"github.com/fprl/simple-vps/cmd/client"
-	"github.com/fprl/simple-vps/internal/agentdocs"
-	"github.com/fprl/simple-vps/internal/errcat"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/cmd/client"
+	"github.com/fprl/ship/internal/agentdocs"
+	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/utils"
 )
 
 func newTestParser(t *testing.T) *kong.Kong {

@@ -159,7 +159,7 @@ func TestWriteHostStatePreservesDesired(t *testing.T) {
 			CloudflaredServiceActive: true,
 		},
 	}, HostMeta{
-		SimpleVPSVersion: "0.3.0",
+		ShipVersion: "0.3.0",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -176,8 +176,15 @@ func TestWriteHostStatePreservesDesired(t *testing.T) {
 	if loaded.Observed.Packages["caddy"].Version != "2.8.4" {
 		t.Fatalf("observed package version was not written: %+v", loaded.Observed.Packages)
 	}
-	if loaded.Meta.SimpleVPSVersion != "0.3.0" {
+	if loaded.Meta.ShipVersion != "0.3.0" {
 		t.Fatalf("meta was not written: %+v", loaded.Meta)
+	}
+	written, err := os.ReadFile(store.HostPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(written), `"ship_version": "0.3.0"`) {
+		t.Fatalf("host state should write ship_version:\n%s", written)
 	}
 }
 
@@ -191,7 +198,7 @@ func TestWriteHostStateIsStableAcrossRepeatedWrites(t *testing.T) {
 			"caddy": {Version: "2.8.4"},
 		},
 	}
-	meta := HostMeta{SimpleVPSVersion: "0.3.0"}
+	meta := HostMeta{ShipVersion: "0.3.0"}
 
 	if err := store.WriteHostState(observed, meta); err != nil {
 		t.Fatal(err)

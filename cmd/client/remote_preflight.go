@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/errcat"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/errcat"
 )
 
 func ensureRemoteEnvReadyForDeploy(runner sshRunner, ctx *config.AppContext) error {

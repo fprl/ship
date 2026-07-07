@@ -2,7 +2,7 @@
 set -euo pipefail
 
 package="${*: -1}"
-state="/run/simple-vps-fresh-host/packages/$package"
+state="/run/ship-fresh-host/packages/$package"
 
 if [[ -f "$state" ]]; then
   if [[ "$*" == *"\${Version}"* ]]; then

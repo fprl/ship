@@ -25,7 +25,7 @@ const (
 // It is stable before the env identity file exists, which lets setup
 // and locking use the same name as later lifecycle operations.
 func InfraID(app, env string) string {
-	return "svps-" + shortHash(app+"\x00"+env, 12)
+	return "ship-" + shortHash(app+"\x00"+env, 12)
 }
 
 // SystemUser is the Linux account that owns /data files and runs
@@ -77,7 +77,7 @@ func shortHash(value string, chars int) string {
 // ImageRepo is the local Podman image repo (without tag) for one
 // `(app, env)` pair. The full image reference is `ImageTag(app, env, sha)`.
 func ImageRepo(app, env string) string {
-	return "simple-vps/" + InfraID(app, env)
+	return "ship/" + InfraID(app, env)
 }
 
 // ImageTag is the full image reference for a deploy.
@@ -147,12 +147,12 @@ func ManifestFile(app, env string) string {
 
 // IdentityFile is the durable env identity anchor.
 func IdentityFile(app, env string) string {
-	return EnvRoot(app, env) + "/simple-vps.json"
+	return EnvRoot(app, env) + "/ship.json"
 }
 
 // CaddyFragmentFile is the generated ingress fragment for one `(app, env)`.
 func CaddyFragmentFile(app, env string) string {
-	return "/etc/caddy/conf.d/simple-vps-" + InfraID(app, env) + ".caddy"
+	return "/etc/caddy/conf.d/ship-" + InfraID(app, env) + ".caddy"
 }
 
 // EnvIdentity is the durable identity anchor stored at IdentityFile(app, env).

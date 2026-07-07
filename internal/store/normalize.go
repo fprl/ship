@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fprl/simple-vps/internal/names"
+	"github.com/fprl/ship/internal/names"
 )
 
 // Exported regexes used outside the package:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-state_dir=/run/simple-vps-fresh-host
+state_dir=/run/ship-fresh-host
 package_dir="$state_dir/packages"
 mkdir -p "$package_dir"
 

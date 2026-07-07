@@ -7,13 +7,13 @@ import (
 	"io"
 	"os"
 
-	"github.com/fprl/simple-vps/internal/secrets"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/secrets"
+	"github.com/fprl/ship/internal/utils"
 )
 
 // appSecretCmd is the host-side surface for the per-(app, env, key)
 // secret store. Values land on disk under
-// /etc/simple-vps/secrets/<app>/<env>/<key> (mode 0600, root:root) and
+// /etc/ship/secrets/<app>/<env>/<key> (mode 0600, root:root) and
 // are resolved into the runtime env file by `server app apply`.
 type appSecretCmd struct {
 	Set  appSecretSetCmd  `cmd:"set" help:"Write a secret value from stdin."`

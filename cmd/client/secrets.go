@@ -2,10 +2,10 @@ package client
 
 import (
 	"fmt"
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/errcat"
-	"github.com/fprl/simple-vps/internal/names"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/names"
+	"github.com/fprl/ship/internal/utils"
 	"io"
 	"os"
 	"strings"
@@ -120,7 +120,7 @@ func CmdSecretSet(root string, key string, preview bool, branch string) {
 
 	// Pipe the value over the helper's stdin — never argv, never a
 	// file on disk between hops. The helper writes it straight to
-	// /etc/simple-vps/secrets/<app>/<env>/<key>.
+	// /etc/ship/secrets/<app>/<env>/<key>.
 	stdout, stderr, code, err := secret.Runner.RunSSHWithStdin(secret.AppContext.Server, serverAppSecretSetCommand(secret.AppContext.AppName, secret.EnvName, key), value)
 	if err != nil || code != 0 {
 		remote := extractRemoteError(stdout, stderr, "no error detail")

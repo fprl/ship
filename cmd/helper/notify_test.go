@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/store"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/store"
 )
 
 func TestNotifyDeployAbortedPayloadCarriesScrubbedJournalAndRemediation(t *testing.T) {

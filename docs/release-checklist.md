@@ -24,18 +24,18 @@ The Astro example check needs Node/npm and network access because it builds a
 real static site before validating `serve = "dist"`.
 
 ```bash
-(cd examples/hono-bun-api && ../../dist/simple-vps check --env production)
-(cd examples/php-plain && ../../dist/simple-vps check --env production)
-(cd examples/django-sqlite && ../../dist/simple-vps check --env production)
-(cd examples/astro-static && npm install --no-package-lock && npm run build && ../../dist/simple-vps check --env production)
-(cd examples/mixed-api-docs && ../../dist/simple-vps check --env production)
-tmp=$(mktemp -d /tmp/simple-vps-init-check-XXXXXX)
-./dist/simple-vps init --config "$tmp/simple-vps.toml" --template php --name init-php --server deploy@example.com --host init-php.example.com
+(cd examples/hono-bun-api && ../../dist/ship check --env production)
+(cd examples/php-plain && ../../dist/ship check --env production)
+(cd examples/django-sqlite && ../../dist/ship check --env production)
+(cd examples/astro-static && npm install --no-package-lock && npm run build && ../../dist/ship check --env production)
+(cd examples/mixed-api-docs && ../../dist/ship check --env production)
+tmp=$(mktemp -d /tmp/ship-init-check-XXXXXX)
+./dist/ship init --config "$tmp/ship.toml" --template php --name init-php --server deploy@example.com --host init-php.example.com
 (cd "$tmp" && git init && git add . && git -c user.email=test@example.com -c user.name=Test commit -m init)
-./dist/simple-vps check --config "$tmp/simple-vps.toml" --env production
+./dist/ship check --config "$tmp/ship.toml" --env production
 
 # Optional local container build coverage when Podman or Docker is available.
-# Set SIMPLE_VPS_TEST_INIT_BUILDER=docker if Podman is installed but unavailable.
+# Set SHIP_TEST_INIT_BUILDER=docker if Podman is installed but unavailable.
 make init-template-builds
 ```
 

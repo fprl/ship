@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/fprl/simple-vps/internal/errcat"
-	"github.com/fprl/simple-vps/internal/secrets"
+	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/secrets"
 )
 
 const sharedPreviewSecretsEnvName = "preview"

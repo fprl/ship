@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-state_dir=/run/simple-vps-fresh-host
+state_dir=/run/ship-fresh-host
 rules_file="$state_dir/ufw-rules"
 active_file="$state_dir/ufw-active"
 mkdir -p "$state_dir"

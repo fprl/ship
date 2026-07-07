@@ -35,7 +35,7 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "preflight", "--secret", "DATABASE_URL", "--json", "api", "production"},
 		{"app", "destroy-env", "api", "production"},
 		{"app", "destroy-env", "--purge", "api", "production"},
-		{"app", "apply", "--tarball", "/tmp/simple-vps-deploy/x.tar", "--manifest", "/tmp/simple-vps-deploy/x.toml", "--sha", "deadbeef", "--base-commit", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "--created-at", "2026-05-30T14:30:12Z", "api", "production"},
+		{"app", "apply", "--tarball", "/tmp/ship-deploy/x.tar", "--manifest", "/tmp/ship-deploy/x.toml", "--sha", "deadbeef", "--base-commit", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "--created-at", "2026-05-30T14:30:12Z", "api", "production"},
 		{"app", "preview", "resolve-or-create", "api", "feat/x"},
 		{"app", "preview", "resolve", "api", "feat/x"},
 		{"app", "preview", "pin", "api", "feat/x"},

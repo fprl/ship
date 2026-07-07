@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/secrets"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/secrets"
+	"github.com/fprl/ship/internal/utils"
 )
 
 type appBackupCmd struct {
@@ -186,7 +186,7 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 	if err != nil {
 		return backupMetadata{}, err
 	}
-	tmp, err := os.MkdirTemp("", "simple-vps-restore-")
+	tmp, err := os.MkdirTemp("", "ship-restore-")
 	if err != nil {
 		return backupMetadata{}, err
 	}
@@ -336,7 +336,7 @@ func containersOutsideDesiredRelease(entries []containerEntry, app, env string, 
 	}
 	var names []string
 	for _, e := range entries {
-		process := e.Labels["simple-vps.process"]
+		process := e.Labels["ship.process"]
 		if process == "" || isEphemeralProcess(process) {
 			continue
 		}
@@ -579,7 +579,7 @@ func addBackupMetadata(path string, item *backupInfo) error {
 }
 
 func readBackupMetadata(path string) (backupMetadata, error) {
-	tmp, err := os.MkdirTemp("", "simple-vps-backup-meta-")
+	tmp, err := os.MkdirTemp("", "ship-backup-meta-")
 	if err != nil {
 		return backupMetadata{}, err
 	}

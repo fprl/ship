@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/errcat"
+	"github.com/fprl/ship/internal/errcat"
 )
 
 func TestRunCheckedWithTimeout(t *testing.T) {
@@ -16,6 +16,13 @@ func TestRunCheckedWithTimeout(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "command timed out after") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBackupDirDefaultMatchesServerContract(t *testing.T) {
+	t.Setenv("SHIP_BACKUP_DIR", "")
+	if got := BackupDir(); got != "/etc/ship/backups" {
+		t.Fatalf("unexpected backup dir: %s", got)
 	}
 }
 

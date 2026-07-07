@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-state_dir=/run/simple-vps-fresh-host
+state_dir=/run/ship-fresh-host
 mkdir -p "$state_dir"
 printf 'gpg %s\n' "$*" >> "$state_dir/gpg.log"
 

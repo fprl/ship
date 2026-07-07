@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/fprl/simple-vps/internal/provision"
-	"github.com/fprl/simple-vps/internal/provision/local"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/provision"
+	"github.com/fprl/ship/internal/provision/local"
+	"github.com/fprl/ship/internal/utils"
 )
 
 type Options struct {

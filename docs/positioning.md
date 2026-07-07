@@ -1,14 +1,14 @@
 # Positioning
 
-simple-vps is a deploy primitive for solo developers and small teams who want
+ship is a deploy primitive for solo developers and small teams who want
 to run their own apps on a single VPS, with the security and operations work
-done up front and out of the way. The user owns the VPS. simple-vps owns:
+done up front and out of the way. The user owns the VPS. ship owns:
 hardening the host once, deploying containerized apps onto it, managing
 routes, secrets, and backups, and getting out of the way between commands.
 There is no control plane, no dashboard, no managed services tier. The CLI
 is the product.
 
-This document is the design discipline reference: who simple-vps is for,
+This document is the design discipline reference: who ship is for,
 what is in scope, what is out, and the tests every new feature must pass.
 
 ## Audience
@@ -49,7 +49,7 @@ Not features we're going to add by accident. If any of these become
 right for the product, they get their own design from scratch, not
 feature creep into the current shape.
 
-- **Multi-host fleet management.** simple-vps is single-host by
+- **Multi-host fleet management.** ship is single-host by
   design. When users outgrow that, they've outgrown this tool —
   multi-host is a different product shape, not a feature to bolt on.
 - **Dashboard UI shipped by us.** The CLI is the product. A dashboard
@@ -66,11 +66,11 @@ feature creep into the current shape.
   SQLite-everywhere (the Rails 8 one-box pattern) — that is the default
   path we optimize for; managed URLs are fully supported and never
   punished. See docs/rfd/0001. Users may run their own DB container
-  outside simple-vps; it is not managed or backed up.
+  outside ship; it is not managed or backed up.
 - **Built-in recurring scheduler / jobs primitive.** Framework
   schedulers (Sidekiq, Oban, Celery beat, BullMQ, Laravel scheduler)
   cover recurring work inside app stacks. System cron, systemd timers,
-  or external schedulers cover host-level scheduling. simple-vps does
+  or external schedulers cover host-level scheduling. ship does
   not own the scheduler.
 - **Git-push deploy.** Explicit `deploy` keeps the trigger surface
   controlled and scriptable.
@@ -87,27 +87,27 @@ The clearest competitor and the right mental reference is
 - Container-runtime-required.
 - Designed for "I own this VPS, deploy my app to it."
 
-What simple-vps does that Kamal doesn't:
+What ship does that Kamal doesn't:
 
 - **Hardened-host installer baked in** (per ADR-0001). UFW, fail2ban,
   deploy user, Caddy, TLS — configured by us, not by the user. Kamal's
-  host hardening (`kamal setup`) is opt-in and minimal; simple-vps's
+  host hardening (`kamal setup`) is opt-in and minimal; ship's
   is default and comprehensive.
 - **Per-env first-class** in the manifest, not grafted on.
 - **Backup and restore as a primitive.** "Fresh VPS, restore app to
   running" is a product bar, not a recipe (per ADR-0007).
 - **Go binary** — no Ruby runtime required on the client.
 
-What Kamal does that simple-vps doesn't ship today:
+What Kamal does that ship doesn't ship today:
 
 - Multi-host deploys.
-- Custom in-house proxy (kamal-proxy). simple-vps stays on Caddy —
+- Custom in-house proxy (kamal-proxy). ship stays on Caddy —
   already small, with none of the Traefik complexity that drove Kamal
   to build a custom proxy.
 
 ## Why not the other options
 
-| Tool | What it offers an indie hacker | What simple-vps offers over it |
+| Tool | What it offers an indie hacker | What ship offers over it |
 |---|---|---|
 | **Coolify / Dokploy / CapRover** | Dashboard-first self-hosted PaaS: control panel, database-backed state, app templates, click-driven flows | CLI-first deploy primitive: repo-owned manifest, flat-file host state, JSON API, no dashboard process, no hidden UI-owned config |
 | **Dokku** | Mature, Heroku-shaped, git-push, plugins | Modern Go binary instead of bash sprawl; hardened host included; no buildpack guesswork |
@@ -115,8 +115,8 @@ What Kamal does that simple-vps doesn't ship today:
 | **Kubernetes / k3s** | Real fleet management, autoscaling | If you need k8s, you are not the audience |
 
 The honest answer to "why not Compose + Traefik + scripts": if you have
-already written those scripts and they work, simple-vps probably is not
-worth the migration. If you have not, simple-vps gives you a maintained
+already written those scripts and they work, ship probably is not
+worth the migration. If you have not, ship gives you a maintained
 version of the same shape, plus the hardened-host installer most
 self-hosters never get around to writing.
 
@@ -139,7 +139,7 @@ Concretely:
 - `logs` does sensible structured tailing. Not "here, run
   `journalctl -u ...` yourself."
 - Error messages are actionable: `secret "db_url" not set for prod;
-  run \`simple-vps secret set db_url --env prod\``. Not `missing reference`.
+  run \`ship secret set db_url --env prod\``. Not `missing reference`.
 - "We will fix that in the dashboard" is not an allowed answer during
   implementation review.
 
@@ -150,7 +150,7 @@ surfaces expose `--json` where the output is stable: `status`, `app
 list`, `backup list`, `backup create`, `secret list`, `host status`,
 and `host doctor`. Someone — the user later, the community, a paid
 SaaS — can build a dashboard, scheduler, or multi-host coordinator on
-top of simple-vps without changing simple-vps.
+top of ship without changing ship.
 
 This is a moat. The discipline cost is real: contracts are written
 down, tests pin them, and pre-1.0 breaking changes happen deliberately

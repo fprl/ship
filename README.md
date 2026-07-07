@@ -1,9 +1,9 @@
-# Simple VPS
+# ship
 
 > **Superseded:** This document describes the pre-ship surface and is not current.
 > **Pending:** The Phase 3 rewrite will replace it; only broken commands are patched here.
 
-Simple VPS is a tiny VPS runtime: point a repo at a Ubuntu box, get Dockerfile
+ship is a tiny VPS runtime: point a repo at a Ubuntu box, get Dockerfile
 builds, Podman containers, Caddy TLS routing, secrets, backup/restore, and
 rollback without bringing Kubernetes or a hosted PaaS into the picture.
 
@@ -53,7 +53,7 @@ For the fresh-VPS-to-first-app path, use
 Install the local CLI on your laptop or CI machine:
 
 ```bash
-curl -fsSL https://github.com/fprl/simple-vps/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | bash
 ship version
 ```
 
@@ -63,7 +63,7 @@ find `ship`, the installer prints the exact `PATH` line to add.
 
 The curl command assumes public release assets. For private release assets,
 download `install.sh` with GitHub authentication first, then run it with
-`SIMPLE_VPS_RELEASE_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`.
+`SHIP_RELEASE_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`.
 
 ## Install A VPS
 
@@ -168,7 +168,7 @@ Then:
 ```bash
 git init
 git add .
-git commit -m "initial simple-vps app"
+git commit -m "initial ship app"
 ship
 ship status
 ```
@@ -213,10 +213,10 @@ make build-release VERSION=v0.7.0
 Build artifacts land in `dist/`:
 
 ```text
-simple-vps-linux-amd64
-simple-vps-linux-arm64
-simple-vps-darwin-amd64
-simple-vps-darwin-arm64
+ship-linux-amd64
+ship-linux-arm64
+ship-darwin-amd64
+ship-darwin-arm64
 SHA256SUMS
 ```
 

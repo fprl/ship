@@ -59,39 +59,39 @@ func TestSelectRollbackReleaseErrors(t *testing.T) {
 func TestImageReleasesFromEntriesUsesPodmanLabels(t *testing.T) {
 	entries := []imageEntry{
 		{
-			Names: []string{"localhost/simple-vps/svps-de70a215abfd:3333333"},
+			Names: []string{"localhost/ship/ship-de70a215abfd:3333333"},
 			Labels: map[string]string{
-				"simple-vps.app":      "hello",
-				"simple-vps.env":      "production",
-				"simple-vps.infra_id": "svps-de70a215abfd",
-				"simple-vps.release":  "3333333",
+				"ship.app":      "hello",
+				"ship.env":      "production",
+				"ship.infra_id": "ship-de70a215abfd",
+				"ship.release":  "3333333",
 			},
 		},
 		{
-			Names: []string{"localhost/simple-vps/svps-de70a215abfd:2222222"},
+			Names: []string{"localhost/ship/ship-de70a215abfd:2222222"},
 			Labels: map[string]string{
-				"simple-vps.app":      "hello",
-				"simple-vps.env":      "production",
-				"simple-vps.infra_id": "svps-de70a215abfd",
-				"simple-vps.release":  "2222222",
+				"ship.app":      "hello",
+				"ship.env":      "production",
+				"ship.infra_id": "ship-de70a215abfd",
+				"ship.release":  "2222222",
 			},
 		},
 		{
-			Names: []string{"localhost/simple-vps/svps-other:ignored"},
+			Names: []string{"localhost/ship/ship-other:ignored"},
 			Labels: map[string]string{
-				"simple-vps.app":      "hello",
-				"simple-vps.env":      "production",
-				"simple-vps.infra_id": "svps-other",
-				"simple-vps.release":  "ignored",
+				"ship.app":      "hello",
+				"ship.env":      "production",
+				"ship.infra_id": "ship-other",
+				"ship.release":  "ignored",
 			},
 		},
 		{
-			Names: []string{"localhost/simple-vps/svps-de70a215abfd:1111111"},
+			Names: []string{"localhost/ship/ship-de70a215abfd:1111111"},
 			Tag:   "1111111",
 			Labels: map[string]string{
-				"simple-vps.app":      "hello",
-				"simple-vps.env":      "production",
-				"simple-vps.infra_id": "svps-de70a215abfd",
+				"ship.app":      "hello",
+				"ship.env":      "production",
+				"ship.infra_id": "ship-de70a215abfd",
 			},
 		},
 	}

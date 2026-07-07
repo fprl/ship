@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/fprl/simple-vps/internal/provision/host"
+	"github.com/fprl/ship/internal/provision/host"
 )
 
 type Runner struct{}
@@ -76,7 +76,7 @@ func (Runner) WriteFile(_ context.Context, file host.File) error {
 func (r Runner) Validate(ctx context.Context, validation host.Validation) error {
 	switch validation.Kind {
 	case host.ValidationSudoers:
-		tmp, err := os.CreateTemp("", "simple-vps-sudoers-")
+		tmp, err := os.CreateTemp("", "ship-sudoers-")
 		if err != nil {
 			return err
 		}

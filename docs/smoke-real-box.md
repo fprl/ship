@@ -3,11 +3,11 @@
 The old release smoke script was removed with the pre-ship CLI surface. This
 runbook is the lower-level debugging path when you need to inspect the host
 between steps. It deliberately uses temp
-keys, `SIMPLE_VPS_SSH_KEY`, and a local `dist/simple-vps` binary; the normal
+keys, `SHIP_SSH_KEY`, and a local `dist/ship` binary; the normal
 user path is [getting-started.md](getting-started.md).
 
 The fake-VPS smoke (`make fake-vps-smoke`, `make fake-vps-install-smoke`)
-proves simple-vps's internal shape is consistent against fake Podman
+proves ship's internal shape is consistent against fake Podman
 and fake Caddy. This runbook drives the same path against a real
 Ubuntu 24.04/26.04 VPS with real Podman and real Caddy. Authored from a
 live smoke session; every command below was actually run.
@@ -28,7 +28,7 @@ the real Caddy container lifecycle.
   curl with a `Host:` header reaches Caddy on port 443 (Caddy auto-
   redirects 80 → 443, so plain HTTP is not the test). Use `tls
   internal` in the fragment for self-signed certs during the smoke.
-- `simple-vps` built locally:
+- `ship` built locally:
 
   ```sh
   make clean && make build
@@ -40,9 +40,9 @@ the real Caddy container lifecycle.
 - Operator and deploy SSH keys generated for the smoke:
 
   ```sh
-  mkdir -p /tmp/simple-vps-smoke-keys
-  ssh-keygen -q -t ed25519 -N '' -f /tmp/simple-vps-smoke-keys/operator
-  ssh-keygen -q -t ed25519 -N '' -f /tmp/simple-vps-smoke-keys/deploy
+  mkdir -p /tmp/ship-smoke-keys
+  ssh-keygen -q -t ed25519 -N '' -f /tmp/ship-smoke-keys/operator
+  ssh-keygen -q -t ed25519 -N '' -f /tmp/ship-smoke-keys/deploy
   ```
 
 - If the VPS was rebuilt at the same IP and SSH reports that the host key
@@ -55,18 +55,18 @@ the real Caddy container lifecycle.
 ## 1. Host install
 
 ```sh
-./dist/simple-vps host install \
+./dist/ship host install \
   --host <IP> \
   --bootstrap-user root \
   --ssh-key ~/.ssh/<root-key> \
-  --operator-ssh-public-key-file /tmp/simple-vps-smoke-keys/operator.pub \
-  --deploy-ssh-public-key-file /tmp/simple-vps-smoke-keys/deploy.pub \
+  --operator-ssh-public-key-file /tmp/ship-smoke-keys/operator.pub \
+  --deploy-ssh-public-key-file /tmp/ship-smoke-keys/deploy.pub \
   --timezone UTC --locale en_US.UTF-8 \
   --no-tailscale --no-cloudflare-tunnel
 ```
 
 Expected output ends with `==> Provisioning complete` and `Apply
-<ID> changed N operations`. If you see `simple-vps: error: ...`
+<ID> changed N operations`. If you see `ship: error: ...`
 instead, capture the stderr line in the release notes or issue you are working.
 
 After install, verify (over SSH as root):
@@ -77,18 +77,18 @@ podman ps                            # → caddy Up, no app yet
 podman network ls                    # → ingress, podman
 cat /etc/caddy/Caddyfile             # → "import conf.d/*.caddy"
 ls /etc/caddy/conf.d/                # → empty
-cat /etc/simple-vps/host.json \
+cat /etc/ship/host.json \
   | jq '.meta.last_apply.status'     # → "ok"
 ```
 
 Verify the public host read surface from the laptop:
 
 ```sh
-SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
-  ./dist/simple-vps host status --json --server deploy@<IP> | jq .
+SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
+  ./dist/ship host status --json --server deploy@<IP> | jq .
 
-SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
-  ./dist/simple-vps host doctor --json --server deploy@<IP> | jq .
+SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
+  ./dist/ship host doctor --json --server deploy@<IP> | jq .
 ```
 
 For release-candidate validation, also run the example matrix in
@@ -99,7 +99,7 @@ the smallest low-level repro when debugging a deploy-path failure.
 ## 2. Build the test app
 
 ```sh
-mkdir -p /tmp/simple-vps-smoke-app && cd /tmp/simple-vps-smoke-app
+mkdir -p /tmp/ship-smoke-app && cd /tmp/ship-smoke-app
 
 cat > server.py <<'EOF'
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -131,7 +131,7 @@ EXPOSE 3000
 CMD ["python", "/app/server.py"]
 EOF
 
-cat > simple-vps.toml <<'EOF'
+cat > ship.toml <<'EOF'
 name = "hello"
 
 [env.production]
@@ -163,17 +163,17 @@ health path, one secret reference, and no image-specific writable-path knobs.
 ## 3. Deploy
 
 ```sh
-cd /tmp/simple-vps-smoke-app
+cd /tmp/ship-smoke-app
 
 printf 'smoke-secret-value' | \
-SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/simple-vps secret set smoke_key --env production
+SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
+  /path/to/ship/dist/ship secret set smoke_key --env production
 
-SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/simple-vps secret list --json --env production | jq .
+SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
+  /path/to/ship/dist/ship secret list --json --env production | jq .
 
-SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/simple-vps deploy --env production
+SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
+  /path/to/ship/dist/ship deploy --env production
 ```
 
 First deploy prepares `/var/apps/hello.production`, writes the env identity,
@@ -181,16 +181,16 @@ and creates the per-env Podman network before upload/build/routing starts.
 
 Expected last line: `Deployed hello (production) at <sha>`. If the
 deploy errors with `wget: bad address`, rerun host install with the
-current binary and then rerun `simple-vps host doctor`.
+current binary and then rerun `ship host doctor`.
 
 Verify the app read surface:
 
 ```sh
-SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/simple-vps status --json --env production | jq .
+SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
+  /path/to/ship/dist/ship status --json --env production | jq .
 
-SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/simple-vps logs web --env production | tail -20
+SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
+  /path/to/ship/dist/ship logs web --env production | tail -20
 ```
 
 The fixture sets `tls = "internal"`, so the Caddy fragment lands as:
@@ -245,11 +245,11 @@ provider console.
 If you're reusing the box, use the public teardown path:
 
 ```sh
-SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/simple-vps destroy --env production --confirm hello --purge
+SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
+  /path/to/ship/dist/ship destroy --env production --confirm hello --purge
 
-SIMPLE_VPS_SSH_KEY="$(cat /tmp/simple-vps-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/simple-vps status --json --env production | jq .
+SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
+  /path/to/ship/dist/ship status --json --env production | jq .
 ```
 
 Expected destroy output names the removed container, removed route, and

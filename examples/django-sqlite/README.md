@@ -14,7 +14,7 @@ Before deploying, edit `ship.toml`:
 ```bash
 git init
 git add .
-git commit -m "initial simple-vps app"
+git commit -m "initial ship app"
 printf '%s' "$(openssl rand -hex 32)" | ship secret set DJANGO_SECRET_KEY
 ship
 curl https://django.example.com/health

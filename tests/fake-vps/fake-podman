@@ -197,10 +197,10 @@ for image_path in sorted(glob.glob(os.path.join(state_dir, "images", "*")), key=
                     k, v = line.split("=", 1)
                     labels[k] = v
     repo = ""
-    tag = labels.get("simple-vps.release", "")
-    infra_id = labels.get("simple-vps.infra_id", "")
+    tag = labels.get("ship.release", "")
+    infra_id = labels.get("ship.infra_id", "")
     if infra_id:
-        repo = f"simple-vps/{infra_id}"
+        repo = f"ship/{infra_id}"
     out.append({"Repository": repo, "Tag": tag, "Labels": labels})
 print(json.dumps(out))
 PY
@@ -278,7 +278,7 @@ except OSError:
     print(f"wget: bad address '{name}'", file=sys.stderr)
     sys.exit(1)
 actual_path = os.path.join(state_dir, "containers", name + ".actual-port")
-actual = labels.get("simple-vps.port", str(port))
+actual = labels.get("ship.port", str(port))
 try:
     with open(actual_path) as f:
         actual = f.read().strip() or actual
@@ -368,13 +368,13 @@ PY
     fi
     is_release=0
     for label in "${labels[@]:-}"; do
-      if [[ "$label" == "simple-vps.process=release" ]]; then
+      if [[ "$label" == "ship.process=release" ]]; then
         is_release=1
       fi
     done
     if [[ "$is_release" == "1" ]]; then
       joined_command="$(printf '%s ' "${command_args[@]:-}")"
-      if [[ "$joined_command" == *simple-vps-fail-release* ]]; then
+      if [[ "$joined_command" == *ship-fail-release* ]]; then
         echo "fake release command failed" >&2
         exit 42
       fi
@@ -414,8 +414,8 @@ PY
     declared_port=""
     for label in "${labels[@]:-}"; do
       [[ -n "$label" ]] && printf '%s\n' "$label" >> "$labels_file"
-      if [[ "$label" == simple-vps.port=* ]]; then
-        declared_port="${label#simple-vps.port=}"
+      if [[ "$label" == ship.port=* ]]; then
+        declared_port="${label#ship.port=}"
       fi
     done
     printf '%s\n' "$image" > "$state_dir/containers/$name.image"
@@ -424,7 +424,7 @@ PY
     fi
     joined_command="$(printf '%s ' "${command_args[@]:-}")"
     actual_port="$declared_port"
-    if [[ "$joined_command" =~ simple-vps-listen-port=([0-9]+) ]]; then
+    if [[ "$joined_command" =~ ship-listen-port=([0-9]+) ]]; then
       actual_port="${BASH_REMATCH[1]}"
     fi
     if [[ -n "$actual_port" ]]; then

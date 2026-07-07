@@ -16,13 +16,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/caddy"
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/host"
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/secrets"
-	"github.com/fprl/simple-vps/internal/store"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/caddy"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/host"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/secrets"
+	"github.com/fprl/ship/internal/store"
+	"github.com/fprl/ship/internal/utils"
 )
 
 const (

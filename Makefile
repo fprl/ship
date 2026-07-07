@@ -3,7 +3,7 @@
 GO ?= go
 DIST_DIR ?= dist
 VERSION ?= $(shell git describe --tags --always --dirty)
-VERSION_LDFLAGS := -X github.com/fprl/simple-vps/internal/version.Version=$(VERSION)
+VERSION_LDFLAGS := -X github.com/fprl/ship/internal/version.Version=$(VERSION)
 SHELL_SCRIPTS := \
 	install.sh \
 	scripts/install-smoke.sh

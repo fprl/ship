@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/provision/host"
-	"github.com/fprl/simple-vps/internal/store"
+	"github.com/fprl/ship/internal/provision/host"
+	"github.com/fprl/ship/internal/store"
 )
 
 func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -65,14 +65,14 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	if _, ok := runner.files["/etc/systemd/system/ssh.service"]; ok {
 		t.Fatal("install must not overwrite the packaged ssh.service unit")
 	}
-	if !runner.ranCommand("install", "-d -o root -g root -m 700 /etc/simple-vps/secrets") {
-		t.Fatal("expected /etc/simple-vps/secrets to be created mode 0700")
+	if !runner.ranCommand("install", "-d -o root -g root -m 700 /etc/ship/secrets") {
+		t.Fatal("expected /etc/ship/secrets to be created mode 0700")
 	}
 }
 
 func TestRunInstallDoesNotRestartSSHWhenConfigAlreadyConverged(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestRunInstallDoesNotRestartSSHWhenConfigAlreadyConverged(t *testing.T) {
 
 func TestRunInstallSkipsPinnedLitestream(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestRunInstallSkipsPinnedLitestream(t *testing.T) {
 
 func TestRunInstallRejectsLitestreamChecksumMismatch(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -187,11 +187,11 @@ func TestRunInstallInstallsLitestreamAfterChecksumMatch(t *testing.T) {
 		t.Skipf("unsupported test architecture: %s", runtime.GOARCH)
 	}
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	deb := fmt.Sprintf("/tmp/simple-vps-litestream.TEST/litestream-%s-linux-%s.deb", litestreamVersion, arch)
+	deb := fmt.Sprintf("/tmp/ship-litestream.TEST/litestream-%s-linux-%s.deb", litestreamVersion, arch)
 	runner := &installFakeRunner{
 		files: map[string]host.FileState{},
 		commandResults: map[string]host.CommandResult{
@@ -261,8 +261,8 @@ func TestCloudflareTunnelGuardReadsADRProviderState(t *testing.T) {
 			Group:   "cloudflared",
 			Mode:    0640,
 		},
-		"/etc/simple-vps/providers/cloudflare.json": {
-			Content: []byte(`{"version":1,"account_id":"account-test","tunnel_id":"tunnel-test","tunnel_name":"simple-vps-test","routes":{}}`),
+		"/etc/ship/providers/cloudflare.json": {
+			Content: []byte(`{"version":1,"account_id":"account-test","tunnel_id":"tunnel-test","tunnel_name":"ship-test","routes":{}}`),
 			Owner:   "root",
 			Group:   "root",
 			Mode:    0600,
@@ -283,7 +283,7 @@ func TestCloudflareTunnelGuardReadsADRProviderState(t *testing.T) {
 
 func TestRunInstallDoesNotRestartConvergedCloudflaredService(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestRunInstallDoesNotRestartConvergedCloudflaredService(t *testing.T) {
 
 func TestRunInstallRestartsCloudflaredWhenTokenChanges(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +369,7 @@ func TestRunInstallRestartsCloudflaredWhenTokenChanges(t *testing.T) {
 
 func TestRunInstallStartsInactiveConvergedCloudflaredService(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +419,7 @@ func TestRunInstallStartsInactiveConvergedCloudflaredService(t *testing.T) {
 
 func TestRunInstallUsesHostUbuntuCodenameForDockerAndTailscaleRepos(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +455,7 @@ func TestRunInstallUsesHostUbuntuCodenameForDockerAndTailscaleRepos(t *testing.T
 	if !strings.Contains(tailscaleSource, " jammy main") {
 		t.Fatalf("tailscale repo did not use host codename:\n%s", tailscaleSource)
 	}
-	if !runner.ranCommand("curl", "-fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /tmp/simple-vps-tailscale-apt.TEST/key") {
+	if !runner.ranCommand("curl", "-fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /tmp/ship-tailscale-apt.TEST/key") {
 		t.Fatalf("tailscale key URL did not use host codename, commands: %+v", runner.commands)
 	}
 }
@@ -511,7 +511,7 @@ func TestOSReleaseValue(t *testing.T) {
 
 func TestRunInstallInstallsPodmanFromUbuntuUniverse(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +548,7 @@ func TestRunInstallInstallsPodmanFromUbuntuUniverse(t *testing.T) {
 
 func TestRunInstallCreatesIngressNetworkWhenAbsent(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +578,7 @@ func TestRunInstallCreatesIngressNetworkWhenAbsent(t *testing.T) {
 
 func TestRunInstallCreatesDeployTmpDirWithStickyMode(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -598,14 +598,14 @@ func TestRunInstallCreatesDeployTmpDirWithStickyMode(t *testing.T) {
 
 	// Mode 1777 = sticky world-writable. The deploy user needs to drop
 	// files there, but other local users must not delete them mid-deploy.
-	if !runner.ranCommand("install", "-d -o root -g root -m 1777 /tmp/simple-vps-deploy") {
-		t.Fatalf("expected /tmp/simple-vps-deploy to be created with mode 1777, commands: %+v", runner.commands)
+	if !runner.ranCommand("install", "-d -o root -g root -m 1777 /tmp/ship-deploy") {
+		t.Fatalf("expected /tmp/ship-deploy to be created with mode 1777, commands: %+v", runner.commands)
 	}
 }
 
 func TestRunInstallWritesCaddyContainerSystemdUnit(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -658,7 +658,7 @@ func TestRunInstallWritesCaddyContainerSystemdUnit(t *testing.T) {
 
 func TestRunInstallWritesPreviewReaperAndDoctorTimers(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -788,10 +788,10 @@ func TestInjectPodmanUfwBlockFreshInsert(t *testing.T) {
 	if !changed {
 		t.Fatal("expected change on fresh insert")
 	}
-	if !strings.Contains(next, "# BEGIN simple-vps podman bridges\n") {
+	if !strings.Contains(next, "# BEGIN ship podman bridges\n") {
 		t.Fatalf("missing BEGIN marker:\n%s", next)
 	}
-	if !strings.Contains(next, "\n# END simple-vps podman bridges\n") {
+	if !strings.Contains(next, "\n# END ship podman bridges\n") {
 		t.Fatalf("missing END marker:\n%s", next)
 	}
 	if !strings.Contains(next, "-A ufw-before-input -i podman+ -j ACCEPT\n") {
@@ -806,7 +806,7 @@ func TestInjectPodmanUfwBlockFreshInsert(t *testing.T) {
 	// Block must land AFTER the anchor (chain declarations) and
 	// BEFORE COMMIT, otherwise the rules don't take effect.
 	anchorIdx := strings.Index(next, "# End required lines")
-	beginIdx := strings.Index(next, "# BEGIN simple-vps podman bridges")
+	beginIdx := strings.Index(next, "# BEGIN ship podman bridges")
 	commitIdx := strings.Index(next, "\nCOMMIT")
 	if !(anchorIdx < beginIdx && beginIdx < commitIdx) {
 		t.Fatalf("block in wrong position: anchor=%d begin=%d commit=%d\n%s", anchorIdx, beginIdx, commitIdx, next)
@@ -834,7 +834,7 @@ func TestInjectPodmanUfwBlockReplacesExistingBlock(t *testing.T) {
 	stale := strings.Replace(
 		ubuntuBeforeRules,
 		"# End required lines\n",
-		"# End required lines\n\n# BEGIN simple-vps podman bridges\n-A ufw-before-input -i podman+ -j REJECT\n# END simple-vps podman bridges\n\n",
+		"# End required lines\n\n# BEGIN ship podman bridges\n-A ufw-before-input -i podman+ -j REJECT\n# END ship podman bridges\n\n",
 		1,
 	)
 	next, changed, err := injectPodmanUfwBlock(stale, podmanUfwBlock())
@@ -851,10 +851,10 @@ func TestInjectPodmanUfwBlockReplacesExistingBlock(t *testing.T) {
 		t.Fatalf("canonical ACCEPT rule missing after replace:\n%s", next)
 	}
 	// Exactly one BEGIN/END pair after replacement.
-	if strings.Count(next, "# BEGIN simple-vps podman bridges") != 1 {
+	if strings.Count(next, "# BEGIN ship podman bridges") != 1 {
 		t.Fatalf("expected exactly one BEGIN marker:\n%s", next)
 	}
-	if strings.Count(next, "# END simple-vps podman bridges") != 1 {
+	if strings.Count(next, "# END ship podman bridges") != 1 {
 		t.Fatalf("expected exactly one END marker:\n%s", next)
 	}
 }
@@ -882,7 +882,7 @@ func TestInjectPodmanUfwBlockRejectsHalfMarker(t *testing.T) {
 	half := strings.Replace(
 		ubuntuBeforeRules,
 		"# End required lines\n",
-		"# End required lines\n\n# BEGIN simple-vps podman bridges\n# but no END here\n",
+		"# End required lines\n\n# BEGIN ship podman bridges\n# but no END here\n",
 		1,
 	)
 	if _, _, err := injectPodmanUfwBlock(half, podmanUfwBlock()); err == nil {
@@ -899,7 +899,7 @@ func TestInjectPodmanUfwBlockRejectsMissingAnchor(t *testing.T) {
 
 func TestRunInstallWritesPodmanHostBaseline(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -957,9 +957,9 @@ func TestRunInstallWritesPodmanHostBaseline(t *testing.T) {
 	}
 
 	// 3. registries drop-in written.
-	reg, ok := runner.files["/etc/containers/registries.conf.d/00-simple-vps.conf"]
+	reg, ok := runner.files["/etc/containers/registries.conf.d/00-ship.conf"]
 	if !ok {
-		t.Fatal("expected /etc/containers/registries.conf.d/00-simple-vps.conf to be written")
+		t.Fatal("expected /etc/containers/registries.conf.d/00-ship.conf to be written")
 	}
 	if !strings.Contains(string(reg.Content), `unqualified-search-registries = ["docker.io"]`) {
 		t.Fatalf("registries drop-in missing the docker.io entry:\n%s", reg.Content)
@@ -973,7 +973,7 @@ func TestRunInstallWritesPodmanHostBaseline(t *testing.T) {
 
 func TestRunInstallSkipsIngressNetworkCreationWhenPresent(t *testing.T) {
 	root := t.TempDir()
-	helper := filepath.Join(root, "simple-vps")
+	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}

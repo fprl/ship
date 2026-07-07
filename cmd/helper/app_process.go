@@ -3,8 +3,8 @@ package helper
 import (
 	"fmt"
 
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/identity"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/identity"
 )
 
 func isEphemeralProcess(process string) bool {

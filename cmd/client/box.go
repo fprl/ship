@@ -3,9 +3,9 @@ package client
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/errcat"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/utils"
 	"os"
 )
 

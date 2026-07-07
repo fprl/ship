@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/utils"
 )
 
 type appWhyCmd struct {

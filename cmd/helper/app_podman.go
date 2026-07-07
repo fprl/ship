@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/utils"
 )
 
 const (
@@ -36,10 +36,10 @@ func podmanBuildArgs(app, env, imageTag, release, dockerfile, ctxDir string, reb
 	}
 	args = append(args,
 		"-t", imageTag,
-		"--label", "simple-vps.app="+app,
-		"--label", "simple-vps.env="+env,
-		"--label", "simple-vps.infra_id="+identity.InfraID(app, env),
-		"--label", "simple-vps.release="+release,
+		"--label", "ship.app="+app,
+		"--label", "ship.env="+env,
+		"--label", "ship.infra_id="+identity.InfraID(app, env),
+		"--label", "ship.release="+release,
 		"-f", dockerfile,
 		ctxDir,
 	)
@@ -78,11 +78,11 @@ func podmanBaseRunArgs(opts podmanBaseRunOptions) []string {
 	}
 	args = append(args,
 		"-v", identity.DataDir(opts.App, opts.Env)+":/data:Z",
-		"--label", "simple-vps.app="+opts.App,
-		"--label", "simple-vps.env="+opts.Env,
-		"--label", "simple-vps.process="+opts.ProcessName,
-		"--label", "simple-vps.infra_id="+identity.InfraID(opts.App, opts.Env),
-		"--label", "simple-vps.release="+opts.Release,
+		"--label", "ship.app="+opts.App,
+		"--label", "ship.env="+opts.Env,
+		"--label", "ship.process="+opts.ProcessName,
+		"--label", "ship.infra_id="+identity.InfraID(opts.App, opts.Env),
+		"--label", "ship.release="+opts.Release,
 	)
 	return args
 }
@@ -147,7 +147,7 @@ func buildPodmanRunArgs(app, env, processName string, proc config.Process, image
 	// behavior for migrations that write inside image-provided paths.
 	args = appendReadOnlyRuntimeArgs(args)
 	if proc.Port != nil {
-		args = append(args, "--label", "simple-vps.port="+strconv.Itoa(*proc.Port))
+		args = append(args, "--label", "ship.port="+strconv.Itoa(*proc.Port))
 	}
 	args = appendResourceArgs(args, resources)
 	if envFileExists {
@@ -292,10 +292,10 @@ func runReleaseCommand(app, env, command, imageTag, userID, groupID, release str
 func processContainers(entries []containerEntry, processName, excludeRelease string) []string {
 	var names []string
 	for _, e := range entries {
-		if e.Labels["simple-vps.process"] != processName {
+		if e.Labels["ship.process"] != processName {
 			continue
 		}
-		if excludeRelease != "" && e.Labels["simple-vps.release"] == excludeRelease {
+		if excludeRelease != "" && e.Labels["ship.release"] == excludeRelease {
 			continue
 		}
 		if len(e.Names) > 0 {

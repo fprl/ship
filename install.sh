@@ -2,8 +2,8 @@
 set -euo pipefail
 
 SHIP_VERSION="${SHIP_VERSION:-latest}"
-SHIP_RELEASE_BASE_URL="${SHIP_RELEASE_BASE_URL:-https://github.com/fprl/simple-vps/releases/download}"
-SHIP_RELEASE_API_BASE_URL="${SHIP_RELEASE_API_BASE_URL:-https://api.github.com/repos/fprl/simple-vps}"
+SHIP_RELEASE_BASE_URL="${SHIP_RELEASE_BASE_URL:-https://github.com/fprl/ship/releases/download}"
+SHIP_RELEASE_API_BASE_URL="${SHIP_RELEASE_API_BASE_URL:-https://api.github.com/repos/fprl/ship}"
 SHIP_INSTALL_DIR="${SHIP_INSTALL_DIR:-$HOME/.local/bin}"
 
 tmp_dir=""
@@ -11,7 +11,7 @@ tmp_dir=""
 usage() {
   cat <<'USAGE'
 Usage:
-  curl -fsSL https://github.com/fprl/simple-vps/releases/latest/download/install.sh | bash
+  curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | bash
 
   install.sh [-v latest|v0.8.0] [--bin-dir ~/.local/bin]
 

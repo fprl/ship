@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-const errcatImportPath = "github.com/fprl/simple-vps/internal/errcat"
+const errcatImportPath = "github.com/fprl/ship/internal/errcat"
 
 func TestCatalogueCompleteness(t *testing.T) {
 	root := repoRoot(t)

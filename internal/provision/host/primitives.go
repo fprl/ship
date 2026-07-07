@@ -345,7 +345,7 @@ func aptRepoTempTemplate(name string) string {
 	if safe == "" {
 		safe = "repo"
 	}
-	return "/tmp/simple-vps-" + safe + "-apt.XXXXXX"
+	return "/tmp/ship-" + safe + "-apt.XXXXXX"
 }
 
 func EnsureUser(apply Apply, user User) (bool, error) {

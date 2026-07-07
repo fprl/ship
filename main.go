@@ -7,12 +7,12 @@ import (
 	"strings"
 
 	"github.com/alecthomas/kong"
-	"github.com/fprl/simple-vps/cmd/client"
-	"github.com/fprl/simple-vps/cmd/helper"
-	"github.com/fprl/simple-vps/cmd/hostinstall"
-	"github.com/fprl/simple-vps/internal/errcat"
-	"github.com/fprl/simple-vps/internal/utils"
-	"github.com/fprl/simple-vps/internal/version"
+	"github.com/fprl/ship/cmd/client"
+	"github.com/fprl/ship/cmd/helper"
+	"github.com/fprl/ship/cmd/hostinstall"
+	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/utils"
+	"github.com/fprl/ship/internal/version"
 )
 
 // Public CLI surface. The post-cutover lifecycle is minimal on

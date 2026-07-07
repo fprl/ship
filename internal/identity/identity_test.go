@@ -33,10 +33,10 @@ func TestDataRuntimeStaticAndManifestPaths(t *testing.T) {
 	if got := ManifestFile("api", "production"); got != "/var/apps/api.production/ship.toml" {
 		t.Fatalf("ManifestFile = %q", got)
 	}
-	if got := IdentityFile("api", "production"); got != "/var/apps/api.production/simple-vps.json" {
+	if got := IdentityFile("api", "production"); got != "/var/apps/api.production/ship.json" {
 		t.Fatalf("IdentityFile = %q", got)
 	}
-	if got, want := CaddyFragmentFile("api", "production"), "/etc/caddy/conf.d/simple-vps-"+InfraID("api", "production")+".caddy"; got != want {
+	if got, want := CaddyFragmentFile("api", "production"), "/etc/caddy/conf.d/ship-"+InfraID("api", "production")+".caddy"; got != want {
 		t.Fatalf("CaddyFragmentFile = %q, want %q", got, want)
 	}
 }
@@ -47,8 +47,8 @@ func TestInfraIDIsDeterministicAndBounded(t *testing.T) {
 	if a != b {
 		t.Fatalf("InfraID not deterministic: %q vs %q", a, b)
 	}
-	if !strings.HasPrefix(a, "svps-") || len(a) != len("svps-")+12 {
-		t.Fatalf("InfraID = %q, want svps- plus 12 hex chars", a)
+	if !strings.HasPrefix(a, "ship-") || len(a) != len("ship-")+12 {
+		t.Fatalf("InfraID = %q, want ship- plus 12 hex chars", a)
 	}
 	if a == InfraID("api", "staging") {
 		t.Fatal("different envs should not share infra id")
@@ -79,7 +79,7 @@ func TestInfraNamesStayWithinLimits(t *testing.T) {
 }
 
 func TestImageRepoUsesInfraID(t *testing.T) {
-	wantRepo := "simple-vps/" + InfraID("api", "production")
+	wantRepo := "ship/" + InfraID("api", "production")
 	if got := ImageRepo("api", "production"); got != wantRepo {
 		t.Fatalf("ImageRepo = %q, want %q", got, wantRepo)
 	}

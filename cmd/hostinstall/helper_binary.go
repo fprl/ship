@@ -15,12 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/version"
+	"github.com/fprl/ship/internal/version"
 )
 
 const (
-	defaultReleaseBaseURL = "https://github.com/fprl/simple-vps/releases/download"
-	defaultReleaseAPIURL  = "https://api.github.com/repos/fprl/simple-vps"
+	defaultReleaseBaseURL = "https://github.com/fprl/ship/releases/download"
+	defaultReleaseAPIURL  = "https://api.github.com/repos/fprl/ship"
 )
 
 var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$`)

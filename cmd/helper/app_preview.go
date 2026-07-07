@@ -10,10 +10,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/errcat"
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/names"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/names"
+	"github.com/fprl/ship/internal/utils"
 )
 
 const (

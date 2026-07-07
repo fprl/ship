@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/identity"
-	h "github.com/fprl/simple-vps/tests/harness"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/identity"
+	h "github.com/fprl/ship/tests/harness"
 )
 
 const productionEnv = "prod"
@@ -91,11 +91,10 @@ func (e *smokeEnv) assertShipSudoersMatchesRealHelperShape(t *testing.T) {
 
 func (e *smokeEnv) ensureSmokeHostSeed(t *testing.T) {
 	t.Helper()
-	e.dockerExec(t, "cat > /etc/simple-vps/host.json <<'EOF'\n"+h.SeedHostJSON()+"EOF")
-	e.dockerExec(t, "mkdir -p /etc/caddy/simple-vps /etc/caddy/conf.d /var/lib/caddy /etc/systemd/system")
-	e.dockerExec(t, "mkdir -p /tmp/simple-vps-deploy && chmod 1777 /tmp/simple-vps-deploy")
+	e.dockerExec(t, "cat > /etc/ship/host.json <<'EOF'\n"+h.SeedHostJSON()+"EOF")
+	e.dockerExec(t, "mkdir -p /etc/caddy/conf.d /var/lib/caddy /etc/systemd/system")
+	e.dockerExec(t, "mkdir -p /tmp/ship-deploy && chmod 1777 /tmp/ship-deploy")
 	e.dockerExec(t, `cat > /etc/caddy/Caddyfile <<'EOF'
-import simple-vps/*.caddy
 import conf.d/*.caddy
 EOF`)
 	e.dockerExec(t, "podman network exists ingress || podman network create ingress")
@@ -117,16 +116,16 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	writeNotifyFixture(t, app, sink.URL("/hook"))
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
-	e.simpleVPS(t, app, []byte(secretValue), "secret", "set", "api_token")
-	e.simpleVPS(t, app, []byte(secretValue), "secret", "set", "api_token", "--preview")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, []byte(secretValue), "secret", "set", "api_token")
+	e.ship(t, app, []byte(secretValue), "secret", "set", "api_token", "--preview")
+	e.ship(t, app, nil)
 
 	manifestPath := filepath.Join(app, "ship.toml")
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	failingManifest := strings.Replace(string(manifest), `release = "touch /data/release-ok"`, `release = "simple-vps-fail-release"`, 1)
+	failingManifest := strings.Replace(string(manifest), `release = "touch /data/release-ok"`, `release = "ship-fail-release"`, 1)
 	if failingManifest == string(manifest) {
 		t.Fatal("notify fixture did not contain the success release command")
 	}
@@ -134,7 +133,7 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "README.md"), "notify failed release\n")
 	e.commitFixture(t, app)
 	failedRelease := gitRelease(t, e, app)
-	failed := e.runSimpleVPS(t, app, nil, "--tls", "internal")
+	failed := e.runShip(t, app, nil, "--tls", "internal")
 	if failed.err == nil {
 		t.Fatal("deploy with failing release command should fail")
 	}
@@ -145,12 +144,12 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	assertNotifySmokeNested(t, aborted, "remediation.command", "ship")
 	assertNotifySmokeNested(t, aborted, "remediation.journal.failing_step", "release")
 
-	fixedManifest := strings.Replace(failingManifest, `release = "simple-vps-fail-release"`, `release = "touch /data/release-ok"`, 1)
+	fixedManifest := strings.Replace(failingManifest, `release = "ship-fail-release"`, `release = "touch /data/release-ok"`, 1)
 	mustWrite(t, manifestPath, fixedManifest)
 	mustWrite(t, filepath.Join(app, "README.md"), "notify recovered release\n")
 	e.commitFixture(t, app)
 	recoveredRelease := gitRelease(t, e, app)
-	e.simpleVPS(t, app, nil, "--tls", "internal")
+	e.ship(t, app, nil, "--tls", "internal")
 	recovered := sink.waitForEvent(t, notifyEventDeployRecovered)
 	assertNotifySmokeField(t, recovered, "release", recoveredRelease)
 	assertNotifySmokeNested(t, recovered, "why.previous_failure.attempted_release", failedRelease)
@@ -158,7 +157,7 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	assertNotifySmokeNested(t, recovered, "remediation.command", "ship status")
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/notify")
-	e.simpleVPS(t, app, nil, "--tls", "internal")
+	e.ship(t, app, nil, "--tls", "internal")
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "notifyapi", "feature/notify")
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "notifyapi", previewEnv)
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")
@@ -177,20 +176,20 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	assertContains(t, notifySmokeNestedString(t, doctor, "remediation.command"), "systemctl start ship-preview-reaper.timer")
 
 	slowManifest := strings.Replace(fixedManifest, sink.URL("/hook"), sink.URL("/slow?token=notify-url-secret"), 1)
-	slowFailing := strings.Replace(slowManifest, `release = "touch /data/release-ok"`, `release = "simple-vps-fail-release"`, 1)
+	slowFailing := strings.Replace(slowManifest, `release = "touch /data/release-ok"`, `release = "ship-fail-release"`, 1)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 	mustWrite(t, manifestPath, slowFailing)
 	mustWrite(t, filepath.Join(app, "README.md"), "slow notify failed release\n")
 	e.commitFixture(t, app)
-	if result := e.runSimpleVPS(t, app, nil, "--tls", "internal"); result.err == nil {
+	if result := e.runShip(t, app, nil, "--tls", "internal"); result.err == nil {
 		t.Fatal("deploy with failing release command should fail")
 	}
-	slowFixed := strings.Replace(slowFailing, `release = "simple-vps-fail-release"`, `release = "touch /data/release-ok"`, 1)
+	slowFixed := strings.Replace(slowFailing, `release = "ship-fail-release"`, `release = "touch /data/release-ok"`, 1)
 	mustWrite(t, manifestPath, slowFixed)
 	mustWrite(t, filepath.Join(app, "README.md"), "slow notify recovered release\n")
 	e.commitFixture(t, app)
 	start := time.Now()
-	result := e.runSimpleVPS(t, app, nil, "--tls", "internal")
+	result := e.runShip(t, app, nil, "--tls", "internal")
 	elapsed := time.Since(start)
 	if result.err != nil {
 		t.Fatalf("deploy should succeed even when notify times out: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
@@ -228,7 +227,7 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 
 	// 1. Deploy on a clean tree. First deploy prepares the per-env user,
 	// paths, identity, and per-(app, env) network before the release starts.
-	firstDeploy := e.runSimpleVPS(t, app, nil)
+	firstDeploy := e.runShip(t, app, nil)
 	if firstDeploy.err != nil {
 		t.Fatalf("ship failed: %v\nstdout:\n%s\nstderr:\n%s", firstDeploy.err, firstDeploy.stdout, firstDeploy.stderr)
 	}
@@ -277,10 +276,10 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	// gone with Caddy-in-container) and the run line must NOT carry a
 	// --publish (no host loopback ingress).
 	labels := e.ssh(t, "cat /run/fake-podman/containers/"+webContainer+".labels")
-	assertContains(t, labels, "simple-vps.app=api")
-	assertContains(t, labels, "simple-vps.env="+productionEnv)
-	assertContains(t, labels, "simple-vps.process=web")
-	assertContains(t, labels, "simple-vps.release="+release)
+	assertContains(t, labels, "ship.app=api")
+	assertContains(t, labels, "ship.env="+productionEnv)
+	assertContains(t, labels, "ship.process=web")
+	assertContains(t, labels, "ship.release="+release)
 	if strings.Contains(commandsLog, "--publish 127.0.0.1:") {
 		t.Fatalf("app container still publishes a host loopback port; Caddy-in-container should drop this:\n%s", commandsLog)
 	}
@@ -308,7 +307,7 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	// container name up front.
 	firstFragment := fragment
 	commandsBeforeRedeploy := e.ssh(t, "cat /run/fake-podman/commands.log")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	secondFragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("api", productionEnv))
 	if firstFragment == secondFragment {
 		t.Fatalf("expected same-release redeploy to route to a replacement container:\n%s", secondFragment)
@@ -329,7 +328,7 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 
 	// 9. Explicit rebuild refreshes mutable base images and bypasses
 	// Podman's build cache.
-	e.simpleVPS(t, app, nil, "--rebuild")
+	e.ship(t, app, nil, "--rebuild")
 	commandsLog = e.ssh(t, "cat /run/fake-podman/commands.log")
 	assertContains(t, commandsLog, "podman build --no-cache --pull=always")
 
@@ -338,11 +337,11 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 func (e *smokeEnv) testPhase1AcceptanceAndZeroDNS(t *testing.T) {
 	app := filepath.Join(e.tmp, "phase1-init")
 	mustMkdir(t, app)
-	e.simpleVPS(t, app, nil, "init", "--box", "fake-vps", "--name", "phaseone", "--host", "phaseone.example.com")
+	e.ship(t, app, nil, "init", "--box", "fake-vps", "--name", "phaseone", "--host", "phaseone.example.com")
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 
-	prod := e.runSimpleVPS(t, app, nil)
+	prod := e.runShip(t, app, nil)
 	if prod.err != nil {
 		t.Fatalf("ship from main failed: %v\nstdout:\n%s\nstderr:\n%s", prod.err, prod.stdout, prod.stderr)
 	}
@@ -353,7 +352,7 @@ func (e *smokeEnv) testPhase1AcceptanceAndZeroDNS(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "README.md"), "feature phase1\n")
 	e.mustRun(t, app, nil, "git", "add", ".")
 	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "feature phase1")
-	preview := e.runSimpleVPS(t, app, nil)
+	preview := e.runShip(t, app, nil)
 	if preview.err != nil {
 		t.Fatalf("feature branch ship failed: %v\nstdout:\n%s\nstderr:\n%s", preview.err, preview.stdout, preview.stderr)
 	}
@@ -368,7 +367,7 @@ func (e *smokeEnv) testPhase1AcceptanceAndZeroDNS(t *testing.T) {
 	writeZeroDNSFixture(t, zero)
 	e.commitFixture(t, zero)
 	e.mustRun(t, zero, nil, "git", "checkout", "-B", "main")
-	result := e.runSimpleVPS(t, zero, nil)
+	result := e.runShip(t, zero, nil)
 	if result.err != nil {
 		t.Fatalf("zero-DNS ship failed: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
 	}
@@ -397,7 +396,7 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	writeReleaseFailFixture(t, app)
 	e.commitFixture(t, app)
 
-	noWhy := e.runSimpleVPS(t, app, nil, "why")
+	noWhy := e.runShip(t, app, nil, "why")
 	if noWhy.err == nil {
 		t.Fatal("why before any deploy should fail")
 	}
@@ -406,12 +405,12 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	assertContains(t, noWhy.stdout+noWhy.stderr, "next: ship")
 
 	secretValue := "releasefail-secret-token"
-	e.simpleVPS(t, app, []byte(secretValue), "secret", "set", "api_token")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, []byte(secretValue), "secret", "set", "api_token")
+	e.ship(t, app, nil)
 	e.dockerExec(t, "test -f "+identity.DataDir("releasefail", productionEnv)+"/release-ok")
 	stableEnv := e.dockerExec(t, "cat "+identity.EnvFile("releasefail", productionEnv))
 	assertContains(t, stableEnv, "MARKER=stable")
-	statusJSON := e.simpleVPS(t, app, nil, "status", "--json")
+	statusJSON := e.ship(t, app, nil, "status", "--json")
 	if strings.Contains(statusJSON, `"process":"release"`) || strings.Contains(statusJSON, `"process": "release"`) {
 		t.Fatalf("release command container polluted status:\n%s", statusJSON)
 	}
@@ -423,7 +422,7 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	failingManifest := strings.Replace(string(manifest), `release = "touch /data/release-ok"`, `release = "simple-vps-fail-release"`, 1)
+	failingManifest := strings.Replace(string(manifest), `release = "touch /data/release-ok"`, `release = "ship-fail-release"`, 1)
 	failingManifest = strings.Replace(failingManifest, `MARKER = "stable"`, `MARKER = "next-marker"`, 1)
 	if failingManifest == string(manifest) {
 		t.Fatal("release failure fixture did not contain the success release command")
@@ -431,7 +430,7 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	mustWrite(t, manifestPath, failingManifest)
 	e.commitFixture(t, app)
 	failedRelease := gitRelease(t, e, app)
-	failed := e.runSimpleVPS(t, app, nil)
+	failed := e.runShip(t, app, nil)
 	if failed.err == nil {
 		t.Fatal("deploy with failing release command should fail")
 	}
@@ -442,13 +441,13 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 		t.Fatalf("failing release command changed traffic:\nbefore:\n%s\nafter:\n%s", stableFragment, fragmentAfterFailure)
 	}
 	e.dockerExec(t, "test -e /run/fake-podman/containers/"+stableContainer+".labels")
-	e.dockerExec(t, "test ! -e /tmp/simple-vps-deploy/releasefail-"+productionEnv+"-"+failedRelease)
+	e.dockerExec(t, "test ! -e /tmp/ship-deploy/releasefail-"+productionEnv+"-"+failedRelease)
 	envAfterFailure := e.dockerExec(t, "cat "+identity.EnvFile("releasefail", productionEnv))
 	if envAfterFailure != stableEnv {
 		t.Fatalf("failing release command changed runtime env:\nbefore:\n%s\nafter:\n%s", stableEnv, envAfterFailure)
 	}
 
-	why := e.simpleVPS(t, app, nil, "why")
+	why := e.ship(t, app, nil, "why")
 	assertContains(t, why, "Deploy aborted for Production main")
 	assertContains(t, why, "failing step: release")
 	assertContains(t, why, "probable cause: release command exited non-zero before traffic switched.")
@@ -459,7 +458,7 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	assertContains(t, why, "next: fix the release command in ship.toml, then ship")
 
 	var whyJSON smokeWhyEntry
-	rawWhyJSON := e.simpleVPS(t, app, nil, "why", "--json")
+	rawWhyJSON := e.ship(t, app, nil, "why", "--json")
 	if err := json.Unmarshal([]byte(rawWhyJSON), &whyJSON); err != nil {
 		t.Fatalf("why --json output not parseable as JSON: %v\nraw:\n%s", err, rawWhyJSON)
 	}
@@ -482,8 +481,8 @@ func (e *smokeEnv) testProbeFailureWhy(t *testing.T) {
 	e.commitFixture(t, app)
 
 	secretValue := "probe-log-secret-token"
-	e.simpleVPS(t, app, []byte(secretValue), "secret", "set", "probe_log_secret")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, []byte(secretValue), "secret", "set", "probe_log_secret")
+	e.ship(t, app, nil)
 	stableFragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("probefail", productionEnv))
 	stableContainer := currentWebContainer(t, e, app)
 
@@ -500,7 +499,7 @@ func (e *smokeEnv) testProbeFailureWhy(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "README.md"), "probe failure\n")
 	e.commitFixture(t, app)
 	failedRelease := gitRelease(t, e, app)
-	failed := e.runSimpleVPS(t, app, nil)
+	failed := e.runShip(t, app, nil)
 	if failed.err == nil {
 		t.Fatal("deploy with failing probe should fail")
 	}
@@ -517,7 +516,7 @@ func (e *smokeEnv) testProbeFailureWhy(t *testing.T) {
 	e.dockerExec(t, "test -e /run/fake-podman/containers/"+stableContainer+".labels")
 	e.dockerExec(t, "test ! -e /run/fake-podman/containers/"+identity.ContainerName("probefail", productionEnv, "web", failedRelease)+".labels")
 
-	why := e.simpleVPS(t, app, nil, "why")
+	why := e.ship(t, app, nil, "why")
 	assertContains(t, why, "Deploy aborted for Production main")
 	assertContains(t, why, "failing step: probe")
 	assertContains(t, why, "probable cause: probe returned HTTP 502")
@@ -528,7 +527,7 @@ func (e *smokeEnv) testProbeFailureWhy(t *testing.T) {
 	assertContains(t, why, "next: fix the process port or probe path in ship.toml, then ship")
 
 	var whyJSON smokeWhyEntry
-	rawWhyJSON := e.simpleVPS(t, app, nil, "why", "--json")
+	rawWhyJSON := e.ship(t, app, nil, "why", "--json")
 	if err := json.Unmarshal([]byte(rawWhyJSON), &whyJSON); err != nil {
 		t.Fatalf("why --json output not parseable as JSON: %v\nraw:\n%s", err, rawWhyJSON)
 	}
@@ -546,7 +545,7 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 	writeCaddyFailFixture(t, app)
 	e.commitFixture(t, app)
 
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	stableWorker := currentProcessContainer(t, e, app, "worker")
 	stableEnv := e.dockerExec(t, "cat "+identity.EnvFile("caddyfail", productionEnv))
 	stableManifest := e.dockerExec(t, "cat "+identity.ManifestFile("caddyfail", productionEnv))
@@ -572,7 +571,7 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 	e.dockerExec(t, "touch /run/fake-podman/fail-caddy-reload")
 	defer e.dockerExec(t, "rm -f /run/fake-podman/fail-caddy-reload")
 
-	failed := e.runSimpleVPS(t, app, nil)
+	failed := e.runShip(t, app, nil)
 	if failed.err == nil {
 		t.Fatal("deploy with failing Caddy reload should fail")
 	}
@@ -604,11 +603,11 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	baseCommit := strings.TrimSpace(e.mustRun(t, app, nil, "git", "rev-parse", "HEAD"))
 	baseShort := gitRelease(t, e, app)
 
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", "prod"))
 
 	mustWrite(t, filepath.Join(app, "dirty.txt"), "dirty deploy payload")
-	rejected := e.runSimpleVPS(t, app, nil)
+	rejected := e.runShip(t, app, nil)
 	if rejected.err == nil {
 		t.Fatal("production branch deploy should reject a dirty worktree")
 	}
@@ -626,9 +625,9 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "README.md"), "new production\n")
 	e.mustRun(t, app, nil, "git", "add", ".")
 	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "new production")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	e.mustRun(t, app, nil, "git", "reset", "--hard", baseCommit)
-	behind := e.runSimpleVPS(t, app, nil)
+	behind := e.runShip(t, app, nil)
 	if behind.err == nil {
 		t.Fatal("production deploy from behind checkout should fail")
 	}
@@ -638,7 +637,7 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feat/x")
 	mustWrite(t, filepath.Join(app, "preview-dirty.txt"), "dirty preview payload")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	featEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", "feat/x")
 	assertPreviewEnvName(t, featEnv, "feat-x")
 	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", featEnv))
@@ -652,14 +651,14 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	releaseMetadata := e.ssh(t, "cat "+identity.ReleaseMetadataFile("branchapi", featEnv, status.Release))
 	assertContains(t, releaseMetadata, `"dirty": true`)
 	assertContains(t, releaseMetadata, `"base_commit": "`+baseCommit+`"`)
-	textStatus := e.simpleVPS(t, app, nil, "status")
+	textStatus := e.ship(t, app, nil, "status")
 	assertContains(t, textStatus, "Preview feat/x")
 	assertContains(t, textStatus, "(dirty")
 	if strings.Contains(stripURLs(textStatus), featEnv) {
 		t.Fatalf("human status leaked internal preview env outside URLs:\n%s", textStatus)
 	}
 
-	checkedOutBranchFlag := e.runSimpleVPS(t, app, nil, "--branch", "feat/x")
+	checkedOutBranchFlag := e.runShip(t, app, nil, "--branch", "feat/x")
 	if checkedOutBranchFlag.err == nil {
 		t.Fatal("deploy --branch should fail while a branch is checked out")
 	}
@@ -667,37 +666,37 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	assertContains(t, checkedOutBranchFlag.stdout+checkedOutBranchFlag.stderr, "--branch is only accepted")
 
 	e.mustRun(t, app, nil, "git", "checkout", "--detach")
-	detachedWithoutBranch := e.runSimpleVPS(t, app, nil)
+	detachedWithoutBranch := e.runShip(t, app, nil)
 	if detachedWithoutBranch.err == nil {
 		t.Fatal("detached HEAD deploy without --branch should fail")
 	}
 	assertContains(t, detachedWithoutBranch.stdout+detachedWithoutBranch.stderr, "branch resolution failed")
 	assertContains(t, detachedWithoutBranch.stdout+detachedWithoutBranch.stderr, "HEAD is detached")
-	e.simpleVPS(t, app, nil, "--branch", "feat/x")
+	e.ship(t, app, nil, "--branch", "feat/x")
 	if again := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", "feat/x"); again != featEnv {
 		t.Fatalf("re-ship should keep preview env stable: first=%s second=%s", featEnv, again)
 	}
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "mañana/Über")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	accentEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", "mañana/Über")
 	assertPreviewEnvName(t, accentEnv, "ma-ana-ber")
 	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", accentEnv))
 
 	longBranch := "feature/abcdefghijklmnopqrstuvwxyz0123456789"
 	e.mustRun(t, app, nil, "git", "checkout", "-B", longBranch)
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	longEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", longBranch)
 	assertPreviewEnvName(t, longEnv, "feature-abcdefghijklmnopqrst")
 	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", longEnv))
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feat/login", "main")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	slashEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", "feat/login")
 	assertPreviewEnvName(t, slashEnv, "feat-login")
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feat.login", "main")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	dotEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", "feat.login")
 	assertPreviewEnvName(t, dotEnv, "feat-login")
 	if slashEnv == dotEnv {
@@ -712,10 +711,10 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	e.ssh(t, "test -f "+identity.IdentityFile("previewapi", "prod"))
 
-	unknown := e.runSimpleVPS(t, app, nil, "pin", "ghost/branch")
+	unknown := e.runShip(t, app, nil, "pin", "ghost/branch")
 	if unknown.err == nil {
 		t.Fatal("pin for an unmapped preview branch should fail")
 	}
@@ -724,7 +723,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	assertContains(t, unknown.stdout+unknown.stderr, "next: git checkout ghost/branch && ship")
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/lifecycle")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "previewapi", "feature/lifecycle")
 	assertPreviewEnvName(t, previewEnv, "feature-lifecycle")
 	firstIdentity := readPreviewIdentity(t, e, "previewapi", previewEnv)
@@ -737,11 +736,11 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	h.SetPreviewExpiry(t, func(command string) string { return e.dockerExec(t, command) }, "previewapi", previewEnv, "2000-01-01T00:00:00Z")
 	firstExpiry := parseRemoteTime(t, "2000-01-01T00:00:00Z")
 
-	e.simpleVPS(t, app, []byte("throwaway"), "secret", "set", "cleanup_key")
+	e.ship(t, app, []byte("throwaway"), "secret", "set", "cleanup_key")
 	mustWrite(t, filepath.Join(app, "README.md"), "second preview ship\n")
 	e.mustRun(t, app, nil, "git", "add", ".")
 	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "second preview")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	if again := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "previewapi", "feature/lifecycle"); again != previewEnv {
 		t.Fatalf("same branch should keep suffix stable: first=%s second=%s", previewEnv, again)
 	}
@@ -751,7 +750,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 		t.Fatalf("expiry should refresh on re-ship: before=%s after=%s", firstExpiry, refreshedExpiry)
 	}
 
-	e.simpleVPS(t, app, nil, "pin", "feature/lifecycle")
+	e.ship(t, app, nil, "pin", "feature/lifecycle")
 	pinned := readPreviewIdentity(t, e, "previewapi", previewEnv)
 	if pinned.Preview == nil || !pinned.Preview.Pinned || pinned.Preview.ExpiresAt != nil {
 		t.Fatalf("pin should clear expiry: %+v", pinned.Preview)
@@ -759,7 +758,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")
 	e.dockerExec(t, "test -d "+identity.EnvRoot("previewapi", previewEnv))
 
-	e.simpleVPS(t, app, nil, "unpin", "feature/lifecycle")
+	e.ship(t, app, nil, "unpin", "feature/lifecycle")
 	unpinned := readPreviewIdentity(t, e, "previewapi", previewEnv)
 	if unpinned.Preview == nil || unpinned.Preview.Pinned || unpinned.Preview.ExpiresAt == nil {
 		t.Fatalf("unpin should restore expiry: %+v", unpinned.Preview)
@@ -768,7 +767,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	reapOutput := e.dockerExec(t, "/usr/local/bin/ship server env reap")
 	assertContains(t, reapOutput, "Reaped preview previewapi ("+previewEnv+") branch=feature/lifecycle")
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("previewapi", previewEnv))
-	e.dockerExec(t, "test ! -e /etc/simple-vps/secrets/previewapi/"+previewEnv)
+	e.dockerExec(t, "test ! -e /etc/ship/secrets/previewapi/"+previewEnv)
 	e.dockerExec(t, "test -e "+identity.EnvRoot("previewapi", "prod"))
 }
 
@@ -778,7 +777,7 @@ func (e *smokeEnv) testBackupRestore(t *testing.T) {
 
 	prodStatus := statusEnvByKind(t, e, app, "Production")
 	backupRelease := prodStatus.Release
-	backupID := backupIDFromSaveOutput(t, e.simpleVPS(t, app, nil, "save"))
+	backupID := backupIDFromSaveOutput(t, e.ship(t, app, nil, "save"))
 
 	mustWrite(t, filepath.Join(app, "README.md"), "post-backup release\n")
 	e.commitFixture(t, app)
@@ -786,21 +785,21 @@ func (e *smokeEnv) testBackupRestore(t *testing.T) {
 	if newRelease == backupRelease {
 		t.Fatal("expected fixture commit to produce a new release")
 	}
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	newContainer := identity.ContainerName("api", productionEnv, "web", newRelease)
 	e.dockerExec(t, "test -f /run/fake-podman/containers/"+newContainer+".labels")
 
-	e.simpleVPS(t, app, nil, "restore", "--from", backupID)
+	e.ship(t, app, nil, "restore", "--from", backupID)
 	e.dockerExec(t, "test ! -f /run/fake-podman/containers/"+newContainer+".labels")
-	statusJSON := e.simpleVPS(t, app, nil, "status", "--json")
+	statusJSON := e.ship(t, app, nil, "status", "--json")
 	assertContains(t, statusJSON, `"release": "`+backupRelease+`"`)
 
-	e.simpleVPS(t, app, nil, "rm", prodStatus.Branch, "--confirm", "api")
+	e.ship(t, app, nil, "rm", prodStatus.Branch, "--confirm", "api")
 	if exists := e.run(t, e.repoRoot, nil, "docker", "exec", e.container, "bash", "-c", "test -e "+identity.DataDir("api", productionEnv)+"/data.txt"); exists.err == nil {
 		t.Fatal("destroy should remove data before restore")
 	}
 
-	e.simpleVPS(t, app, nil, "restore", "--from", backupID)
+	e.ship(t, app, nil, "restore", "--from", backupID)
 	got := strings.TrimSpace(e.dockerExec(t, "cat "+identity.DataDir("api", productionEnv)+"/data.txt"))
 	if got != "durable-state" {
 		t.Fatalf("restored data = %q, want durable-state", got)
@@ -813,7 +812,7 @@ func (e *smokeEnv) testBackupRestore(t *testing.T) {
 	if dataStat != "2775 "+identity.SystemUser("api", productionEnv) {
 		t.Fatalf("restored data ownership = %q, want `2775 %s`", dataStat, identity.SystemUser("api", productionEnv))
 	}
-	status := e.simpleVPS(t, app, nil, "status")
+	status := e.ship(t, app, nil, "status")
 	assertContains(t, status, "Production "+prodStatus.Branch)
 	assertContains(t, status, "health=healthy")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: api.example.com' http://127.0.0.1/health", "ok")
@@ -839,12 +838,12 @@ func (e *smokeEnv) testRollback(t *testing.T) {
 	if newRelease == oldRelease {
 		t.Fatal("expected fixture commit to produce a new release")
 	}
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	newFragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("api", productionEnv))
 	assertContains(t, newFragment, ":"+"3333")
 
 	prodStatus := statusEnvByKind(t, e, app, "Production")
-	rollbackText := e.simpleVPS(t, app, nil, "rollback")
+	rollbackText := e.ship(t, app, nil, "rollback")
 	assertContains(t, rollbackText, "Rolled back Production "+prodStatus.Branch+" from "+newRelease+" to "+oldRelease)
 	assertContains(t, rollbackText, "web")
 
@@ -861,13 +860,13 @@ func (e *smokeEnv) testRollback(t *testing.T) {
 	assertContains(t, appliedManifest, "port = 3000")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: api.example.com' http://127.0.0.1/health", "ok")
 
-	why := e.simpleVPS(t, app, nil, "why")
+	why := e.ship(t, app, nil, "why")
 	assertContains(t, why, "Rollback completed for Production "+prodStatus.Branch)
 	assertContains(t, why, "release: "+oldRelease+" (from "+newRelease+")")
 	assertContains(t, why, "traffic: release "+oldRelease+" is live.")
 	assertContains(t, why, "shipped by: Smoke <smoke@example.com> (ssh key: fake-vps-smoke)")
 	var whyJSON smokeWhyEntry
-	rawWhyJSON := e.simpleVPS(t, app, nil, "why", "--json")
+	rawWhyJSON := e.ship(t, app, nil, "why", "--json")
 	if err := json.Unmarshal([]byte(rawWhyJSON), &whyJSON); err != nil {
 		t.Fatalf("why --json output not parseable as JSON: %v\nraw:\n%s", err, rawWhyJSON)
 	}
@@ -887,7 +886,7 @@ func (e *smokeEnv) testConcurrentDeploys(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			results <- e.runSimpleVPS(t, app, nil)
+			results <- e.runShip(t, app, nil)
 		}()
 	}
 	close(start)
@@ -901,7 +900,7 @@ func (e *smokeEnv) testConcurrentDeploys(t *testing.T) {
 		assertEqual(t, result.stdout, "https://api.example.com\n")
 	}
 
-	status := e.simpleVPS(t, app, nil, "status")
+	status := e.ship(t, app, nil, "status")
 	assertContains(t, status, "Production ")
 	assertContains(t, status, "health=healthy")
 }
@@ -912,7 +911,7 @@ func (e *smokeEnv) testRemovedProcessReconciliation(t *testing.T) {
 	writePruneFixture(t, app)
 	e.commitFixture(t, app)
 
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	oldRelease := gitRelease(t, e, app)
 	oldWorker := identity.ContainerName("prune", productionEnv, "worker", oldRelease)
 	e.dockerExec(t, "test -f /run/fake-podman/containers/"+oldWorker+".labels")
@@ -930,10 +929,10 @@ func (e *smokeEnv) testRemovedProcessReconciliation(t *testing.T) {
 	mustWrite(t, manifestPath, nextManifest)
 	mustWrite(t, filepath.Join(app, "README.md"), "worker removed\n")
 	e.commitFixture(t, app)
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 
 	e.dockerExec(t, "test ! -f /run/fake-podman/containers/"+oldWorker+".labels")
-	statusJSON := e.simpleVPS(t, app, nil, "status", "--json")
+	statusJSON := e.ship(t, app, nil, "status", "--json")
 	if strings.Contains(statusJSON, `"process": "worker"`) {
 		t.Fatalf("removed worker still appears in status:\n%s", statusJSON)
 	}
@@ -945,17 +944,17 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	writeStaticFixture(t, app)
 	e.commitFixture(t, app)
 
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	oldRelease := currentStaticReleaseFor(t, e, "site", productionEnv)
 	staticReleaseManifest := e.ssh(t, "cat "+identity.ReleaseManifestFile("site", productionEnv, oldRelease))
 	assertContains(t, staticReleaseManifest, `static = "dist"`)
 
-	status := e.simpleVPS(t, app, nil, "status")
+	status := e.ship(t, app, nil, "status")
 	assertContains(t, status, "Production ")
 	assertContains(t, status, "release="+oldRelease)
 	assertContains(t, status, "health=healthy")
 
-	rawListJSON := e.simpleVPS(t, app, nil, "box", "ls", "--json")
+	rawListJSON := e.ship(t, app, nil, "box", "ls", "--json")
 	var listPayload struct {
 		Apps []struct {
 			App       string `json:"app"`
@@ -982,22 +981,22 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 
 	mustWrite(t, filepath.Join(app, "dist", "index.html"), "static-v2")
 	e.commitFixture(t, app)
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	newRelease := currentStaticReleaseFor(t, e, "site", productionEnv)
 	if newRelease == oldRelease {
 		t.Fatal("expected static fixture deploy to produce a new release")
 	}
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: static.example.com' http://127.0.0.1/", "static-v2")
 
-	rawRollback := e.simpleVPS(t, app, nil, "rollback")
+	rawRollback := e.ship(t, app, nil, "rollback")
 	prodStatus := statusEnvByKind(t, e, app, "Production")
 	assertContains(t, rawRollback, "Rolled back Production "+prodStatus.Branch+" from "+newRelease+" to "+oldRelease)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: static.example.com' http://127.0.0.1/", "static-ok")
 
-	backupID := backupIDFromSaveOutput(t, e.simpleVPS(t, app, nil, "save"))
+	backupID := backupIDFromSaveOutput(t, e.ship(t, app, nil, "save"))
 
-	e.simpleVPS(t, app, nil, "rm", prodStatus.Branch, "--confirm", "site")
-	e.simpleVPS(t, app, nil, "restore", "--from", backupID)
+	e.ship(t, app, nil, "rm", prodStatus.Branch, "--confirm", "site")
+	e.ship(t, app, nil, "restore", "--from", backupID)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: static.example.com' http://127.0.0.1/", "static-ok")
 }
 
@@ -1007,7 +1006,7 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	writeMixedFixture(t, app)
 	e.commitFixture(t, app)
 
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	oldRelease := currentStaticReleaseFor(t, e, "mix", productionEnv)
 	oldWeb := identity.ContainerName("mix", productionEnv, "web", oldRelease)
 	fragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", productionEnv))
@@ -1021,7 +1020,7 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "docs-dist", "index.html"), "docs-v2")
 	mustWrite(t, filepath.Join(app, "README.md"), "docs v2\n")
 	e.commitFixture(t, app)
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	newRelease := currentStaticReleaseFor(t, e, "mix", productionEnv)
 	if newRelease == oldRelease {
 		t.Fatal("expected mixed fixture deploy to produce a new release")
@@ -1033,24 +1032,24 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/health", "ok")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v2")
 
-	e.simpleVPS(t, app, nil, "rollback")
+	e.ship(t, app, nil, "rollback")
 	prodStatus := statusEnvByKind(t, e, app, "Production")
 	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", productionEnv))
 	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
 	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", productionEnv, oldRelease, "mixed.example.com/docs")+`"`)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
 
-	backupID := backupIDFromSaveOutput(t, e.simpleVPS(t, app, nil, "save"))
-	e.simpleVPS(t, app, nil)
+	backupID := backupIDFromSaveOutput(t, e.ship(t, app, nil, "save"))
+	e.ship(t, app, nil)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v2")
-	e.simpleVPS(t, app, nil, "restore", "--from", backupID)
+	e.ship(t, app, nil, "restore", "--from", backupID)
 	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", productionEnv))
 	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
 	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", productionEnv, oldRelease, "mixed.example.com/docs")+`"`)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
 
-	e.simpleVPS(t, app, nil, "rm", prodStatus.Branch, "--confirm", "mix")
-	e.simpleVPS(t, app, nil, "restore", "--from", backupID)
+	e.ship(t, app, nil, "rm", prodStatus.Branch, "--confirm", "mix")
+	e.ship(t, app, nil, "restore", "--from", backupID)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/health", "ok")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
 
@@ -1067,7 +1066,7 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	mustWrite(t, manifestPath, nextManifest)
 	mustWrite(t, filepath.Join(app, "README.md"), "docs route removed\n")
 	e.commitFixture(t, app)
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", productionEnv))
 	if strings.Contains(fragment, "docs-dist") || strings.Contains(fragment, "/docs") {
 		t.Fatalf("removed static route still appears in Caddy fragment:\n%s", fragment)
@@ -1076,7 +1075,7 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 }
 
 // testSecretLifecycle covers the @secret:KEY resolution path end-to-end
-// against the helper-side store under /etc/simple-vps/secrets/:
+// against the helper-side store under /etc/ship/secrets/:
 //
 //  1. setup the app/env baseline
 //  2. `ship secret set` over SSH-stdin (value never on argv)
@@ -1112,13 +1111,13 @@ web = { port = 3000 }
 	// 1. set: value over stdin, never argv. The fake-VPS harness uses
 	// docker exec ssh under the hood and the helper reads from its
 	// own stdin in `secret set`.
-	e.simpleVPS(t, app, []byte("postgres://verybadidea"), "secret", "set", "db_url")
+	e.ship(t, app, []byte("postgres://verybadidea"), "secret", "set", "db_url")
 
 	// 2. file lands at the expected path, root-owned, mode 0600,
 	// containing the value verbatim (no trailing newline — the client
 	// trims one if present). Read as root via dockerExec because the
 	// deploy user only has passwordless sudo for /usr/local/bin/ship.
-	secretDir := "/etc/simple-vps/secrets/sec/" + productionEnv
+	secretDir := "/etc/ship/secrets/sec/" + productionEnv
 	listing := strings.TrimSpace(e.dockerExec(t, "ls -l "+secretDir))
 	if !strings.Contains(listing, " db_url") {
 		t.Fatalf("expected db_url in %s listing:\n%s", secretDir, listing)
@@ -1132,14 +1131,14 @@ web = { port = 3000 }
 	}
 
 	// 3. list shows the key — NEVER the value.
-	listing = e.simpleVPS(t, app, nil, "secret", "ls")
+	listing = e.ship(t, app, nil, "secret", "ls")
 	if !strings.Contains(listing, "db_url") {
 		t.Fatalf("secret list missing db_url:\n%s", listing)
 	}
 	if strings.Contains(listing, "postgres://") {
 		t.Fatalf("secret list leaked the value:\n%s", listing)
 	}
-	rawSecretJSON := e.simpleVPS(t, app, nil, "secret", "ls", "--json")
+	rawSecretJSON := e.ship(t, app, nil, "secret", "ls", "--json")
 	var secretPayload struct {
 		App  string   `json:"app"`
 		Env  string   `json:"env"`
@@ -1157,7 +1156,7 @@ web = { port = 3000 }
 
 	// 4. deploy: helper resolves @secret:db_url into the env file
 	// next to the literal LOG_LEVEL.
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	envFile := e.dockerExec(t, "cat "+identity.EnvFile("sec", productionEnv))
 	if !strings.Contains(envFile, "LOG_LEVEL=info\n") {
 		t.Fatalf("env file missing literal LOG_LEVEL:\n%s", envFile)
@@ -1174,13 +1173,13 @@ web = { port = 3000 }
 	}
 
 	// 6. rm removes the key.
-	e.simpleVPS(t, app, nil, "secret", "rm", "db_url")
+	e.ship(t, app, nil, "secret", "rm", "db_url")
 	if missing := strings.TrimSpace(e.dockerExec(t, "ls "+secretDir)); missing != "" {
 		t.Fatalf("expected empty secret dir after rm, got:\n%s", missing)
 	}
 
 	// 7. next deploy with the ref still in the manifest fails fast.
-	result := e.runSimpleVPS(t, app, nil)
+	result := e.runShip(t, app, nil)
 	if result.err == nil {
 		t.Fatal("expected deploy to fail with unresolved @secret reference")
 	}
@@ -1213,13 +1212,13 @@ web = { port = 3000 }
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 
-	e.simpleVPS(t, app, []byte("prod-token"), "secret", "set", "api_token")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, []byte("prod-token"), "secret", "set", "api_token")
+	e.ship(t, app, nil)
 	prodEnv := e.dockerExec(t, "cat "+identity.EnvFile("scope", productionEnv))
 	assertContains(t, prodEnv, "API_TOKEN=prod-token\n")
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/secrets")
-	failed := e.runSimpleVPS(t, app, nil, "--json")
+	failed := e.runShip(t, app, nil, "--json")
 	if failed.err == nil {
 		t.Fatal("preview deploy should fail when only the Production secret exists")
 	}
@@ -1232,18 +1231,18 @@ web = { port = 3000 }
 		t.Fatalf("preview env received Production secret value:\n%s", leaked)
 	}
 
-	e.simpleVPS(t, app, []byte("shared-preview-token"), "secret", "set", "api_token", "--preview")
-	previewList := e.simpleVPS(t, app, nil, "secret", "ls", "--preview")
+	e.ship(t, app, []byte("shared-preview-token"), "secret", "set", "api_token", "--preview")
+	previewList := e.ship(t, app, nil, "secret", "ls", "--preview")
 	assertContains(t, previewList, "api_token")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	envFile := e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
 	assertContains(t, envFile, "API_TOKEN=shared-preview-token\n")
 	if strings.Contains(envFile, "prod-token") {
 		t.Fatalf("preview env leaked Production secret value:\n%s", envFile)
 	}
 
-	e.simpleVPS(t, app, []byte("branch-token"), "secret", "set", "api_token", "--branch", "feature/secrets")
-	branchJSON := e.simpleVPS(t, app, nil, "secret", "ls", "--json", "--branch", "feature/secrets")
+	e.ship(t, app, []byte("branch-token"), "secret", "set", "api_token", "--branch", "feature/secrets")
+	branchJSON := e.ship(t, app, nil, "secret", "ls", "--json", "--branch", "feature/secrets")
 	var branchPayload struct {
 		App  string   `json:"app"`
 		Env  string   `json:"env"`
@@ -1255,15 +1254,15 @@ web = { port = 3000 }
 	if branchPayload.App != "scope" || branchPayload.Env != previewEnv || len(branchPayload.Keys) != 1 || branchPayload.Keys[0] != "api_token" {
 		t.Fatalf("unexpected branch secret JSON: %+v", branchPayload)
 	}
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil)
 	envFile = e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
 	assertContains(t, envFile, "API_TOKEN=branch-token\n")
 	if strings.Contains(envFile, "shared-preview-token") || strings.Contains(envFile, "prod-token") {
 		t.Fatalf("branch secret should win over shared preview and prod:\n%s", envFile)
 	}
 
-	e.simpleVPS(t, app, nil, "secret", "rm", "api_token", "--branch", "feature/secrets")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, nil, "secret", "rm", "api_token", "--branch", "feature/secrets")
+	e.ship(t, app, nil)
 	envFile = e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
 	assertContains(t, envFile, "API_TOKEN=shared-preview-token\n")
 	if strings.Contains(envFile, "branch-token") || strings.Contains(envFile, "prod-token") {
@@ -1295,7 +1294,7 @@ web = { port = 3000 }
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 
-	noRelease := e.runSimpleVPS(t, app, nil, "exec", "env")
+	noRelease := e.runShip(t, app, nil, "exec", "env")
 	if noRelease.err == nil {
 		t.Fatal("exec before first deploy should fail")
 	}
@@ -1303,11 +1302,11 @@ web = { port = 3000 }
 		t.Fatalf("exec no-release guard should be coded on stderr\nstdout:%s\nstderr:%s", noRelease.stdout, noRelease.stderr)
 	}
 
-	e.simpleVPS(t, app, []byte("postgres://exec-secret"), "secret", "set", "db_url")
-	e.simpleVPS(t, app, nil)
+	e.ship(t, app, []byte("postgres://exec-secret"), "secret", "set", "db_url")
+	e.ship(t, app, nil)
 	release := gitRelease(t, e, app)
 
-	envOut := e.simpleVPS(t, app, nil, "exec", "env")
+	envOut := e.ship(t, app, nil, "exec", "env")
 	for _, want := range []string{
 		"LOG_LEVEL=info\n",
 		"DATABASE_URL=postgres://exec-secret\n",
@@ -1319,14 +1318,14 @@ web = { port = 3000 }
 		assertContains(t, envOut, want)
 	}
 
-	failed := e.runSimpleVPS(t, app, nil, "exec", "sh", "-c", "exit 7")
+	failed := e.runShip(t, app, nil, "exec", "sh", "-c", "exit 7")
 	var exitErr *exec.ExitError
 	if !errors.As(failed.err, &exitErr) || exitErr.ExitCode() != 7 {
 		t.Fatalf("exec should propagate command exit 7, got err=%v stdout=%s stderr=%s", failed.err, failed.stdout, failed.stderr)
 	}
 
-	e.simpleVPS(t, app, nil, "exec", "sh", "-c", "printf exec-data > /data/exec.txt")
-	got := strings.TrimSpace(e.simpleVPS(t, app, nil, "exec", "cat", "/data/exec.txt"))
+	e.ship(t, app, nil, "exec", "sh", "-c", "printf exec-data > /data/exec.txt")
+	got := strings.TrimSpace(e.ship(t, app, nil, "exec", "cat", "/data/exec.txt"))
 	if got != "exec-data" {
 		t.Fatalf("exec /data round-trip = %q, want exec-data", got)
 	}
@@ -1340,7 +1339,7 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 
 	// Text status surfaces the web process, its container, and the
 	// release label baked in by `app apply`.
-	text := e.simpleVPS(t, app, nil, "status")
+	text := e.ship(t, app, nil, "status")
 	assertContains(t, text, "Production ")
 	assertContains(t, text, "release=")
 	assertContains(t, text, "health=healthy")
@@ -1373,7 +1372,7 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 
 	// Host-level app listing is sourced from Podman labels instead
 	// of the removed apps.json/routes.json registries.
-	rawListJSON := e.simpleVPS(t, app, nil, "box", "ls", "--json")
+	rawListJSON := e.ship(t, app, nil, "box", "ls", "--json")
 	var listPayload struct {
 		Apps []struct {
 			App       string `json:"app"`
@@ -1402,10 +1401,10 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 
 	// Logs reaches `podman logs` on the right container and prints
 	// the deterministic stub line.
-	logs := e.simpleVPS(t, app, nil, "logs", "web")
+	logs := e.ship(t, app, nil, "logs", "web")
 	assertContains(t, logs, "fake podman logs for "+env.Processes[0].Container)
 
-	logsJSON := e.simpleVPS(t, app, nil, "logs", "web", "--json")
+	logsJSON := e.ship(t, app, nil, "logs", "web", "--json")
 	var logsPayload struct {
 		App     string   `json:"app"`
 		Env     string   `json:"env"`
@@ -1420,11 +1419,11 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 	}
 
 	// Process argument is optional when exactly one process exists.
-	logsNoSvc := e.simpleVPS(t, app, nil, "logs")
+	logsNoSvc := e.ship(t, app, nil, "logs")
 	assertContains(t, logsNoSvc, "fake podman logs for "+env.Processes[0].Container)
 
 	// Unknown process errors clearly.
-	missing := e.runSimpleVPS(t, app, nil, "logs", "nope")
+	missing := e.runShip(t, app, nil, "logs", "nope")
 	if missing.err == nil {
 		t.Fatal("expected logs to fail when process is unknown")
 	}
@@ -1443,7 +1442,7 @@ func (e *smokeEnv) testDestroy(t *testing.T) {
 
 	// Client safety gate: no accidental teardown without either
 	// --confirm <app>.
-	missingConfirm := e.runSimpleVPS(t, app, nil, "rm", prodStatus.Branch)
+	missingConfirm := e.runShip(t, app, nil, "rm", prodStatus.Branch)
 	if missingConfirm.err == nil {
 		t.Fatal("expected rm without confirmation to fail")
 	}
@@ -1452,10 +1451,10 @@ func (e *smokeEnv) testDestroy(t *testing.T) {
 	}
 
 	// Give --purge something observable to remove.
-	e.simpleVPS(t, app, []byte("throwaway"), "secret", "set", "cleanup_key")
+	e.ship(t, app, []byte("throwaway"), "secret", "set", "cleanup_key")
 	currentContainer := currentWebContainer(t, e, app)
 
-	out := e.simpleVPS(t, app, nil, "rm", prodStatus.Branch, "--confirm", "api")
+	out := e.ship(t, app, nil, "rm", prodStatus.Branch, "--confirm", "api")
 	assertContains(t, out, "Removed Production "+prodStatus.Branch)
 
 	commandsLog := e.ssh(t, "cat /run/fake-podman/commands.log")
@@ -1467,10 +1466,10 @@ func (e *smokeEnv) testDestroy(t *testing.T) {
 	e.dockerExec(t, "test ! -e /run/fake-podman/networks/"+identity.Network("api", productionEnv))
 	e.dockerExec(t, "test ! -e "+identity.CaddyFragmentFile("api", productionEnv))
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("api", productionEnv))
-	e.dockerExec(t, "test ! -e /etc/simple-vps/secrets/api/"+productionEnv)
+	e.dockerExec(t, "test ! -e /etc/ship/secrets/api/"+productionEnv)
 	e.dockerExec(t, "! getent passwd "+identity.SystemUser("api", productionEnv)+" >/dev/null")
 
-	status := e.simpleVPS(t, app, nil, "status")
+	status := e.ship(t, app, nil, "status")
 	assertContains(t, status, "No live envs for api")
 
 	// Fake Caddy re-reads conf.d on every request, so route removal is
@@ -1478,7 +1477,7 @@ func (e *smokeEnv) testDestroy(t *testing.T) {
 	e.ssh(t, "if curl -fsS -H 'Host: api.example.com' http://127.0.0.1/health; then exit 1; fi")
 
 	// Idempotence: a second destroy should be a no-op, not an error.
-	again := e.simpleVPS(t, app, nil, "rm", prodStatus.Branch, "--confirm", "api")
+	again := e.ship(t, app, nil, "rm", prodStatus.Branch, "--confirm", "api")
 	assertContains(t, again, "Removed Production "+prodStatus.Branch)
 }
 
@@ -1608,7 +1607,7 @@ probe = "/health"
 LEAK_ON_PROBE_LOG = "@secret:probe_log_secret"
 
 [processes]
-web = { port = 3000, cmd = "simple-vps-listen-port=3000 sleep 3600" }
+web = { port = 3000, cmd = "ship-listen-port=3000 sleep 3600" }
 
 [routes]
 "probe-fail.example.com" = "web"
@@ -1807,7 +1806,7 @@ type smokeWhyEntry struct {
 
 func statusPayloadForApp(t *testing.T, e *smokeEnv, app string) smokeStatusPayload {
 	t.Helper()
-	rawJSON := e.simpleVPS(t, app, nil, "status", "--json")
+	rawJSON := e.ship(t, app, nil, "status", "--json")
 	var payload smokeStatusPayload
 	if err := json.Unmarshal([]byte(rawJSON), &payload); err != nil {
 		t.Fatalf("status --json output not parseable as JSON: %v\nraw:\n%s", err, rawJSON)

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/ship/internal/config"
 )
 
 func TestRunInitTemplatesCreateValidManifests(t *testing.T) {
@@ -298,7 +298,7 @@ func TestRunInitGeneratedContainerTemplatesBuildWhenRequested(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			image := "simple-vps-init-test-" + template + "-" + strings.ToLower(t.Name())
+			image := "ship-init-test-" + template + "-" + strings.ToLower(t.Name())
 			image = strings.NewReplacer("/", "-", "_", "-").Replace(image)
 			t.Cleanup(func() {
 				_ = exec.Command(builder, "rmi", "-f", image).Run()

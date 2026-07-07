@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/utils"
 )
 
 func serverCommand(args ...string) string {

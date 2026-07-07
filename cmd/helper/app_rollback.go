@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/store"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/store"
+	"github.com/fprl/ship/internal/utils"
 )
 
 // appRollbackCmd swaps one (app, env) back to an older local release. The
@@ -253,13 +253,13 @@ func imageReleasesFromEntries(app, env string, entries []imageEntry) []imageRele
 	var releases []imageRelease
 	seen := map[string]bool{}
 	for _, e := range entries {
-		if e.Labels["simple-vps.app"] != app || e.Labels["simple-vps.env"] != env {
+		if e.Labels["ship.app"] != app || e.Labels["ship.env"] != env {
 			continue
 		}
-		if e.Labels["simple-vps.infra_id"] != identity.InfraID(app, env) {
+		if e.Labels["ship.infra_id"] != identity.InfraID(app, env) {
 			continue
 		}
-		release := e.Labels["simple-vps.release"]
+		release := e.Labels["ship.release"]
 		if release == "" || release == "<none>" || seen[release] {
 			continue
 		}
@@ -420,7 +420,7 @@ func loadAppContextFromManifest(app, env, manifestPath, missingHint string) (*co
 	if _, err := os.Stat(manifestPath); err != nil {
 		return nil, func() {}, fmt.Errorf("applied manifest not found at %s; %s", manifestPath, missingHint)
 	}
-	tmp, err := os.MkdirTemp("", "simple-vps-rollback-manifest-")
+	tmp, err := os.MkdirTemp("", "ship-rollback-manifest-")
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -541,10 +541,10 @@ func restoreEnvFile(app, env string, snapshot fileSnapshot) error {
 func containerNamesExceptRelease(entries []containerEntry, release string) []string {
 	var names []string
 	for _, e := range entries {
-		if isEphemeralProcess(e.Labels["simple-vps.process"]) {
+		if isEphemeralProcess(e.Labels["ship.process"]) {
 			continue
 		}
-		if e.Labels["simple-vps.release"] == release {
+		if e.Labels["ship.release"] == release {
 			continue
 		}
 		if len(e.Names) > 0 {

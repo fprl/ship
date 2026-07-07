@@ -1,12 +1,12 @@
 # Security Model
 
-Simple VPS is not a general compliance hardening framework. It has one
+ship is not a general compliance hardening framework. It has one
 host posture: least-open-by-default, explicit ingress/admin modes, and an
 expected host state that is inspectable.
 
 ## Opinionated Choices
 
-Simple VPS always uses Caddy as the local ingress router and OpenSSH for
+ship always uses Caddy as the local ingress router and OpenSSH for
 bootstrap/recovery access. The operator chooses ingress and admin modes:
 
 - `--ingress public`: Caddy listens on public `80`/`443`.
@@ -58,7 +58,7 @@ expected to work. Today the role sets `PermitRootLogin prohibit-password`, which
 blocks root password login but still allows root key login. That is safer than
 root passwords, but it is still not the desired steady state.
 
-`simple-vps host doctor` should make this visible. A host with password SSH
+`ship host doctor` should make this visible. A host with password SSH
 enabled or root key login still enabled should be reported as degraded. Public
 SSH is degraded only when `--admin tailscale` is the desired steady state and
 Tailscale is ready.
@@ -90,10 +90,10 @@ The expected security services are:
 - `tailscaled` installed and enabled when Tailscale is enabled.
 - `cloudflared` installed, isolated as its own user, and enabled only when a
   Cloudflare tunnel token, API token, or config path is provided.
-- Caddy running as the generated Simple VPS ingress container.
+- Caddy running as the generated ship ingress container.
 
 The default Cloudflare trust boundary is tunnel-token or config-file access:
-Simple VPS can run the tunnel on the VPS, while users configure Cloudflare
+ship can run the tunnel on the VPS, while users configure Cloudflare
 public hostnames and DNS in Cloudflare. Cloudflare API-managed hostname and DNS
 publication is an advanced opt-in for teams comfortable storing that API token
 on the server.
@@ -109,13 +109,13 @@ The intended privilege model has three identities:
 ```text
 bootstrap user   root or provider-created initial user
                  used by remote host install only
-                 not a steady-state Simple VPS identity
+                 not a steady-state ship identity
 
 operator user    human/admin identity for host convergence and recovery
                  allowed to run the Go host provisioner with root privileges
 
 deploy user      identity used by the app CLI and CI
-                 allowed to invoke only the server-side Simple VPS helper
+                 allowed to invoke only the server-side ship helper
 ```
 
 The operator user keeps the root path host convergence needs. The deploy user
@@ -128,9 +128,9 @@ instead of adding ad hoc sudo commands to the public CLI.
 
 ## State and Drift
 
-The host should be checkable from the host itself. `simple-vps host status`
+The host should be checkable from the host itself. `ship host status`
 reports install state, supervised service state, and required host tools.
-`simple-vps host doctor` currently checks host state, required service health,
+`ship host doctor` currently checks host state, required service health,
 and the sudoers identity split.
 
 Future doctor hardening checks should cover:
@@ -146,7 +146,7 @@ Future doctor hardening checks should cover:
 - The operator/deploy split is healthy.
 - Generated Caddy config validates.
 
-Later, if Simple VPS grows an app registry, app and route drift should be
+Later, if ship grows an app registry, app and route drift should be
 reported from that source of truth too.
 
 ## External Hardening References
@@ -155,9 +155,9 @@ A strict hardening checklist is useful reference material, not a default
 dependency. External hardening role collections often cover Linux, SSH, nginx,
 and MySQL, and many deliberately disable root login.
 
-Do not add those checks blindly to the default install. They overlap with Simple VPS-owned
+Do not add those checks blindly to the default install. They overlap with ship-owned
 behavior: SSH bootstrap order, Tailscale reachability, UFW policy, optional
-Docker networking, and recovery access. If Simple VPS adopts pieces from it,
+Docker networking, and recovery access. If ship adopts pieces from it,
 they should be copied into explicit Go primitives or exposed behind an optional
 strict hardening profile with VM coverage for bootstrap, rerun idempotency,
 deploy, rollback, Tailscale access, Cloudflare Tunnel, and recovery.

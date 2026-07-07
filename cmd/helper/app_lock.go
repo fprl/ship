@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/names"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/names"
+	"github.com/fprl/ship/internal/utils"
 )
 
-const defaultAppEnvLockDir = "/run/simple-vps/locks"
+const defaultAppEnvLockDir = "/run/ship/locks"
 
 type appEnvLock struct {
 	file *os.File

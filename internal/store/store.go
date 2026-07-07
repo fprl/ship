@@ -22,7 +22,7 @@ func DefaultRoot() string {
 	if root := os.Getenv("SHIP_STATE_DIR"); root != "" {
 		return root
 	}
-	return "/etc/simple-vps"
+	return "/etc/ship"
 }
 
 func Default() Store {

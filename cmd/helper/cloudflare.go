@@ -7,9 +7,9 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/fprl/simple-vps/internal/cloudflare"
-	"github.com/fprl/simple-vps/internal/store"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/cloudflare"
+	"github.com/fprl/ship/internal/store"
+	"github.com/fprl/ship/internal/utils"
 )
 
 type cloudflareCmd struct {

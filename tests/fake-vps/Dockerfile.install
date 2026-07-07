@@ -13,7 +13,7 @@ RUN apt-get update \
     sudo \
   && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /run/sshd /root/.ssh /run/simple-vps-fresh-host /etc/caddy/simple-vps /etc/caddy/conf.d /etc/ufw /etc/default \
+RUN mkdir -p /run/sshd /root/.ssh /run/ship-fresh-host /etc/caddy/conf.d /etc/ufw /etc/default \
   && chmod 700 /root/.ssh \
   && useradd --system --home-dir /var/lib/caddy --shell /usr/sbin/nologin --create-home caddy
 

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fprl/simple-vps/internal/identity"
+	"github.com/fprl/ship/internal/identity"
 )
 
 func TestRunningContainerExistsRequiresRunningState(t *testing.T) {

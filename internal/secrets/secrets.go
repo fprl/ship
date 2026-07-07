@@ -3,13 +3,13 @@
 //
 // Storage shape: one file per secret, value verbatim, no metadata.
 //
-//	/etc/simple-vps/secrets                       mode 0700, root:root
-//	/etc/simple-vps/secrets/<app>/<env>/<key>     mode 0600, root:root
+//	/etc/ship/secrets                       mode 0700, root:root
+//	/etc/ship/secrets/<app>/<env>/<key>     mode 0600, root:root
 //
 // `key` is the env-var name (`DATABASE_URL`, `STRIPE_KEY`, ...) — the
 // validator at the call site (`SecretKeyRe`) keeps it filesystem-safe
 // so it can be used directly as the filename. The dir tree is created
-// on demand with the same 0700 mode so `ls /etc/simple-vps/secrets/`
+// on demand with the same 0700 mode so `ls /etc/ship/secrets/`
 // from any non-root account fails before it can enumerate apps.
 //
 // What this package deliberately does NOT do:
@@ -32,7 +32,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fprl/simple-vps/internal/names"
+	"github.com/fprl/ship/internal/names"
 )
 
 // SecretKeyRe matches the env-var grammar. Callers must validate
@@ -41,7 +41,7 @@ var SecretKeyRe = names.EnvKeyRe
 
 // Default location. Override with SHIP_SECRETS_DIR for tests so
 // they don't need root to exercise the real path layout.
-const defaultRoot = "/etc/simple-vps/secrets"
+const defaultRoot = "/etc/ship/secrets"
 
 func root() string {
 	if v := os.Getenv("SHIP_SECRETS_DIR"); v != "" {

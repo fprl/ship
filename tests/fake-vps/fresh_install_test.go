@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	h "github.com/fprl/simple-vps/tests/harness"
+	h "github.com/fprl/ship/tests/harness"
 )
 
-const freshHostImage = "simple-vps-fresh-host:local"
+const freshHostImage = "ship-fresh-host:local"
 
 func TestFreshHostInstall(t *testing.T) {
 	if os.Getenv("SHIP_RUN_FAKE_VPS_SMOKE") != "1" {
@@ -55,7 +55,7 @@ func TestFreshHostInstall(t *testing.T) {
 
 func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {
 	t.Helper()
-	result := e.runSimpleVPS(t, e.repoRoot, nil,
+	result := e.runShip(t, e.repoRoot, nil,
 		"box", "init", "fake-vps",
 		"--mode", "remote",
 		"--bootstrap-user", "root",
@@ -76,7 +76,7 @@ func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {
 		t.Fatalf("ship box init failed: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
 	}
 	assertContains(t, result.stdout, "Provisioning complete")
-	// Read operations-changed from /etc/simple-vps/host.json on the
+	// Read operations-changed from /etc/ship/host.json on the
 	// VPS. The trailing `Apply ... changed N operations` stdout line
 	// can be dropped by SSH pipe-close races on some Linux/Docker
 	// runners; host.json is the authoritative record (ADR-0002 §2).
@@ -93,9 +93,15 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	e.ssh(t, "grep -Fq 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *' /etc/sudoers.d/ship")
 	e.ssh(t, "grep -q 'ssh-ed25519 AAAAoperator test-operator' /home/operator/.ssh/authorized_keys")
 	e.ssh(t, "grep -q 'ssh-ed25519 AAAAoperator test-operator' /home/deploy/.ssh/authorized_keys")
-	assertEqual(t, strings.TrimSpace(e.ssh(t, "stat -c '%a' /etc/simple-vps/secrets")), "700")
+	e.ssh(t, "test -d /etc/ship/backups && test -d /etc/ship/providers && test -d /etc/ship/secrets")
+	assertEqual(t, strings.TrimSpace(e.ssh(t, "stat -c '%a' /etc/ship/secrets")), "700")
+	assertEqual(t, strings.TrimSpace(e.ssh(t, "stat -c '%a' /tmp/ship-deploy")), "1777")
+	e.ssh(t, "grep -Fq '# BEGIN ship podman bridges' /etc/ufw/before.rules")
+	e.ssh(t, "test -f /etc/containers/registries.conf.d/00-ship.conf")
+	e.ssh(t, "grep -Fq '# Managed by ship.' /etc/containers/registries.conf.d/00-ship.conf")
+	e.ssh(t, "grep -Fq '# Managed by ship.' /etc/caddy/Caddyfile")
 
-	hostState := e.ssh(t, "cat /etc/simple-vps/host.json")
+	hostState := e.ssh(t, "cat /etc/ship/host.json")
 	var state struct {
 		Version int `json:"version"`
 		Desired struct {
@@ -138,8 +144,8 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 		t.Fatalf("unexpected last apply meta: %+v", state.Meta.LastApply)
 	}
 
-	assertContains(t, e.ssh(t, "cat /run/simple-vps-fresh-host/systemctl.log"), "restart ssh.service")
-	systemctlLog := e.ssh(t, "cat /run/simple-vps-fresh-host/systemctl.log")
+	assertContains(t, e.ssh(t, "cat /run/ship-fresh-host/systemctl.log"), "restart ssh.service")
+	systemctlLog := e.ssh(t, "cat /run/ship-fresh-host/systemctl.log")
 	assertContains(t, systemctlLog, "start fail2ban.service")
 	assertContains(t, systemctlLog, "start caddy.service")
 	assertContains(t, systemctlLog, "start ship-preview-reaper.timer")
@@ -151,7 +157,7 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	e.ssh(t, "grep -Fq 'ExecStart=/usr/local/bin/ship server doctor record' /etc/systemd/system/ship-doctor.service")
 	e.ssh(t, "grep -Fq 'OnUnitActiveSec=24h' /etc/systemd/system/ship-doctor.timer")
 
-	ufwLog := e.ssh(t, "cat /run/simple-vps-fresh-host/ufw.log")
+	ufwLog := e.ssh(t, "cat /run/ship-fresh-host/ufw.log")
 	for _, want := range []string{
 		"default deny incoming",
 		"default allow outgoing",
@@ -163,13 +169,13 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	} {
 		assertContains(t, ufwLog, want)
 	}
-	assertEqual(t, strings.TrimSpace(e.ssh(t, "cat /run/simple-vps-fresh-host/timezone")), "Europe/Madrid")
-	assertEqual(t, strings.TrimSpace(e.ssh(t, "cat /run/simple-vps-fresh-host/locale")), "en_US.UTF-8")
+	assertEqual(t, strings.TrimSpace(e.ssh(t, "cat /run/ship-fresh-host/timezone")), "Europe/Madrid")
+	assertEqual(t, strings.TrimSpace(e.ssh(t, "cat /run/ship-fresh-host/locale")), "en_US.UTF-8")
 }
 
 func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {
 	t.Helper()
-	result := e.runSimpleVPS(t, e.repoRoot, nil, "box", "doctor", "fake-vps")
+	result := e.runShip(t, e.repoRoot, nil, "box", "doctor", "fake-vps")
 	if result.err == nil {
 		t.Fatalf("box doctor passed before install\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
@@ -177,7 +183,7 @@ func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {
 	assertContains(t, output, "failed to run doctor")
 	assertContains(t, output, "host is not installed")
 
-	jsonResult := e.runSimpleVPS(t, e.repoRoot, nil, "box", "doctor", "fake-vps", "--json")
+	jsonResult := e.runShip(t, e.repoRoot, nil, "box", "doctor", "fake-vps", "--json")
 	if jsonResult.err == nil {
 		t.Fatalf("box doctor --json passed before install\nstdout:\n%s\nstderr:\n%s", jsonResult.stdout, jsonResult.stderr)
 	}
@@ -193,7 +199,7 @@ func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {
 
 func (e *smokeEnv) assertHostDoctorHealthy(t *testing.T) {
 	t.Helper()
-	output := e.simpleVPS(t, e.repoRoot, nil, "box", "doctor", "fake-vps")
+	output := e.ship(t, e.repoRoot, nil, "box", "doctor", "fake-vps")
 	for _, want := range []string{
 		"host_state ok -",
 		"service_health ok -",
@@ -206,7 +212,7 @@ func (e *smokeEnv) assertHostDoctorHealthy(t *testing.T) {
 		assertContains(t, output, want)
 	}
 
-	rawDoctorJSON := e.simpleVPS(t, e.repoRoot, nil, "box", "doctor", "fake-vps", "--json")
+	rawDoctorJSON := e.ship(t, e.repoRoot, nil, "box", "doctor", "fake-vps", "--json")
 	var doctorPayload []doctorCheck
 	if err := json.Unmarshal([]byte(rawDoctorJSON), &doctorPayload); err != nil {
 		t.Fatalf("box doctor --json output not parseable as JSON: %v\nraw:\n%s", err, rawDoctorJSON)
@@ -228,7 +234,7 @@ func (e *smokeEnv) assertDoctorRecordingDeltaForStoppedReaper(t *testing.T) {
 	}
 
 	e.ssh(t, "systemctl stop ship-preview-reaper.timer")
-	result := e.runSimpleVPS(t, e.repoRoot, nil, "box", "doctor", "fake-vps", "--json")
+	result := e.runShip(t, e.repoRoot, nil, "box", "doctor", "fake-vps", "--json")
 	if result.err == nil {
 		t.Fatalf("box doctor should fail after stopping reaper timer\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
@@ -273,7 +279,7 @@ type doctorStateFile struct {
 
 func readDoctorState(t *testing.T, e *smokeEnv) doctorStateFile {
 	t.Helper()
-	raw := e.ssh(t, "cat /etc/simple-vps/doctor.json")
+	raw := e.ssh(t, "cat /etc/ship/doctor.json")
 	var state doctorStateFile
 	if err := json.Unmarshal([]byte(raw), &state); err != nil {
 		t.Fatalf("decode doctor.json: %v\n%s", err, raw)
@@ -295,13 +301,13 @@ func findDoctorCheck(t *testing.T, checks []doctorCheck, id string) doctorCheck 
 	return doctorCheck{}
 }
 
-// changedOperationsFromHostState reads /etc/simple-vps/host.json from
+// changedOperationsFromHostState reads /etc/ship/host.json from
 // the fake VPS and returns meta.last_apply.operations_changed. Reading
 // the file directly avoids the SSH pipe-close race that drops trailing
 // inner-installer stdout on some Linux/Docker runners.
 func changedOperationsFromHostState(t *testing.T, e *smokeEnv) int {
 	t.Helper()
-	raw := e.ssh(t, "cat /etc/simple-vps/host.json")
+	raw := e.ssh(t, "cat /etc/ship/host.json")
 	var state struct {
 		Meta struct {
 			LastApply struct {

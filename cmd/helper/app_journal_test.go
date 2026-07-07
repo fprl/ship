@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fprl/simple-vps/internal/errcat"
+	"github.com/fprl/ship/internal/errcat"
 )
 
 func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {

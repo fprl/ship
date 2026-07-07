@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/errcat"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/errcat"
 )
 
 func writeClientManifest(t *testing.T, root string, body string) {
@@ -57,12 +57,12 @@ web = { port = 3000 }
 }
 
 func TestDefaultAppNameUsesCurrentDirectoryBase(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "simple-vps-local-demo")
+	root := filepath.Join(t.TempDir(), "ship-local-demo")
 	if err := os.Mkdir(root, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	if got := defaultAppName(root); got != "simple-vps-local-demo" {
+	if got := defaultAppName(root); got != "ship-local-demo" {
 		t.Fatalf("defaultAppName = %q", got)
 	}
 }
@@ -848,8 +848,8 @@ func captureClientStdout(t *testing.T, fn func()) string {
 func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", false)
 	actor := testDeployIdentity()
-	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, actor, false, "internal")
-	want := "sudo -n /usr/local/bin/ship server app apply --tls internal --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
+	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, false, "internal")
+	want := "sudo -n /usr/local/bin/ship server app apply --tls internal --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -858,8 +858,8 @@ func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 func TestServerAppApplyCommandSupportsRebuild(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", true)
 	actor := testDeployIdentity()
-	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, actor, true, "")
-	want := "sudo -n /usr/local/bin/ship server app apply --rebuild --dirty --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
+	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, "")
+	want := "sudo -n /usr/local/bin/ship server app apply --rebuild --dirty --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -889,7 +889,7 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "doctor json", command: serverDoctorCommand("deploy@example.com", true)},
 		{name: "setup env", command: serverAppSetupEnvCommand("api", "production")},
 		{name: "preflight json", command: serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})},
-		{name: "apply", command: serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, actor, true, "auto")},
+		{name: "apply", command: serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, "auto")},
 		{name: "status json", command: serverAppStatusCommand("api", "production")},
 		{name: "list text", command: serverAppListCommand(false)},
 		{name: "list json", command: serverAppListCommand(true)},

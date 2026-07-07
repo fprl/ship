@@ -10,8 +10,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/fprl/simple-vps/internal/store"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/store"
+	"github.com/fprl/ship/internal/utils"
 )
 
 // DeployTmpDir is the world-writable + sticky directory the client
@@ -21,12 +21,12 @@ func DeployTmpDir() string {
 	if p := os.Getenv("SHIP_DEPLOY_TMP_DIR"); p != "" {
 		return p
 	}
-	return "/tmp/simple-vps-deploy"
+	return "/tmp/ship-deploy"
 }
 
 // PathIsRelativeTo reports whether target is the same as base or lives
 // under it after symlink-free cleanup. Used by ValidateDeployTmpSource
-// to confine uploaded paths to /tmp/simple-vps-deploy.
+// to confine uploaded paths to /tmp/ship-deploy.
 func PathIsRelativeTo(target string, base string) bool {
 	tClean := filepath.Clean(target)
 	bClean := filepath.Clean(base)
@@ -85,7 +85,7 @@ func DeployUserFromSudo() (string, error) {
 // requires the resolved path to live under DeployTmpDir(), requires it
 // to be a regular file, and (when invoked via sudo) verifies the file
 // is owned by SUDO_UID. This closes the door on a local user seeding
-// files into /tmp/simple-vps-deploy for the helper to act on.
+// files into /tmp/ship-deploy for the helper to act on.
 func ValidateDeployTmpSource(path string) (string, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {

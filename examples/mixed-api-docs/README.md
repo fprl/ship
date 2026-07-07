@@ -13,7 +13,7 @@ Before deploying, edit `ship.toml`:
 ```bash
 git init
 git add .
-git commit -m "initial simple-vps app"
+git commit -m "initial ship app"
 ship
 curl https://mixed.example.com/health
 curl https://mixed.example.com/docs

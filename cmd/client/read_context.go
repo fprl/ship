@@ -2,8 +2,8 @@ package client
 
 import (
 	"fmt"
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/names"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/names"
 	"strings"
 )
 

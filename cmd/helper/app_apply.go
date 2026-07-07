@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/config"
-	"github.com/fprl/simple-vps/internal/errcat"
-	"github.com/fprl/simple-vps/internal/host"
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/store"
-	"github.com/fprl/simple-vps/internal/utils"
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/host"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/store"
+	"github.com/fprl/ship/internal/utils"
 )
 
 // appApplyCmd is the per-env deploy primitive. Given a
@@ -551,7 +551,7 @@ func processProbe(routed map[string]bool, processName string, probe string) stri
 func containersForRemovedProcesses(entries []containerEntry, next map[string]config.Process) []string {
 	var names []string
 	for _, e := range entries {
-		process := e.Labels["simple-vps.process"]
+		process := e.Labels["ship.process"]
 		if process == "" || isEphemeralProcess(process) {
 			continue
 		}
@@ -568,7 +568,7 @@ func containersForRemovedProcesses(entries []containerEntry, next map[string]con
 func appContainerNames(entries []containerEntry) []string {
 	var names []string
 	for _, e := range entries {
-		process := e.Labels["simple-vps.process"]
+		process := e.Labels["ship.process"]
 		if process == "" || isEphemeralProcess(process) {
 			continue
 		}

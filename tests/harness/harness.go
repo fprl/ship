@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/store"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/store"
 )
 
 type CommandResult struct {

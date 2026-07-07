@@ -8,7 +8,7 @@ Small PHP app that exposes HTTP directly from the container.
 ```bash
 git init
 git add .
-git commit -m "initial simple-vps app"
+git commit -m "initial ship app"
 printf '%s' 'change-me' | ship secret set APP_SECRET
 ship
 ```
@@ -16,11 +16,11 @@ ship
 This uses PHP's built-in server to keep the example tiny. For Laravel,
 Symfony, or anything real, keep the same `ship.toml` shape but use a
 production HTTP-serving image such as FrankenPHP, RoadRunner, or Apache.
-simple-vps only needs the container to listen on the configured internal port.
+ship only needs the container to listen on the configured internal port.
 
 ## Redis and Postgres
 
-simple-vps v1 does not provision Redis or Postgres.
+ship v1 does not provision Redis or Postgres.
 
 Use a managed service or a database you operate separately, then pass
 connection strings as secrets:
@@ -36,5 +36,5 @@ printf '%s' "$DATABASE_URL" | ship secret set DATABASE_URL
 printf '%s' "$REDIS_URL" | ship secret set REDIS_URL
 ```
 
-For single-node apps, SQLite and uploads belong under `/data`; simple-vps
+For single-node apps, SQLite and uploads belong under `/data`; ship
 mounts `/data` into container apps and includes it in backup/restore.

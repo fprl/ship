@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/simple-vps/internal/cloudflare"
-	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/provision/host"
-	"github.com/fprl/simple-vps/internal/store"
-	"github.com/fprl/simple-vps/internal/version"
+	"github.com/fprl/ship/internal/cloudflare"
+	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/provision/host"
+	"github.com/fprl/ship/internal/store"
+	"github.com/fprl/ship/internal/version"
 )
 
 const (
@@ -123,10 +123,10 @@ func installOperations(opts InstallOptions, stateStore store.Store) []operation 
 	})
 
 	for _, dir := range []host.Directory{
-		{Path: "/etc/simple-vps", Owner: "root", Group: "root", Mode: 0755},
-		{Path: "/etc/simple-vps/backups", Owner: "root", Group: "root", Mode: 0755},
-		{Path: "/etc/simple-vps/providers", Owner: "root", Group: "root", Mode: 0755},
-		{Path: "/etc/simple-vps/secrets", Owner: "root", Group: "root", Mode: 0700},
+		{Path: "/etc/ship", Owner: "root", Group: "root", Mode: 0755},
+		{Path: "/etc/ship/backups", Owner: "root", Group: "root", Mode: 0755},
+		{Path: "/etc/ship/providers", Owner: "root", Group: "root", Mode: 0755},
+		{Path: "/etc/ship/secrets", Owner: "root", Group: "root", Mode: 0700},
 	} {
 		dir := dir
 		add("ensure directory "+dir.Path, func(apply host.Apply) (bool, error) {
@@ -463,7 +463,7 @@ func addPodman(ops *[]operation) {
 	*ops = append(*ops, operation{name: "podman ingress network", run: ensureIngressNetwork})
 }
 
-// addDeployTmpDir creates /tmp/simple-vps-deploy with mode 1777 (sticky
+// addDeployTmpDir creates /tmp/ship-deploy with mode 1777 (sticky
 // world-writable) so the unprivileged deploy user can drop the source
 // tarball and manifest under it during `ship deploy`, while still
 // preventing other local users from deleting another user's files mid-
@@ -478,7 +478,7 @@ func addDeployTmpDir(ops *[]operation) {
 // stripped to .Perm() (low 9 bits) so it can't express the sticky bit;
 // roll our own stat-then-install for this one path.
 func ensureDeployTmpDir(apply host.Apply) (bool, error) {
-	const path = "/tmp/simple-vps-deploy"
+	const path = "/tmp/ship-deploy"
 	const wantMode = "1777"
 	probe, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "stat", Args: []string{"-c", "%U\t%G\t%a\t%F", path}})
 	if err != nil {
@@ -528,7 +528,7 @@ func addPodmanHostBaseline(ops *[]operation) {
 	*ops = append(*ops, operation{name: "podman unqualified registries", run: ensurePodmanRegistries})
 }
 
-const podmanUfwMarker = "simple-vps podman bridges"
+const podmanUfwMarker = "ship podman bridges"
 
 func podmanUfwBlock() string {
 	return strings.Join([]string{
@@ -642,7 +642,7 @@ func injectPodmanUfwBlock(text string, body string) (string, bool, error) {
 	const anchor = "# End required lines"
 	anchorIdx := strings.Index(text, anchor)
 	if anchorIdx < 0 {
-		return "", false, fmt.Errorf("/etc/ufw/before.rules is missing the `%s` anchor; cannot safely insert the simple-vps podman block", anchor)
+		return "", false, fmt.Errorf("/etc/ufw/before.rules is missing the `%s` anchor; cannot safely insert the ship podman block", anchor)
 	}
 	// Insert after the line containing the anchor.
 	lineEnd := strings.Index(text[anchorIdx:], "\n")
@@ -658,14 +658,14 @@ func ensurePodmanRegistries(apply host.Apply) (bool, error) {
 	// Drop-in under /etc/containers/registries.conf.d/ so we never
 	// touch the distro-shipped /etc/containers/registries.conf.
 	body := strings.Join([]string{
-		"# Managed by simple-vps. Lets `FROM nginx:alpine` and similar",
+		"# Managed by ship. Lets `FROM nginx:alpine` and similar",
 		"# short image names resolve via docker.io. To pull from another",
 		"# registry, fully qualify the image in your Dockerfile.",
 		`unqualified-search-registries = ["docker.io"]`,
 		"",
 	}, "\n")
 	return host.EnsureFile(apply, host.File{
-		Path:    "/etc/containers/registries.conf.d/00-simple-vps.conf",
+		Path:    "/etc/containers/registries.conf.d/00-ship.conf",
 		Content: []byte(body),
 		Owner:   "root",
 		Group:   "root",
@@ -696,7 +696,7 @@ func ensureIngressNetwork(apply host.Apply) (bool, error) {
 
 // addCaddy installs and starts Caddy as a Podman container on the
 // shared `ingress` network, per ADR-0006 Cut 2. The previous apt-based
-// install + systemd-from-apt path is gone: simple-vps no longer treats
+// install + systemd-from-apt path is gone: ship no longer treats
 // Caddy as a host service. App containers join `ingress` and Caddy
 // reaches them by container DNS.
 //
@@ -746,7 +746,7 @@ func addCaddy(ops *[]operation, opts InstallOptions) {
 // empty config — the container stays up and accepts reloads as
 // fragments land.
 func caddyMainFile() string {
-	return "# Managed by simple-vps. Per-app routes live in conf.d/*.caddy.\n\nimport conf.d/*.caddy\n"
+	return "# Managed by ship. Per-app routes live in conf.d/*.caddy.\n\nimport conf.d/*.caddy\n"
 }
 
 // caddyUnit returns the systemd unit content that runs Caddy as a
@@ -856,7 +856,7 @@ func litestreamSHA256(arch string) string {
 }
 
 func createLitestreamTempDir(apply host.Apply) (string, error) {
-	args := []string{"-d", "/tmp/simple-vps-litestream.XXXXXX"}
+	args := []string{"-d", "/tmp/ship-litestream.XXXXXX"}
 	result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "mktemp", Args: args})
 	if err != nil {
 		return "", err
@@ -1202,7 +1202,7 @@ func writeApplyState(stateStore store.Store, opts InstallOptions, applyID string
 		Packages: map[string]store.ObservedPackage{},
 		Ingress:  store.HostIngressObserved{CloudflaredServiceActive: opts.CloudflareTunnel},
 	}, store.HostMeta{
-		SimpleVPSVersion: version.Version,
+		ShipVersion: version.Version,
 		LastApply: &store.ApplyMeta{
 			ID:                applyID,
 			StartedAt:         startedAt.Format(time.RFC3339),

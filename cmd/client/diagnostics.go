@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/ship/internal/config"
 )
 
 type diagnosticLevel string

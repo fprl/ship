@@ -34,7 +34,7 @@ surface that points at it. The unscheduled bets live in `docs/rfd/`
 
 ## 0. Mission and constraints
 
-ship is the v2 surface of the existing simple-vps engine in this repository.
+ship is the v2 surface of the pre-existing engine in this repository.
 It is **an adaptation, not a rewrite**: the deploy pipeline, host hardening,
 routing, secrets storage, backup machinery, helper privilege model, and the
 fake-vps test harness are kept. What changes is the CLI surface, the
@@ -71,7 +71,7 @@ sudoers model stay as-is unless a section below says otherwise.
 - On-host install path becomes `/usr/local/bin/ship`; sudoers grant updated
   accordingly. There are no external users; no compatibility shims for the
   old binary name are needed.
-- Manifest file: `ship.toml` only. No legacy `simple-vps.toml` support.
+- Manifest file: `ship.toml` only; no legacy manifest names.
 
 ## 2. Manifest (`ship.toml`)
 

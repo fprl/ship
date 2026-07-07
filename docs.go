@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/fprl/simple-vps/internal/agentdocs"
-	"github.com/fprl/simple-vps/internal/errcat"
+	"github.com/fprl/ship/internal/agentdocs"
+	"github.com/fprl/ship/internal/errcat"
 )
 
 //go:embed docs/AGENT.md

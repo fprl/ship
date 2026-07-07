@@ -4,30 +4,30 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fprl/simple-vps/internal/identity"
+	"github.com/fprl/ship/internal/identity"
 )
 
 func TestContainersToProcessesFiltersUnlabelledAndSorts(t *testing.T) {
 	// The fake `podman ps` filter accepts containers we don't own.
-	// The helper relies on the `simple-vps.process` label to know
-	// what's actually a managed simple-vps process.
+	// The helper relies on the `ship.process` label to know
+	// what's actually a managed ship process.
 	got := containersToProcesses([]containerEntry{
 		{
-			Names: []string{"svps-a8f9b2-worker-abc1234"},
+			Names: []string{"ship-a8f9b2-worker-abc1234"},
 			State: "running", Status: "Up 4 minutes",
-			Image:  "simple-vps/svps-a8f9b2:abc1234",
-			Labels: map[string]string{"simple-vps.app": "api", "simple-vps.env": "production", "simple-vps.process": "worker", "simple-vps.release": "abc1234"},
+			Image:  "ship/ship-a8f9b2:abc1234",
+			Labels: map[string]string{"ship.app": "api", "ship.env": "production", "ship.process": "worker", "ship.release": "abc1234"},
 		},
 		{
 			Names:  []string{"random-thing"},
 			State:  "running",
-			Labels: map[string]string{"simple-vps.app": "api", "simple-vps.env": "production"},
+			Labels: map[string]string{"ship.app": "api", "ship.env": "production"},
 		},
 		{
-			Names: []string{"svps-a8f9b2-web-abc1234"},
+			Names: []string{"ship-a8f9b2-web-abc1234"},
 			State: "running", Status: "Up 4 minutes",
-			Image:  "simple-vps/svps-a8f9b2:abc1234",
-			Labels: map[string]string{"simple-vps.app": "api", "simple-vps.env": "production", "simple-vps.process": "web", "simple-vps.release": "abc1234"},
+			Image:  "ship/ship-a8f9b2:abc1234",
+			Labels: map[string]string{"ship.app": "api", "ship.env": "production", "ship.process": "web", "ship.release": "abc1234"},
 		},
 	})
 	if len(got) != 2 {
@@ -37,7 +37,7 @@ func TestContainersToProcessesFiltersUnlabelledAndSorts(t *testing.T) {
 	if got[0].Process != "web" || got[1].Process != "worker" {
 		t.Fatalf("expected [web, worker] sorted, got [%s, %s]", got[0].Process, got[1].Process)
 	}
-	if got[0].Container != "svps-a8f9b2-web-abc1234" || got[0].Release != "abc1234" {
+	if got[0].Container != "ship-a8f9b2-web-abc1234" || got[0].Release != "abc1234" {
 		t.Fatalf("first process mapped wrong: %+v", got[0])
 	}
 }
@@ -45,40 +45,40 @@ func TestContainersToProcessesFiltersUnlabelledAndSorts(t *testing.T) {
 func TestContainersToAppEnvsGroupsAndSorts(t *testing.T) {
 	got := containersToAppEnvs([]containerEntry{
 		{
-			Names:  []string{"svps-api-staging-web"},
+			Names:  []string{"ship-api-staging-web"},
 			State:  "running",
 			Status: "Up",
-			Labels: map[string]string{"simple-vps.app": "api", "simple-vps.env": "staging", "simple-vps.process": "web", "simple-vps.infra_id": identity.InfraID("api", "staging")},
+			Labels: map[string]string{"ship.app": "api", "ship.env": "staging", "ship.process": "web", "ship.infra_id": identity.InfraID("api", "staging")},
 		},
 		{
-			Names:  []string{"svps-api-production-worker"},
+			Names:  []string{"ship-api-production-worker"},
 			State:  "running",
 			Status: "Up",
-			Labels: map[string]string{"simple-vps.app": "api", "simple-vps.env": "production", "simple-vps.process": "worker", "simple-vps.infra_id": identity.InfraID("api", "production")},
+			Labels: map[string]string{"ship.app": "api", "ship.env": "production", "ship.process": "worker", "ship.infra_id": identity.InfraID("api", "production")},
 		},
 		{
-			Names:  []string{"svps-api-production-web"},
+			Names:  []string{"ship-api-production-web"},
 			State:  "running",
 			Status: "Up",
-			Labels: map[string]string{"simple-vps.app": "api", "simple-vps.env": "production", "simple-vps.process": "web", "simple-vps.infra_id": identity.InfraID("api", "production")},
+			Labels: map[string]string{"ship.app": "api", "ship.env": "production", "ship.process": "web", "ship.infra_id": identity.InfraID("api", "production")},
 		},
 		{
-			Names:  []string{"svps-blog-production-web"},
+			Names:  []string{"ship-blog-production-web"},
 			State:  "running",
 			Status: "Up",
-			Labels: map[string]string{"simple-vps.app": "blog", "simple-vps.env": "production", "simple-vps.process": "web", "simple-vps.infra_id": identity.InfraID("blog", "production")},
+			Labels: map[string]string{"ship.app": "blog", "ship.env": "production", "ship.process": "web", "ship.infra_id": identity.InfraID("blog", "production")},
 		},
 		{
 			Names:  []string{"not-ours"},
 			State:  "running",
 			Status: "Up",
-			Labels: map[string]string{"simple-vps.app": "api", "simple-vps.env": "production"},
+			Labels: map[string]string{"ship.app": "api", "ship.env": "production"},
 		},
 		{
 			Names:  []string{"wrong-infra"},
 			State:  "running",
 			Status: "Up",
-			Labels: map[string]string{"simple-vps.app": "api", "simple-vps.env": "production", "simple-vps.process": "web", "simple-vps.infra_id": "svps-other"},
+			Labels: map[string]string{"ship.app": "api", "ship.env": "production", "ship.process": "web", "ship.infra_id": "ship-other"},
 		},
 	})
 
@@ -124,8 +124,8 @@ func TestRenderStatusTextKnownEnvWithoutProcesses(t *testing.T) {
 
 func TestRenderStatusTextWithProcesses(t *testing.T) {
 	processes := []processStatus{
-		{Process: "web", Container: "svps-a8f9b2-web-abc1234", State: "running", Status: "Up 4 minutes", Release: "abc1234"},
-		{Process: "worker", Container: "svps-a8f9b2-worker-abc1234", State: "exited", Status: "Exited (1) 2 minutes ago", Release: "abc1234"},
+		{Process: "web", Container: "ship-a8f9b2-web-abc1234", State: "running", Status: "Up 4 minutes", Release: "abc1234"},
+		{Process: "worker", Container: "ship-a8f9b2-worker-abc1234", State: "exited", Status: "Exited (1) 2 minutes ago", Release: "abc1234"},
 	}
 	out := renderStatusText("api", "production", processes, true, &statusRelease{Release: "abc1234", Source: "process"}, nil)
 	if !strings.Contains(out, "api (production)") {
