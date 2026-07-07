@@ -56,45 +56,12 @@ Run against a freshly rebuilt Ubuntu 24.04 or 26.04 VPS after the GitHub release
 assets exist. Requires `curl`, `git`, `jq`, and `ssh-keyscan` on the smoke
 machine.
 
-```bash
-scripts/release-smoke.sh --version "$VERSION" --host <ip>
-```
-
-For private release assets, export `SIMPLE_VPS_RELEASE_TOKEN`, `GH_TOKEN`, or
-`GITHUB_TOKEN`.
-
-By default the script uses:
-
-- root bootstrap key: `~/.ssh/hetzner`
-- operator public key: `~/.ssh/hetzner.pub`
-- deploy public key: `~/.ssh/simple-vps-deploy.pub`
-- deploy private key: `~/.ssh/simple-vps-deploy`
-
-The script installs the released CLI through the released `install.sh`, then
-uses that CLI for host install and app deploy.
-
-Override those with `SIMPLE_VPS_BOOTSTRAP_SSH_KEY`,
-`SIMPLE_VPS_OPERATOR_PUBKEY`, `SIMPLE_VPS_DEPLOY_PUBKEY`, and
-`SIMPLE_VPS_DEPLOY_SSH_KEY`.
+The old `scripts/release-smoke.sh` path was removed with the pre-ship CLI
+surface. Use `make fake-vps-smoke` and `make fake-vps-install-smoke` as the
+checked release gates until the Phase 3 real-box runbook is rewritten.
 
 ## Example Matrix Smoke
 
-After the host is installed, this deploys the checked-in PHP, Hono/Bun, mixed
-API+static, and Astro static examples with the current local client binary:
-
-```bash
-make build VERSION="$VERSION"
-scripts/example-matrix-smoke.sh --host <ip> --client ./dist/simple-vps
-```
-
-The Astro example runs `npm install --no-package-lock && npm run build` locally
-before deploy. The script destroys each example env unless
-`SIMPLE_VPS_EXAMPLE_MATRIX_SKIP_DESTROY=1` is set.
-
-The Django example is heavier because it builds a Python framework image and
-runs a migration release command. Include it with:
-
-```bash
-SIMPLE_VPS_EXAMPLE_MATRIX_INCLUDE_DJANGO=1 \
-  scripts/example-matrix-smoke.sh --host <ip> --client ./dist/simple-vps
-```
+The old `scripts/example-matrix-smoke.sh` path was removed with the pre-ship CLI
+surface. Keep example validation manual until the Phase 3 example matrix is
+rewritten.

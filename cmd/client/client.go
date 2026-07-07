@@ -269,7 +269,7 @@ func (r *CommandRunner) Upload(local string, remote string, server string) error
 	args = append(args, "-az", local, fmt.Sprintf("%s:%s", server, remote))
 	_, stderr, code, err := runCommand("rsync", args, "")
 	if err != nil || code != 0 {
-		return fmt.Errorf("rsync failed (exit %d): %s", code, stderr)
+		return operationError(fmt.Sprintf("rsync failed (exit %d): %s", code, strings.TrimSpace(stderr)), "ship")
 	}
 	return nil
 }
@@ -311,6 +311,7 @@ func runSSHRequired(runner sshRunner, server string, command string, errMsg stri
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
 		if coded, ok := remoteCodedError(stdout, stderr); ok {
+			writeRemoteStderr(stderr)
 			return "", coded
 		}
 		detail := strings.TrimSpace(stderr)
@@ -318,9 +319,9 @@ func runSSHRequired(runner sshRunner, server string, command string, errMsg stri
 			detail = strings.TrimSpace(stdout)
 		}
 		if detail != "" {
-			return "", fmt.Errorf("%s: %s", errMsg, detail)
+			return "", operationError(fmt.Sprintf("%s: %s", errMsg, detail), "ship box doctor")
 		}
-		return "", fmt.Errorf("%s", errMsg)
+		return "", operationError(errMsg, "ship box doctor")
 	}
 	return stdout, nil
 }
@@ -329,6 +330,7 @@ func runSSHDetail(runner sshRunner, server string, command string) (string, erro
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
 		if coded, ok := remoteCodedError(stdout, stderr); ok {
+			writeRemoteStderr(stderr)
 			return "", coded
 		}
 		detail := strings.TrimSpace(stderr)
@@ -339,7 +341,7 @@ func runSSHDetail(runner sshRunner, server string, command string) (string, erro
 		if detail == "" {
 			detail = "remote command failed"
 		}
-		return "", fmt.Errorf("%s", detail)
+		return "", operationError(detail, "ship box doctor")
 	}
 	return stdout, nil
 }
@@ -352,6 +354,40 @@ func remoteCodedError(stdout, stderr string) (*errcat.Error, bool) {
 		return coded, true
 	}
 	return nil, false
+}
+
+func writeRemoteStderr(stderr string) {
+	if strings.TrimSpace(stderr) == "" {
+		return
+	}
+	if _, ok := errcat.ParseJSON(stderr); ok {
+		return
+	}
+	fmt.Fprint(os.Stderr, stderr)
+	if !strings.HasSuffix(stderr, "\n") {
+		fmt.Fprintln(os.Stderr)
+	}
+}
+
+func usageError(detail, command string) error {
+	return errcat.New(errcat.CodeUsageError, errcat.Fields{
+		"detail":  detail,
+		"command": command,
+	})
+}
+
+func operationError(detail, command string) error {
+	return errcat.New(errcat.CodeOperationFailed, errcat.Fields{
+		"detail":  detail,
+		"command": command,
+	})
+}
+
+func manifestInvalidError(detail, command string) error {
+	return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
+		"details": detail,
+		"command": command,
+	})
 }
 
 func runSSHChecked(runner sshRunner, server string, command string, errMsg string) string {
@@ -396,10 +432,13 @@ type deployIdentityJSON struct {
 	GitAuthor     string `json:"git_author"`
 }
 
-func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, plan localDeployPlan, actor deployIdentityJSON, rebuild bool) string {
+func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, plan localDeployPlan, actor deployIdentityJSON, rebuild bool, tlsMode string) string {
 	args := []string{"app", "apply"}
 	if rebuild {
 		args = append(args, "--rebuild")
+	}
+	if tlsMode != "" {
+		args = append(args, "--tls", tlsMode)
 	}
 	if plan.Dirty {
 		args = append(args, "--dirty")
@@ -545,7 +584,7 @@ func resolveDeployPreviewEnv(runner sshRunner, ctx *config.AppContext, address d
 	}
 	env := strings.TrimSpace(out)
 	if !names.EnvRe.MatchString(env) {
-		return "", fmt.Errorf("preview resolver returned invalid env name: %q", env)
+		return "", operationError(fmt.Sprintf("preview resolver returned invalid env name: %q", env), "ship box doctor")
 	}
 	return env, nil
 }
@@ -560,7 +599,7 @@ func resolveReadPreviewEnv(runner sshRunner, ctx *config.AppContext, address rea
 	}
 	env := strings.TrimSpace(out)
 	if !names.EnvRe.MatchString(env) {
-		return "", fmt.Errorf("preview resolver returned invalid env name: %q", env)
+		return "", operationError(fmt.Sprintf("preview resolver returned invalid env name: %q", env), "ship box doctor")
 	}
 	return env, nil
 }
@@ -738,7 +777,7 @@ func CmdWhy(root, branch string, jsonFlag bool) {
 	}
 	var entry whyJournalEntry
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &entry); err != nil {
-		utils.Die(fmt.Sprintf("why failed: invalid journal JSON: %v", err), 1)
+		utils.DieError(operationError(fmt.Sprintf("why failed: invalid journal JSON: %v", err), "ship why"), 1)
 	}
 	fmt.Print(renderWhy(entry, read))
 }
@@ -842,7 +881,7 @@ func dashIfEmpty(value string) string {
 func statusFromAppList(ctx *config.AppContext, raw string) (statusPayload, error) {
 	var list appListJSON
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &list); err != nil {
-		return statusPayload{}, fmt.Errorf("status failed: invalid app list JSON: %v", err)
+		return statusPayload{}, operationError(fmt.Sprintf("status failed: invalid app list JSON: %v", err), "ship status")
 	}
 	payload := statusPayload{App: ctx.AppName}
 	for _, item := range list.Apps {
@@ -1151,7 +1190,7 @@ func splitLogLines(out string) []string {
 func secretValueFromStdin() ([]byte, error) {
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		return nil, fmt.Errorf("read secret value from stdin: %v", err)
+		return nil, operationError(fmt.Sprintf("read secret value from stdin: %v", err), "ship secret set KEY")
 	}
 	if n := len(data); n > 0 && data[n-1] == '\n' {
 		data = data[:n-1]
@@ -1198,7 +1237,7 @@ func currentSecretContext(root, command string, preview bool, branch string, cre
 	case branch != "":
 		if !names.ValidGitBranch(branch) {
 			runner.Close()
-			return secretContext{}, fmt.Errorf("invalid preview branch mapping key: %q", branch)
+			return secretContext{}, usageError(fmt.Sprintf("invalid preview branch mapping key: %q", branch), secretScopeConflictCommand(command))
 		}
 		if branch == ctx.ProductionBranch {
 			return secret, nil
@@ -1215,7 +1254,7 @@ func currentSecretContext(root, command string, preview bool, branch string, cre
 		env := strings.TrimSpace(out)
 		if !names.EnvRe.MatchString(env) {
 			runner.Close()
-			return secretContext{}, fmt.Errorf("preview resolver returned invalid env name: %q", env)
+			return secretContext{}, operationError(fmt.Sprintf("preview resolver returned invalid env name: %q", env), "ship box doctor")
 		}
 		secret.EnvName = env
 		secret.Kind = "Preview"
@@ -1274,7 +1313,7 @@ func CmdSecretSet(root string, key string, preview bool, branch string) {
 		if detail == "" {
 			detail = "no error detail"
 		}
-		utils.Die(fmt.Sprintf("secret set failed: %s", detail), 1)
+		utils.DieError(operationError(fmt.Sprintf("secret set failed: %s", detail), "ship secret set "+key), 1)
 	}
 	// Don't echo stdout — it'd carry the helper's confirmation
 	// (which already names the key but not the value). Print our own.
@@ -1409,9 +1448,9 @@ func CmdBoxDoctor(server string, jsonFlag bool) {
 			detail = strings.TrimSpace(stdout)
 		}
 		if detail != "" {
-			utils.Die(fmt.Sprintf("failed to run doctor: %s", detail), 1)
+			utils.DieError(operationError(fmt.Sprintf("failed to run doctor: %s", detail), "ship box doctor "+server), 1)
 		}
-		utils.Die("failed to run doctor", 1)
+		utils.DieError(operationError("failed to run doctor", "ship box doctor "+server), 1)
 	}
 	fmt.Print(stdout)
 }
@@ -1550,10 +1589,10 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, inclu
 	}
 	if routePlan.RewritesManifest {
 		if err := writeDeployManifest(filepath.Join(root, ManifestFile), localManifest, ctx.Routes); err != nil {
-			return ShipResult{}, fmt.Errorf("write deploy manifest: %v", err)
+			return ShipResult{}, operationError(fmt.Sprintf("write deploy manifest: %v", err), "ship")
 		}
 	} else if err := copyFile(filepath.Join(root, ManifestFile), localManifest); err != nil {
-		return ShipResult{}, fmt.Errorf("copy manifest: %v", err)
+		return ShipResult{}, operationError(fmt.Sprintf("copy manifest: %v", err), "ship")
 	}
 
 	// 2. Upload tarball + manifest to a per-deploy temp dir on the host.
@@ -1565,10 +1604,10 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, inclu
 		return failDeployAfterRemoteDir(cleanupRemoteDir, err)
 	}
 	if err := runner.Upload(localTar, remoteDir+"/source.tar", ctx.Server); err != nil {
-		return failDeployAfterRemoteDir(cleanupRemoteDir, fmt.Errorf("failed to upload source: %v", err))
+		return failDeployAfterRemoteDir(cleanupRemoteDir, operationError(fmt.Sprintf("failed to upload source: %v", err), "ship"))
 	}
 	if err := runner.Upload(localManifest, remoteDir+"/ship.toml", ctx.Server); err != nil {
-		return failDeployAfterRemoteDir(cleanupRemoteDir, fmt.Errorf("failed to upload manifest: %v", err))
+		return failDeployAfterRemoteDir(cleanupRemoteDir, operationError(fmt.Sprintf("failed to upload manifest: %v", err), "ship"))
 	}
 	progress.timed("build")
 
@@ -1579,6 +1618,7 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, inclu
 		plan,
 		deployIdentity(root, runner, ctx.Server),
 		rebuild,
+		tlsMode,
 	)
 	if _, err := runSSHRequired(runner, ctx.Server, applyCmd, "deploy failed"); err != nil {
 		return failDeployAfterRemoteDir(cleanupRemoteDir, err)
@@ -1607,14 +1647,15 @@ func failDeployAfterRemoteDir(cleanup func(), err error) (ShipResult, error) {
 }
 
 func deployDiagnosticsError(diags diagnostics) error {
+	items := diags.errors()
 	messages := diags.errorMessages()
-	if dockerfileMissingDiagnostic(messages) {
+	if diagnosticHasKind(items, diagnosticKindDockerfileMissing) {
 		return errcat.New(errcat.CodeDockerfileMissing, nil)
 	}
-	if localDeployDiagnostic(messages) {
+	if localDeployDiagnostic(items) {
 		return errcat.New(errcat.CodeDeployBlockedLocalChecks, errcat.Fields{
 			"detail":  strings.Join(messages, "\n"),
-			"command": localDeployRemediation(messages),
+			"command": localDeployRemediation(items),
 		})
 	}
 	return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
@@ -1623,37 +1664,39 @@ func deployDiagnosticsError(diags diagnostics) error {
 	})
 }
 
-func dockerfileMissingDiagnostic(messages []string) bool {
-	for _, message := range messages {
-		if strings.Contains(message, "missing a Dockerfile") {
+func diagnosticHasKind(items []diagnostic, kind diagnosticKind) bool {
+	for _, item := range items {
+		if item.Kind == kind {
 			return true
 		}
 	}
 	return false
 }
 
-func localDeployRemediation(messages []string) string {
-	for _, message := range messages {
-		switch {
-		case strings.Contains(message, "git repository not found"):
+func localDeployRemediation(items []diagnostic) string {
+	for _, item := range items {
+		switch item.Kind {
+		case diagnosticKindGitNotRepo:
 			return "git init && git add . && git commit -m \"initial ship app\""
-		case strings.Contains(message, "git repository has no commits"):
+		case diagnosticKindGitNoCommits:
 			return "git add . && git commit -m \"initial ship app\""
-		case strings.Contains(message, "refusing to deploy dotenv file:"):
+		case diagnosticKindDotenv:
 			return "ship --include-dotenv"
-		case strings.HasPrefix(message, "hash static assets:"):
+		case diagnosticKindStaticHash:
 			return "<build command> && ship"
 		}
 	}
 	return "fix local checks"
 }
 
-func localDeployDiagnostic(messages []string) bool {
-	for _, message := range messages {
-		switch {
-		case strings.HasPrefix(message, "git "),
-			strings.HasPrefix(message, "hash static assets:"),
-			strings.Contains(message, "refusing to deploy dotenv file:"):
+func localDeployDiagnostic(items []diagnostic) bool {
+	for _, item := range items {
+		switch item.Kind {
+		case diagnosticKindGit,
+			diagnosticKindGitNotRepo,
+			diagnosticKindGitNoCommits,
+			diagnosticKindStaticHash,
+			diagnosticKindDotenv:
 			return true
 		}
 	}

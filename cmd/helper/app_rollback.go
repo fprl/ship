@@ -11,6 +11,7 @@ import (
 
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/identity"
+	"github.com/fprl/simple-vps/internal/store"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -178,7 +179,7 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 			}
 			containerName := identity.ContainerName(c.App, c.Env, procName, targetRelease)
 			started = append(started, containerName)
-			if err := startProcess(c.App, c.Env, procName, proc, imageTag, userID, groupID, targetRelease, containerName, processProbe(routed, procName, app.Probe), previewEnv); err != nil {
+			if err := startProcess(c.App, c.Env, procName, proc, imageTag, userID, groupID, targetRelease, containerName, processProbe(routed, procName, app.Probe), previewEnv, collectEnvValues(resolved)); err != nil {
 				cleanupStarted()
 				_ = restoreEnvFile(c.App, c.Env, envSnapshot)
 				_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
@@ -485,7 +486,7 @@ func persistCurrentManifestFromRelease(app, env, release string) error {
 		return fmt.Errorf("read release manifest snapshot: %v", err)
 	}
 	current := identity.ManifestFile(app, env)
-	if err := os.WriteFile(current, data, 0644); err != nil {
+	if err := store.AtomicWrite(current, data, 0644); err != nil {
 		return fmt.Errorf("write applied manifest: %v", err)
 	}
 	if _, err := utils.RunChecked("chown", []string{"root:root", current}, ""); err != nil {

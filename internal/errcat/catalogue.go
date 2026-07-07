@@ -353,11 +353,6 @@ func MustLookup(code Code) Entry {
 	return entry
 }
 
-func Lookup(code Code) (Entry, bool) {
-	entry, ok := catalogue[code]
-	return entry, ok
-}
-
 func Catalogue() []Entry {
 	out := make([]Entry, 0, len(catalogue))
 	for _, entry := range catalogue {
@@ -366,15 +361,6 @@ func Catalogue() []Entry {
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Code < out[j].Code
 	})
-	return out
-}
-
-func Codes() []Code {
-	entries := Catalogue()
-	out := make([]Code, 0, len(entries))
-	for _, entry := range entries {
-		out = append(out, entry.Code)
-	}
 	return out
 }
 

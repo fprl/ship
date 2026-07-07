@@ -16,9 +16,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fprl/simple-vps/internal/caddy"
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/host"
 	"github.com/fprl/simple-vps/internal/identity"
+	"github.com/fprl/simple-vps/internal/secrets"
 	"github.com/fprl/simple-vps/internal/store"
 	"github.com/fprl/simple-vps/internal/utils"
 )
@@ -340,6 +342,13 @@ func doctorHostStateCheck(stateStore store.Store, boxTarget string) store.Doctor
 	if _, err := stateStore.ReadCloudflare(); err != nil {
 		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("cloudflare state invalid: %v", err), remediation)
 	}
+	if info, err := os.Stat(secrets.RootDir()); err != nil {
+		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("secrets root unavailable: %v", err), remediation)
+	} else if !info.IsDir() {
+		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("secrets root %s is not a directory", secrets.RootDir()), remediation)
+	} else if mode := info.Mode().Perm(); mode != 0700 {
+		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("secrets root %s mode %03o, want 700", secrets.RootDir(), mode), remediation)
+	}
 	return doctorCheck(doctorCheckHostState, doctorStatusOK, fmt.Sprintf("host state readable (%s)", stateStore.HostPath()), doctorRerunCommand(boxTarget))
 }
 
@@ -468,7 +477,7 @@ func routedTLSCertStatuses(now time.Time) ([]tlsCertStatus, error) {
 			return nil, fmt.Errorf("%s/%s applied manifest: %v", app.App, app.Env, err)
 		}
 		for _, route := range manifest.Routes {
-			if route.Host == "" || normalizeTLS(route.TLS) == "internal" {
+			if route.Host == "" || normalizeTLS(route.TLS) == "internal" || deployedRouteUsesInternalTLS(app.App, app.Env, route.Host) {
 				continue
 			}
 			hosts[route.Host] = true
@@ -495,6 +504,38 @@ func routedTLSCertStatuses(now time.Time) ([]tlsCertStatus, error) {
 		statuses = append(statuses, status)
 	}
 	return statuses, nil
+}
+
+func deployedRouteUsesInternalTLS(app, env, host string) bool {
+	data, err := os.ReadFile(identity.CaddyFragmentFile(app, env))
+	if err != nil {
+		return false
+	}
+	quotedHost, err := caddy.CaddyQuote(host)
+	if err != nil {
+		return false
+	}
+	prefix := quotedHost + " {\n"
+	fragment := string(data)
+	offset := 0
+	for {
+		start := strings.Index(fragment[offset:], prefix)
+		if start < 0 {
+			return false
+		}
+		bodyStart := offset + start + len(prefix)
+		end := strings.Index(fragment[bodyStart:], "\n}\n")
+		if end < 0 {
+			end = len(fragment)
+		} else {
+			end += bodyStart
+		}
+		body := fragment[bodyStart:end]
+		if strings.Contains(body, "\ttls internal\n") {
+			return true
+		}
+		offset = bodyStart
+	}
 }
 
 func readCaddyCertificate(host string) (*x509.Certificate, string, error) {

@@ -419,6 +419,9 @@ PY
       fi
     done
     printf '%s\n' "$image" > "$state_dir/containers/$name.image"
+    if [[ -n "$env_file" ]]; then
+      printf '%s\n' "$env_file" > "$state_dir/containers/$name.env-file"
+    fi
     joined_command="$(printf '%s ' "${command_args[@]:-}")"
     actual_port="$declared_port"
     if [[ "$joined_command" =~ simple-vps-listen-port=([0-9]+) ]]; then
@@ -484,6 +487,19 @@ PY
       exit 1
     fi
     printf 'fake podman logs for %s\n' "$name"
+    env_file_path="$state_dir/containers/$name.env-file"
+    if [[ -f "$env_file_path" ]]; then
+      source_env_file="$(cat "$env_file_path" 2>/dev/null || true)"
+      if [[ -n "$source_env_file" && -f "$source_env_file" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+          case "$line" in
+            LEAK_ON_PROBE_LOG=*)
+              printf 'probe log marker %s\n' "${line#LEAK_ON_PROBE_LOG=}"
+              ;;
+          esac
+        done < "$source_env_file"
+      fi
+    fi
     exit 0
     ;;
 

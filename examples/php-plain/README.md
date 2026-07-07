@@ -1,18 +1,20 @@
 # Plain PHP
 
+> **Superseded:** This document describes the pre-ship surface and is not current.
+> **Pending:** The Phase 3 rewrite will replace it; only broken commands are patched here.
+
 Small PHP app that exposes HTTP directly from the container.
 
 ```bash
 git init
 git add .
 git commit -m "initial simple-vps app"
-simple-vps check --env production
-printf '%s' 'change-me' | simple-vps secret set APP_SECRET --env production
-simple-vps deploy --env production
+printf '%s' 'change-me' | ship secret set APP_SECRET
+ship
 ```
 
 This uses PHP's built-in server to keep the example tiny. For Laravel,
-Symfony, or anything real, keep the same `simple-vps.toml` shape but use a
+Symfony, or anything real, keep the same `ship.toml` shape but use a
 production HTTP-serving image such as FrankenPHP, RoadRunner, or Apache.
 simple-vps only needs the container to listen on the configured internal port.
 
@@ -30,8 +32,8 @@ REDIS_URL = "@secret:REDIS_URL"
 ```
 
 ```bash
-printf '%s' "$DATABASE_URL" | simple-vps secret set DATABASE_URL --env production
-printf '%s' "$REDIS_URL" | simple-vps secret set REDIS_URL --env production
+printf '%s' "$DATABASE_URL" | ship secret set DATABASE_URL
+printf '%s' "$REDIS_URL" | ship secret set REDIS_URL
 ```
 
 For single-node apps, SQLite and uploads belong under `/data`; simple-vps

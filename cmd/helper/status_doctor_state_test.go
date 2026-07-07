@@ -14,7 +14,9 @@ import (
 
 func TestDoctorHostStateCheckReportsMissingHostWithoutRawError(t *testing.T) {
 	root := t.TempDir()
+	secretsRoot := prepareDoctorSecretsRoot(t, 0700)
 	stateStore := store.Store{Root: root}
+	_ = secretsRoot
 
 	check := doctorHostStateCheck(stateStore, "fake-vps")
 	if check.Status != doctorStatusFailed || !strings.Contains(check.Evidence, "host is not installed") {
@@ -30,6 +32,7 @@ func TestDoctorHostStateCheckReportsMissingHostWithoutRawError(t *testing.T) {
 
 func TestDoctorHostStateCheckClearsAfterValidHost(t *testing.T) {
 	root := t.TempDir()
+	prepareDoctorSecretsRoot(t, 0700)
 	stateStore := store.Store{Root: root}
 	writeValidHost(t, stateStore.HostPath())
 
@@ -37,6 +40,31 @@ func TestDoctorHostStateCheckClearsAfterValidHost(t *testing.T) {
 	if check.Status != doctorStatusOK {
 		t.Fatalf("expected ok check for a valid host, got: %+v", check)
 	}
+}
+
+func TestDoctorHostStateCheckReportsWrongSecretsRootMode(t *testing.T) {
+	root := t.TempDir()
+	secretsRoot := prepareDoctorSecretsRoot(t, 0755)
+	stateStore := store.Store{Root: root}
+	writeValidHost(t, stateStore.HostPath())
+
+	check := doctorHostStateCheck(stateStore, "fake-vps")
+	if check.Status != doctorStatusFailed || !strings.Contains(check.Evidence, "mode 755, want 700") || !strings.Contains(check.Evidence, secretsRoot) {
+		t.Fatalf("unexpected secrets root check: %+v", check)
+	}
+}
+
+func prepareDoctorSecretsRoot(t *testing.T, mode os.FileMode) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "secrets")
+	if err := os.MkdirAll(path, mode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SHIP_SECRETS_DIR", path)
+	return path
 }
 
 func TestDoctorReportJSONShape(t *testing.T) {
@@ -217,6 +245,7 @@ func TestDoctorDeltaTracksSeverityIncreasesOnly(t *testing.T) {
 func TestRecordDoctorRunPersistsChecksAndDelta(t *testing.T) {
 	stateStore := store.Store{Root: t.TempDir()}
 	writeValidHost(t, stateStore.HostPath())
+	prepareDoctorSecretsRoot(t, 0700)
 	setupDoctorSudoers(t)
 	now := time.Date(2026, 7, 7, 10, 0, 0, 0, time.UTC)
 	timer := systemdUnitState{Name: reaperTimerUnit, Path: "/etc/systemd/system/" + reaperTimerUnit, Present: true, Active: "inactive", Enabled: "enabled"}

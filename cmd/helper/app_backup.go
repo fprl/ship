@@ -308,7 +308,7 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 		for _, procName := range sortedKeys(appCtx.Processes) {
 			containerName := identity.ContainerName(app, env, procName, meta.Release)
 			startedContainers = append(startedContainers, containerName)
-			if err := startProcess(app, env, procName, appCtx.Processes[procName], imageTag, userID, groupID, meta.Release, containerName, processProbe(routed, procName, appCtx.Probe), previewEnv); err != nil {
+			if err := startProcess(app, env, procName, appCtx.Processes[procName], imageTag, userID, groupID, meta.Release, containerName, processProbe(routed, procName, appCtx.Probe), previewEnv, collectEnvValues(resolved)); err != nil {
 				removeContainers(startedContainers)
 				_ = restoreEnvFile(app, env, envSnapshot)
 				_ = restoreStaticCurrent(app, env, staticSnapshot)

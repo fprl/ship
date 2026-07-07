@@ -9,8 +9,9 @@
 
 > ADR-0008 and ADR-0009 supersede this ADR's public manifest, storage, static,
 > identity, and CLI details. This ADR remains as historical rationale for the
-> container runtime decision; current contracts live in [SPEC.md](../../SPEC.md),
-> [ADR-0008](0008-manifest-v2-env-root-and-runtime-identity.md), and
+> container runtime decision. Historical contract snapshots used to live in
+> SPEC.md; current contracts live in
+> [ADR-0008](0008-manifest-v2-env-root-and-runtime-identity.md) and
 > [ADR-0009](0009-v1-cli-and-primitive-contract.md).
 
 ## Context

@@ -132,7 +132,7 @@ func effectiveProcessResources(proc config.Process, previewEnv bool) config.Reso
 	return resources
 }
 
-func startProcess(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, probe string, previewEnv bool) error {
+func startProcess(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, probe string, previewEnv bool, scrubValues []string) error {
 	envFile := identity.EnvFile(app, env)
 
 	_, _ = utils.RunChecked("podman", []string{"rm", "-f", containerName}, "")
@@ -151,7 +151,7 @@ func startProcess(app, env, processName string, proc config.Process, imageTag, u
 		if err := waitHealthy(containerName, *proc.Port, probe, 30*time.Second); err != nil {
 			// Surface logs on failure so the user can see why.
 			out, _ := exec.Command("podman", "logs", "--tail", "50", containerName).CombinedOutput()
-			os.Stderr.Write(out)
+			_, _ = os.Stderr.Write([]byte(scrubText(string(out), scrubValues)))
 			return fmt.Errorf("health check failed for %s: %w", processName, err)
 		}
 	}

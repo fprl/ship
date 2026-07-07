@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +14,7 @@ import (
 	"github.com/fprl/simple-vps/cmd/client"
 	"github.com/fprl/simple-vps/internal/agentdocs"
 	"github.com/fprl/simple-vps/internal/errcat"
+	"github.com/fprl/simple-vps/internal/utils"
 )
 
 func newTestParser(t *testing.T) *kong.Kong {
@@ -340,15 +340,21 @@ func TestCLIArgsKeepsExplicitArgs(t *testing.T) {
 	}
 }
 
-func TestCommandErrorExitCodeSeparatesUsageManifestFromOperations(t *testing.T) {
-	if got := commandErrorExitCode(os.ErrNotExist); got != 1 {
+func TestErrcatExitCodeSeparatesUsageManifestFromOperations(t *testing.T) {
+	if got := utils.ExitCodeForErrorCode(errcat.CodeOperationFailed); got != 1 {
 		t.Fatalf("operation exit code = %d, want 1", got)
 	}
-	if got := commandErrorExitCode(filepath.ErrBadPattern); got != 1 {
-		t.Fatalf("ordinary error exit code = %d, want 1", got)
-	}
-	if got := commandErrorExitCode(errors.New("ship.toml not found")); got != 2 {
+	if got := utils.ExitCodeForErrorCode(errcat.CodeManifestInvalid); got != 2 {
 		t.Fatalf("manifest exit code = %d, want 2", got)
+	}
+	if got := utils.ExitCodeForErrorCode(errcat.CodeDockerfileMissing); got != 2 {
+		t.Fatalf("dockerfile-missing exit code = %d, want 2", got)
+	}
+	if got := utils.ExitCodeForErrorCode(errcat.CodeMultiProcessNoWebRoute); got != 2 {
+		t.Fatalf("multi-process route exit code = %d, want 2", got)
+	}
+	if got := utils.ExitCodeForErrorCode(errcat.CodeUsageError); got != 2 {
+		t.Fatalf("usage exit code = %d, want 2", got)
 	}
 }
 

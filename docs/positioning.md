@@ -172,7 +172,7 @@ its own product, not feature creep into this one.
 
 ## Evolution policy
 
-- The CLI surface (SPEC.md), manifest schema, and state schema are
+- The CLI surface, manifest schema, and state schema are
   versioned contracts. Pre-1.0 they may break between minors. Post-1.0
   they break only on majors, with the migration tooling and deprecation
   window committed to in ADR-0006.
@@ -184,7 +184,8 @@ its own product, not feature creep into this one.
 
 ## Related documents
 
-- [SPEC.md](../SPEC.md) — public CLI surface and manifest contract
+- [docs/adr/0009-v1-cli-and-primitive-contract.md](adr/0009-v1-cli-and-primitive-contract.md)
+  — current v1 CLI surface and manifest contract
 - [docs/security-model.md](security-model.md) — host security posture and
   ingress / admin modes
 - [docs/adr/0001-replace-ansible-with-bounded-go-provisioner.md](adr/0001-replace-ansible-with-bounded-go-provisioner.md)

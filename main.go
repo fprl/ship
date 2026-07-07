@@ -61,7 +61,10 @@ func appRoot(configPath string) (string, error) {
 	}
 	cleaned := filepath.Clean(configPath)
 	if filepath.Base(cleaned) != client.ManifestFile {
-		return "", fmt.Errorf("--config must point to %s", client.ManifestFile)
+		return "", errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  fmt.Sprintf("--config must point to %s", client.ManifestFile),
+			"command": "ship --config path/to/" + client.ManifestFile,
+		})
 	}
 	abs, err := filepath.Abs(cleaned)
 	if err != nil {
@@ -78,13 +81,19 @@ func projectAppRoot(configPath string) (string, error) {
 	manifest := filepath.Join(root, client.ManifestFile)
 	info, err := os.Stat(manifest)
 	if os.IsNotExist(err) {
-		return "", fmt.Errorf("this is a project command, but %s was not found.\nRun it from a directory containing %s, or pass --config path/to/%s.\nTo start a new project, run `ship init`.", manifest, client.ManifestFile, client.ManifestFile)
+		return "", errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
+			"details": fmt.Sprintf("this is a project command, but %s was not found.\nRun it from a directory containing %s, or pass --config path/to/%s.", manifest, client.ManifestFile, client.ManifestFile),
+			"command": "ship init",
+		})
 	}
 	if err != nil {
 		return "", err
 	}
 	if info.IsDir() {
-		return "", fmt.Errorf("--config must point to %s, got directory %s", client.ManifestFile, manifest)
+		return "", errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  fmt.Sprintf("--config must point to %s, got directory %s", client.ManifestFile, manifest),
+			"command": "ship --config path/to/" + client.ManifestFile,
+		})
 	}
 	return root, nil
 }
@@ -496,7 +505,7 @@ func boxTarget(configPath, target string) (string, error) {
 	}
 	root, err := projectAppRoot(configPath)
 	if err != nil {
-		return "", fmt.Errorf("box target is required outside an app dir")
+		return "", errcat.New(errcat.CodeBoxTargetRequired, errcat.Fields{"command": "ship box ls <ssh-target>"})
 	}
 	return client.BoxTarget(root)
 }
@@ -524,9 +533,9 @@ func main() {
 	}
 	if err := ctx.Run(); err != nil {
 		if wantsServerAppExecError(args) {
-			dieServerAppExecError(err, commandErrorExitCode(err))
+			dieServerAppExecError(err)
 		}
-		utils.DieError(err, commandErrorExitCode(err))
+		utils.DieError(err, 1)
 	}
 }
 
@@ -547,37 +556,10 @@ func wantsServerAppExecError(args []string) bool {
 	return len(args) >= 3 && args[0] == "server" && args[1] == "app" && args[2] == "exec"
 }
 
-func dieServerAppExecError(err error, code int) {
+func dieServerAppExecError(err error) {
 	if coded, ok := errcat.As(err); ok {
-		if coded.Code() == errcat.CodeUsageError || coded.Code() == errcat.CodeManifestInvalid {
-			code = 2
-		}
 		fmt.Fprintln(os.Stderr, coded.JSONLine())
-		os.Exit(code)
+		os.Exit(utils.ExitCodeForErrorCode(coded.Code()))
 	}
-	utils.DieError(err, code)
-}
-
-func commandErrorExitCode(err error) int {
-	if coded, ok := errcat.As(err); ok {
-		switch coded.Code() {
-		case errcat.CodeUsageError, errcat.CodeManifestInvalid:
-			return 2
-		default:
-			return 1
-		}
-	}
-	text := err.Error()
-	switch {
-	case strings.Contains(text, client.ManifestFile),
-		strings.Contains(text, "--config"),
-		strings.Contains(text, "manifest"),
-		strings.Contains(text, "invalid app name"),
-		strings.Contains(text, "invalid env name"),
-		strings.Contains(text, "invalid template"),
-		strings.Contains(text, "box target is required"):
-		return 2
-	default:
-		return 1
-	}
+	utils.DieError(err, 1)
 }

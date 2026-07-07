@@ -1,6 +1,7 @@
 package client
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,11 @@ import (
 
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/releaseid"
+)
+
+var (
+	errGitRepositoryNotFound  = errors.New("git repository not found")
+	errGitRepositoryNoCommits = errors.New("git repository has no commits")
 )
 
 type localDeployOptions struct {
@@ -26,11 +32,11 @@ type localDeployPlan struct {
 const timeRFC3339UTC = time.RFC3339Nano
 
 func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localDeployPlan, diagnostics, error) {
-	errors, warnings, err := config.CheckManifest(root, envName)
+	manifestErrors, warnings, err := config.CheckManifest(root, envName)
 	if err != nil {
 		return localDeployPlan{}, nil, err
 	}
-	diags := manifestDiagnostics(errors, warnings)
+	diags := manifestDiagnostics(manifestErrors, warnings)
 	if diags.hasErrors() {
 		return localDeployPlan{}, diags, nil
 	}
@@ -47,7 +53,14 @@ func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localD
 
 	shortCommit, fullCommit, err := gitCommit(root)
 	if err != nil {
+		kind := diagnosticKindGit
+		if errors.Is(err, errGitRepositoryNotFound) {
+			kind = diagnosticKindGitNotRepo
+		} else if errors.Is(err, errGitRepositoryNoCommits) {
+			kind = diagnosticKindGitNoCommits
+		}
 		diags = append(diags, diagnostic{
+			Kind:    kind,
 			Level:   diagnosticError,
 			Message: err.Error(),
 			Hint:    gitCommitHint(err),
@@ -60,6 +73,7 @@ func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localD
 	dirty, err := gitWorktreeDirty(root, plan.ServeDirs)
 	if err != nil {
 		diags = append(diags, diagnostic{
+			Kind:    diagnosticKindGit,
 			Level:   diagnosticError,
 			Message: err.Error(),
 			Hint:    "Check that Git is installed and the app root is a valid Git worktree.",
@@ -75,6 +89,7 @@ func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localD
 		hash, err := staticTreeHash(root, plan.ServeDirs)
 		if err != nil {
 			diags = append(diags, diagnostic{
+				Kind:    diagnosticKindStaticHash,
 				Level:   diagnosticError,
 				Message: fmt.Sprintf("hash static assets: %v", err),
 				Hint:    "Run your framework build first so every serve directory exists and is readable.",
@@ -84,6 +99,7 @@ func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localD
 		release, err := releaseid.WithStaticHash(plan.Release, hash[:12])
 		if err != nil {
 			diags = append(diags, diagnostic{
+				Kind:    diagnosticKindGit,
 				Level:   diagnosticError,
 				Message: err.Error(),
 			})
@@ -95,6 +111,7 @@ func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localD
 	if !opts.IncludeDotenv {
 		if err := validateDeployArtifactDotenv(root, plan.Dirty, plan.ServeDirs); err != nil {
 			diags = append(diags, diagnostic{
+				Kind:    diagnosticKindDotenv,
 				Level:   diagnosticError,
 				Message: err.Error(),
 				Hint:    "Use [env] and @secret references instead. Pass --include-dotenv only when you intentionally want dotenv files in the deploy artifact.",
@@ -108,12 +125,12 @@ func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localD
 func gitCommit(root string) (short string, full string, err error) {
 	insideOut, _, code, _ := runCommand("git", []string{"rev-parse", "--is-inside-work-tree"}, root)
 	if code != 0 || strings.TrimSpace(insideOut) != "true" {
-		return "", "", fmt.Errorf("git repository not found")
+		return "", "", errGitRepositoryNotFound
 	}
 	fullOut, stderr, code, _ := runCommand("git", []string{"rev-parse", "HEAD"}, root)
 	if code != 0 {
 		if strings.Contains(stderr, "ambiguous argument") || strings.Contains(stderr, "unknown revision") {
-			return "", "", fmt.Errorf("git repository has no commits")
+			return "", "", errGitRepositoryNoCommits
 		}
 		return "", "", fmt.Errorf("git rev-parse failed")
 	}
@@ -130,10 +147,10 @@ func gitCommit(root string) (short string, full string, err error) {
 }
 
 func gitCommitHint(err error) string {
-	switch err.Error() {
-	case "git repository not found":
+	switch {
+	case errors.Is(err, errGitRepositoryNotFound):
 		return "ship uses Git commits to name reproducible releases.\nRun:\n  git init\n  git add .\n  git commit -m \"initial ship app\""
-	case "git repository has no commits":
+	case errors.Is(err, errGitRepositoryNoCommits):
 		return "Create the first release identity:\n  git add .\n  git commit -m \"initial ship app\""
 	default:
 		return "Run this from a committed Git checkout. Dirty deploys still need a base commit."

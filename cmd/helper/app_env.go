@@ -11,6 +11,7 @@ import (
 	"github.com/fprl/simple-vps/internal/names"
 	"github.com/fprl/simple-vps/internal/releaseid"
 	"github.com/fprl/simple-vps/internal/secrets"
+	"github.com/fprl/simple-vps/internal/store"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -309,7 +310,6 @@ func writeEnvIdentity(app, env string) error {
 
 func writeEnvIdentityWithPreview(app, env string, preview *identity.PreviewIdentity) error {
 	path := identity.IdentityFile(app, env)
-	dir := filepath.Dir(path)
 	file := identity.EnvIdentity{
 		Version: 1,
 		App:     app,
@@ -323,36 +323,12 @@ func writeEnvIdentityWithPreview(app, env string, preview *identity.PreviewIdent
 	}
 	data = append(data, '\n')
 
-	tmp, err := os.CreateTemp(dir, ".simple-vps.json-*")
-	if err != nil {
-		return fmt.Errorf("create env identity temp file: %v", err)
+	if err := store.AtomicWrite(path, data, 0644); err != nil {
+		return fmt.Errorf("write env identity: %v", err)
 	}
-	tmpPath := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpPath)
-		}
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write env identity temp file: %v", err)
-	}
-	if err := tmp.Chmod(0644); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod env identity temp file: %v", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close env identity temp file: %v", err)
-	}
-	if _, err := utils.RunChecked("chown", []string{"root:root", tmpPath}, ""); err != nil {
+	if _, err := utils.RunChecked("chown", []string{"root:root", path}, ""); err != nil {
 		return fmt.Errorf("chown env identity: %v", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("replace env identity %s: %v", path, err)
-	}
-	cleanup = false
 	return nil
 }
 
@@ -368,6 +344,9 @@ func readEnvIdentityFile(path string) (identity.EnvIdentity, error) {
 	var file identity.EnvIdentity
 	if err := json.Unmarshal(data, &file); err != nil {
 		return identity.EnvIdentity{}, err
+	}
+	if file.Version != 1 {
+		return identity.EnvIdentity{}, fmt.Errorf("unsupported identity version %d", file.Version)
 	}
 	if file.App == "" || file.Env == "" || file.InfraID != identity.InfraID(file.App, file.Env) {
 		return identity.EnvIdentity{}, fmt.Errorf("invalid env identity %s", path)

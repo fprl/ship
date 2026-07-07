@@ -10,6 +10,7 @@ import (
 
 	"github.com/fprl/simple-vps/internal/identity"
 	"github.com/fprl/simple-vps/internal/releaseid"
+	"github.com/fprl/simple-vps/internal/store"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -96,7 +97,7 @@ func writeReleaseMetadata(app, env string, meta releaseMetadata) error {
 		return err
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := store.AtomicWrite(path, data, 0644); err != nil {
 		return fmt.Errorf("write release metadata: %v", err)
 	}
 	if _, err := utils.RunChecked("chown", []string{"root:root", path}, ""); err != nil {

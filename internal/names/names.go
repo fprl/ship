@@ -1,4 +1,4 @@
-// Package names is the single policy point for user-supplied simple-vps
+// Package names is the single policy point for user-supplied ship
 // identifiers. Generated host/container artifact names live in
 // internal/identity.
 package names

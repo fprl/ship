@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fprl/simple-vps/internal/cloudflare"
+	"github.com/fprl/simple-vps/internal/identity"
 	"github.com/fprl/simple-vps/internal/provision/host"
 	"github.com/fprl/simple-vps/internal/store"
 	"github.com/fprl/simple-vps/internal/version"
@@ -124,7 +126,7 @@ func installOperations(opts InstallOptions, stateStore store.Store) []operation 
 		{Path: "/etc/simple-vps", Owner: "root", Group: "root", Mode: 0755},
 		{Path: "/etc/simple-vps/backups", Owner: "root", Group: "root", Mode: 0755},
 		{Path: "/etc/simple-vps/providers", Owner: "root", Group: "root", Mode: 0755},
-		{Path: "/etc/simple-vps/secrets", Owner: "root", Group: "root", Mode: 0755},
+		{Path: "/etc/simple-vps/secrets", Owner: "root", Group: "root", Mode: 0700},
 	} {
 		dir := dir
 		add("ensure directory "+dir.Path, func(apply host.Apply) (bool, error) {
@@ -705,16 +707,17 @@ func ensureIngressNetwork(apply host.Apply) (bool, error) {
 // repeated too quickly" kills the service. We learned that the hard
 // way on real-box smoke.
 func addCaddy(ops *[]operation, opts InstallOptions) {
+	appsRoot := identity.AppsRoot()
 	for _, dir := range []host.Directory{
 		{Path: "/etc/caddy", Owner: "root", Group: "root", Mode: 0755},
 		{Path: "/etc/caddy/conf.d", Owner: "root", Group: "root", Mode: 0755},
 		// Caddy's runtime data (certificates, last_config.json, etc.)
 		// lives outside /etc so config edits stay clean to diff.
 		{Path: "/var/lib/caddy", Owner: "root", Group: "root", Mode: 0755},
-		// Caddy bind-mounts /var/apps read-only so static routes can serve
+		// Caddy bind-mounts the app root read-only so static routes can serve
 		// host-side releases. Podman refuses to start if the host source is
 		// missing, even when no app has been deployed yet.
-		{Path: "/var/apps", Owner: "root", Group: "root", Mode: 0755},
+		{Path: appsRoot, Owner: "root", Group: "root", Mode: 0755},
 	} {
 		dir := dir
 		*ops = append(*ops, operation{name: "caddy dir " + dir.Path, run: func(apply host.Apply) (bool, error) { return host.EnsureDirectory(apply, dir) }})
@@ -774,7 +777,7 @@ func caddyUnit(mode string) string {
 			publish +
 			" -v /etc/caddy:/etc/caddy:Z" +
 			" -v /var/lib/caddy:/data:Z" +
-			" -v /var/apps:/var/apps:ro,Z" +
+			" -v " + identity.AppsRoot() + ":/var/apps:ro,Z" +
 			" docker.io/library/caddy:2-alpine",
 		"ExecStop=/usr/bin/podman stop caddy",
 		"Restart=on-failure",
@@ -1005,7 +1008,7 @@ func addCloudflare(ops *[]operation, opts InstallOptions) {
 	cloudflaredRuntimeChanged := false
 	if opts.CloudflareTunnelToken != "" {
 		*ops = append(*ops, operation{name: "cloudflared token", run: func(apply host.Apply) (bool, error) {
-			changed, err := host.EnsureFile(apply, host.File{Path: "/etc/cloudflared/tunnel-token", Content: []byte(strings.TrimSpace(opts.CloudflareTunnelToken) + "\n"), Owner: "root", Group: "cloudflared", Mode: 0640})
+			changed, err := host.EnsureFile(apply, host.File{Path: cloudflare.CloudflaredTunnelTokenPath(), Content: []byte(strings.TrimSpace(opts.CloudflareTunnelToken) + "\n"), Owner: "root", Group: "cloudflared", Mode: 0640})
 			if changed {
 				cloudflaredRuntimeChanged = true
 			}
@@ -1014,9 +1017,9 @@ func addCloudflare(ops *[]operation, opts InstallOptions) {
 	}
 	if opts.CloudflareAPIToken != "" {
 		*ops = append(*ops, operation{name: "cloudflare api token", run: func(apply host.Apply) (bool, error) {
-			return host.EnsureFile(apply, host.File{Path: "/etc/simple-vps/cloudflare-api-token", Content: []byte(strings.TrimSpace(opts.CloudflareAPIToken) + "\n"), Owner: "root", Group: "root", Mode: 0600})
+			return host.EnsureFile(apply, host.File{Path: cloudflare.CloudflareApiTokenPath(), Content: []byte(strings.TrimSpace(opts.CloudflareAPIToken) + "\n"), Owner: "root", Group: "root", Mode: 0600})
 		}})
-		args := []string{"server", "cloudflare", "setup-tunnel", "--token-file", "/etc/simple-vps/cloudflare-api-token", "--name", "ship-" + hostname()}
+		args := []string{"server", "cloudflare", "setup-tunnel", "--token-file", cloudflare.CloudflareApiTokenPath(), "--name", "ship-" + hostname()}
 		if opts.CloudflareAccountID != "" {
 			args = append(args, "--account-id", opts.CloudflareAccountID)
 		}
@@ -1037,7 +1040,7 @@ func addCloudflare(ops *[]operation, opts InstallOptions) {
 	}
 	if opts.CloudflareTunnelToken != "" || opts.CloudflareAPIToken != "" || opts.CloudflareTunnelConfig != "" {
 		*ops = append(*ops, operation{name: "cloudflared service", run: func(apply host.Apply) (bool, error) {
-			execStart := "/usr/bin/cloudflared tunnel --no-autoupdate run --token-file /etc/cloudflared/tunnel-token"
+			execStart := "/usr/bin/cloudflared tunnel --no-autoupdate run --token-file " + cloudflare.CloudflaredTunnelTokenPath()
 			if opts.CloudflareTunnelConfig != "" {
 				execStart = "/usr/bin/cloudflared --config " + opts.CloudflareTunnelConfig + " tunnel run"
 			}
@@ -1087,7 +1090,7 @@ func systemdServiceActive(apply host.Apply, name string) (bool, error) {
 }
 
 func cloudflareTunnelAlreadyConfigured(apply host.Apply) (bool, error) {
-	if _, err := apply.Runner.ReadFile(apply.ContextOrBackground(), "/etc/cloudflared/tunnel-token"); err != nil {
+	if _, err := apply.Runner.ReadFile(apply.ContextOrBackground(), cloudflare.CloudflaredTunnelTokenPath()); err != nil {
 		if errors.Is(err, host.ErrNotExist) {
 			return false, nil
 		}

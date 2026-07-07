@@ -94,10 +94,6 @@ func TestAgentEvalScenarios(t *testing.T) {
 				t.Logf("%s passed with %d tool calls", scenario.Name, result.ToolCalls)
 				return
 			}
-			if runnerKind == "oracle" {
-				t.Logf("ORACLE_FINDING %s after %d tool calls: %s", scenario.Name, result.ToolCalls, result.DeadEnd)
-				return
-			}
 			t.Fatalf("%s failed with %s after %d tool calls: %s", scenario.Name, result.Outcome, result.ToolCalls, result.DeadEnd)
 		})
 	}

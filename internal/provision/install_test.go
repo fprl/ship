@@ -65,6 +65,9 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	if _, ok := runner.files["/etc/systemd/system/ssh.service"]; ok {
 		t.Fatal("install must not overwrite the packaged ssh.service unit")
 	}
+	if !runner.ranCommand("install", "-d -o root -g root -m 700 /etc/simple-vps/secrets") {
+		t.Fatal("expected /etc/simple-vps/secrets to be created mode 0700")
+	}
 }
 
 func TestRunInstallDoesNotRestartSSHWhenConfigAlreadyConverged(t *testing.T) {

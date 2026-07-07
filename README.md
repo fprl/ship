@@ -1,5 +1,8 @@
 # Simple VPS
 
+> **Superseded:** This document describes the pre-ship surface and is not current.
+> **Pending:** The Phase 3 rewrite will replace it; only broken commands are patched here.
+
 Simple VPS is a tiny VPS runtime: point a repo at a Ubuntu box, get Dockerfile
 builds, Podman containers, Caddy TLS routing, secrets, backup/restore, and
 rollback without bringing Kubernetes or a hosted PaaS into the picture.
@@ -50,13 +53,13 @@ For the fresh-VPS-to-first-app path, use
 Install the local CLI on your laptop or CI machine:
 
 ```bash
-curl -fsSL https://github.com/fprl/simple-vps/releases/download/v0.7.0/install.sh | bash
-simple-vps version
+curl -fsSL https://github.com/fprl/simple-vps/releases/latest/download/install.sh | bash
+ship version
 ```
 
 The installer downloads the release asset for your OS/CPU, verifies it against
-`SHA256SUMS`, and writes `simple-vps` to `~/.local/bin`. If your shell cannot
-find `simple-vps`, the installer prints the exact `PATH` line to add.
+`SHA256SUMS`, and writes `ship` to `~/.local/bin`. If your shell cannot
+find `ship`, the installer prints the exact `PATH` line to add.
 
 The curl command assumes public release assets. For private release assets,
 download `install.sh` with GitHub authentication first, then run it with
@@ -67,27 +70,25 @@ download `install.sh` with GitHub authentication first, then run it with
 Create a deploy key if you do not already have one:
 
 ```bash
-test -f ~/.ssh/simple-vps-deploy || \
-  ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/simple-vps-deploy
-test -f ~/.ssh/simple-vps-deploy.pub || \
-  ssh-keygen -y -f ~/.ssh/simple-vps-deploy > ~/.ssh/simple-vps-deploy.pub
+test -f ~/.ssh/ship-deploy || \
+  ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/ship-deploy
+test -f ~/.ssh/ship-deploy.pub || \
+  ssh-keygen -y -f ~/.ssh/ship-deploy > ~/.ssh/ship-deploy.pub
 ```
 
 Then converge a fresh Ubuntu VPS:
 
 ```bash
-simple-vps host install \
-  --host <vps-ip> \
-  --ssh-key ~/.ssh/<root-key>
+ship box init root@<vps-ip>
 ```
 
 The operator key is for human host recovery and rerunning host install. The
 deploy key is what `deploy`, `status`, `secret`, and other app commands use
-after install. By default, host install uses `~/.ssh/simple-vps-deploy.pub` for
+after install. By default, box init uses `~/.ssh/ship-deploy.pub` for
 the deploy user and the VPS bootstrap user's existing authorized key for the
 operator user.
 
-`host install` accepts a new SSH host key for a never-seen VPS. If you rebuilt
+`box init` accepts a new SSH host key for a never-seen VPS. If you rebuilt
 a VPS at the same IP and SSH blocks because the host key changed, remove the
 old remembered key with `ssh-keygen -R <vps-ip>` and rerun the command.
 
@@ -96,9 +97,9 @@ old remembered key with `ssh-keygen -R <vps-ip>` and rerun the command.
 For a new project, scaffold a small deployable shape:
 
 ```bash
-simple-vps init --template php \
+ship init --template php \
   --name api \
-  --server deploy@example.com \
+  --box deploy@example.com \
   --host api.example.com
 ```
 
@@ -114,7 +115,7 @@ it creates the manifest and leaves the Dockerfile alone. Use
 `--tls internal` for private DNS or disposable smoke hosts; omit it for normal
 public Let's Encrypt routes.
 
-`simple-vps.toml`:
+`ship.toml`:
 
 ```toml
 name = "api"
@@ -168,9 +169,8 @@ Then:
 git init
 git add .
 git commit -m "initial simple-vps app"
-simple-vps check --env production
-simple-vps deploy --env production
-simple-vps status --env production
+ship
+ship status
 ```
 
 `check --env` uses the same local deploy diagnostics as `deploy`: the app
@@ -191,14 +191,14 @@ process route.
 In monorepos, point commands at a manifest explicitly:
 
 ```bash
-simple-vps deploy --config apps/api/simple-vps.toml --env production
+ship --config apps/api/ship.toml
 ```
 
 Secrets are stored on the host and referenced from the manifest:
 
 ```bash
-printf '%s' "$DATABASE_URL" | simple-vps secret set DATABASE_URL --env production
-simple-vps secret list --json --env production
+printf '%s' "$DATABASE_URL" | ship secret set DATABASE_URL
+ship secret ls --json
 ```
 
 ## Release Builds
@@ -222,15 +222,8 @@ SHA256SUMS
 
 The release workflow uploads those files plus the root `install.sh` script.
 
-Smoke a published release against a VPS:
-
-```bash
-scripts/release-smoke.sh --version v0.7.0 --host <ip>
-```
-
 ## References
 
-- [SPEC.md](SPEC.md)
 - [CHANGELOG.md](CHANGELOG.md)
 - [docs/positioning.md](docs/positioning.md)
 - [docs/getting-started.md](docs/getting-started.md)

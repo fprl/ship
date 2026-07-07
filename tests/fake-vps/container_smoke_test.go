@@ -136,7 +136,7 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "README.md"), "notify failed release\n")
 	e.commitFixture(t, app)
 	failedRelease := gitRelease(t, e, app)
-	failed := e.runSimpleVPS(t, app, nil)
+	failed := e.runSimpleVPS(t, app, nil, "--tls", "internal")
 	if failed.err == nil {
 		t.Fatal("deploy with failing release command should fail")
 	}
@@ -152,7 +152,7 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "README.md"), "notify recovered release\n")
 	e.commitFixture(t, app)
 	recoveredRelease := gitRelease(t, e, app)
-	e.simpleVPS(t, app, nil)
+	e.simpleVPS(t, app, nil, "--tls", "internal")
 	recovered := sink.waitForEvent(t, notifyEventDeployRecovered)
 	assertNotifySmokeField(t, recovered, "release", recoveredRelease)
 	assertNotifySmokeNested(t, recovered, "why.previous_failure.attempted_release", failedRelease)
@@ -160,7 +160,7 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	assertNotifySmokeNested(t, recovered, "remediation.command", "ship status")
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/notify")
-	e.simpleVPS(t, app, nil)
+	e.simpleVPS(t, app, nil, "--tls", "internal")
 	previewEnv := previewEnvForBranch(t, e, "notifyapi", "feature/notify")
 	forcePreviewExpired(t, e, "notifyapi", previewEnv)
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")
@@ -184,7 +184,7 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	mustWrite(t, manifestPath, slowFailing)
 	mustWrite(t, filepath.Join(app, "README.md"), "slow notify failed release\n")
 	e.commitFixture(t, app)
-	if result := e.runSimpleVPS(t, app, nil); result.err == nil {
+	if result := e.runSimpleVPS(t, app, nil, "--tls", "internal"); result.err == nil {
 		t.Fatal("deploy with failing release command should fail")
 	}
 	slowFixed := strings.Replace(slowFailing, `release = "simple-vps-fail-release"`, `release = "touch /data/release-ok"`, 1)
@@ -192,7 +192,7 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "README.md"), "slow notify recovered release\n")
 	e.commitFixture(t, app)
 	start := time.Now()
-	result := e.runSimpleVPS(t, app, nil)
+	result := e.runSimpleVPS(t, app, nil, "--tls", "internal")
 	elapsed := time.Since(start)
 	if result.err != nil {
 		t.Fatalf("deploy should succeed even when notify times out: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
@@ -483,6 +483,8 @@ func (e *smokeEnv) testProbeFailureWhy(t *testing.T) {
 	writeProbeFailFixture(t, app)
 	e.commitFixture(t, app)
 
+	secretValue := "probe-log-secret-token"
+	e.simpleVPS(t, app, []byte(secretValue), "secret", "set", "probe_log_secret")
 	e.simpleVPS(t, app, nil)
 	stableFragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("probefail", productionEnv))
 	stableContainer := currentWebContainer(t, e, app)
@@ -506,6 +508,10 @@ func (e *smokeEnv) testProbeFailureWhy(t *testing.T) {
 	}
 	assertContains(t, failed.stdout+failed.stderr, "health check failed")
 	assertContains(t, failed.stdout+failed.stderr, "HTTP status 502")
+	assertContains(t, failed.stderr, "[redacted]")
+	if strings.Contains(failed.stdout+failed.stderr, secretValue) {
+		t.Fatalf("probe failure output leaked secret value\nstdout:\n%s\nstderr:\n%s", failed.stdout, failed.stderr)
+	}
 	fragmentAfterFailure := e.ssh(t, "cat "+identity.CaddyFragmentFile("probefail", productionEnv))
 	if fragmentAfterFailure != stableFragment {
 		t.Fatalf("failing probe changed traffic:\nbefore:\n%s\nafter:\n%s", stableFragment, fragmentAfterFailure)
@@ -1588,7 +1594,6 @@ web = { port = 3000 }
 
 [routes."notify.example.com"]
 process = "web"
-tls = "internal"
 `)
 }
 
@@ -1600,6 +1605,9 @@ CMD ["/bin/sh", "-c", "sleep 3600"]
 	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "probefail"
 box = "fake-vps"
 probe = "/health"
+
+[env]
+LEAK_ON_PROBE_LOG = "@secret:probe_log_secret"
 
 [processes]
 web = { port = 3000, cmd = "simple-vps-listen-port=3000 sleep 3600" }

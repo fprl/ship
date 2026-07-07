@@ -41,13 +41,13 @@ func fetchDeployedCommit(runner sshRunner, ctx *config.AppContext) (string, bool
 	}
 	var status deployedReleaseStatus
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &status); err != nil {
-		return "", false, fmt.Errorf("read deployed release failed: invalid status JSON: %v", err)
+		return "", false, operationError(fmt.Sprintf("read deployed release failed: invalid status JSON: %v", err), "ship status")
 	}
 	if status.Release == nil || status.Release.Release == "" {
 		return "", false, nil
 	}
 	if status.Release.BaseCommit == "" {
-		return "", false, fmt.Errorf("read deployed release failed: active release %s has no base_commit", status.Release.Release)
+		return "", false, operationError(fmt.Sprintf("read deployed release failed: active release %s has no base_commit", status.Release.Release), "ship status")
 	}
 	return status.Release.BaseCommit, true, nil
 }

@@ -1,13 +1,8 @@
 # Real-box smoke runbook
 
-For release-candidate validation, use the scripted smoke first:
-
-```sh
-scripts/release-smoke.sh --version v0.7.0 --host <IP>
-```
-
-This runbook is the lower-level debugging path when the scripted smoke fails
-or when you need to inspect the host between steps. It deliberately uses temp
+The old release smoke script was removed with the pre-ship CLI surface. This
+runbook is the lower-level debugging path when you need to inspect the host
+between steps. It deliberately uses temp
 keys, `SIMPLE_VPS_SSH_KEY`, and a local `dist/simple-vps` binary; the normal
 user path is [getting-started.md](getting-started.md).
 
@@ -262,18 +257,9 @@ purged secrets. Expected status after destroy has an empty `processes` array.
 
 ## 6. Example Matrix
 
-For release DX hardening, also run the checked-in example matrix after the
-host has the current helper:
-
-```sh
-make build build-linux
-./dist/simple-vps host install --host <IP> --bootstrap-user root --ssh-key ~/.ssh/hetzner \
-  --operator-user admin --deploy-user deploy \
-  --operator-ssh-public-key-file ~/.ssh/hetzner.pub \
-  --deploy-ssh-public-key-file ~/.ssh/simple-vps-deploy.pub \
-  --ingress public --admin public-ssh --no-tailscale --no-cloudflare-tunnel --yes
-scripts/example-matrix-smoke.sh --host <IP> --client ./dist/simple-vps
-```
+For release DX hardening, manually run the checked-in examples after the host
+has the current helper. The old `scripts/example-matrix-smoke.sh` path was
+removed with the pre-ship CLI surface.
 
 The May 30, 2026 example-matrix run against `128.140.3.159` passed PHP, Hono/Bun,
 mixed API plus static docs, and real `astro build` static deploys. Host doctor

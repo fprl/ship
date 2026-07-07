@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SHIP_VERSION="${SHIP_VERSION:-v0.7.0}"
+SHIP_VERSION="${SHIP_VERSION:-latest}"
 SHIP_RELEASE_BASE_URL="${SHIP_RELEASE_BASE_URL:-https://github.com/fprl/simple-vps/releases/download}"
 SHIP_RELEASE_API_BASE_URL="${SHIP_RELEASE_API_BASE_URL:-https://api.github.com/repos/fprl/simple-vps}"
 SHIP_INSTALL_DIR="${SHIP_INSTALL_DIR:-$HOME/.local/bin}"
@@ -11,20 +11,20 @@ tmp_dir=""
 usage() {
   cat <<'USAGE'
 Usage:
-  curl -fsSL https://github.com/fprl/simple-vps/releases/download/v0.7.0/install.sh | bash
+  curl -fsSL https://github.com/fprl/simple-vps/releases/latest/download/install.sh | bash
 
-  install.sh [--version v0.7.0] [--bin-dir ~/.local/bin]
+  install.sh [-v latest|v0.8.0] [--bin-dir ~/.local/bin]
 
 Installs the ship CLI on this machine. It does not provision a VPS.
 After this, run:
 
   test -f ~/.ssh/ship-deploy || ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/ship-deploy
   test -f ~/.ssh/ship-deploy.pub || ssh-keygen -y -f ~/.ssh/ship-deploy > ~/.ssh/ship-deploy.pub
-  ship host install --host <vps-ip> --ssh-key ~/.ssh/<root-key>
+  ship box init <ssh-target>
 
 Environment:
   SHIP_VERSION
-      release tag to install, default v0.7.0
+      release tag to install, default latest resolved through the GitHub API
   SHIP_INSTALL_DIR
       install directory, default ~/.local/bin
   SHIP_RELEASE_TOKEN, GH_TOKEN, or GITHUB_TOKEN
@@ -52,6 +52,11 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --version)
       [[ $# -ge 2 ]] || die "--version requires a value"
+      SHIP_VERSION="$2"
+      shift 2
+      ;;
+    -v)
+      [[ $# -ge 2 ]] || die "-v requires a value"
       SHIP_VERSION="$2"
       shift 2
       ;;
@@ -97,6 +102,48 @@ token() {
   printf '%s' "${SHIP_RELEASE_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-}}}"
 }
 
+curl_api() {
+  local url="$1"
+  local output="$2"
+  local auth_token
+  auth_token="$(token)"
+  if [[ -n "$auth_token" ]]; then
+    curl -fsSL \
+      -H "Authorization: Bearer $auth_token" \
+      -H "Accept: application/vnd.github+json" \
+      "$url" \
+      -o "$output"
+  else
+    curl -fsSL \
+      -H "Accept: application/vnd.github+json" \
+      "$url" \
+      -o "$output"
+  fi
+}
+
+resolve_version() {
+  local release_json tag
+  if [[ "$SHIP_VERSION" != "latest" ]]; then
+    return 0
+  fi
+  require_cmd python3
+  release_json="$tmp_dir/latest-release.json"
+  if ! curl_api "${SHIP_RELEASE_API_BASE_URL%/}/releases/latest" "$release_json"; then
+    die "could not resolve latest release via GitHub API; rerun with -v <release-tag>"
+  fi
+  tag="$(python3 - "$release_json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    release = json.load(f)
+print(release.get("tag_name", ""))
+PY
+)"
+  [[ -n "$tag" ]] || die "GitHub API latest release response did not include tag_name; rerun with -v <release-tag>"
+  SHIP_VERSION="$tag"
+}
+
 curl_download_quiet() {
   local url="$1"
   local output="$2"
@@ -121,11 +168,7 @@ download_via_github_api() {
   require_cmd python3
 
   release_json="$tmp_dir/release.json"
-  curl -fsSL \
-    -H "Authorization: Bearer $auth_token" \
-    -H "Accept: application/vnd.github+json" \
-    "${SHIP_RELEASE_API_BASE_URL%/}/releases/tags/$SHIP_VERSION" \
-    -o "$release_json"
+  curl_api "${SHIP_RELEASE_API_BASE_URL%/}/releases/tags/$SHIP_VERSION" "$release_json"
 
   asset_url="$(python3 - "$asset_name" "$release_json" <<'PY'
 import json
@@ -190,6 +233,7 @@ main() {
 
   asset="$(platform_asset)"
   tmp_dir="$(mktemp -d)"
+  resolve_version
   binary="$tmp_dir/ship"
   sums="$tmp_dir/SHA256SUMS"
   target="$SHIP_INSTALL_DIR/ship"

@@ -93,12 +93,12 @@ func TestCheckManifestAcceptsContainerV2(t *testing.T) {
 	if ctx.SecretRefs["DATABASE_URL"] != "DATABASE_URL" || ctx.SecretRefs["SMTP_URL"] != "MAIL_URL" {
 		t.Fatalf("@secret refs not loaded: %+v", ctx.SecretRefs)
 	}
-	if ctx.Deploy.Release != "bun run migrate" || ctx.Probe != "/health" || ctx.Notify != "https://ntfy.sh/api" {
-		t.Fatalf("top-level deploy/probe/notify not loaded: deploy=%+v probe=%q notify=%q", ctx.Deploy, ctx.Probe, ctx.Notify)
+	if ctx.Release != "bun run migrate" || ctx.Probe != "/health" || ctx.Notify != "https://ntfy.sh/api" {
+		t.Fatalf("top-level release/probe/notify not loaded: release=%q probe=%q notify=%q", ctx.Release, ctx.Probe, ctx.Notify)
 	}
 }
 
-func TestCheckManifestAcceptsProcessRouteTableWithTLS(t *testing.T) {
+func TestReadManifestRejectsProcessRouteTableWithTLS(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
 	writeManifest(t, root, `name = "api"
@@ -111,20 +111,9 @@ web = { port = 3000 }
 "api.example.com" = { process = "web", tls = "internal" }
 `)
 
-	errors, _, err := CheckManifest(root, "production")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(errors) != 0 {
-		t.Fatalf("expected no errors, got %v", errors)
-	}
-	ctx, err := LoadAppContext(root, "production")
-	if err != nil {
-		t.Fatal(err)
-	}
-	route := ctx.Routes["api.example.com"]
-	if route.Process != "web" || route.TLS != "internal" {
-		t.Fatalf("route table fields not loaded: %+v", route)
+	_, err := ReadManifest(root)
+	if err == nil || !strings.Contains(err.Error(), `unknown route target field "tls"`) {
+		t.Fatalf("expected tls rejection, got %v", err)
 	}
 }
 

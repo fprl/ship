@@ -83,14 +83,8 @@ func Die(message string, code int) {
 }
 
 func DieError(err error, code int) {
-	message := strings.TrimSpace(err.Error())
-	if code == 1 && usageOrManifestFailure(message) {
-		code = 2
-	}
 	coded := normalizeExitError(err, code)
-	if codedExitCode(coded.Code()) == 2 {
-		code = 2
-	}
+	code = codedExitCode(coded.Code())
 	if errorJSON {
 		fmt.Println(coded.JSONLine())
 		os.Exit(code)
@@ -117,27 +111,9 @@ func normalizeExitError(err error, code int) *errcat.Error {
 		message = "no error detail"
 	}
 	if code == 2 {
-		if manifestFailure(message) {
-			if dockerfileMissingMessage(message) {
-				return errcat.New(errcat.CodeDockerfileMissing, nil)
-			}
-			return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
-				"details": message,
-				"command": manifestCommandFromMessage(message),
-			})
-		}
 		return errcat.New(errcat.CodeUsageError, errcat.Fields{
 			"detail":  message,
 			"command": "ship help",
-		})
-	}
-	if manifestFailure(message) {
-		if dockerfileMissingMessage(message) {
-			return errcat.New(errcat.CodeDockerfileMissing, nil)
-		}
-		return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
-			"details": message,
-			"command": manifestCommandFromMessage(message),
 		})
 	}
 	return errcat.New(errcat.CodeOperationFailed, errcat.Fields{
@@ -197,6 +173,8 @@ func codedExitCode(code errcat.Code) int {
 	switch code {
 	case errcat.CodeUsageError,
 		errcat.CodeManifestInvalid,
+		errcat.CodeDockerfileMissing,
+		errcat.CodeMultiProcessNoWebRoute,
 		errcat.CodeInvalidSecretKey,
 		errcat.CodeLogsFollowJSONConflict,
 		errcat.CodeBoxTargetRequired,
@@ -207,24 +185,8 @@ func codedExitCode(code errcat.Code) int {
 	}
 }
 
-func usageOrManifestFailure(message string) bool {
-	if manifestFailure(message) {
-		return true
-	}
-	switch {
-	case strings.Contains(message, "--config"),
-		strings.Contains(message, "invalid app name"),
-		strings.Contains(message, "invalid env name"),
-		strings.Contains(message, "invalid template"),
-		strings.Contains(message, "box target is required"):
-		return true
-	default:
-		return false
-	}
-}
-
-func manifestFailure(message string) bool {
-	return strings.Contains(message, "ship.toml") || strings.Contains(message, "manifest")
+func ExitCodeForErrorCode(code errcat.Code) int {
+	return codedExitCode(code)
 }
 
 func RunChecked(name string, args []string, cwd string) ([]byte, error) {

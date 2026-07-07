@@ -1,9 +1,7 @@
-.ansible/
 .DS_Store
 __pycache__/
 *.pyc
 node_modules/
-packages/*/pnpm-lock.yaml
 dist/
 .fake-vps-bin/
 tests/agent-evals/.fake-vps-bin/

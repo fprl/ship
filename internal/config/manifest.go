@@ -24,6 +24,8 @@ const (
 	ShapeStatic    = "static"
 )
 
+const DockerfileMissingDetail = "manifest declares processes but is missing a Dockerfile"
+
 var (
 	AppRe        = names.AppRe
 	EnvRe        = names.EnvRe
@@ -55,19 +57,14 @@ type Route struct {
 	Process  string `toml:"-"`
 	Serve    string `toml:"-"`
 	Redirect string `toml:"-"`
-	// TLS controls Caddy's automatic-HTTPS behavior for this route:
+	// TLS is helper-side deploy state set by the client --tls flag:
 	//   - ""         — same as "auto"
 	//   - "auto"     — emit nothing; Caddy provisions Let's Encrypt
 	//   - "internal" — emit `tls internal`; self-signed cert for
 	//                  private DNS, dev, and smoke boxes
 	//
-	// "off" is intentionally not supported. Reject anything else at
-	// check time so typos never silently downgrade HTTPS behavior.
-	TLS string `toml:"tls"`
-}
-
-type DeployConfig struct {
-	Release string `toml:"release"`
+	// It is not part of the public MANIFEST schema.
+	TLS string `toml:"-"`
 }
 
 type Manifest struct {
@@ -105,7 +102,7 @@ type AppContext struct {
 	Dockerfile       string
 	Processes        map[string]Process
 	Routes           map[string]Route
-	Deploy           DeployConfig
+	Release          string
 	Probe            string
 	Notify           string
 	// Vars holds resolved non-secret env values for this env.
@@ -259,12 +256,6 @@ func (r *Route) UnmarshalTOML(value any) error {
 				}
 				r.Redirect = s
 				targets++
-			case "tls":
-				s, ok := raw.(string)
-				if !ok {
-					return fmt.Errorf("[routes.<host/path>].tls must be a string")
-				}
-				r.TLS = s
 			default:
 				return fmt.Errorf("unknown route target field %q", key)
 			}
@@ -580,7 +571,7 @@ func detectShape(root string, processes map[string]Process, routes map[string]Ro
 
 	if hasProcesses || hasProcessRoutes(routes) {
 		if !hasDockerfile {
-			return "", "manifest declares processes but is missing a Dockerfile"
+			return "", DockerfileMissingDetail
 		}
 		return ShapeContainer, ""
 	}
@@ -678,7 +669,7 @@ func LoadAppContext(root string, envName string) (*AppContext, error) {
 		Dockerfile:       dockerfile,
 		Processes:        processes,
 		Routes:           routes,
-		Deploy:           DeployConfig{Release: manifest.Release},
+		Release:          manifest.Release,
 		Probe:            manifest.Probe,
 		Notify:           manifest.Notify,
 		Vars:             vars,

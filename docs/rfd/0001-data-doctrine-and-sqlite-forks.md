@@ -6,9 +6,9 @@
 
 Two threads converge here:
 
-1. SPEC.md already refuses database provisioning ("No first-class
-   Postgres, Redis... use external/managed services") — but as a buried
-   non-goal, not a stated product opinion.
+1. The engine has always refused database provisioning ("no first-class
+   Postgres, Redis — use external/managed services") — long a buried
+   non-goal, now stated as positive doctrine in docs/positioning.md.
 2. The Rails 8 / Laravel 11 generation moved SQLite into **production** —
    the one-box pattern (Solid Queue/Cache/Cable: one server, SQLite in
    prod, no Redis). That architecture preserves dev/prod parity and wants

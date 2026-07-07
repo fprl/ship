@@ -13,6 +13,7 @@ import (
 	"github.com/fprl/simple-vps/internal/errcat"
 	"github.com/fprl/simple-vps/internal/host"
 	"github.com/fprl/simple-vps/internal/identity"
+	"github.com/fprl/simple-vps/internal/store"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -35,6 +36,7 @@ type appApplyCmd struct {
 	BaseCommit    string `name:"base-commit" required:"" help:"Git commit the release is based on."`
 	CreatedAt     string `name:"created-at" required:"" help:"Release creation time in RFC3339."`
 	Rebuild       bool   `name:"rebuild" help:"Pass --no-cache --pull=always to podman build."`
+	TLS           string `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode stamped by the client for this deploy."`
 	SSHKeyComment string `name:"ssh-key-comment" help:"SSH public key comment for the deploying key."`
 	GitAuthor     string `name:"git-author" help:"Git author configured by the deploying client."`
 }
@@ -115,6 +117,7 @@ func (c appApplyCmd) runLockedE() (err error) {
 	if err != nil {
 		return err
 	}
+	applyRouteTLS(app, c.TLS)
 
 	var envSnapshot *fileSnapshot
 	if app.NeedsImage {
@@ -194,6 +197,16 @@ func (c appApplyCmd) runLockedE() (err error) {
 
 	fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, c.SHA)
 	return nil
+}
+
+func applyRouteTLS(app *config.AppContext, tlsMode string) {
+	if tlsMode == "" || tlsMode == "auto" {
+		return
+	}
+	for name, route := range app.Routes {
+		route.TLS = tlsMode
+		app.Routes[name] = route
+	}
 }
 
 func (c appApplyCmd) actor() deployIdentity {
@@ -423,7 +436,7 @@ func writeManifestSnapshot(app, env, release string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return fmt.Errorf("mkdir release manifest dir: %v", err)
 	}
-	if err := os.WriteFile(dst, data, 0644); err != nil {
+	if err := store.AtomicWrite(dst, data, 0644); err != nil {
 		return fmt.Errorf("write release manifest: %v", err)
 	}
 	if _, err := utils.RunChecked("chown", []string{"root:root", dst}, ""); err != nil {
@@ -463,8 +476,8 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		return containerApplyResult{}, newJournalStepError("build", fmt.Errorf("podman build: %w", err), scrubValues, nil)
 	}
 
-	if app.Deploy.Release != "" {
-		if err := runReleaseCommand(c.App, c.Env, app.Deploy.Release, imageTag, userID, groupID, c.SHA); err != nil {
+	if app.Release != "" {
+		if err := runReleaseCommand(c.App, c.Env, app.Release, imageTag, userID, groupID, c.SHA); err != nil {
 			return containerApplyResult{}, newJournalStepError("release", err, scrubValues, nil)
 		}
 	}
@@ -496,7 +509,7 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		if proc.Port != nil {
 			processNames[processName] = containerName
 		}
-		if err := startProcess(c.App, c.Env, processName, proc, imageTag, userID, groupID, c.SHA, containerName, processProbe(routed, processName, app.Probe), previewEnv); err != nil {
+		if err := startProcess(c.App, c.Env, processName, proc, imageTag, userID, groupID, c.SHA, containerName, processProbe(routed, processName, app.Probe), previewEnv, scrubValues); err != nil {
 			removeContainers(started)
 			startContainers(stopped)
 			step := "release"
@@ -720,7 +733,7 @@ func writeEnvFile(app, env string, vals map[string]string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path, []byte(renderEnvFile(vals)), 0600); err != nil {
+	if err := store.AtomicWrite(path, []byte(renderEnvFile(vals)), 0600); err != nil {
 		return err
 	}
 	user := identity.SystemUser(app, env)

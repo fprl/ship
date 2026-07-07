@@ -10,6 +10,7 @@ import (
 	"github.com/fprl/simple-vps/internal/caddy"
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/identity"
+	"github.com/fprl/simple-vps/internal/store"
 )
 
 func caddyfilePath(app, env string) string {
@@ -162,7 +163,7 @@ func writeAppCaddyfileWithProcessNames(app, env string, ctx *config.AppContext, 
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(content), 0644)
+	return store.AtomicWrite(path, []byte(content), 0644)
 }
 
 // snapshotCaddyFragment reads the existing fragment so a failed deploy

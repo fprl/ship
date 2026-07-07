@@ -77,10 +77,10 @@ func RunInit(root string, opts InitOptions) (InitResult, error) {
 		return InitResult{}, err
 	} else if exists {
 		if info.Mode()&os.ModeSymlink != 0 {
-			return InitResult{}, fmt.Errorf("%s already exists and is a symlink", ManifestFile)
+			return InitResult{}, operationError(fmt.Sprintf("%s already exists and is a symlink", ManifestFile), "ship init")
 		}
 		if info.IsDir() {
-			return InitResult{}, fmt.Errorf("%s already exists and is a directory", ManifestFile)
+			return InitResult{}, operationError(fmt.Sprintf("%s already exists and is a directory", ManifestFile), "ship init")
 		}
 		manifestExists = true
 	}
@@ -101,10 +101,10 @@ func RunInit(root string, opts InitOptions) (InitResult, error) {
 		}
 		if exists {
 			if info.Mode()&os.ModeSymlink != 0 {
-				return InitResult{}, fmt.Errorf("Dockerfile already exists and is a symlink")
+				return InitResult{}, operationError("Dockerfile already exists and is a symlink", "ship init")
 			}
 			if info.IsDir() {
-				return InitResult{}, fmt.Errorf("Dockerfile already exists and is a directory")
+				return InitResult{}, operationError("Dockerfile already exists and is a directory", "ship init")
 			}
 			result.Kept = append(result.Kept, "Dockerfile")
 			files = nil
@@ -147,14 +147,14 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 	switch template {
 	case initTemplateContainer, initTemplateStatic, initTemplatePHP, initTemplateHono:
 	default:
-		return normalizedInit{}, fmt.Errorf("invalid template %q: expected container, static, php, or hono", opts.Template)
+		return normalizedInit{}, usageError(fmt.Sprintf("invalid template %q: expected container, static, php, or hono", opts.Template), "ship init --template container")
 	}
 
 	var name string
 	if opts.Name != "" {
 		name = strings.TrimSpace(opts.Name)
 		if !names.AppRe.MatchString(name) {
-			return normalizedInit{}, fmt.Errorf("invalid app name %q: must match %s", opts.Name, names.AppPattern)
+			return normalizedInit{}, usageError(fmt.Sprintf("invalid app name %q: must match %s", opts.Name, names.AppPattern), "ship init --name <app>")
 		}
 	} else {
 		name = defaultAppName(root)
@@ -164,7 +164,7 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 		name = normalizeAppName(name)
 	}
 	if !names.AppRe.MatchString(name) {
-		return normalizedInit{}, fmt.Errorf("invalid app name %q: must match %s", name, names.AppPattern)
+		return normalizedInit{}, usageError(fmt.Sprintf("invalid app name %q: must match %s", name, names.AppPattern), "ship init --name <app>")
 	}
 
 	server := strings.TrimSpace(opts.Server)
@@ -172,7 +172,7 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 		server = "deploy@example.com"
 	}
 	if !config.ValidateSshTarget(server) {
-		return normalizedInit{}, fmt.Errorf("--box must be an SSH target like deploy@example.com")
+		return normalizedInit{}, usageError("--box must be an SSH target like deploy@example.com", "ship init --box deploy@example.com")
 	}
 
 	host := strings.ToLower(strings.TrimSpace(opts.Host))
@@ -181,13 +181,13 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 	}
 	host = strings.TrimSuffix(host, ".")
 	if !config.ValidateHost(host) {
-		return normalizedInit{}, fmt.Errorf("--host must be a valid hostname")
+		return normalizedInit{}, usageError("--host must be a valid hostname", "ship init --host api.example.com")
 	}
 
 	port := opts.Port
 	if template == initTemplateStatic {
 		if port != 0 {
-			return normalizedInit{}, fmt.Errorf("--port is not used with --template static")
+			return normalizedInit{}, usageError("--port is not used with --template static", "ship init --template static")
 		}
 		return normalizedInit{template: template, name: name, server: server, host: host}, nil
 	}
@@ -198,7 +198,7 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 		}
 	}
 	if port < 1 || port > 65535 {
-		return normalizedInit{}, fmt.Errorf("--port must be between 1 and 65535")
+		return normalizedInit{}, usageError("--port must be between 1 and 65535", "ship init --port 3000")
 	}
 
 	return normalizedInit{
@@ -228,16 +228,16 @@ func preflightInitFiles(root string, files []initFile) error {
 	for _, file := range files {
 		clean := filepath.Clean(file.Path)
 		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("invalid init file path %q", file.Path)
+			return operationError(fmt.Sprintf("invalid init file path %q", file.Path), "ship init")
 		}
 		if info, exists, err := lstatInitPath(root, clean); err != nil {
 			return err
 		} else if exists {
 			if info.Mode()&os.ModeSymlink != 0 {
-				return fmt.Errorf("%s already exists and is a symlink", filepath.ToSlash(clean))
+				return operationError(fmt.Sprintf("%s already exists and is a symlink", filepath.ToSlash(clean)), "ship init")
 			}
 			if info.IsDir() {
-				return fmt.Errorf("%s already exists and is a directory", file.Path)
+				return operationError(fmt.Sprintf("%s already exists and is a directory", file.Path), "ship init")
 			}
 		}
 		if err := preflightInitParentDirs(root, clean); err != nil {
@@ -260,10 +260,10 @@ func preflightInitParentDirs(root string, rel string) error {
 		if err == nil {
 			display := filepath.ToSlash(filepath.Join(parts[:i+1]...))
 			if info.Mode()&os.ModeSymlink != 0 {
-				return fmt.Errorf("%s already exists and is a symlink", display)
+				return operationError(fmt.Sprintf("%s already exists and is a symlink", display), "ship init")
 			}
 			if !info.IsDir() {
-				return fmt.Errorf("%s already exists and is not a directory", display)
+				return operationError(fmt.Sprintf("%s already exists and is not a directory", display), "ship init")
 			}
 			continue
 		}
@@ -307,10 +307,10 @@ func writeInitFile(root string, file initFile) (bool, error) {
 		return false, err
 	} else if exists {
 		if info.Mode()&os.ModeSymlink != 0 {
-			return false, fmt.Errorf("%s already exists and is a symlink", file.Path)
+			return false, operationError(fmt.Sprintf("%s already exists and is a symlink", file.Path), "ship init")
 		}
 		if info.IsDir() {
-			return false, fmt.Errorf("%s already exists and is a directory", file.Path)
+			return false, operationError(fmt.Sprintf("%s already exists and is a directory", file.Path), "ship init")
 		}
 		return false, nil
 	}

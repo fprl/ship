@@ -91,6 +91,7 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	e.ssh(t, "grep -Fq 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *' /etc/sudoers.d/ship")
 	e.ssh(t, "grep -q 'ssh-ed25519 AAAAoperator test-operator' /home/operator/.ssh/authorized_keys")
 	e.ssh(t, "grep -q 'ssh-ed25519 AAAAoperator test-operator' /home/deploy/.ssh/authorized_keys")
+	assertEqual(t, strings.TrimSpace(e.ssh(t, "stat -c '%a' /etc/simple-vps/secrets")), "700")
 
 	hostState := e.ssh(t, "cat /etc/simple-vps/host.json")
 	var state struct {

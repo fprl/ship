@@ -3,6 +3,7 @@
 //
 // Storage shape: one file per secret, value verbatim, no metadata.
 //
+//	/etc/simple-vps/secrets                       mode 0700, root:root
 //	/etc/simple-vps/secrets/<app>/<env>/<key>     mode 0600, root:root
 //
 // `key` is the env-var name (`DATABASE_URL`, `STRIPE_KEY`, ...) — the
@@ -47,6 +48,10 @@ func root() string {
 		return v
 	}
 	return defaultRoot
+}
+
+func RootDir() string {
+	return root()
 }
 
 // Path returns the on-disk location for one (app, env, key) triple.

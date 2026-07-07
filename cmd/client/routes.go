@@ -116,7 +116,7 @@ func previewCollapsedRoutes(routes map[string]config.Route, envName, boxIP strin
 	defaultHost := defaultRouteHost(routes)
 	if defaultHost == "" {
 		synthHost := sslipHost(envName, boxIP)
-		return nil, fmt.Errorf("preview routes cannot be collapsed because [routes] has no non-redirect default host; add a process or static route for %s", synthHost)
+		return nil, manifestInvalidError(fmt.Sprintf("preview routes cannot be collapsed because [routes] has no non-redirect default host; add a process or static route for %s", synthHost), "fix ship.toml")
 	}
 	// v1 previews always use sslip because the manifest has no wildcard-base knob.
 	// TODO(§3): add an explicit wildcard-base config field and use it here.
@@ -132,7 +132,7 @@ func previewCollapsedRoutes(routes map[string]config.Route, envName, boxIP strin
 		out[key] = route
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("preview routes cannot be collapsed because default host %s has only redirects", defaultHost)
+		return nil, manifestInvalidError(fmt.Sprintf("preview routes cannot be collapsed because default host %s has only redirects", defaultHost), "fix ship.toml")
 	}
 	return out, nil
 }
@@ -223,21 +223,13 @@ func tomlRoutes(routes map[string]config.Route) map[string]any {
 		route := routes[name]
 		key := route.Host + route.Path
 		switch {
-		case route.Process != "" && route.TLS == "":
-			out[key] = route.Process
 		case route.Process != "":
-			out[key] = map[string]any{"process": route.Process, "tls": route.TLS}
+			out[key] = route.Process
 		case route.Serve != "":
 			entry := map[string]any{"static": route.Serve}
-			if route.TLS != "" {
-				entry["tls"] = route.TLS
-			}
 			out[key] = entry
 		case route.Redirect != "":
 			entry := map[string]any{"redirect": route.Redirect}
-			if route.TLS != "" {
-				entry["tls"] = route.TLS
-			}
 			out[key] = entry
 		}
 	}
