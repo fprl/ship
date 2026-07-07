@@ -98,6 +98,36 @@ func TestCheckManifestAcceptsContainerV2(t *testing.T) {
 	}
 }
 
+func TestCheckManifestAcceptsProcessRouteTableWithTLS(t *testing.T) {
+	root := t.TempDir()
+	writeDockerfile(t, root, "FROM alpine\n")
+	writeManifest(t, root, `name = "api"
+box = "deploy@example.com"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"api.example.com" = { process = "web", tls = "internal" }
+`)
+
+	errors, _, err := CheckManifest(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(errors) != 0 {
+		t.Fatalf("expected no errors, got %v", errors)
+	}
+	ctx, err := LoadAppContext(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := ctx.Routes["api.example.com"]
+	if route.Process != "web" || route.TLS != "internal" {
+		t.Fatalf("route table fields not loaded: %+v", route)
+	}
+}
+
 func TestReadManifestRejectsVarsAndDeploy(t *testing.T) {
 	root := t.TempDir()
 	writeManifest(t, root, `name = "api"
@@ -306,17 +336,24 @@ healthcheck = "/health"
 	}
 }
 
-func TestReadManifestRejectsOldRouteTargetTable(t *testing.T) {
+func TestCheckManifestRejectsRouteTableWithMultipleTargets(t *testing.T) {
 	root := t.TempDir()
+	writeDockerfile(t, root, "FROM alpine\n")
+	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	writeManifest(t, root, `name = "api"
 box = "deploy@example.com"
 
+[processes]
+web = { port = 3000 }
+
 [routes]
-"api.example.com" = { process = "web" }
+"api.example.com" = { process = "web", static = "dist" }
 `)
 	_, err := ReadManifest(root)
-	if err == nil || !strings.Contains(err.Error(), `unknown route target field "process"`) {
-		t.Fatalf("expected route process table rejection, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), `[routes."api.example.com"] must set exactly one of process, static, or redirect`) {
+		t.Fatalf("expected multi-target route rejection, got %v", err)
 	}
 }
 

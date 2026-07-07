@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -855,12 +856,89 @@ func secretValueFromStdin() ([]byte, error) {
 	return data, nil
 }
 
-func CmdSecretSet(root string, key string) {
-	read, err := currentReadContext(root, "secret set")
+const sharedPreviewSecretsEnvName = "preview"
+
+type secretContext struct {
+	AppContext *config.AppContext
+	EnvName    string
+	Runner     *CommandRunner
+	Kind       string
+	Branch     string
+}
+
+func currentSecretContext(root, _ string, preview bool, branch string, createBranch bool) (secretContext, error) {
+	if preview && branch != "" {
+		return secretContext{}, codedNextError(
+			"secret_scope_conflict",
+			"--preview and --branch cannot be combined",
+			"choose one secret scope",
+		)
+	}
+	ctx, err := config.LoadAppContext(root, productionEnvName)
+	if err != nil {
+		return secretContext{}, err
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		return secretContext{}, err
+	}
+	secret := secretContext{
+		AppContext: ctx,
+		EnvName:    productionEnvName,
+		Runner:     runner,
+		Kind:       "Production",
+		Branch:     ctx.ProductionBranch,
+	}
+	switch {
+	case preview:
+		secret.EnvName = sharedPreviewSecretsEnvName
+		secret.Kind = "Preview"
+		secret.Branch = ""
+	case branch != "":
+		if !names.ValidGitBranch(branch) {
+			runner.Close()
+			return secretContext{}, fmt.Errorf("invalid preview branch mapping key: %q", branch)
+		}
+		if branch == ctx.ProductionBranch {
+			return secret, nil
+		}
+		command := serverAppPreviewResolveCommand(ctx.AppName, branch)
+		if createBranch {
+			command = serverAppPreviewResolveOrCreateCommand(ctx.AppName, branch)
+		}
+		out, err := runSSHDetail(runner, ctx.Server, command)
+		if err != nil {
+			runner.Close()
+			return secretContext{}, err
+		}
+		env := strings.TrimSpace(out)
+		if !names.EnvRe.MatchString(env) {
+			runner.Close()
+			return secretContext{}, fmt.Errorf("preview resolver returned invalid env name: %q", env)
+		}
+		secret.EnvName = env
+		secret.Kind = "Preview"
+		secret.Branch = branch
+	}
+	return secret, nil
+}
+
+func (s secretContext) surface() string {
+	if s.Kind == "Production" {
+		return "Production " + s.Branch
+	}
+	if s.Branch != "" {
+		return "Preview " + s.Branch
+	}
+	return "Preview"
+}
+
+func CmdSecretSet(root string, key string, preview bool, branch string) {
+	secret, err := currentSecretContext(root, "secret set", preview, branch, true)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	defer read.Runner.Close()
+	defer secret.Runner.Close()
 	if err := envKeyValid(key); err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -872,7 +950,7 @@ func CmdSecretSet(root string, key string) {
 	// Pipe the value over the helper's stdin — never argv, never a
 	// file on disk between hops. The helper writes it straight to
 	// /etc/simple-vps/secrets/<app>/<env>/<key>.
-	stdout, stderr, code, err := read.Runner.RunSSHWithStdin(read.AppContext.Server, serverAppSecretSetCommand(read.AppContext.AppName, read.EnvName, key), value)
+	stdout, stderr, code, err := secret.Runner.RunSSHWithStdin(secret.AppContext.Server, serverAppSecretSetCommand(secret.AppContext.AppName, secret.EnvName, key), value)
 	if err != nil || code != 0 {
 		detail := strings.TrimSpace(stderr)
 		if detail == "" {
@@ -885,19 +963,18 @@ func CmdSecretSet(root string, key string) {
 	}
 	// Don't echo stdout — it'd carry the helper's confirmation
 	// (which already names the key but not the value). Print our own.
-	kind, branch := readSurface(read)
-	fmt.Printf("Stored secret %s for %s %s.\n", key, kind, branch)
+	fmt.Printf("Stored secret %s for %s.\n", key, secret.surface())
 	fmt.Fprintln(os.Stderr, "next: ship")
 }
 
-func CmdSecretList(root string, jsonFlag bool) {
-	read, err := currentReadContext(root, "secret ls")
+func CmdSecretList(root string, jsonFlag bool, preview bool, branch string) {
+	secret, err := currentSecretContext(root, "secret ls", preview, branch, false)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	defer read.Runner.Close()
+	defer secret.Runner.Close()
 
-	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppSecretListCommand(read.AppContext.AppName, read.EnvName, jsonFlag), "secret list failed")
+	out := runSSHChecked(secret.Runner, secret.AppContext.Server, serverAppSecretListCommand(secret.AppContext.AppName, secret.EnvName, jsonFlag), "secret list failed")
 	if jsonFlag {
 		fmt.Print(out)
 		return
@@ -911,23 +988,22 @@ func CmdSecretList(root string, jsonFlag bool) {
 	fmt.Println(out)
 }
 
-func CmdSecretRm(root string, key string) {
-	read, err := currentReadContext(root, "secret rm")
+func CmdSecretRm(root string, key string, preview bool, branch string) {
+	secret, err := currentSecretContext(root, "secret rm", preview, branch, false)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
-	defer read.Runner.Close()
+	defer secret.Runner.Close()
 	if err := envKeyValid(key); err != nil {
 		utils.Die(err.Error(), 1)
 	}
 
-	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppSecretRmCommand(read.AppContext.AppName, read.EnvName, key), "secret rm failed")
-	kind, branch := readSurface(read)
+	out := runSSHChecked(secret.Runner, secret.AppContext.Server, serverAppSecretRmCommand(secret.AppContext.AppName, secret.EnvName, key), "secret rm failed")
 	if strings.Contains(out, "was not set") {
-		fmt.Printf("Secret %s was not set for %s %s.\n", key, kind, branch)
+		fmt.Printf("Secret %s was not set for %s.\n", key, secret.surface())
 		return
 	}
-	fmt.Printf("Removed secret %s for %s %s.\n", key, kind, branch)
+	fmt.Printf("Removed secret %s for %s.\n", key, secret.surface())
 }
 
 func readSurface(read readContext) (string, string) {
@@ -1052,10 +1128,10 @@ func formatPhaseDuration(d time.Duration) string {
 	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
-func CmdShip(root string, branchName string, jsonFlag bool, rebuild bool, includeDotenv bool) {
+func CmdShip(root string, branchName string, tlsMode string, jsonFlag bool, rebuild bool, includeDotenv bool) {
 	start := time.Now()
 	progress := newShipProgress()
-	result, err := runShip(root, branchName, rebuild, includeDotenv, &progress)
+	result, err := runShip(root, branchName, tlsMode, rebuild, includeDotenv, &progress)
 	if err != nil {
 		utils.Die(err.Error(), 1)
 	}
@@ -1075,7 +1151,7 @@ func writeShipResult(result ShipResult, jsonFlag bool) {
 	fmt.Println(result.URL)
 }
 
-func runShip(root string, branchName string, rebuild bool, includeDotenv bool, progress *shipProgress) (ShipResult, error) {
+func runShip(root string, branchName string, tlsMode string, rebuild bool, includeDotenv bool, progress *shipProgress) (ShipResult, error) {
 	address, err := resolveDeployAddress(root, "", branchName)
 	if err != nil {
 		return ShipResult{}, err
@@ -1114,6 +1190,7 @@ func runShip(root string, branchName string, rebuild bool, includeDotenv bool, p
 	envName := address.EnvName
 	progress.timed("preflight")
 
+	boxIP := resolveBoxIPv4(runner, ctx.Server)
 	plan, diags, err := buildLocalDeployPlan(root, envName, localDeployOptions{
 		AllowDirty:    !address.ProductionBranch,
 		IncludeDotenv: includeDotenv,
@@ -1125,7 +1202,17 @@ func runShip(root string, branchName string, rebuild bool, includeDotenv bool, p
 	if diags.hasErrors() {
 		return ShipResult{}, fmt.Errorf("deploy blocked by local checks")
 	}
-	ctx = plan.Context
+	routePlan, err := prepareDeployRoutes(plan.Context, envName, deployRouteOptions{
+		Preview: address.PreviewBranch != "",
+		TLS:     tlsMode,
+		BoxIP:   boxIP,
+	})
+	if err != nil {
+		return ShipResult{}, err
+	}
+	plan.Context = routePlan.Context
+	ctx = routePlan.Context
+	warnRouteDNSPreflight(ctx, boxIP)
 	if address.ProductionBranch {
 		if err := enforceProductionAncestry(root, runner, ctx, plan.BaseCommit); err != nil {
 			return ShipResult{}, err
@@ -1147,7 +1234,11 @@ func runShip(root string, branchName string, rebuild bool, includeDotenv bool, p
 	if err := writeSourceTar(root, localTar, plan.Dirty, plan.ServeDirs); err != nil {
 		return ShipResult{}, err
 	}
-	if err := copyFile(filepath.Join(root, ManifestFile), localManifest); err != nil {
+	if routePlan.RewritesManifest {
+		if err := writeDeployManifest(filepath.Join(root, ManifestFile), localManifest, ctx.Routes); err != nil {
+			return ShipResult{}, fmt.Errorf("write deploy manifest: %v", err)
+		}
+	} else if err := copyFile(filepath.Join(root, ManifestFile), localManifest); err != nil {
 		return ShipResult{}, fmt.Errorf("copy manifest: %v", err)
 	}
 
@@ -1187,6 +1278,9 @@ func runShip(root string, branchName string, rebuild bool, includeDotenv bool, p
 	// 4. Best-effort cleanup of the upload dir.
 	cleanupRemoteDir()
 	progress.line("live")
+	if address.ProductionBranch && routePlan.NoConfiguredDomain {
+		progress.line(prodNoDomainNextLine(boxIP))
+	}
 
 	return ShipResult{
 		URL:       deploymentURL(ctx, envName),
@@ -1209,7 +1303,7 @@ func deploymentURL(ctx *config.AppContext, envName string) string {
 	if url := routedDeploymentURL(ctx); url != "" {
 		return url
 	}
-	return fmt.Sprintf("ship://%s/%s/%s", boxHost(ctx.Server), ctx.AppName, envName)
+	return "https://" + sslipHost(envName, fallbackBoxIPForURL(ctx.Server))
 }
 
 type routeCandidate struct {
@@ -1257,6 +1351,23 @@ func boxHost(target string) string {
 		return "box"
 	}
 	return target
+}
+
+func fallbackBoxIPForURL(server string) string {
+	host := boxHost(server)
+	if ip := net.ParseIP(host); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			return v4.String()
+		}
+	}
+	if ips, err := net.LookupIP(host); err == nil {
+		for _, ip := range ips {
+			if v4 := ip.To4(); v4 != nil {
+				return v4.String()
+			}
+		}
+	}
+	return "127.0.0.1"
 }
 
 func writeSourceTar(root string, dest string, dirty bool, staticDirs []string) error {

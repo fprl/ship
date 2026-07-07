@@ -1,7 +1,6 @@
 package helper
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +11,6 @@ import (
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/host"
 	"github.com/fprl/simple-vps/internal/identity"
-	"github.com/fprl/simple-vps/internal/secrets"
 	"github.com/fprl/simple-vps/internal/utils"
 )
 
@@ -618,23 +616,26 @@ func resolveEnv(app, env string, literals map[string]string, refs map[string]str
 	}
 	sort.Strings(keys)
 
-	var missing []string
 	for _, envKey := range keys {
 		secretKey := refs[envKey]
-		val, err := secrets.Get(app, env, secretKey)
-		if errors.Is(err, secrets.ErrNotFound) {
-			missing = append(missing, fmt.Sprintf("%s (looks up @secret:%s)", envKey, secretKey))
-			continue
-		}
+		val, err := resolveSecretValue(app, env, secretKey)
 		if err != nil {
-			return nil, fmt.Errorf("read secret %s: %w", secretKey, err)
+			if strings.HasPrefix(err.Error(), "secret_missing:") {
+				return nil, annotateSecretMissingRef(err, envKey)
+			}
+			return nil, err
 		}
 		out[envKey] = string(val)
 	}
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("unresolved @secret references: %s — run `ship secret set <key>` for each", strings.Join(missing, ", "))
-	}
 	return out, nil
+}
+
+func annotateSecretMissingRef(err error, envKey string) error {
+	lines := strings.SplitN(err.Error(), "\n", 2)
+	if len(lines) != 2 {
+		return err
+	}
+	return fmt.Errorf("%s (referenced by %s)\n%s", lines[0], envKey, lines[1])
 }
 
 func writeEnvFile(app, env string, vals map[string]string) error {

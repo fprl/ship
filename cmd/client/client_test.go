@@ -302,10 +302,10 @@ func TestRewriteRestoreSummaryUsesSurfaceEnvironmentName(t *testing.T) {
 	}
 }
 
-func TestDeploymentURLFallsBackToShipAddressWithoutRoutes(t *testing.T) {
-	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@example.com"}
+func TestDeploymentURLSynthesizesSSLIPWithoutRoutes(t *testing.T) {
+	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@203.0.113.7"}
 	got := deploymentURL(ctx, "prod")
-	want := "ship://example.com/api/prod"
+	want := "https://prod.203-0-113-7.sslip.io"
 	if got != want {
 		t.Fatalf("fallback URL = %q, want %q", got, want)
 	}
@@ -325,6 +325,107 @@ func TestDeploymentURLPrefersRootWebRoute(t *testing.T) {
 	want := "https://api.example.com"
 	if got != want {
 		t.Fatalf("routed URL = %q, want %q", got, want)
+	}
+}
+
+func TestPrepareDeployRoutesSynthesizesSSLIPRouteForRoutelessApp(t *testing.T) {
+	port := 3000
+	ctx := &config.AppContext{
+		AppName: "api",
+		EnvName: "prod",
+		Server:  "deploy@example.com",
+		Processes: map[string]config.Process{
+			"web": {Port: &port},
+		},
+	}
+	plan, err := prepareDeployRoutes(ctx, "prod", deployRouteOptions{BoxIP: "203.0.113.7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.RewritesManifest || !plan.NoConfiguredDomain {
+		t.Fatalf("expected rewritten no-domain plan: %+v", plan)
+	}
+	route := plan.Context.Routes["prod.203-0-113-7.sslip.io"]
+	if route.Host != "prod.203-0-113-7.sslip.io" || route.Process != "web" {
+		t.Fatalf("unexpected synthesized route: %+v", route)
+	}
+}
+
+func TestPrepareDeployRoutesRejectsMultipleProcessesWithoutWeb(t *testing.T) {
+	ctx := &config.AppContext{
+		AppName: "api",
+		EnvName: "prod",
+		Processes: map[string]config.Process{
+			"api":    {},
+			"worker": {},
+		},
+	}
+	_, err := prepareDeployRoutes(ctx, "prod", deployRouteOptions{BoxIP: "203.0.113.7"})
+	if err == nil || !strings.Contains(err.Error(), "multi_process_no_web_route") {
+		t.Fatalf("expected multi-process/no-web error, got %v", err)
+	}
+}
+
+func TestPrepareDeployRoutesCollapsesPreviewToSSLIPHost(t *testing.T) {
+	port := 3000
+	ctx := &config.AppContext{
+		AppName: "api",
+		EnvName: "feat-x-ab12",
+		Server:  "deploy@example.com",
+		Processes: map[string]config.Process{
+			"web": {Port: &port},
+		},
+		Routes: map[string]config.Route{
+			"api.example.com":      {Host: "api.example.com", Process: "web"},
+			"api.example.com/docs": {Host: "api.example.com", Path: "/docs", Serve: "dist"},
+			"old.example.com":      {Host: "old.example.com", Redirect: "api.example.com"},
+		},
+	}
+	plan, err := prepareDeployRoutes(ctx, "feat-x-ab12", deployRouteOptions{Preview: true, TLS: "internal", BoxIP: "203.0.113.7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.RewritesManifest || plan.NoConfiguredDomain {
+		t.Fatalf("unexpected preview route plan: %+v", plan)
+	}
+	if _, ok := plan.Context.Routes["old.example.com"]; ok {
+		t.Fatalf("preview routes should drop redirects and extra hosts: %+v", plan.Context.Routes)
+	}
+	root := plan.Context.Routes["feat-x-ab12.203-0-113-7.sslip.io"]
+	docs := plan.Context.Routes["feat-x-ab12.203-0-113-7.sslip.io/docs"]
+	if root.Host != "feat-x-ab12.203-0-113-7.sslip.io" || root.Process != "web" || root.TLS != "internal" {
+		t.Fatalf("unexpected preview root route: %+v", root)
+	}
+	if docs.Host != "feat-x-ab12.203-0-113-7.sslip.io" || docs.Path != "/docs" || docs.Serve != "dist" || docs.TLS != "internal" {
+		t.Fatalf("unexpected preview docs route: %+v", docs)
+	}
+}
+
+func TestWriteDeployManifestOverlaysRoutesAsParseableTOML(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, clientContainerManifest())
+	dst := filepath.Join(root, "upload.toml")
+	routes := map[string]config.Route{
+		"prod.203-0-113-7.sslip.io": {Host: "prod.203-0-113-7.sslip.io", Process: "web", TLS: "internal"},
+	}
+	if err := writeDeployManifest(filepath.Join(root, ManifestFile), dst, routes); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ManifestFile), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := config.LoadAppContext(root, "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := ctx.Routes["prod.203-0-113-7.sslip.io"]
+	if route.Process != "web" || route.TLS != "internal" {
+		t.Fatalf("overlay route did not round-trip: %+v\n%s", route, string(data))
 	}
 }
 

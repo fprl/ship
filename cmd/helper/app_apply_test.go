@@ -1,10 +1,12 @@
 package helper
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/identity"
@@ -42,6 +44,63 @@ func TestResolveEnvFailsOnMissingSecretBeforeAnyContainerStarts(t *testing.T) {
 	}
 }
 
+func TestResolveEnvPreviewUsesSharedPreviewNotProductionSecret(t *testing.T) {
+	t.Setenv("SHIP_SECRETS_DIR", t.TempDir())
+	t.Setenv("SHIP_APPS_DIR", t.TempDir())
+	preview := &identity.PreviewIdentity{Branch: "feat/x", SanitizedBranch: "feat-x", Env: "feat-x-ab12", Suffix: "ab12", LastShipAt: time.Now(), ExpiresAt: ptrTime(time.Now().Add(time.Hour))}
+	writePreviewIdentityForResolveTest(t, "api", "feat-x-ab12", preview)
+	if err := secrets.Put("api", "prod", "db_url", []byte("postgres://prod")); err != nil {
+		t.Fatal(err)
+	}
+	if err := secrets.Put("api", sharedPreviewSecretsEnvName, "db_url", []byte("postgres://preview")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveEnv("api", "feat-x-ab12", nil, map[string]string{"DATABASE_URL": "db_url"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["DATABASE_URL"] != "postgres://preview" {
+		t.Fatalf("preview should use shared preview secret, got %+v", got)
+	}
+}
+
+func TestResolveEnvPreviewBranchSecretWinsOverSharedPreview(t *testing.T) {
+	t.Setenv("SHIP_SECRETS_DIR", t.TempDir())
+	t.Setenv("SHIP_APPS_DIR", t.TempDir())
+	preview := &identity.PreviewIdentity{Branch: "feat/x", SanitizedBranch: "feat-x", Env: "feat-x-ab12", Suffix: "ab12", LastShipAt: time.Now(), ExpiresAt: ptrTime(time.Now().Add(time.Hour))}
+	writePreviewIdentityForResolveTest(t, "api", "feat-x-ab12", preview)
+	if err := secrets.Put("api", sharedPreviewSecretsEnvName, "db_url", []byte("postgres://preview")); err != nil {
+		t.Fatal(err)
+	}
+	if err := secrets.Put("api", "feat-x-ab12", "db_url", []byte("postgres://branch")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := resolveEnv("api", "feat-x-ab12", nil, map[string]string{"DATABASE_URL": "db_url"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["DATABASE_URL"] != "postgres://branch" {
+		t.Fatalf("branch secret should win over shared preview, got %+v", got)
+	}
+}
+
+func TestResolveEnvPreviewMissingSecretUsesScopedRemediation(t *testing.T) {
+	t.Setenv("SHIP_SECRETS_DIR", t.TempDir())
+	t.Setenv("SHIP_APPS_DIR", t.TempDir())
+	preview := &identity.PreviewIdentity{Branch: "feat/x", SanitizedBranch: "feat-x", Env: "feat-x-ab12", Suffix: "ab12", LastShipAt: time.Now(), ExpiresAt: ptrTime(time.Now().Add(time.Hour))}
+	writePreviewIdentityForResolveTest(t, "api", "feat-x-ab12", preview)
+	_, err := resolveEnv("api", "feat-x-ab12", nil, map[string]string{"DATABASE_URL": "db_url"})
+	if err == nil {
+		t.Fatal("expected preview missing secret error")
+	}
+	if !strings.Contains(err.Error(), "secret_missing") ||
+		!strings.Contains(err.Error(), "ship secret set db_url [--preview|--branch <name>]") {
+		t.Fatalf("unexpected missing secret error: %v", err)
+	}
+}
+
 func TestResolveEnvDoesNotMutateInputMaps(t *testing.T) {
 	t.Setenv("SHIP_SECRETS_DIR", t.TempDir())
 	_ = secrets.Put("api", "production", "k", []byte("v"))
@@ -52,6 +111,32 @@ func TestResolveEnvDoesNotMutateInputMaps(t *testing.T) {
 	}
 	if _, ok := literals["R"]; ok {
 		t.Fatal("resolveEnv leaked resolved secrets back into the literals map")
+	}
+}
+
+func ptrTime(t time.Time) *time.Time {
+	return &t
+}
+
+func writePreviewIdentityForResolveTest(t *testing.T, app, env string, preview *identity.PreviewIdentity) {
+	t.Helper()
+	path := identity.IdentityFile(app, env)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	file := identity.EnvIdentity{
+		Version: 1,
+		App:     app,
+		Env:     env,
+		InfraID: identity.InfraID(app, env),
+		Preview: preview,
+	}
+	data, err := json.Marshal(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -404,6 +489,23 @@ func TestRenderAppCaddyfileGroupsEmptyTLSWithAuto(t *testing.T) {
 	}
 	if strings.Count(got, `"example.com" {`) != 1 {
 		t.Fatalf("expected one host block for empty/auto TLS routes:\n%s", got)
+	}
+}
+
+func TestRenderAppCaddyfileEmitsInternalTLS(t *testing.T) {
+	port := 3000
+	ctx := &config.AppContext{
+		Processes: map[string]config.Process{"web": {Port: &port}},
+		Routes: map[string]config.Route{
+			"app": {Host: "example.com", Process: "web", TLS: "internal"},
+		},
+	}
+	got, err := renderAppCaddyfile("api", "production", ctx, "abc123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "\ttls internal\n") {
+		t.Fatalf("expected internal TLS directive:\n%s", got)
 	}
 }
 

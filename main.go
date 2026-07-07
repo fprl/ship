@@ -108,8 +108,10 @@ func (c initCmd) Run() error {
 }
 
 type shipCmd struct {
-	Config        string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Branch        string `name:"branch" hidden:"" help:"Branch name to use when HEAD is detached."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	Branch string `name:"branch" hidden:"" help:"Branch name to use when HEAD is detached."`
+	// TODO(§8): document --tls internal in the Phase 2/3 docs pass.
+	TLS           string `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode for this deploy."`
 	JSON          bool   `name:"json" help:"Emit structured deployment JSON instead of the URL."`
 	Rebuild       bool   `name:"rebuild" hidden:"" help:"Refresh base images and bypass Podman's build cache."`
 	IncludeDotenv bool   `name:"include-dotenv" hidden:"" help:"Include .env-style files in the uploaded release artifact."`
@@ -120,7 +122,7 @@ func (c shipCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdShip(root, c.Branch, c.JSON, c.Rebuild, c.IncludeDotenv)
+	client.CmdShip(root, c.Branch, c.TLS, c.JSON, c.Rebuild, c.IncludeDotenv)
 	return nil
 }
 
@@ -260,8 +262,10 @@ type secretCmd struct {
 }
 
 type secretSetCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Key    string `arg:"" help:"Env-var name (e.g., DATABASE_URL)."`
+	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	Preview bool   `name:"preview" help:"Store the shared Preview value."`
+	Branch  string `name:"branch" help:"Store the value for one branch Preview env."`
+	Key     string `arg:"" help:"Env-var name (e.g., DATABASE_URL)."`
 }
 
 func (c secretSetCmd) Run() error {
@@ -269,13 +273,15 @@ func (c secretSetCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdSecretSet(root, c.Key)
+	client.CmdSecretSet(root, c.Key, c.Preview, c.Branch)
 	return nil
 }
 
 type secretListCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	JSON   bool   `name:"json" help:"Emit structured JSON instead of plain key lines."`
+	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	Preview bool   `name:"preview" help:"List the shared Preview scope."`
+	Branch  string `name:"branch" help:"List one branch Preview scope."`
+	JSON    bool   `name:"json" help:"Emit structured JSON instead of plain key lines."`
 }
 
 func (c secretListCmd) Run() error {
@@ -283,13 +289,15 @@ func (c secretListCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdSecretList(root, c.JSON)
+	client.CmdSecretList(root, c.JSON, c.Preview, c.Branch)
 	return nil
 }
 
 type secretRmCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Key    string `arg:"" help:"Env-var name to remove."`
+	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	Preview bool   `name:"preview" help:"Remove from the shared Preview scope."`
+	Branch  string `name:"branch" help:"Remove from one branch Preview scope."`
+	Key     string `arg:"" help:"Env-var name to remove."`
 }
 
 func (c secretRmCmd) Run() error {
@@ -297,7 +305,7 @@ func (c secretRmCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdSecretRm(root, c.Key)
+	client.CmdSecretRm(root, c.Key, c.Preview, c.Branch)
 	return nil
 }
 

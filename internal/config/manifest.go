@@ -218,6 +218,13 @@ func (r *Route) UnmarshalTOML(value any) error {
 		targets := 0
 		for key, raw := range v {
 			switch key {
+			case "process":
+				s, ok := raw.(string)
+				if !ok {
+					return fmt.Errorf("[routes.<host/path>].process must be a string")
+				}
+				r.Process = s
+				targets++
 			case "static":
 				s, ok := raw.(string)
 				if !ok {
@@ -232,12 +239,18 @@ func (r *Route) UnmarshalTOML(value any) error {
 				}
 				r.Redirect = s
 				targets++
+			case "tls":
+				s, ok := raw.(string)
+				if !ok {
+					return fmt.Errorf("[routes.<host/path>].tls must be a string")
+				}
+				r.TLS = s
 			default:
 				return fmt.Errorf("unknown route target field %q", key)
 			}
 		}
 		if targets != 1 {
-			return fmt.Errorf("[routes.<host/path>] must set exactly one of static or redirect")
+			return fmt.Errorf("[routes.<host/path>] must set exactly one of process, static, or redirect")
 		}
 		return nil
 	default:

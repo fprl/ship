@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +47,7 @@ func TestContainerSmoke(t *testing.T) {
 	env.waitForSSH(t)
 
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
+	t.Run("phase 1 acceptance init ship branch and sslip", env.testPhase1AcceptanceAndZeroDNS)
 	t.Run("release command failure leaves old traffic unchanged", env.testReleaseCommandFailure)
 	t.Run("caddy switch failure restores runtime state", env.testCaddySwitchFailureRollback)
 	t.Run("branch env resolution and production guards", env.testBranchEnvironmentGuards)
@@ -57,6 +59,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("static-only app deploys and restores without containers", env.testStaticOnlyAppLifecycle)
 	t.Run("mixed container and static routes deploy as one release", env.testMixedContainerStaticLifecycle)
 	t.Run("@secret refs resolve through set/list/rm into the runtime env", env.testSecretLifecycle)
+	t.Run("preview secret scoping isolation", env.testPreviewSecretScoping)
 	t.Run("status + logs surface deployed processes without SSHing in", env.testStatusAndLogs)
 	t.Run("rm tears down one app environment", env.testDestroy)
 }
@@ -194,6 +197,62 @@ EOF`)
 	commandsLog = e.ssh(t, "cat /run/fake-podman/commands.log")
 	assertContains(t, commandsLog, "podman build --no-cache --pull=always")
 
+}
+
+func (e *smokeEnv) testPhase1AcceptanceAndZeroDNS(t *testing.T) {
+	app := filepath.Join(e.tmp, "phase1-init")
+	mustMkdir(t, app)
+	e.simpleVPS(t, app, nil, "init", "--box", "fake-vps", "--name", "phaseone", "--host", "phaseone.example.com")
+	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+
+	prod := e.runSimpleVPS(t, app, nil)
+	if prod.err != nil {
+		t.Fatalf("ship from main failed: %v\nstdout:\n%s\nstderr:\n%s", prod.err, prod.stdout, prod.stderr)
+	}
+	prodURL := assertOnlyURL(t, prod.stdout)
+	assertURLServes200(t, e, prodURL)
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/phase1")
+	mustWrite(t, filepath.Join(app, "README.md"), "feature phase1\n")
+	e.mustRun(t, app, nil, "git", "add", ".")
+	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "feature phase1")
+	preview := e.runSimpleVPS(t, app, nil)
+	if preview.err != nil {
+		t.Fatalf("feature branch ship failed: %v\nstdout:\n%s\nstderr:\n%s", preview.err, preview.stdout, preview.stderr)
+	}
+	previewURL := assertOnlyURL(t, preview.stdout)
+	if previewURL == prodURL {
+		t.Fatalf("feature branch URL should be distinct from Production URL: %s", previewURL)
+	}
+	assertURLServes200(t, e, previewURL)
+
+	zero := filepath.Join(e.tmp, "zero-dns")
+	mustMkdir(t, zero)
+	writeZeroDNSFixture(t, zero)
+	e.commitFixture(t, zero)
+	e.mustRun(t, zero, nil, "git", "checkout", "-B", "main")
+	result := e.runSimpleVPS(t, zero, nil)
+	if result.err != nil {
+		t.Fatalf("zero-DNS ship failed: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
+	}
+	zeroURL := assertOnlyURL(t, result.stdout)
+	if strings.Contains(zeroURL, "ship://") {
+		t.Fatalf("zero-DNS ship printed removed fallback URL: %s", zeroURL)
+	}
+	parsed, err := url.Parse(zeroURL)
+	if err != nil {
+		t.Fatalf("parse zero-DNS URL: %v", err)
+	}
+	if !strings.HasSuffix(parsed.Hostname(), ".sslip.io") {
+		t.Fatalf("zero-DNS URL should use sslip.io, got %s", zeroURL)
+	}
+	assertURLServes200(t, e, zeroURL)
+	ip := sslipIPFromHost(parsed.Hostname())
+	wantLast := "next: add DNS A <your-domain> → " + ip + " and add it under [routes]"
+	if gotLast := lastNonEmptyLine(result.stderr); gotLast != wantLast {
+		t.Fatalf("zero-DNS final stderr line = %q, want %q\nstderr:\n%s", gotLast, wantLast, result.stderr)
+	}
 }
 
 func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
@@ -353,6 +412,9 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	textStatus := e.simpleVPS(t, app, nil, "status")
 	assertContains(t, textStatus, "Preview feat/x")
 	assertContains(t, textStatus, "(dirty")
+	if strings.Contains(stripURLs(textStatus), featEnv) {
+		t.Fatalf("human status leaked internal preview env outside URLs:\n%s", textStatus)
+	}
 
 	checkedOutBranchFlag := e.runSimpleVPS(t, app, nil, "--branch", "feat/x")
 	if checkedOutBranchFlag.err == nil {
@@ -868,6 +930,85 @@ web = { port = 3000 }
 	}
 }
 
+func (e *smokeEnv) testPreviewSecretScoping(t *testing.T) {
+	app := filepath.Join(e.tmp, "preview-secret-scope")
+	mustMkdir(t, app)
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "scope"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+
+[env]
+API_TOKEN = "@secret:api_token"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"scope.example.com" = "web"
+`)
+	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+
+	e.simpleVPS(t, app, []byte("prod-token"), "secret", "set", "api_token")
+	e.simpleVPS(t, app, nil)
+	prodEnv := e.dockerExec(t, "cat "+identity.EnvFile("scope", productionEnv))
+	assertContains(t, prodEnv, "API_TOKEN=prod-token\n")
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/secrets")
+	failed := e.runSimpleVPS(t, app, nil)
+	if failed.err == nil {
+		t.Fatal("preview deploy should fail when only the Production secret exists")
+	}
+	assertContains(t, failed.stdout+failed.stderr, "secret_missing")
+	assertContains(t, failed.stdout+failed.stderr, "ship secret set api_token [--preview|--branch <name>]")
+	previewEnv := previewEnvForBranch(t, e, "scope", "feature/secrets")
+	if leaked := e.dockerExec(t, "test ! -f "+identity.EnvFile("scope", previewEnv)+" || cat "+identity.EnvFile("scope", previewEnv)); strings.Contains(leaked, "prod-token") {
+		t.Fatalf("preview env received Production secret value:\n%s", leaked)
+	}
+
+	e.simpleVPS(t, app, []byte("shared-preview-token"), "secret", "set", "api_token", "--preview")
+	previewList := e.simpleVPS(t, app, nil, "secret", "ls", "--preview")
+	assertContains(t, previewList, "api_token")
+	e.simpleVPS(t, app, nil)
+	envFile := e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
+	assertContains(t, envFile, "API_TOKEN=shared-preview-token\n")
+	if strings.Contains(envFile, "prod-token") {
+		t.Fatalf("preview env leaked Production secret value:\n%s", envFile)
+	}
+
+	e.simpleVPS(t, app, []byte("branch-token"), "secret", "set", "api_token", "--branch", "feature/secrets")
+	branchJSON := e.simpleVPS(t, app, nil, "secret", "ls", "--json", "--branch", "feature/secrets")
+	var branchPayload struct {
+		App  string   `json:"app"`
+		Env  string   `json:"env"`
+		Keys []string `json:"keys"`
+	}
+	if err := json.Unmarshal([]byte(branchJSON), &branchPayload); err != nil {
+		t.Fatalf("branch secret list JSON invalid: %v\n%s", err, branchJSON)
+	}
+	if branchPayload.App != "scope" || branchPayload.Env != previewEnv || len(branchPayload.Keys) != 1 || branchPayload.Keys[0] != "api_token" {
+		t.Fatalf("unexpected branch secret JSON: %+v", branchPayload)
+	}
+	e.simpleVPS(t, app, nil)
+	envFile = e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
+	assertContains(t, envFile, "API_TOKEN=branch-token\n")
+	if strings.Contains(envFile, "shared-preview-token") || strings.Contains(envFile, "prod-token") {
+		t.Fatalf("branch secret should win over shared preview and prod:\n%s", envFile)
+	}
+
+	e.simpleVPS(t, app, nil, "secret", "rm", "api_token", "--branch", "feature/secrets")
+	e.simpleVPS(t, app, nil)
+	envFile = e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
+	assertContains(t, envFile, "API_TOKEN=shared-preview-token\n")
+	if strings.Contains(envFile, "branch-token") || strings.Contains(envFile, "prod-token") {
+		t.Fatalf("branch rm should fall back to shared preview only:\n%s", envFile)
+	}
+}
+
 // testStatusAndLogs covers the read-only operator surface. It assumes
 // the earlier subtests have already deployed the `api` container app
 // and left its `web` process running.
@@ -1083,6 +1224,21 @@ web = { port = 3000 }
 `)
 }
 
+func writeZeroDNSFixture(t *testing.T, app string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "zerodns"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+
+[processes]
+web = { port = 3000 }
+`)
+}
+
 func writeReleaseFailFixture(t *testing.T, app string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
@@ -1181,6 +1337,68 @@ web = { port = 3000 }
 func gitRelease(t *testing.T, e *smokeEnv, app string) string {
 	t.Helper()
 	return strings.TrimSpace(e.mustRun(t, app, nil, "git", "rev-parse", "--short=12", "HEAD"))
+}
+
+func assertOnlyURL(t *testing.T, stdout string) string {
+	t.Helper()
+	if strings.Count(stdout, "\n") != 1 || !strings.HasSuffix(stdout, "\n") {
+		t.Fatalf("ship stdout should be exactly one URL line, got %q", stdout)
+	}
+	raw := strings.TrimSpace(stdout)
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
+		t.Fatalf("ship stdout is not an https URL: %q", stdout)
+	}
+	return raw
+}
+
+func assertURLServes200(t *testing.T, e *smokeEnv, rawURL string) {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse URL %q: %v", rawURL, err)
+	}
+	path := parsed.EscapedPath()
+	if path == "" {
+		path = "/"
+	}
+	command := fmt.Sprintf("curl -fsS -o /dev/null -w '%%{http_code}' -H %s %s",
+		shellQuote("Host: "+parsed.Hostname()),
+		shellQuote("http://127.0.0.1"+path),
+	)
+	got := strings.TrimSpace(e.ssh(t, command))
+	if got != "200" {
+		t.Fatalf("%s served HTTP %s through fake Caddy, want 200", rawURL, got)
+	}
+}
+
+func sslipIPFromHost(host string) string {
+	labels := strings.Split(strings.TrimSuffix(host, "."), ".")
+	if len(labels) < 4 {
+		return ""
+	}
+	return strings.ReplaceAll(labels[len(labels)-3], "-", ".")
+}
+
+func lastNonEmptyLine(text string) string {
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func stripURLs(text string) string {
+	fields := strings.Fields(text)
+	for i, field := range fields {
+		if strings.HasPrefix(field, "https://") || strings.HasPrefix(field, "http://") {
+			fields[i] = "<url>"
+		}
+	}
+	return strings.Join(fields, " ")
 }
 
 func staticRouteRoot(app, env, release, routeKey string) string {

@@ -595,8 +595,9 @@ func sshArgs(plan Plan, command string) []string {
 func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string, deployKeyFile string) string {
 	args := []string{
 		binary,
-		"host",
-		"install",
+		"box",
+		"init",
+		"localhost",
 		"--mode", "local",
 		"--operator-user", plan.OperatorUser,
 		"--deploy-user", plan.DeployUser,

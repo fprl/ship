@@ -2,7 +2,6 @@ package helper
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -155,8 +154,8 @@ func appPreflightIssues(app, env string, requiredSecrets []string) []appPrefligh
 			addIssue(appPreflightSecretInvalid, err.Error())
 			continue
 		}
-		if _, err := secrets.Get(app, env, key); errors.Is(err, secrets.ErrNotFound) {
-			addIssue(appPreflightSecretMissing, fmt.Sprintf("missing secret %s; run `ship secret set %s`", key, key))
+		if _, err := resolveSecretValue(app, env, key); err != nil && strings.HasPrefix(err.Error(), "secret_missing:") {
+			addIssue(appPreflightSecretMissing, err.Error())
 		} else if err != nil {
 			addIssue(appPreflightSecretReadError, fmt.Sprintf("read secret %s: %v", key, err))
 		}

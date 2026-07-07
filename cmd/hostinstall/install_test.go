@@ -54,7 +54,7 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 
 	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub")
 	for _, want := range []string{
-		`/tmp/ship-host-install host install --mode local`,
+		`/tmp/ship-host-install box init localhost --mode local`,
 		`--operator-user ops`,
 		`--deploy-user deployer`,
 		`--ingress cloudflare`,
