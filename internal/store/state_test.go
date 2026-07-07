@@ -96,6 +96,35 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 	if got := store.SecretsDir(); got != filepath.Join(root, "secrets") {
 		t.Fatalf("unexpected secrets dir: %s", got)
 	}
+
+	if err := store.WriteDoctor(DoctorFile{
+		Version:    CurrentVersion,
+		RecordedAt: "2026-07-07T10:00:00Z",
+		Checks: []DoctorCheck{
+			{ID: "disk_space", Status: "ok", Evidence: "used=10%", Remediation: "ship box doctor fake-vps"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.DoctorPath(); got != filepath.Join(root, "doctor.json") {
+		t.Fatalf("unexpected doctor path: %s", got)
+	}
+	doctorData, err := os.ReadFile(store.DoctorPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(doctorData), `"delta": []`) {
+		t.Fatalf("doctor state should encode empty delta as [], got:\n%s", doctorData)
+	}
+	assertMode(t, store.DoctorPath(), 0644)
+
+	doctorState, err := store.ReadDoctor()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doctorState.Version != CurrentVersion || len(doctorState.Checks) != 1 || len(doctorState.Delta) != 0 {
+		t.Fatalf("unexpected doctor state: %+v", doctorState)
+	}
 }
 
 func TestWriteHostStatePreservesDesired(t *testing.T) {
@@ -264,6 +293,16 @@ func TestStoreValidatesVersionsAcrossStateFiles(t *testing.T) {
 			futureRaw:   `{"version":2,"routes":{}}`,
 			required:    "providers/cloudflare.json version is required",
 			unsupported: "unsupported providers/cloudflare.json version 2",
+		},
+		{
+			name:        "doctor",
+			path:        store.DoctorPath(),
+			read:        func() error { _, err := store.ReadDoctor(); return err },
+			writeZero:   func() error { return store.WriteDoctor(DoctorFile{}) },
+			zeroRaw:     `{"version":0,"recorded_at":"2026-07-07T10:00:00Z","checks":[],"delta":[]}`,
+			futureRaw:   `{"version":2,"recorded_at":"2026-07-07T10:00:00Z","checks":[],"delta":[]}`,
+			required:    "doctor.json version is required",
+			unsupported: "unsupported doctor.json version 2",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

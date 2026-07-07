@@ -44,6 +44,10 @@ func (s Store) CloudflarePath() string {
 	return filepath.Join(s.root(), "providers", "cloudflare.json")
 }
 
+func (s Store) DoctorPath() string {
+	return filepath.Join(s.root(), "doctor.json")
+}
+
 func (s Store) SecretsDir() string {
 	return filepath.Join(s.root(), "secrets")
 }
@@ -138,6 +142,27 @@ func (s Store) WriteCloudflare(file CloudflareFile) error {
 		file.Routes = map[string]CloudflareRoute{}
 	}
 	return writeJSON(s.CloudflarePath(), file, 0600)
+}
+
+func (s Store) ReadDoctor() (*DoctorFile, error) {
+	var file DoctorFile
+	if err := readJSON(s.DoctorPath(), &file); err != nil {
+		return nil, err
+	}
+	if err := validateVersion("doctor.json", file.Version); err != nil {
+		return nil, err
+	}
+	normalizeDoctorFile(&file)
+	return &file, nil
+}
+
+func (s Store) WriteDoctor(file DoctorFile) error {
+	if err := validateVersion("doctor.json", file.Version); err != nil {
+		return err
+	}
+	file.Version = CurrentVersion
+	normalizeDoctorFile(&file)
+	return writeJSON(s.DoctorPath(), file, 0644)
 }
 func (s Store) readHostForDesiredWrite() (HostFile, error) {
 	var file HostFile

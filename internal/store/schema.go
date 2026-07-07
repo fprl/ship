@@ -93,3 +93,17 @@ type CloudflareFile struct {
 	TunnelName string                     `json:"tunnel_name,omitempty"`
 	Routes     map[string]CloudflareRoute `json:"routes"`
 }
+
+type DoctorCheck struct {
+	ID          string `json:"id"`
+	Status      string `json:"status"`
+	Evidence    string `json:"evidence"`
+	Remediation string `json:"remediation"`
+}
+
+type DoctorFile struct {
+	Version    int           `json:"version"`
+	RecordedAt string        `json:"recorded_at"`
+	Checks     []DoctorCheck `json:"checks"`
+	Delta      []DoctorCheck `json:"delta"`
+}

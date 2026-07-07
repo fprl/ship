@@ -370,11 +370,12 @@ func serverCommand(args ...string) string {
 	return strings.Join(parts, " ")
 }
 
-func serverDoctorCommand(jsonFlag bool) string {
+func serverDoctorCommand(server string, jsonFlag bool) string {
+	args := []string{"doctor", "--box-target", server}
 	if jsonFlag {
-		return serverCommand("doctor", "--json")
+		args = append(args, "--json")
 	}
-	return serverCommand("doctor")
+	return serverCommand(args...)
 }
 
 func serverAppSetupEnvCommand(appName string, envName string) string {
@@ -1406,7 +1407,7 @@ func CmdBoxDoctor(server string, jsonFlag bool) {
 	}
 	defer runner.Close()
 
-	stdout, stderr, code, err := runner.RunSSH(server, serverDoctorCommand(jsonFlag))
+	stdout, stderr, code, err := runner.RunSSH(server, serverDoctorCommand(server, jsonFlag))
 	if err != nil || code != 0 {
 		if coded, ok := remoteCodedError(stdout, stderr); ok {
 			utils.DieError(coded, 1)

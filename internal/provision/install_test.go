@@ -653,7 +653,7 @@ func TestRunInstallWritesCaddyContainerSystemdUnit(t *testing.T) {
 	}
 }
 
-func TestRunInstallWritesPreviewReaperTimer(t *testing.T) {
+func TestRunInstallWritesPreviewReaperAndDoctorTimers(t *testing.T) {
 	root := t.TempDir()
 	helper := filepath.Join(root, "simple-vps")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
@@ -688,6 +688,24 @@ func TestRunInstallWritesPreviewReaperTimer(t *testing.T) {
 	for _, want := range []string{"OnBootSec=15min", "OnUnitActiveSec=1h", "Persistent=true", "WantedBy=timers.target"} {
 		if !strings.Contains(timerContent, want) {
 			t.Fatalf("timer missing %q:\n%s", want, timerContent)
+		}
+	}
+
+	doctorService, ok := runner.files["/etc/systemd/system/ship-doctor.service"]
+	if !ok {
+		t.Fatal("expected doctor service")
+	}
+	if !strings.Contains(string(doctorService.Content), "ExecStart=/usr/local/bin/ship server doctor record") {
+		t.Fatalf("unexpected doctor service:\n%s", doctorService.Content)
+	}
+	doctorTimer, ok := runner.files["/etc/systemd/system/ship-doctor.timer"]
+	if !ok {
+		t.Fatal("expected doctor timer")
+	}
+	doctorTimerContent := string(doctorTimer.Content)
+	for _, want := range []string{"OnBootSec=30min", "OnUnitActiveSec=24h", "Persistent=true", "WantedBy=timers.target"} {
+		if !strings.Contains(doctorTimerContent, want) {
+			t.Fatalf("doctor timer missing %q:\n%s", want, doctorTimerContent)
 		}
 	}
 }

@@ -30,6 +30,8 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"status", "--json"},
 		{"doctor"},
 		{"doctor", "--json"},
+		{"doctor", "--box-target", "deploy@example.com", "--json"},
+		{"doctor", "record"},
 		{"cloudflare", "setup-tunnel", "--name", "ship", "--account-id", "account-test", "--token-file", "/tmp/token"},
 		{"cloudflare", "publish", "--app", "api", "api.example.com"},
 		{"cloudflare", "remove", "--app", "api"},

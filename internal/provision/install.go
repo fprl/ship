@@ -164,6 +164,7 @@ func installOperations(opts InstallOptions, stateStore store.Store) []operation 
 	addSecurity(&ops, opts)
 	addHelper(&ops, opts)
 	addPreviewReaper(&ops)
+	addDoctorTimer(&ops)
 	addPodman(&ops)
 	addPodmanHostBaseline(&ops)
 	addDeployTmpDir(&ops)
@@ -387,6 +388,53 @@ func previewReaperTimerUnit() string {
 		"[Timer]",
 		"OnBootSec=15min",
 		"OnUnitActiveSec=1h",
+		"Persistent=true",
+		"",
+		"[Install]",
+		"WantedBy=timers.target",
+		"",
+	}, "\n")
+}
+
+func addDoctorTimer(ops *[]operation) {
+	*ops = append(*ops, operation{name: "doctor record service", run: func(apply host.Apply) (bool, error) {
+		return host.EnsureSystemdUnit(apply, host.SystemdUnit{
+			Name:    "ship-doctor.service",
+			Content: []byte(doctorServiceUnit()),
+		})
+	}})
+	*ops = append(*ops, operation{name: "doctor record timer", run: func(apply host.Apply) (bool, error) {
+		return host.EnsureSystemdUnit(apply, host.SystemdUnit{
+			Name:    "ship-doctor.timer",
+			Content: []byte(doctorTimerUnit()),
+			Action:  host.Started,
+		})
+	}})
+	*ops = append(*ops, operation{name: "doctor record timer enabled", run: func(apply host.Apply) (bool, error) {
+		return ensureSystemdUnitEnabled(apply, "ship-doctor.timer")
+	}})
+}
+
+func doctorServiceUnit() string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=ship daily doctor state recorder",
+		"",
+		"[Service]",
+		"Type=oneshot",
+		"ExecStart=/usr/local/bin/ship server doctor record",
+		"",
+	}, "\n")
+}
+
+func doctorTimerUnit() string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=Run ship doctor state recorder",
+		"",
+		"[Timer]",
+		"OnBootSec=30min",
+		"OnUnitActiveSec=24h",
 		"Persistent=true",
 		"",
 		"[Install]",

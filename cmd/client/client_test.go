@@ -985,8 +985,8 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		name    string
 		command string
 	}{
-		{name: "doctor text", command: serverDoctorCommand(false)},
-		{name: "doctor json", command: serverDoctorCommand(true)},
+		{name: "doctor text", command: serverDoctorCommand("deploy@example.com", false)},
+		{name: "doctor json", command: serverDoctorCommand("deploy@example.com", true)},
 		{name: "setup env", command: serverAppSetupEnvCommand("api", "production")},
 		{name: "preflight", command: serverAppPreflightCommand("api", "production", []string{"DATABASE_URL"})},
 		{name: "preflight json", command: serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})},
@@ -1304,13 +1304,13 @@ func TestServerDoctorCommandSupportsJSON(t *testing.T) {
 	}{
 		{
 			name: "doctor text",
-			got:  serverDoctorCommand(false),
-			want: "sudo -n /usr/local/bin/ship server doctor",
+			got:  serverDoctorCommand("deploy@example.com", false),
+			want: "sudo -n /usr/local/bin/ship server doctor --box-target deploy@example.com",
 		},
 		{
 			name: "doctor json",
-			got:  serverDoctorCommand(true),
-			want: "sudo -n /usr/local/bin/ship server doctor --json",
+			got:  serverDoctorCommand("deploy@example.com", true),
+			want: "sudo -n /usr/local/bin/ship server doctor --box-target deploy@example.com --json",
 		},
 	}
 

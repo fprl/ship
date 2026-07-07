@@ -42,6 +42,16 @@ func normalizeHostObserved(observed *HostObserved) {
 	}
 }
 
+func normalizeDoctorFile(file *DoctorFile) {
+	file.Version = CurrentVersion
+	if file.Checks == nil {
+		file.Checks = []DoctorCheck{}
+	}
+	if file.Delta == nil {
+		file.Delta = []DoctorCheck{}
+	}
+}
+
 // NormalizeApp keeps a tiny "is this a valid app name?" surface for
 // the Cloudflare per-route call site. Treats nil and empty string as
 // "no app set"; non-empty values must match AppRe.

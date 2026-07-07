@@ -47,6 +47,8 @@ func TestFreshHostInstall(t *testing.T) {
 	}
 	assertEqual(t, strings.TrimSpace(env.ssh(t, "cat /var/apps/api.production/data/sentinel")), "sentinel")
 	assertEqual(t, strings.TrimSpace(env.ssh(t, "stat -c '%a' /var/apps/api.production/data/sentinel")), "600")
+
+	env.assertDoctorRecordingDeltaForStoppedReaper(t)
 }
 
 func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {
@@ -139,8 +141,12 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	assertContains(t, systemctlLog, "start caddy.service")
 	assertContains(t, systemctlLog, "start ship-preview-reaper.timer")
 	assertContains(t, systemctlLog, "enable ship-preview-reaper.timer")
+	assertContains(t, systemctlLog, "start ship-doctor.timer")
+	assertContains(t, systemctlLog, "enable ship-doctor.timer")
 	e.ssh(t, "grep -Fq 'ExecStart=/usr/local/bin/ship server env reap' /etc/systemd/system/ship-preview-reaper.service")
 	e.ssh(t, "grep -Fq 'OnUnitActiveSec=1h' /etc/systemd/system/ship-preview-reaper.timer")
+	e.ssh(t, "grep -Fq 'ExecStart=/usr/local/bin/ship server doctor record' /etc/systemd/system/ship-doctor.service")
+	e.ssh(t, "grep -Fq 'OnUnitActiveSec=24h' /etc/systemd/system/ship-doctor.timer")
 
 	ufwLog := e.ssh(t, "cat /run/simple-vps-fresh-host/ufw.log")
 	for _, want := range []string{
@@ -172,52 +178,118 @@ func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {
 	if jsonResult.err == nil {
 		t.Fatalf("box doctor --json passed before install\nstdout:\n%s\nstderr:\n%s", jsonResult.stdout, jsonResult.stderr)
 	}
-	var payload struct {
-		State struct {
-			Status   string   `json:"status"`
-			Findings []string `json:"findings"`
-		} `json:"state"`
-		Healthy bool `json:"healthy"`
-	}
-	if err := json.Unmarshal([]byte(jsonResult.stdout), &payload); err != nil {
+	var checks []doctorCheck
+	if err := json.Unmarshal([]byte(jsonResult.stdout), &checks); err != nil {
 		t.Fatalf("box doctor --json output not parseable as JSON: %v\nstdout:\n%s\nstderr:\n%s", err, jsonResult.stdout, jsonResult.stderr)
 	}
-	if payload.Healthy || payload.State.Status != "degraded" || len(payload.State.Findings) == 0 {
-		t.Fatalf("unexpected degraded doctor payload: %+v", payload)
+	hostState := findDoctorCheck(t, checks, "host_state")
+	if hostState.Status != "failed" || !strings.Contains(hostState.Evidence, "host is not installed") {
+		t.Fatalf("unexpected degraded doctor payload: %+v", checks)
 	}
 }
 
 func (e *smokeEnv) assertHostDoctorHealthy(t *testing.T) {
 	t.Helper()
 	output := e.simpleVPS(t, e.repoRoot, nil, "box", "doctor", "fake-vps")
-	assertContains(t, output, "ship doctor")
-	assertContains(t, output, "state: healthy")
-	assertContains(t, output, "services: healthy")
-	assertContains(t, output, "identity: healthy")
+	for _, want := range []string{
+		"host_state ok -",
+		"service_health ok -",
+		"sudoers_identity ok -",
+		"disk_space ok -",
+		"tls_certs ok -",
+		"reaper_timer ok -",
+		"deploy_journals ok -",
+	} {
+		assertContains(t, output, want)
+	}
 
 	rawDoctorJSON := e.simpleVPS(t, e.repoRoot, nil, "box", "doctor", "fake-vps", "--json")
-	var doctorPayload struct {
-		State struct {
-			Status   string   `json:"status"`
-			Findings []string `json:"findings"`
-		} `json:"state"`
-		Services struct {
-			Status   string   `json:"status"`
-			Findings []string `json:"findings"`
-		} `json:"services"`
-		Identity struct {
-			Status   string   `json:"status"`
-			Findings []string `json:"findings"`
-		} `json:"identity"`
-		Healthy bool `json:"healthy"`
-	}
+	var doctorPayload []doctorCheck
 	if err := json.Unmarshal([]byte(rawDoctorJSON), &doctorPayload); err != nil {
 		t.Fatalf("box doctor --json output not parseable as JSON: %v\nraw:\n%s", err, rawDoctorJSON)
 	}
-	if !doctorPayload.Healthy || doctorPayload.State.Status != "healthy" || doctorPayload.Services.Status != "healthy" || doctorPayload.Identity.Status != "healthy" {
-		t.Fatalf("unexpected healthy doctor payload: %+v", doctorPayload)
+	for _, id := range []string{"host_state", "service_health", "sudoers_identity", "disk_space", "tls_certs", "reaper_timer", "deploy_journals"} {
+		check := findDoctorCheck(t, doctorPayload, id)
+		if check.Status != "ok" || check.Evidence == "" || check.Remediation == "" {
+			t.Fatalf("unexpected healthy doctor check %s: %+v", id, check)
+		}
+	}
+}
+
+func (e *smokeEnv) assertDoctorRecordingDeltaForStoppedReaper(t *testing.T) {
+	t.Helper()
+	e.ssh(t, "/usr/local/bin/ship server doctor record")
+	state := readDoctorState(t, e)
+	if len(state.Delta) != 0 {
+		t.Fatalf("healthy baseline doctor record should have empty delta: %+v", state.Delta)
 	}
 
+	e.ssh(t, "systemctl stop ship-preview-reaper.timer")
+	result := e.runSimpleVPS(t, e.repoRoot, nil, "box", "doctor", "fake-vps", "--json")
+	if result.err == nil {
+		t.Fatalf("box doctor should fail after stopping reaper timer\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	}
+	var checks []doctorCheck
+	if err := json.Unmarshal([]byte(result.stdout), &checks); err != nil {
+		t.Fatalf("doctor degraded JSON not parseable: %v\nstdout:\n%s\nstderr:\n%s", err, result.stdout, result.stderr)
+	}
+	reaper := findDoctorCheck(t, checks, "reaper_timer")
+	if reaper.Status != "degraded" || !strings.Contains(reaper.Evidence, "active=inactive") {
+		t.Fatalf("unexpected reaper degraded check: %+v", reaper)
+	}
+
+	e.ssh(t, "/usr/local/bin/ship server doctor record")
+	state = readDoctorState(t, e)
+	if len(state.Delta) != 1 || state.Delta[0].ID != "reaper_timer" || state.Delta[0].Status != "degraded" {
+		t.Fatalf("expected newly degraded reaper delta, got: %+v", state.Delta)
+	}
+	if findDoctorCheck(t, state.Checks, "reaper_timer").Status != "degraded" {
+		t.Fatalf("recorded checks did not reflect degraded reaper: %+v", state.Checks)
+	}
+
+	e.ssh(t, "/usr/local/bin/ship server doctor record")
+	state = readDoctorState(t, e)
+	if len(state.Delta) != 0 {
+		t.Fatalf("second degraded doctor record should have empty delta: %+v", state.Delta)
+	}
+}
+
+type doctorCheck struct {
+	ID          string `json:"id"`
+	Status      string `json:"status"`
+	Evidence    string `json:"evidence"`
+	Remediation string `json:"remediation"`
+}
+
+type doctorStateFile struct {
+	Version    int           `json:"version"`
+	RecordedAt string        `json:"recorded_at"`
+	Checks     []doctorCheck `json:"checks"`
+	Delta      []doctorCheck `json:"delta"`
+}
+
+func readDoctorState(t *testing.T, e *smokeEnv) doctorStateFile {
+	t.Helper()
+	raw := e.ssh(t, "cat /etc/simple-vps/doctor.json")
+	var state doctorStateFile
+	if err := json.Unmarshal([]byte(raw), &state); err != nil {
+		t.Fatalf("decode doctor.json: %v\n%s", err, raw)
+	}
+	if state.Version != 1 || state.RecordedAt == "" || state.Checks == nil || state.Delta == nil {
+		t.Fatalf("unexpected doctor.json shape: %+v", state)
+	}
+	return state
+}
+
+func findDoctorCheck(t *testing.T, checks []doctorCheck, id string) doctorCheck {
+	t.Helper()
+	for _, check := range checks {
+		if check.ID == id {
+			return check
+		}
+	}
+	t.Fatalf("doctor check %q not found in %+v", id, checks)
+	return doctorCheck{}
 }
 
 // changedOperationsFromHostState reads /etc/simple-vps/host.json from
