@@ -385,10 +385,11 @@ bulk import: `ship secret set --from .env [--preview|--branch <name>]`
 (merge by default; `--replace` makes the file authoritative for the
 scope and lists removed key names on stderr — never values);
 `box add-key`, `box rm <app>` + the `box ls --json` fleet view,
-install one-liner (curl script) + Homebrew tap + shell completions,
-README rewritten around the four moments (§0), `box doctor`
-remediation coverage, error-text audit driven by eval transcripts,
-CHANGELOG, release.
+install one-liner (curl script — the only install story; a Homebrew
+tap is deliberately cut, deferred until users ask) + shell
+completions, README rewritten around the four moments (§0),
+`box doctor` remediation coverage, error-text audit driven by eval
+transcripts, CHANGELOG, release.
 
 Work honestly serially: Phase 1 acceptance before Phase 2 work. Deferred
 backlog (do not start, tracked for later): mounted-cargo fast path,
