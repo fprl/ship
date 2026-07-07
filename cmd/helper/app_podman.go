@@ -19,6 +19,16 @@ const (
 	previewDefaultCPUs   = 0.5
 )
 
+type podmanBaseRunOptions struct {
+	App         string
+	Env         string
+	ProcessName string
+	UserID      string
+	GroupID     string
+	Release     string
+	Networks    []string
+}
+
 func podmanBuildArgs(app, env, imageTag, release, dockerfile, ctxDir string, rebuild bool) []string {
 	args := []string{"build"}
 	if rebuild {
@@ -56,6 +66,48 @@ func hostUserIDs(name string) (string, string, error) {
 	return uid, gid, nil
 }
 
+func podmanBaseRunArgs(opts podmanBaseRunOptions) []string {
+	args := []string{
+		"--user", opts.UserID + ":" + opts.GroupID,
+		"--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges",
+		"--pids-limit", "512",
+	}
+	for _, network := range opts.Networks {
+		args = append(args, "--network", network)
+	}
+	args = append(args,
+		"-v", identity.DataDir(opts.App, opts.Env)+":/data:Z",
+		"--label", "simple-vps.app="+opts.App,
+		"--label", "simple-vps.env="+opts.Env,
+		"--label", "simple-vps.process="+opts.ProcessName,
+		"--label", "simple-vps.infra_id="+identity.InfraID(opts.App, opts.Env),
+		"--label", "simple-vps.release="+opts.Release,
+	)
+	return args
+}
+
+func appendReadOnlyRuntimeArgs(args []string) []string {
+	return append(args,
+		"--read-only",
+		// mode=1777 (sticky world-writable) so the per-env container
+		// user (--user above) can actually write here. Without it,
+		// the tmpfs is owned by root and the unprivileged container
+		// process fails with EACCES.
+		"--tmpfs", "/tmp:size=64m,mode=1777",
+	)
+}
+
+func appendResourceArgs(args []string, resources config.Resources) []string {
+	if resources.Memory != nil {
+		args = append(args, "--memory", *resources.Memory)
+	}
+	if resources.CPUs != nil {
+		args = append(args, "--cpus", strconv.FormatFloat(*resources.CPUs, 'f', -1, 64))
+	}
+	return args
+}
+
 // buildPodmanRunArgs is the pure-function core of startProcess:
 // produces the `podman run` argv for one process. Extracted so it can
 // be unit-tested without shelling out.
@@ -67,7 +119,6 @@ func hostUserIDs(name string) (string, string, error) {
 // network by container DNS. Manifest-declared memory and CPU limits
 // render to the closed set of runtime flags.
 func buildPodmanRunArgs(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, envFileExists bool, previewEnv bool) []string {
-	dataDir := identity.DataDir(app, env)
 	appNet := identity.Network(app, env)
 	envFile := identity.EnvFile(app, env)
 	resources := effectiveProcessResources(proc, previewEnv)
@@ -75,35 +126,30 @@ func buildPodmanRunArgs(app, env, processName string, proc config.Process, image
 	args := []string{
 		"run", "-d",
 		"--name", containerName,
+		// Long-running app processes should come back after host or
+		// Podman restarts. Release and exec containers are one-shot and
+		// intentionally do not set a restart policy.
 		"--restart", "unless-stopped",
-		"--user", userID + ":" + groupID,
-		"--cap-drop", "ALL",
-		"--security-opt", "no-new-privileges",
-		"--pids-limit", "512",
-		"--read-only",
-		// mode=1777 (sticky world-writable) so the per-env container
-		// user (--user above) can actually write here. Without it,
-		// the tmpfs is owned by root and the unprivileged container
-		// process fails with EACCES.
-		"--tmpfs", "/tmp:size=64m,mode=1777",
-		"--network", appNet,
-		"--network", "ingress",
-		"-v", dataDir + ":/data:Z",
-		"--label", "simple-vps.app=" + app,
-		"--label", "simple-vps.env=" + env,
-		"--label", "simple-vps.process=" + processName,
-		"--label", "simple-vps.infra_id=" + identity.InfraID(app, env),
-		"--label", "simple-vps.release=" + release,
 	}
+	args = append(args, podmanBaseRunArgs(podmanBaseRunOptions{
+		App:         app,
+		Env:         env,
+		ProcessName: processName,
+		UserID:      userID,
+		GroupID:     groupID,
+		Release:     release,
+		// App processes join ingress so Caddy can reach them by
+		// container DNS. Release and exec commands stay off ingress.
+		Networks: []string{appNet, "ingress"},
+	})...)
+	// App processes and exec commands keep a read-only rootfs with a
+	// writable /tmp. Release commands preserve today's looser rootfs
+	// behavior for migrations that write inside image-provided paths.
+	args = appendReadOnlyRuntimeArgs(args)
 	if proc.Port != nil {
 		args = append(args, "--label", "simple-vps.port="+strconv.Itoa(*proc.Port))
 	}
-	if resources.Memory != nil {
-		args = append(args, "--memory", *resources.Memory)
-	}
-	if resources.CPUs != nil {
-		args = append(args, "--cpus", strconv.FormatFloat(*resources.CPUs, 'f', -1, 64))
-	}
+	args = appendResourceArgs(args, resources)
 	if envFileExists {
 		args = append(args, "--env-file", envFile)
 	}
@@ -219,18 +265,19 @@ func runReleaseCommand(app, env, command, imageTag, userID, groupID, release str
 	args := []string{
 		"run", "--rm",
 		"--name", name,
-		"--user", userID + ":" + groupID,
-		"--cap-drop", "ALL",
-		"--security-opt", "no-new-privileges",
-		"--pids-limit", "512",
-		"--network", identity.Network(app, env),
-		"-v", identity.DataDir(app, env) + ":/data:Z",
-		"--label", "simple-vps.app=" + app,
-		"--label", "simple-vps.env=" + env,
-		"--label", "simple-vps.process=release",
-		"--label", "simple-vps.infra_id=" + identity.InfraID(app, env),
-		"--label", "simple-vps.release=" + release,
 	}
+	// Release commands are one-shot migrations: --rm cleans them up,
+	// no --restart is set, and they only join the app network because
+	// Caddy never proxies to them.
+	args = append(args, podmanBaseRunArgs(podmanBaseRunOptions{
+		App:         app,
+		Env:         env,
+		ProcessName: "release",
+		UserID:      userID,
+		GroupID:     groupID,
+		Release:     release,
+		Networks:    []string{identity.Network(app, env)},
+	})...)
 	if _, err := os.Stat(identity.EnvFile(app, env)); err == nil {
 		args = append(args, "--env-file", identity.EnvFile(app, env))
 	}

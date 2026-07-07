@@ -2,6 +2,7 @@ package helper
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -69,14 +70,7 @@ func (c appRollbackCmd) runLocked() {
 }
 
 func (c appRollbackCmd) actor() deployIdentity {
-	actor := deployIdentity{SSHKeyComment: c.SSHKeyComment, GitAuthor: c.GitAuthor}
-	if actor.SSHKeyComment == "" {
-		actor.SSHKeyComment = "unknown"
-	}
-	if actor.GitAuthor == "" {
-		actor.GitAuthor = "unknown"
-	}
-	return actor
+	return deployActor(c.SSHKeyComment, c.GitAuthor)
 }
 
 func (c appRollbackCmd) rollbackRelease(currentApp *config.AppContext) (rollbackPayload, error) {
@@ -146,45 +140,27 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 	}
 
 	if app.NeedsImage {
-		resolved, err := resolveEnv(c.App, c.Env, app.Vars, app.SecretRefs)
-		if err != nil {
-			_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
-			return rollbackPayload{}, err
-		}
-		if err := writeEnvFile(c.App, c.Env, resolved); err != nil {
-			_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
-			return rollbackPayload{}, err
-		}
-		userID, groupID, err := hostUserIDs(identity.SystemUser(c.App, c.Env))
-		if err != nil {
-			_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-			_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
-			return rollbackPayload{}, err
-		}
-		imageTag := identity.ImageTag(c.App, c.Env, targetRelease)
-		routed := routedProcessNames(app.Routes)
-		previewEnv, err := isPreviewEnv(c.App, c.Env)
+		startedResult, err := startReleaseProcesses(startReleaseProcessesParams{
+			App:     c.App,
+			Env:     c.Env,
+			Release: targetRelease,
+			Context: app,
+			BeforeProcess: func(procName string, proc config.Process) error {
+				if proc.Port != nil {
+					return nil
+				}
+				for _, old := range processContainers(containers, procName, targetRelease) {
+					_, _ = utils.RunChecked("podman", []string{"rm", "-f", old}, "")
+				}
+				return nil
+			},
+		})
+		started = append(started, startedResult.Started...)
 		if err != nil {
 			cleanupStarted()
 			_ = restoreEnvFile(c.App, c.Env, envSnapshot)
 			_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
 			return rollbackPayload{}, err
-		}
-		for _, procName := range sortedKeys(app.Processes) {
-			proc := app.Processes[procName]
-			if proc.Port == nil {
-				for _, old := range processContainers(containers, procName, targetRelease) {
-					_, _ = utils.RunChecked("podman", []string{"rm", "-f", old}, "")
-				}
-			}
-			containerName := identity.ContainerName(c.App, c.Env, procName, targetRelease)
-			started = append(started, containerName)
-			if err := startProcess(c.App, c.Env, procName, proc, imageTag, userID, groupID, targetRelease, containerName, processProbe(routed, procName, app.Probe), previewEnv, collectEnvValues(resolved)); err != nil {
-				cleanupStarted()
-				_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-				_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
-				return rollbackPayload{}, err
-			}
 		}
 	}
 	caddyPath := caddyfilePath(c.App, c.Env)
@@ -202,21 +178,22 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
 		return rollbackPayload{}, err
 	}
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}, ""); err != nil {
+	if err := reloadCaddyOrRestore(caddyPath, prevFragment, prevExisted); err != nil {
 		cleanupStarted()
 		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
 		_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
-		if restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted); restoreErr != nil {
-			return rollbackPayload{}, fmt.Errorf("caddy validate rejected the rollback fragment AND restore failed (manual fix required at %s): %v (restore: %v)", caddyPath, err, restoreErr)
+		var caddyErr caddyReloadStageError
+		if errors.As(err, &caddyErr) {
+			switch {
+			case caddyErr.Stage == "validate" && caddyErr.RestoreErr != nil:
+				return rollbackPayload{}, fmt.Errorf("caddy validate rejected the rollback fragment AND restore failed (manual fix required at %s): %v (restore: %v)", caddyPath, caddyErr.Err, caddyErr.RestoreErr)
+			case caddyErr.Stage == "validate":
+				return rollbackPayload{}, fmt.Errorf("caddy validate after rollback: %v", caddyErr.Err)
+			case caddyErr.Stage == "reload":
+				return rollbackPayload{}, fmt.Errorf("caddy reload after rollback: %v", caddyErr.Err)
+			}
 		}
-		return rollbackPayload{}, fmt.Errorf("caddy validate after rollback: %v", err)
-	}
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
-		cleanupStarted()
-		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-		_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
-		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
-		return rollbackPayload{}, fmt.Errorf("caddy reload after rollback: %v", err)
+		return rollbackPayload{}, err
 	}
 	if err := persistCurrentManifestFromRelease(c.App, c.Env, targetRelease); err != nil {
 		return rollbackPayload{}, err

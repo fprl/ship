@@ -2,6 +2,7 @@ package helper
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,11 +59,6 @@ func (c appSetupEnvCmd) runLocked(printSummary bool) {
 func setupEnv(app, env string) error {
 	user := identity.SystemUser(app, env)
 	network := identity.Network(app, env)
-	envRoot := identity.EnvRoot(app, env)
-	dataDir := identity.DataDir(app, env)
-	runtimeDir := identity.RuntimeDir(app, env)
-	staticDir := identity.StaticDir(app, env)
-	releaseDir := identity.ReleaseDir(app, env)
 
 	// 0. Make sure the deploy tmp dir exists with sticky +
 	// world-writable perms. The client uploads tarballs and manifests
@@ -99,6 +95,32 @@ func setupEnv(app, env string) error {
 	}
 
 	// 3. Create the on-disk layout.
+	if err := applyEnvLayoutPerms(app, env); err != nil {
+		return err
+	}
+	if err := writeEnvIdentity(app, env); err != nil {
+		return err
+	}
+
+	// 4. Ensure the per-env Podman network exists. Containers join this
+	// for intra-app DNS in addition to the shared `ingress` network.
+	if !host.CommandSucceeds("podman", "network", "exists", network) {
+		if _, err := utils.RunChecked("podman", []string{"network", "create", network}, ""); err != nil {
+			return fmt.Errorf("podman network create %s: %v", network, err)
+		}
+	}
+
+	return nil
+}
+
+func applyEnvLayoutPerms(app, env string) error {
+	user := identity.SystemUser(app, env)
+	envRoot := identity.EnvRoot(app, env)
+	dataDir := identity.DataDir(app, env)
+	runtimeDir := identity.RuntimeDir(app, env)
+	staticDir := identity.StaticDir(app, env)
+	releaseDir := identity.ReleaseDir(app, env)
+
 	for _, dir := range []string{envRoot, dataDir, runtimeDir, staticDir, releaseDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return err
@@ -130,18 +152,6 @@ func setupEnv(app, env string) error {
 	if _, err := utils.RunChecked("chmod", []string{"0750", runtimeDir}, ""); err != nil {
 		return fmt.Errorf("chmod 0750 %s: %v", runtimeDir, err)
 	}
-	if err := writeEnvIdentity(app, env); err != nil {
-		return err
-	}
-
-	// 4. Ensure the per-env Podman network exists. Containers join this
-	// for intra-app DNS in addition to the shared `ingress` network.
-	if !host.CommandSucceeds("podman", "network", "exists", network) {
-		if _, err := utils.RunChecked("podman", []string{"network", "create", network}, ""); err != nil {
-			return fmt.Errorf("podman network create %s: %v", network, err)
-		}
-	}
-
 	return nil
 }
 
@@ -263,17 +273,21 @@ func removeAppCaddyfile(app, env string) (bool, error) {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("remove caddy fragment %s: %v", path, err)
 	}
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}, ""); err != nil {
-		if restoreErr := restoreCaddyFragment(path, prevFragment, prevExisted); restoreErr != nil {
-			return false, fmt.Errorf("caddy validate after destroy failed AND restore failed (manual fix required at %s): %v (restore: %v)", path, err, restoreErr)
+	if err := reloadCaddyOrRestore(path, prevFragment, prevExisted); err != nil {
+		var caddyErr caddyReloadStageError
+		if errors.As(err, &caddyErr) {
+			switch {
+			case caddyErr.Stage == "validate" && caddyErr.RestoreErr != nil:
+				return false, fmt.Errorf("caddy validate after destroy failed AND restore failed (manual fix required at %s): %v (restore: %v)", path, caddyErr.Err, caddyErr.RestoreErr)
+			case caddyErr.Stage == "validate":
+				return false, fmt.Errorf("caddy validate after destroy failed, restored previous fragment: %v", caddyErr.Err)
+			case caddyErr.Stage == "reload" && caddyErr.RestoreErr != nil:
+				return false, fmt.Errorf("caddy reload after destroy failed AND restore failed (manual fix required at %s): %v (restore: %v)", path, caddyErr.Err, caddyErr.RestoreErr)
+			case caddyErr.Stage == "reload":
+				return false, fmt.Errorf("caddy reload after destroy failed, restored previous fragment: %v", caddyErr.Err)
+			}
 		}
-		return false, fmt.Errorf("caddy validate after destroy failed, restored previous fragment: %v", err)
-	}
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
-		if restoreErr := restoreCaddyFragment(path, prevFragment, prevExisted); restoreErr != nil {
-			return false, fmt.Errorf("caddy reload after destroy failed AND restore failed (manual fix required at %s): %v (restore: %v)", path, err, restoreErr)
-		}
-		return false, fmt.Errorf("caddy reload after destroy failed, restored previous fragment: %v", err)
+		return false, err
 	}
 	return true, nil
 }

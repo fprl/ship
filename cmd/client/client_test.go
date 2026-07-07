@@ -1287,6 +1287,22 @@ func TestEnsureRemoteEnvReadyPreparesMissingEnv(t *testing.T) {
 	if !strings.Contains(joined, serverAppSetupEnvCommand("api", "production")) {
 		t.Fatalf("expected deploy preparation to run setup-env, got:\n%s", joined)
 	}
+	assertCommandCount(t, runner.commands, "true", 1)
+	assertCommandCount(t, runner.commands, "test -x /usr/local/bin/ship", 1)
+	assertCommandCount(t, runner.commands, "command -v rsync >/dev/null", 1)
+}
+
+func assertCommandCount(t *testing.T, commands []string, command string, want int) {
+	t.Helper()
+	got := 0
+	for _, item := range commands {
+		if item == command {
+			got++
+		}
+	}
+	if got != want {
+		t.Fatalf("command %q ran %d times, want %d\ncommands:\n%s", command, got, want, strings.Join(commands, "\n"))
+	}
 }
 
 func TestEnsureRemoteEnvReadyDoesNotPrepareWhenSecretsAreMissing(t *testing.T) {

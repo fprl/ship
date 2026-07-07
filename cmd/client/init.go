@@ -169,7 +169,7 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 
 	server := strings.TrimSpace(opts.Server)
 	if server == "" {
-		server = "deploy@example.com"
+		server = DefaultBoxTarget
 	}
 	if !config.ValidateSshTarget(server) {
 		return normalizedInit{}, usageError("--box must be an SSH target like deploy@example.com", "ship init --box deploy@example.com")

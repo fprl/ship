@@ -23,6 +23,17 @@ type deployIdentity struct {
 	GitAuthor     string `json:"git_author"`
 }
 
+func deployActor(sshKeyComment, gitAuthor string) deployIdentity {
+	actor := deployIdentity{SSHKeyComment: sshKeyComment, GitAuthor: gitAuthor}
+	if actor.SSHKeyComment == "" {
+		actor.SSHKeyComment = "unknown"
+	}
+	if actor.GitAuthor == "" {
+		actor.GitAuthor = "unknown"
+	}
+	return actor
+}
+
 type journalProbe struct {
 	Status      int    `json:"status"`
 	BodySnippet string `json:"body_snippet"`

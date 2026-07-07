@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/fprl/simple-vps/internal/config"
@@ -172,29 +171,25 @@ func buildPodmanExecRunArgs(app, env, containerName, imageTag, userID, groupID, 
 	args := []string{
 		"run", "--rm", "-i",
 		"--name", containerName,
-		"--user", userID + ":" + groupID,
-		"--cap-drop", "ALL",
-		"--security-opt", "no-new-privileges",
-		"--pids-limit", "512",
-		"--read-only",
-		"--tmpfs", "/tmp:size=64m,mode=1777",
-		"--network", identity.Network(app, env),
-		"-v", identity.DataDir(app, env) + ":/data:Z",
-		"--label", "simple-vps.app=" + app,
-		"--label", "simple-vps.env=" + env,
-		"--label", "simple-vps.process=exec",
-		"--label", "simple-vps.infra_id=" + identity.InfraID(app, env),
-		"--label", "simple-vps.release=" + release,
 	}
+	// Exec containers are interactive one-shots: --rm cleans them up,
+	// no --restart is set, and they stay on the app network only. The
+	// optional -t is added after the common baseline so tests can see it
+	// only when a terminal is actually requested.
+	args = append(args, podmanBaseRunArgs(podmanBaseRunOptions{
+		App:         app,
+		Env:         env,
+		ProcessName: "exec",
+		UserID:      userID,
+		GroupID:     groupID,
+		Release:     release,
+		Networks:    []string{identity.Network(app, env)},
+	})...)
+	args = appendReadOnlyRuntimeArgs(args)
 	if tty {
 		args = append(args, "-t")
 	}
-	if resources.Memory != nil {
-		args = append(args, "--memory", *resources.Memory)
-	}
-	if resources.CPUs != nil {
-		args = append(args, "--cpus", strconv.FormatFloat(*resources.CPUs, 'f', -1, 64))
-	}
+	args = appendResourceArgs(args, resources)
 	if envFileExists {
 		args = append(args, "--env-file", identity.EnvFile(app, env))
 	}

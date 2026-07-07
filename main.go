@@ -31,7 +31,7 @@ type cli struct {
 	Unpin    unpinCmd         `cmd:"" group:"project" help:"Unpin a preview environment so normal expiry applies."`
 	Save     saveCmd          `cmd:"" group:"project" help:"Create a backup for the current branch environment."`
 	Restore  restoreCmd       `cmd:"" group:"project" help:"Restore the current branch environment from a backup."`
-	SSH      sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the current branch environment."`
+	SSH      sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the box."`
 	Secret   secretCmd        `cmd:"" group:"project" help:"Manage secrets for the current branch environment."`
 	Box      boxCmd           `cmd:"" group:"host" help:"Install or inspect a ship box."`
 	Docs     docsCmd          `cmd:"" group:"global" help:"Print the agent contract."`
@@ -102,7 +102,7 @@ type initCmd struct {
 	Config   string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Template string `name:"template" enum:"container,static,php,hono" default:"container" help:"Scaffold template."`
 	Name     string `name:"name" help:"App name. Defaults to package.json name or directory name."`
-	Box      string `name:"box" default:"deploy@example.com" help:"SSH target for the box."`
+	Box      string `name:"box" help:"SSH target for the box."`
 	Host     string `name:"host" help:"Route host. Defaults to <app>.example.com."`
 	Port     int    `name:"port" help:"Internal process port for container templates."`
 }

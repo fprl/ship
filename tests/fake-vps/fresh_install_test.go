@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	h "github.com/fprl/simple-vps/tests/harness"
 )
 
 const freshHostImage = "simple-vps-fresh-host:local"
@@ -20,7 +22,7 @@ func TestFreshHostInstall(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	t.Cleanup(cancel)
 
-	env := newSmokeEnvWithImage(t, ctx, freshHostImage, filepath.Join(repoRootForTest(t), "tests/fake-vps/Dockerfile.install"))
+	env := newSmokeEnvWithImage(t, ctx, freshHostImage, filepath.Join(h.RepoRootForTest(t), "tests/fake-vps/Dockerfile.install"))
 	env.buildBinaries(t)
 	env.buildImage(t)
 	env.startContainer(t)

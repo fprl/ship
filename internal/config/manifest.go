@@ -588,7 +588,10 @@ func CheckManifest(root string, envName string) ([]string, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	return CheckLoadedManifest(root, envName, manifest)
+}
 
+func CheckLoadedManifest(root string, envName string, manifest *Manifest) ([]string, []string, error) {
 	var errors []string
 	var warnings []string
 
@@ -640,7 +643,11 @@ func LoadAppContext(root string, envName string) (*AppContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	errors, _, err := CheckManifest(root, envName)
+	return LoadAppContextFromManifest(root, envName, manifest)
+}
+
+func LoadAppContextFromManifest(root string, envName string, manifest *Manifest) (*AppContext, error) {
+	errors, _, err := CheckLoadedManifest(root, envName, manifest)
 	if err != nil {
 		return nil, err
 	}

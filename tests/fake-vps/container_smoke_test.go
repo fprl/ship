@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/identity"
+	h "github.com/fprl/simple-vps/tests/harness"
 )
 
 const productionEnv = "prod"
@@ -91,9 +91,7 @@ func (e *smokeEnv) assertShipSudoersMatchesRealHelperShape(t *testing.T) {
 
 func (e *smokeEnv) ensureSmokeHostSeed(t *testing.T) {
 	t.Helper()
-	e.dockerExec(t, `cat > /etc/simple-vps/host.json <<'EOF'
-{"version":1,"desired":{"users":{"operator":"operator","deploy":"deploy"},"ingress":{"expose":"public","tunnel":"none"},"features":{},"packages":{"podman":{"source":"apt"},"rsync":{"source":"apt"},"caddy":{"source":"container"}}},"observed":{"packages":{},"ingress":{}},"meta":{}}
-EOF`)
+	e.dockerExec(t, "cat > /etc/simple-vps/host.json <<'EOF'\n"+h.SeedHostJSON()+"EOF")
 	e.dockerExec(t, "mkdir -p /etc/caddy/simple-vps /etc/caddy/conf.d /var/lib/caddy /etc/systemd/system")
 	e.dockerExec(t, "mkdir -p /tmp/simple-vps-deploy && chmod 1777 /tmp/simple-vps-deploy")
 	e.dockerExec(t, `cat > /etc/caddy/Caddyfile <<'EOF'
@@ -161,8 +159,8 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/notify")
 	e.simpleVPS(t, app, nil, "--tls", "internal")
-	previewEnv := previewEnvForBranch(t, e, "notifyapi", "feature/notify")
-	forcePreviewExpired(t, e, "notifyapi", previewEnv)
+	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "notifyapi", "feature/notify")
+	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "notifyapi", previewEnv)
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")
 	reaped := sink.waitForEvent(t, notifyEventPreviewReaped)
 	assertNotifySmokeField(t, reaped, "env", "Preview feature/notify")
@@ -349,7 +347,7 @@ func (e *smokeEnv) testPhase1AcceptanceAndZeroDNS(t *testing.T) {
 		t.Fatalf("ship from main failed: %v\nstdout:\n%s\nstderr:\n%s", prod.err, prod.stdout, prod.stderr)
 	}
 	prodURL := assertOnlyURL(t, prod.stdout)
-	assertURLServes200(t, e, prodURL)
+	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, prodURL)
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/phase1")
 	mustWrite(t, filepath.Join(app, "README.md"), "feature phase1\n")
@@ -363,7 +361,7 @@ func (e *smokeEnv) testPhase1AcceptanceAndZeroDNS(t *testing.T) {
 	if previewURL == prodURL {
 		t.Fatalf("feature branch URL should be distinct from Production URL: %s", previewURL)
 	}
-	assertURLServes200(t, e, previewURL)
+	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, previewURL)
 
 	zero := filepath.Join(e.tmp, "zero-dns")
 	mustMkdir(t, zero)
@@ -385,7 +383,7 @@ func (e *smokeEnv) testPhase1AcceptanceAndZeroDNS(t *testing.T) {
 	if !strings.HasSuffix(parsed.Hostname(), ".sslip.io") {
 		t.Fatalf("zero-DNS URL should use sslip.io, got %s", zeroURL)
 	}
-	assertURLServes200(t, e, zeroURL)
+	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, zeroURL)
 	ip := sslipIPFromHost(parsed.Hostname())
 	wantLast := "next: add DNS A <your-domain> → " + ip + " and add it under [routes]"
 	if gotLast := lastNonEmptyLine(result.stderr); gotLast != wantLast {
@@ -641,7 +639,7 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feat/x")
 	mustWrite(t, filepath.Join(app, "preview-dirty.txt"), "dirty preview payload")
 	e.simpleVPS(t, app, nil)
-	featEnv := previewEnvForBranch(t, e, "branchapi", "feat/x")
+	featEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", "feat/x")
 	assertPreviewEnvName(t, featEnv, "feat-x")
 	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", featEnv))
 	status := statusEnvByBranch(t, e, app, "feat/x")
@@ -676,31 +674,31 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	assertContains(t, detachedWithoutBranch.stdout+detachedWithoutBranch.stderr, "branch resolution failed")
 	assertContains(t, detachedWithoutBranch.stdout+detachedWithoutBranch.stderr, "HEAD is detached")
 	e.simpleVPS(t, app, nil, "--branch", "feat/x")
-	if again := previewEnvForBranch(t, e, "branchapi", "feat/x"); again != featEnv {
+	if again := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", "feat/x"); again != featEnv {
 		t.Fatalf("re-ship should keep preview env stable: first=%s second=%s", featEnv, again)
 	}
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "mañana/Über")
 	e.simpleVPS(t, app, nil)
-	accentEnv := previewEnvForBranch(t, e, "branchapi", "mañana/Über")
+	accentEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", "mañana/Über")
 	assertPreviewEnvName(t, accentEnv, "ma-ana-ber")
 	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", accentEnv))
 
 	longBranch := "feature/abcdefghijklmnopqrstuvwxyz0123456789"
 	e.mustRun(t, app, nil, "git", "checkout", "-B", longBranch)
 	e.simpleVPS(t, app, nil)
-	longEnv := previewEnvForBranch(t, e, "branchapi", longBranch)
+	longEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", longBranch)
 	assertPreviewEnvName(t, longEnv, "feature-abcdefghijklmnopqrst")
 	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", longEnv))
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feat/login", "main")
 	e.simpleVPS(t, app, nil)
-	slashEnv := previewEnvForBranch(t, e, "branchapi", "feat/login")
+	slashEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", "feat/login")
 	assertPreviewEnvName(t, slashEnv, "feat-login")
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feat.login", "main")
 	e.simpleVPS(t, app, nil)
-	dotEnv := previewEnvForBranch(t, e, "branchapi", "feat.login")
+	dotEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", "feat.login")
 	assertPreviewEnvName(t, dotEnv, "feat-login")
 	if slashEnv == dotEnv {
 		t.Fatalf("raw branches with colliding sanitized names should get distinct envs: %s", slashEnv)
@@ -727,7 +725,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/lifecycle")
 	e.simpleVPS(t, app, nil)
-	previewEnv := previewEnvForBranch(t, e, "previewapi", "feature/lifecycle")
+	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "previewapi", "feature/lifecycle")
 	assertPreviewEnvName(t, previewEnv, "feature-lifecycle")
 	firstIdentity := readPreviewIdentity(t, e, "previewapi", previewEnv)
 	if firstIdentity.Preview == nil || firstIdentity.Preview.Pinned {
@@ -736,15 +734,15 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	if firstIdentity.Preview.Branch != "feature/lifecycle" || firstIdentity.Preview.SanitizedBranch != "feature-lifecycle" {
 		t.Fatalf("preview mapping should store raw and sanitized branch names: %+v", firstIdentity.Preview)
 	}
-	firstExpiry := parseRemoteTime(t, *firstIdentity.Preview.ExpiresAt)
+	h.SetPreviewExpiry(t, func(command string) string { return e.dockerExec(t, command) }, "previewapi", previewEnv, "2000-01-01T00:00:00Z")
+	firstExpiry := parseRemoteTime(t, "2000-01-01T00:00:00Z")
 
 	e.simpleVPS(t, app, []byte("throwaway"), "secret", "set", "cleanup_key")
-	time.Sleep(time.Second)
 	mustWrite(t, filepath.Join(app, "README.md"), "second preview ship\n")
 	e.mustRun(t, app, nil, "git", "add", ".")
 	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "second preview")
 	e.simpleVPS(t, app, nil)
-	if again := previewEnvForBranch(t, e, "previewapi", "feature/lifecycle"); again != previewEnv {
+	if again := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "previewapi", "feature/lifecycle"); again != previewEnv {
 		t.Fatalf("same branch should keep suffix stable: first=%s second=%s", previewEnv, again)
 	}
 	refreshed := readPreviewIdentity(t, e, "previewapi", previewEnv)
@@ -766,7 +764,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	if unpinned.Preview == nil || unpinned.Preview.Pinned || unpinned.Preview.ExpiresAt == nil {
 		t.Fatalf("unpin should restore expiry: %+v", unpinned.Preview)
 	}
-	forcePreviewExpired(t, e, "previewapi", previewEnv)
+	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "previewapi", previewEnv)
 	reapOutput := e.dockerExec(t, "/usr/local/bin/ship server env reap")
 	assertContains(t, reapOutput, "Reaped preview previewapi ("+previewEnv+") branch=feature/lifecycle")
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("previewapi", previewEnv))
@@ -1229,7 +1227,7 @@ web = { port = 3000 }
 	if failed.stdout != wantSecretJSON {
 		t.Fatalf("secret_missing json shape mismatch\nwant:\n%s\ngot:\n%s\nstderr:\n%s", wantSecretJSON, failed.stdout, failed.stderr)
 	}
-	previewEnv := previewEnvForBranch(t, e, "scope", "feature/secrets")
+	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "scope", "feature/secrets")
 	if leaked := e.dockerExec(t, "test ! -f "+identity.EnvFile("scope", previewEnv)+" || cat "+identity.EnvFile("scope", previewEnv)); strings.Contains(leaked, "prod-token") {
 		t.Fatalf("preview env received Production secret value:\n%s", leaked)
 	}
@@ -1709,26 +1707,6 @@ func assertOnlyURL(t *testing.T, stdout string) string {
 	return raw
 }
 
-func assertURLServes200(t *testing.T, e *smokeEnv, rawURL string) {
-	t.Helper()
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		t.Fatalf("parse URL %q: %v", rawURL, err)
-	}
-	path := parsed.EscapedPath()
-	if path == "" {
-		path = "/"
-	}
-	command := fmt.Sprintf("curl -fsS -o /dev/null -w '%%{http_code}' -H %s %s",
-		shellQuote("Host: "+parsed.Hostname()),
-		shellQuote("http://127.0.0.1"+path),
-	)
-	got := strings.TrimSpace(e.ssh(t, command))
-	if got != "200" {
-		t.Fatalf("%s served HTTP %s through fake Caddy, want 200", rawURL, got)
-	}
-}
-
 func sslipIPFromHost(host string) string {
 	labels := strings.Split(strings.TrimSuffix(host, "."), ".")
 	if len(labels) < 4 {
@@ -1894,16 +1872,6 @@ type previewIdentityPayload struct {
 	} `json:"preview"`
 }
 
-func previewEnvForBranch(t *testing.T, e *smokeEnv, app, branch string) string {
-	t.Helper()
-	out := e.ssh(t, "sudo -n /usr/local/bin/ship server app preview resolve "+app+" "+shellQuote(branch))
-	return strings.TrimSpace(out)
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
-}
-
 type smokeNotifySink struct {
 	env        *smokeEnv
 	eventsPath string
@@ -1974,7 +1942,7 @@ func (s *smokeNotifySink) URL(path string) string {
 
 func (s *smokeNotifySink) rawEvents(t *testing.T) string {
 	t.Helper()
-	return s.env.dockerExec(t, "if [ -f "+shellQuote(s.eventsPath)+" ]; then cat "+shellQuote(s.eventsPath)+"; fi")
+	return s.env.dockerExec(t, "if [ -f "+h.ShellQuote(s.eventsPath)+" ]; then cat "+h.ShellQuote(s.eventsPath)+"; fi")
 }
 
 func (s *smokeNotifySink) waitForEvent(t *testing.T, event string) map[string]any {
@@ -2072,20 +2040,4 @@ func parseRemoteTime(t *testing.T, raw string) time.Time {
 		t.Fatalf("parse remote time %q: %v", raw, err)
 	}
 	return parsed
-}
-
-func forcePreviewExpired(t *testing.T, e *smokeEnv, app, env string) {
-	t.Helper()
-	path := identity.IdentityFile(app, env)
-	e.dockerExec(t, fmt.Sprintf(`python3 - <<'PY'
-import json
-path = %q
-with open(path) as f:
-    data = json.load(f)
-data["preview"]["pinned"] = False
-data["preview"]["expires_at"] = "2000-01-01T00:00:00Z"
-with open(path, "w") as f:
-    json.dump(data, f)
-    f.write("\n")
-PY`, path))
 }

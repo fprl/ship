@@ -6,17 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fprl/simple-vps/internal/identity"
+	h "github.com/fprl/simple-vps/tests/harness"
 )
 
 const (
@@ -101,7 +100,7 @@ func TestAgentEvalScenarios(t *testing.T) {
 
 func newEvalSuite(t *testing.T, ctx context.Context) *evalSuite {
 	t.Helper()
-	repoRoot := repoRootForTest(t)
+	repoRoot := h.RepoRootForTest(t)
 	tmp := t.TempDir()
 	s := &evalSuite{
 		ctx:        ctx,
@@ -124,64 +123,14 @@ func newEvalSuite(t *testing.T, ctx context.Context) *evalSuite {
 	return s
 }
 
-func repoRootForTest(t *testing.T) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("resolve test file path")
-	}
-	root, err := filepath.Abs(filepath.Join(filepath.Dir(file), "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return root
-}
-
 func (s *evalSuite) buildBinaries(t *testing.T) {
 	t.Helper()
-	if err := os.RemoveAll(s.binDir); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(s.binDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(s.hostBinDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	goCmd := os.Getenv("GO")
-	if goCmd == "" {
-		goCmd = "go"
-	}
-	mustRunHost(t, s.ctx, s.repoRoot, nil, goCmd, "build", "-trimpath", "-o", s.shipBin, ".")
-	mustRunHost(t, s.ctx, s.repoRoot, []string{"CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64"}, goCmd, "build", "-trimpath", "-ldflags=-s -w", "-o", s.linuxBin, ".")
+	h.BuildBinaries(t, s.ctx, s.repoRoot, s.binDir, s.shipBin, s.linuxBin)
 }
 
 func (s *evalSuite) buildImage(t *testing.T) {
 	t.Helper()
-	mustRunHost(t, s.ctx, s.repoRoot, nil, "docker", "build", "-f", s.dockerfile, "-t", s.image, s.repoRoot)
-}
-
-func mustRunHost(t *testing.T, ctx context.Context, dir string, extraEnv []string, name string, args ...string) string {
-	t.Helper()
-	result := runHost(ctx, dir, extraEnv, nil, name, args...)
-	if result.err != nil {
-		t.Fatalf("%s %s failed: %v\nstdout:\n%s\nstderr:\n%s", name, strings.Join(args, " "), result.err, result.stdout, result.stderr)
-	}
-	return result.stdout
-}
-
-func runHost(ctx context.Context, dir string, extraEnv []string, stdin []byte, name string, args ...string) commandResult {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), extraEnv...)
-	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
-	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	return commandResult{stdout: stdout.String(), stderr: stderr.String(), err: err}
+	h.BuildImage(t, s.ctx, s.repoRoot, s.dockerfile, s.image)
 }
 
 type evalCase struct {
@@ -222,97 +171,22 @@ func (s *evalSuite) newCase(t *testing.T) *evalCase {
 
 func (e *evalCase) startContainer(t *testing.T) {
 	t.Helper()
-	out := e.mustRun(t, e.suite.repoRoot, nil, nil, "docker", "run", "-d", "-p", "127.0.0.1::22", e.suite.image)
-	e.container = strings.TrimSpace(out)
-	if e.container == "" {
-		t.Fatal("docker run returned empty container id")
-	}
+	e.container = h.StartContainer(t, e.suite.ctx, e.suite.repoRoot, e.suite.image)
 }
 
 func (e *evalCase) configureSSH(t *testing.T, user string) {
 	t.Helper()
-	keyPath := filepath.Join(e.tmp, "id_ed25519")
-	e.mustRun(t, e.suite.repoRoot, nil, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "agent-eval", "-f", keyPath)
-
-	pub, err := os.ReadFile(keyPath + ".pub")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sshDir := "/home/" + user + "/.ssh"
-	owner := user + ":" + user
-	if user == "root" {
-		sshDir = "/root/.ssh"
-		owner = "root:root"
-	}
-	authorize := fmt.Sprintf("mkdir -p %[1]s && cat > %[1]s/authorized_keys && chown %[2]s %[1]s/authorized_keys && chmod 600 %[1]s/authorized_keys", sshDir, owner)
-	e.mustRun(t, e.suite.repoRoot, nil, pub, "docker", "exec", "-i", e.container, "bash", "-lc", authorize)
-
-	portOutput := strings.TrimSpace(e.mustRun(t, e.suite.repoRoot, nil, nil, "docker", "port", e.container, "22/tcp"))
-	colon := strings.LastIndex(portOutput, ":")
-	if colon == -1 || colon == len(portOutput)-1 {
-		t.Fatalf("unexpected docker port output: %q", portOutput)
-	}
-	port := portOutput[colon+1:]
-
-	homeSSH := filepath.Join(e.tmp, "home", ".ssh")
-	if err := os.MkdirAll(homeSSH, 0700); err != nil {
-		t.Fatal(err)
-	}
-	config := fmt.Sprintf(`Host fake-vps
-  HostName 127.0.0.1
-  Port %s
-  User %s
-  IdentityFile %s
-  IdentitiesOnly yes
-  BatchMode yes
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null
-  LogLevel ERROR
-`, port, user, keyPath)
-	if err := os.WriteFile(filepath.Join(homeSSH, "config"), []byte(config), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	hostSSH, err := exec.LookPath("ssh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	hostSCP, err := exec.LookPath("scp")
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.sshBinDir = filepath.Join(e.tmp, "bin")
-	if err := os.MkdirAll(e.sshBinDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	sshWrapper := fmt.Sprintf("#!/usr/bin/env bash\nexec %q -F %q \"$@\"\n", hostSSH, filepath.Join(homeSSH, "config"))
-	if err := os.WriteFile(filepath.Join(e.sshBinDir, "ssh"), []byte(sshWrapper), 0755); err != nil {
-		t.Fatal(err)
-	}
-	scpWrapper := fmt.Sprintf("#!/usr/bin/env bash\nexec %q -F %q \"$@\"\n", hostSCP, filepath.Join(homeSSH, "config"))
-	if err := os.WriteFile(filepath.Join(e.sshBinDir, "scp"), []byte(scpWrapper), 0755); err != nil {
-		t.Fatal(err)
-	}
+	e.sshBinDir = h.ConfigureSSH(t, e.suite.ctx, e.suite.repoRoot, e.tmp, e.container, user, "agent-eval")
 }
 
 func (e *evalCase) waitForSSH(t *testing.T) {
 	t.Helper()
-	var last commandResult
-	for i := 0; i < 30; i++ {
-		last = e.run(t, e.suite.repoRoot, nil, nil, e.sshBin(), "fake-vps", "true")
-		if last.err == nil {
-			return
-		}
-		time.Sleep(time.Second)
-	}
-	t.Fatalf("fake VPS ssh did not become ready\nstdout:\n%s\nstderr:\n%s\nerr: %v", last.stdout, last.stderr, last.err)
+	h.WaitForSSH(t, e.suite.ctx, e.suite.repoRoot, e.sshBin())
 }
 
 func (e *evalCase) ensureSmokeHostSeed(t *testing.T) {
 	t.Helper()
-	e.dockerExec(t, `cat > /etc/simple-vps/host.json <<'EOF'
-{"version":1,"desired":{"users":{"operator":"operator","deploy":"deploy"},"ingress":{"expose":"public","tunnel":"none"},"features":{},"packages":{"podman":{"source":"apt"},"rsync":{"source":"apt"},"caddy":{"source":"container"}}},"observed":{"packages":{},"ingress":{}},"meta":{}}
-EOF`)
+	e.dockerExec(t, "cat > /etc/simple-vps/host.json <<'EOF'\n"+h.SeedHostJSON()+"EOF")
 	e.dockerExec(t, "mkdir -p /etc/caddy/simple-vps /etc/caddy/conf.d /var/lib/caddy /etc/systemd/system")
 	e.dockerExec(t, "mkdir -p /tmp/simple-vps-deploy && chmod 1777 /tmp/simple-vps-deploy")
 	e.dockerExec(t, `cat > /etc/caddy/Caddyfile <<'EOF'
@@ -339,6 +213,11 @@ func (e *evalCase) dockerExec(t *testing.T, command string) string {
 		t.Fatalf("docker exec %q failed: %v\nstdout:\n%s\nstderr:\n%s", command, result.err, result.stdout, result.stderr)
 	}
 	return result.stdout
+}
+
+func (e *evalCase) ssh(t *testing.T, command string) string {
+	t.Helper()
+	return e.mustRun(t, e.suite.repoRoot, nil, nil, e.sshBin(), "fake-vps", command)
 }
 
 func (e *evalCase) mustRun(t *testing.T, dir string, extraEnv []string, stdin []byte, name string, args ...string) string {
@@ -386,19 +265,8 @@ func (e *evalCase) commandEnv(extra []string) []string {
 		pathParts = append([]string{e.sshBinDir}, pathParts...)
 	}
 	pathParts = append(pathParts, os.Getenv("PATH"))
-	env = setEnv(env, "PATH", strings.Join(pathParts, string(os.PathListSeparator)))
+	env = h.SetEnv(env, "PATH", strings.Join(pathParts, string(os.PathListSeparator)))
 	return append(env, extra...)
-}
-
-func setEnv(env []string, key string, value string) []string {
-	prefix := key + "="
-	for i, item := range env {
-		if strings.HasPrefix(item, prefix) {
-			env[i] = prefix + value
-			return env
-		}
-	}
-	return append(env, prefix+value)
 }
 
 type evalScenario struct {
@@ -552,8 +420,8 @@ func setupExpiredPreviewReferenced(t *testing.T, e *evalCase) *evalProject {
 	mustWrite(t, filepath.Join(app, "README.md"), "expired preview\n")
 	commitAll(t, e, app, "deploy preview")
 	e.mustRun(t, app, nil, nil, e.suite.shipBin)
-	previewEnv := previewEnvForBranch(t, e, "evalpreview", "feature/expired")
-	forcePreviewExpired(t, e, "evalpreview", previewEnv)
+	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "evalpreview", "feature/expired")
+	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "evalpreview", previewEnv)
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")
 	checkoutBranch(t, e, app, "main")
 	return &evalProject{Dir: app, App: "evalpreview", Host: "eval-preview.example.com", Branch: "feature/expired"}
@@ -968,7 +836,7 @@ func renderAgentPrompt(scenario evalScenario, project *evalProject, docs string,
 func expandAgentTemplate(template string, values map[string]string) string {
 	out := template
 	for key, value := range values {
-		replacement := shellQuote(value)
+		replacement := h.ShellQuote(value)
 		if key == "turn" {
 			replacement = value
 		}
@@ -1108,7 +976,7 @@ func checkMissingSecretRecovered(e *evalCase, p *evalProject) error {
 	if err := checkCurrentHeadProductionLive(e, p); err != nil {
 		return err
 	}
-	envFile := e.runShell(e.suite.repoRoot, nil, nil, "docker exec "+shellQuote(e.container)+" bash -c "+shellQuote("cat "+identity.EnvFile(p.App, productionEnv)))
+	envFile := e.runShell(e.suite.repoRoot, nil, nil, "docker exec "+h.ShellQuote(e.container)+" bash -c "+h.ShellQuote("cat "+identity.EnvFile(p.App, productionEnv)))
 	if envFile.err != nil {
 		return fmt.Errorf("read env file failed: %v\nstdout:%s\nstderr:%s", envFile.err, envFile.stdout, envFile.stderr)
 	}
@@ -1138,7 +1006,7 @@ func checkCurrentHeadProductionLive(e *evalCase, p *evalProject) error {
 	if env.Health != "healthy" {
 		return fmt.Errorf("Production health = %q, want healthy", env.Health)
 	}
-	if err := e.urlServes200(env.URL); err != nil {
+	if err := h.URLServes200(e.fakeCaddy, env.URL); err != nil {
 		return err
 	}
 	return nil
@@ -1159,7 +1027,7 @@ func checkExpiredPreviewRecreated(e *evalCase, p *evalProject) error {
 	if env.Health != "healthy" {
 		return fmt.Errorf("Preview health = %q, want healthy", env.Health)
 	}
-	if err := e.urlServes200(env.URL); err != nil {
+	if err := h.URLServes200(e.fakeCaddy, env.URL); err != nil {
 		return err
 	}
 	return nil
@@ -1212,58 +1080,7 @@ func readStatus(e *evalCase, p *evalProject) (evalStatusPayload, error) {
 	return payload, nil
 }
 
-func (e *evalCase) urlServes200(rawURL string) error {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("parse URL %q: %v", rawURL, err)
-	}
-	path := parsed.EscapedPath()
-	if path == "" {
-		path = "/"
-	}
-	command := fmt.Sprintf("curl -fsS -o /dev/null -w '%%{http_code}' -H %s %s",
-		shellQuote("Host: "+parsed.Hostname()),
-		shellQuote("http://127.0.0.1"+path),
-	)
-	result := e.runShell(e.suite.repoRoot, nil, nil, "ssh fake-vps "+shellQuote(command))
-	if result.err != nil {
-		return fmt.Errorf("curl through fake Caddy failed: %v\nstdout:%s\nstderr:%s", result.err, result.stdout, result.stderr)
-	}
-	if got := strings.TrimSpace(result.stdout); got != "200" {
-		return fmt.Errorf("%s served HTTP %s, want 200", rawURL, got)
-	}
-	return nil
-}
-
-func previewEnvForBranch(t *testing.T, e *evalCase, app string, branch string) string {
-	t.Helper()
-	command := "sudo -n /usr/local/bin/ship server app preview resolve " + app + " " + shellQuote(branch)
-	out := e.mustRun(t, e.suite.repoRoot, nil, nil, e.sshBin(), "fake-vps", command)
-	return strings.TrimSpace(out)
-}
-
-func forcePreviewExpired(t *testing.T, e *evalCase, app string, env string) {
-	t.Helper()
-	path := identity.IdentityFile(app, env)
-	e.dockerExec(t, fmt.Sprintf(`python3 - <<'PY'
-import json
-path = %q
-with open(path) as f:
-    data = json.load(f)
-data["preview"]["pinned"] = False
-data["preview"]["expires_at"] = "2000-01-01T00:00:00Z"
-with open(path, "w") as f:
-    json.dump(data, f)
-    f.write("\n")
-PY`, path))
-}
-
-func shellQuote(value string) string {
-	if value == "" {
-		return "''"
-	}
-	if regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`).MatchString(value) {
-		return value
-	}
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+func (e *evalCase) fakeCaddy(command string) h.CommandResult {
+	result := e.runShell(e.suite.repoRoot, nil, nil, "ssh fake-vps "+h.ShellQuote(command))
+	return h.CommandResult{Stdout: result.stdout, Stderr: result.stderr, Err: result.err}
 }

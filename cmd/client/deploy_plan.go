@@ -18,6 +18,7 @@ var (
 
 type localDeployOptions struct {
 	IncludeDotenv bool
+	Dirty         *bool
 }
 
 type localDeployPlan struct {
@@ -32,7 +33,15 @@ type localDeployPlan struct {
 const timeRFC3339UTC = time.RFC3339Nano
 
 func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localDeployPlan, diagnostics, error) {
-	manifestErrors, warnings, err := config.CheckManifest(root, envName)
+	manifest, err := config.ReadManifest(root)
+	if err != nil {
+		return localDeployPlan{}, nil, err
+	}
+	return buildLocalDeployPlanForManifest(root, envName, manifest, opts)
+}
+
+func buildLocalDeployPlanForManifest(root, envName string, manifest *config.Manifest, opts localDeployOptions) (localDeployPlan, diagnostics, error) {
+	manifestErrors, warnings, err := config.CheckLoadedManifest(root, envName, manifest)
 	if err != nil {
 		return localDeployPlan{}, nil, err
 	}
@@ -41,7 +50,7 @@ func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localD
 		return localDeployPlan{}, diags, nil
 	}
 
-	ctx, err := config.LoadAppContext(root, envName)
+	ctx, err := config.LoadAppContextFromManifest(root, envName, manifest)
 	if err != nil {
 		return localDeployPlan{}, nil, err
 	}
@@ -70,15 +79,21 @@ func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localD
 	plan.Release = shortCommit
 	plan.BaseCommit = fullCommit
 
-	dirty, err := gitWorktreeDirty(root, plan.ServeDirs)
-	if err != nil {
-		diags = append(diags, diagnostic{
-			Kind:    diagnosticKindGit,
-			Level:   diagnosticError,
-			Message: err.Error(),
-			Hint:    "Check that Git is installed and the app root is a valid Git worktree.",
-		})
-		return plan, diags, nil
+	dirty := false
+	if opts.Dirty != nil {
+		dirty = *opts.Dirty
+	} else {
+		var err error
+		dirty, err = gitWorktreeDirty(root, plan.ServeDirs)
+		if err != nil {
+			diags = append(diags, diagnostic{
+				Kind:    diagnosticKindGit,
+				Level:   diagnosticError,
+				Message: err.Error(),
+				Hint:    "Check that Git is installed and the app root is a valid Git worktree.",
+			})
+			return plan, diags, nil
+		}
 	}
 	plan.Dirty = dirty
 	if dirty {

@@ -210,14 +210,7 @@ func applyRouteTLS(app *config.AppContext, tlsMode string) {
 }
 
 func (c appApplyCmd) actor() deployIdentity {
-	actor := deployIdentity{SSHKeyComment: c.SSHKeyComment, GitAuthor: c.GitAuthor}
-	if actor.SSHKeyComment == "" {
-		actor.SSHKeyComment = "unknown"
-	}
-	if actor.GitAuthor == "" {
-		actor.GitAuthor = "unknown"
-	}
-	return actor
+	return deployActor(c.SSHKeyComment, c.GitAuthor)
 }
 
 func (c appApplyCmd) releaseMetadata() (releaseMetadata, error) {
@@ -356,21 +349,22 @@ func (c appApplyCmd) switchTraffic(app *config.AppContext, result applyReleaseRe
 		}
 		return err
 	}
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}, ""); err != nil {
-		if restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted); restoreErr != nil {
-			return fmt.Errorf("caddy validate rejected the fragment AND restore failed (manual fix required at %s): %v (restore: %v)", caddyPath, err, restoreErr)
-		}
+	if err := reloadCaddyOrRestore(caddyPath, prevFragment, prevExisted); err != nil {
 		if result.staticSnapshot != nil {
 			_ = restoreStaticCurrent(c.App, c.Env, *result.staticSnapshot)
 		}
-		return fmt.Errorf("caddy validate rejected the fragment, restored previous: %v", err)
-	}
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
-		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
-		if result.staticSnapshot != nil {
-			_ = restoreStaticCurrent(c.App, c.Env, *result.staticSnapshot)
+		var caddyErr caddyReloadStageError
+		if errors.As(err, &caddyErr) {
+			switch {
+			case caddyErr.Stage == "validate" && caddyErr.RestoreErr != nil:
+				return fmt.Errorf("caddy validate rejected the fragment AND restore failed (manual fix required at %s): %v (restore: %v)", caddyPath, caddyErr.Err, caddyErr.RestoreErr)
+			case caddyErr.Stage == "validate":
+				return fmt.Errorf("caddy validate rejected the fragment, restored previous: %v", caddyErr.Err)
+			case caddyErr.Stage == "reload":
+				return fmt.Errorf("caddy reload: %v", caddyErr.Err)
+			}
 		}
-		return fmt.Errorf("caddy reload: %v", err)
+		return err
 	}
 	return nil
 }
@@ -453,86 +447,75 @@ type containerApplyResult struct {
 }
 
 func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, existing []containerEntry) (containerApplyResult, error) {
-	if len(app.Processes) == 0 {
-		return containerApplyResult{}, fmt.Errorf("manifest must declare at least one [processes.<name>] block")
-	}
-	resolved, err := resolveEnv(c.App, c.Env, app.Vars, app.SecretRefs)
-	if err != nil {
-		return containerApplyResult{}, err
-	}
-	scrubValues := collectEnvValues(resolved)
-	if err := writeEnvFile(c.App, c.Env, resolved); err != nil {
-		return containerApplyResult{}, err
-	}
-
-	userID, groupID, err := hostUserIDs(identity.SystemUser(c.App, c.Env))
-	if err != nil {
-		return containerApplyResult{}, err
-	}
-
-	imageTag := identity.ImageTag(c.App, c.Env, c.SHA)
-	buildArgs := podmanBuildArgs(c.App, c.Env, imageTag, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild)
-	if _, err := utils.RunChecked("podman", buildArgs, ""); err != nil {
-		return containerApplyResult{}, newJournalStepError("build", fmt.Errorf("podman build: %w", err), scrubValues, nil)
-	}
-
-	if app.Release != "" {
-		if err := runReleaseCommand(c.App, c.Env, app.Release, imageTag, userID, groupID, c.SHA); err != nil {
-			return containerApplyResult{}, newJournalStepError("release", err, scrubValues, nil)
-		}
-	}
-
-	previewEnv, err := isPreviewEnv(c.App, c.Env)
-	if err != nil {
-		return containerApplyResult{}, err
-	}
-
-	var started []string
 	var stopped []string
-	processNames := map[string]string{}
-	routed := routedProcessNames(app.Routes)
 	containersToRemove := containersForRemovedProcesses(existing, app.Processes)
-	for _, processName := range sortedKeys(app.Processes) {
-		proc := app.Processes[processName]
-		if proc.Port == nil {
+	startedAt := time.Now().UTC().Format("20060102t150405000000000z")
+	started, err := startReleaseProcesses(startReleaseProcessesParams{
+		App:     c.App,
+		Env:     c.Env,
+		Release: c.SHA,
+		Context: app,
+		BeforeStart: func(runtime processStartRuntime) error {
+			buildArgs := podmanBuildArgs(c.App, c.Env, runtime.ImageTag, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild)
+			if _, err := utils.RunChecked("podman", buildArgs, ""); err != nil {
+				return newJournalStepError("build", fmt.Errorf("podman build: %w", err), runtime.ScrubValues, nil)
+			}
+			if app.Release != "" {
+				if err := runReleaseCommand(c.App, c.Env, app.Release, runtime.ImageTag, runtime.UserID, runtime.GroupID, c.SHA); err != nil {
+					return newJournalStepError("release", err, runtime.ScrubValues, nil)
+				}
+			}
+			return nil
+		},
+		BeforeProcess: func(processName string, proc config.Process) error {
+			if proc.Port != nil {
+				return nil
+			}
 			old := processContainers(existing, processName, "")
 			if err := stopContainers(old); err != nil {
-				removeContainers(started)
 				startContainers(stopped)
-				return containerApplyResult{}, err
+				return err
 			}
 			stopped = append(stopped, old...)
 			containersToRemove = append(containersToRemove, old...)
+			return nil
+		},
+		ContainerName: func(processName string, proc config.Process) string {
+			return nextProcessContainerName(existing, c.App, c.Env, processName, c.SHA, startedAt)
+		},
+	})
+	if err != nil {
+		var stepErr *journalStepError
+		if errors.As(err, &stepErr) {
+			return containerApplyResult{}, err
 		}
-		containerName := nextProcessContainerName(existing, c.App, c.Env, processName, c.SHA, time.Now().UTC().Format("20060102t150405000000000z"))
-		started = append(started, containerName)
-		if proc.Port != nil {
-			processNames[processName] = containerName
-		}
-		if err := startProcess(c.App, c.Env, processName, proc, imageTag, userID, groupID, c.SHA, containerName, processProbe(routed, processName, app.Probe), previewEnv, scrubValues); err != nil {
-			removeContainers(started)
+		var startErr processStartError
+		if errors.As(err, &startErr) {
 			startContainers(stopped)
 			step := "release"
 			var probe *journalProbe
 			var probeErr *probeFailureError
-			if strings.Contains(err.Error(), "health check failed") {
+			if strings.Contains(startErr.Err.Error(), "health check failed") {
 				step = "probe"
 			}
-			if errors.As(err, &probeErr) {
+			if errors.As(startErr.Err, &probeErr) {
 				step = "probe"
 				probe = &journalProbe{Status: probeErr.Status, BodySnippet: probeErr.BodySnippet}
 			}
-			return containerApplyResult{}, newJournalStepError(step, err, scrubValues, probe)
+			return containerApplyResult{}, newJournalStepError(step, startErr.Err, started.ScrubValues, probe)
 		}
-		if proc.Port != nil {
+		return containerApplyResult{}, err
+	}
+	for _, processName := range sortedKeys(app.Processes) {
+		if app.Processes[processName].Port != nil {
 			containersToRemove = append(containersToRemove, processContainers(existing, processName, "")...)
 		}
 	}
 	return containerApplyResult{
 		containersToRemove: uniqueContainerNames(containersToRemove),
-		startedContainers:  uniqueContainerNames(started),
+		startedContainers:  uniqueContainerNames(started.Started),
 		stoppedContainers:  uniqueContainerNames(stopped),
-		processNames:       processNames,
+		processNames:       started.ProcessName,
 	}, nil
 }
 

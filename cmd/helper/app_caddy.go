@@ -11,6 +11,7 @@ import (
 	"github.com/fprl/simple-vps/internal/config"
 	"github.com/fprl/simple-vps/internal/identity"
 	"github.com/fprl/simple-vps/internal/store"
+	"github.com/fprl/simple-vps/internal/utils"
 )
 
 func caddyfilePath(app, env string) string {
@@ -190,6 +191,37 @@ func restoreCaddyFragment(path string, prev []byte, existed bool) error {
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	return nil
+}
+
+type caddyReloadStageError struct {
+	Stage      string
+	Err        error
+	RestoreErr error
+}
+
+func (e caddyReloadStageError) Error() string {
+	if e.RestoreErr != nil {
+		return fmt.Sprintf("caddy %s failed AND restore failed (manual fix required): %v (restore: %v)", e.Stage, e.Err, e.RestoreErr)
+	}
+	return fmt.Sprintf("caddy %s failed: %v", e.Stage, e.Err)
+}
+
+func (e caddyReloadStageError) Unwrap() error {
+	return e.Err
+}
+
+func reloadCaddyOrRestore(caddyPath string, prevFragment []byte, prevExisted bool) error {
+	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}, ""); err != nil {
+		if restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted); restoreErr != nil {
+			return caddyReloadStageError{Stage: "validate", Err: err, RestoreErr: restoreErr}
+		}
+		return caddyReloadStageError{Stage: "validate", Err: err}
+	}
+	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
+		restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
+		return caddyReloadStageError{Stage: "reload", Err: err, RestoreErr: restoreErr}
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package helper
 import (
 	"archive/tar"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -282,38 +283,18 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 		}
 	}
 	if appCtx.NeedsImage {
-		resolved, err := resolveEnv(app, env, appCtx.Vars, appCtx.SecretRefs)
+		startedResult, err := startReleaseProcesses(startReleaseProcessesParams{
+			App:     app,
+			Env:     env,
+			Release: meta.Release,
+			Context: appCtx,
+		})
+		startedContainers = append(startedContainers, startedResult.Started...)
 		if err != nil {
-			_ = restoreStaticCurrent(app, env, staticSnapshot)
-			return backupMetadata{}, err
-		}
-		if err := writeEnvFile(app, env, resolved); err != nil {
-			_ = restoreStaticCurrent(app, env, staticSnapshot)
-			return backupMetadata{}, err
-		}
-		userID, groupID, err := hostUserIDs(identity.SystemUser(app, env))
-		if err != nil {
+			removeContainers(startedContainers)
 			_ = restoreEnvFile(app, env, envSnapshot)
 			_ = restoreStaticCurrent(app, env, staticSnapshot)
 			return backupMetadata{}, err
-		}
-		imageTag := identity.ImageTag(app, env, meta.Release)
-		routed := routedProcessNames(appCtx.Routes)
-		previewEnv, err := isPreviewEnv(app, env)
-		if err != nil {
-			_ = restoreEnvFile(app, env, envSnapshot)
-			_ = restoreStaticCurrent(app, env, staticSnapshot)
-			return backupMetadata{}, err
-		}
-		for _, procName := range sortedKeys(appCtx.Processes) {
-			containerName := identity.ContainerName(app, env, procName, meta.Release)
-			startedContainers = append(startedContainers, containerName)
-			if err := startProcess(app, env, procName, appCtx.Processes[procName], imageTag, userID, groupID, meta.Release, containerName, processProbe(routed, procName, appCtx.Probe), previewEnv, collectEnvValues(resolved)); err != nil {
-				removeContainers(startedContainers)
-				_ = restoreEnvFile(app, env, envSnapshot)
-				_ = restoreStaticCurrent(app, env, staticSnapshot)
-				return backupMetadata{}, err
-			}
 		}
 		containersToRemove = containersOutsideDesiredRelease(existing, app, env, appCtx.Processes, meta.Release)
 	} else {
@@ -327,21 +308,22 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
 		return backupMetadata{}, err
 	}
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}, ""); err != nil {
+	if err := reloadCaddyOrRestore(caddyPath, prevFragment, prevExisted); err != nil {
 		removeContainers(startedContainers)
 		_ = restoreEnvFile(app, env, envSnapshot)
 		_ = restoreStaticCurrent(app, env, staticSnapshot)
-		if restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted); restoreErr != nil {
-			return backupMetadata{}, fmt.Errorf("caddy validate after restore failed AND fragment restore failed (manual fix required at %s): %v (restore: %v)", caddyPath, err, restoreErr)
+		var caddyErr caddyReloadStageError
+		if errors.As(err, &caddyErr) {
+			switch {
+			case caddyErr.Stage == "validate" && caddyErr.RestoreErr != nil:
+				return backupMetadata{}, fmt.Errorf("caddy validate after restore failed AND fragment restore failed (manual fix required at %s): %v (restore: %v)", caddyPath, caddyErr.Err, caddyErr.RestoreErr)
+			case caddyErr.Stage == "validate":
+				return backupMetadata{}, fmt.Errorf("caddy validate after restore: %v", caddyErr.Err)
+			case caddyErr.Stage == "reload":
+				return backupMetadata{}, fmt.Errorf("caddy reload after restore: %v", caddyErr.Err)
+			}
 		}
-		return backupMetadata{}, fmt.Errorf("caddy validate after restore: %v", err)
-	}
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
-		removeContainers(startedContainers)
-		_ = restoreEnvFile(app, env, envSnapshot)
-		_ = restoreStaticCurrent(app, env, staticSnapshot)
-		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
-		return backupMetadata{}, fmt.Errorf("caddy reload after restore: %v", err)
+		return backupMetadata{}, err
 	}
 	removeContainers(containersToRemove)
 	return meta, nil
@@ -645,44 +627,7 @@ func staticRouteNames(routes map[string]config.Route) []string {
 }
 
 func ensureRestoreLayout(app, env string) error {
-	user := identity.SystemUser(app, env)
-	envRoot := identity.EnvRoot(app, env)
-	dataDir := identity.DataDir(app, env)
-	runtimeDir := identity.RuntimeDir(app, env)
-	staticDir := identity.StaticDir(app, env)
-	releaseDir := identity.ReleaseDir(app, env)
-	for _, dir := range []string{envRoot, dataDir, runtimeDir, staticDir, releaseDir} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return err
-		}
-	}
-	if _, err := utils.RunChecked("chown", []string{"root:root", envRoot}, ""); err != nil {
-		return fmt.Errorf("chown %s: %v", envRoot, err)
-	}
-	if _, err := utils.RunChecked("chmod", []string{"0755", envRoot}, ""); err != nil {
-		return fmt.Errorf("chmod %s: %v", envRoot, err)
-	}
-	for _, dir := range []string{dataDir, staticDir} {
-		if _, err := utils.RunChecked("chown", []string{"-R", user + ":" + user, dir}, ""); err != nil {
-			return fmt.Errorf("chown %s: %v", dir, err)
-		}
-		if _, err := utils.RunChecked("chmod", []string{"2775", dir}, ""); err != nil {
-			return fmt.Errorf("chmod %s: %v", dir, err)
-		}
-	}
-	if _, err := utils.RunChecked("chown", []string{"-R", "root:root", releaseDir}, ""); err != nil {
-		return fmt.Errorf("chown %s: %v", releaseDir, err)
-	}
-	if _, err := utils.RunChecked("chmod", []string{"0755", releaseDir}, ""); err != nil {
-		return fmt.Errorf("chmod %s: %v", releaseDir, err)
-	}
-	if _, err := utils.RunChecked("chown", []string{"root:" + user, runtimeDir}, ""); err != nil {
-		return fmt.Errorf("chown %s: %v", runtimeDir, err)
-	}
-	if _, err := utils.RunChecked("chmod", []string{"0750", runtimeDir}, ""); err != nil {
-		return fmt.Errorf("chmod %s: %v", runtimeDir, err)
-	}
-	return nil
+	return applyEnvLayoutPerms(app, env)
 }
 
 func restoreStaticRelease(app, env, extractedRoot, release string) error {

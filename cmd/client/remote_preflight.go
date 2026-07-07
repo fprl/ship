@@ -67,29 +67,15 @@ func fetchRemotePreflightReport(runner sshRunner, ctx *config.AppContext) (remot
 	if err == nil && code == 0 {
 		return remotePreflightReport{}, deployPreflightError("invalid preflight response from host")
 	}
-	if coded, ok := remoteCodedError(stdout, stderr); ok {
-		return remotePreflightReport{}, coded
+	remote := extractRemoteError(stdout, stderr, "no error detail")
+	if remote.Coded != nil {
+		return remotePreflightReport{}, remote.Coded
 	}
-	detail := strings.TrimSpace(stdout)
-	if detail == "" {
-		detail = strings.TrimSpace(stderr)
-	}
-	if detail == "" {
-		detail = "no error detail"
-	}
-	return remotePreflightReport{}, deployPreflightError(detail)
+	return remotePreflightReport{}, deployPreflightError(remote.Detail)
 }
 
 func commandDetail(stdout, stderr, fallback string) string {
-	detail := strings.TrimSpace(stderr)
-	if detail == "" {
-		detail = strings.TrimSpace(stdout)
-	}
-	if detail == "" {
-		detail = fallback
-	}
-	detail = strings.TrimPrefix(detail, "Error: ")
-	return detail
+	return extractRemoteError(stdout, stderr, fallback).Detail
 }
 
 type remotePreflightReport struct {

@@ -137,14 +137,16 @@ func previewCollapsedRoutes(routes map[string]config.Route, envName, boxIP strin
 	return out, nil
 }
 
-func defaultRouteHost(routes map[string]config.Route) string {
-	type candidate struct {
-		rank int
-		host string
-	}
-	var candidates []candidate
+type rankedRoute struct {
+	rank int
+	url  string
+	host string
+}
+
+func bestRankedRoute(routes map[string]config.Route, includeRedirects bool) (rankedRoute, bool) {
+	var candidates []rankedRoute
 	for _, route := range routes {
-		if route.Host == "" || route.Redirect != "" {
+		if route.Host == "" || (!includeRedirects && route.Redirect != "") {
 			continue
 		}
 		rank := 3
@@ -156,18 +158,30 @@ func defaultRouteHost(routes map[string]config.Route) string {
 		case route.Process == "web":
 			rank = 2
 		}
-		candidates = append(candidates, candidate{rank: rank, host: route.Host})
+		candidates = append(candidates, rankedRoute{
+			rank: rank,
+			url:  "https://" + route.Host + route.Path,
+			host: route.Host,
+		})
 	}
 	if len(candidates) == 0 {
-		return ""
+		return rankedRoute{}, false
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].rank != candidates[j].rank {
 			return candidates[i].rank < candidates[j].rank
 		}
-		return candidates[i].host < candidates[j].host
+		return candidates[i].url < candidates[j].url
 	})
-	return candidates[0].host
+	return candidates[0], true
+}
+
+func defaultRouteHost(routes map[string]config.Route) string {
+	best, ok := bestRankedRoute(routes, false)
+	if !ok {
+		return ""
+	}
+	return best.host
 }
 
 func routesWithTLS(routes map[string]config.Route, tlsMode string) map[string]config.Route {
@@ -265,6 +279,9 @@ func resolveBoxIPv4(runner sshRunner, server string) string {
 				return v4.String()
 			}
 		}
+	}
+	if runner == nil {
+		return "127.0.0.1"
 	}
 	command := "hostname -I 2>/dev/null | tr ' ' '\\n' | sed -n '/^[0-9][0-9.]*$/p' | head -n1"
 	if out, err := runSSHDetail(runner, server, command); err == nil {
