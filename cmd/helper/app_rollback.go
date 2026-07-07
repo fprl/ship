@@ -27,11 +27,11 @@ type appRollbackCmd struct {
 
 func (c appRollbackCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if c.Release != "" {
 		if err := validateRelease(c.Release); err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 	}
 	withAppEnvLock(c.App, c.Env, func() {
@@ -44,12 +44,12 @@ func (c appRollbackCmd) runLocked() {
 	startedAt := time.Now().UTC()
 	currentApp, cleanup, err := loadAppliedAppContext(c.App, c.Env)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer cleanup()
 	result, err := c.rollbackRelease(currentApp)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if err := appendDeployJournalEntry(c.App, c.Env, deployJournalEntry{
 		SchemaVersion:    deployJournalSchemaVersion,
@@ -62,7 +62,7 @@ func (c appRollbackCmd) runLocked() {
 		AttemptedRelease: result.Release,
 		Identity:         c.actor(),
 	}, nil); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	fmt.Print(renderRollbackText(result))
 }

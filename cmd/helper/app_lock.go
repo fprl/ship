@@ -80,7 +80,7 @@ func (l *appEnvLock) Release() error {
 func withAppEnvLock(app, env string, fn func()) {
 	lock, err := acquireAppEnvLock(app, env)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer func() {
 		if err := lock.Release(); err != nil {
@@ -93,7 +93,7 @@ func withAppEnvLock(app, env string, fn func()) {
 func withAppNamedLock(app, name string, fn func()) {
 	lock, err := acquireAppNamedLock(app, name)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer func() {
 		if err := lock.Release(); err != nil {

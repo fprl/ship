@@ -29,10 +29,10 @@ type appSecretSetCmd struct {
 
 func (c appSecretSetCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if err := secrets.ValidateKey(c.Key); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	// stdin only — never argv. The client SSHes the value over the
 	// helper's stdin so the value never lands in the host's process
@@ -50,7 +50,7 @@ func (c appSecretSetCmd) Run() error {
 	}
 	withAppEnvLock(c.App, c.Env, func() {
 		if err := secrets.Put(c.App, c.Env, c.Key, value); err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		// Never echo the value. Confirm the write by naming the key only.
 		fmt.Printf("Stored secret %s for %s (%s)\n", c.Key, c.App, c.Env)
@@ -66,17 +66,17 @@ type appSecretListCmd struct {
 
 func (c appSecretListCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	keys, err := secrets.List(c.App, c.Env)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if c.JSON {
 		payload := secretListPayloadFor(c.App, c.Env, keys)
 		buf, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		fmt.Println(string(buf))
 		return nil
@@ -109,10 +109,10 @@ type appSecretRmCmd struct {
 
 func (c appSecretRmCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if err := secrets.ValidateKey(c.Key); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	withAppEnvLock(c.App, c.Env, func() {
 		err := secrets.Rm(c.App, c.Env, c.Key)
@@ -121,7 +121,7 @@ func (c appSecretRmCmd) Run() error {
 			fmt.Printf("Secret %s was not set for %s (%s).\n", c.Key, c.App, c.Env)
 			return
 		case err != nil:
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		fmt.Printf("Removed secret %s for %s (%s)\n", c.Key, c.App, c.Env)
 	})

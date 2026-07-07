@@ -115,6 +115,26 @@ type AppContext struct {
 	SecretRefs map[string]string
 }
 
+type ManifestError struct {
+	Details []string
+}
+
+func (e *ManifestError) Error() string {
+	return strings.Join(e.Details, "\n")
+}
+
+func manifestError(details ...string) error {
+	return &ManifestError{Details: append([]string(nil), details...)}
+}
+
+func ManifestErrorDetails(err error) ([]string, bool) {
+	var manifestErr *ManifestError
+	if !errors.As(err, &manifestErr) {
+		return nil, false
+	}
+	return append([]string(nil), manifestErr.Details...), true
+}
+
 func (p *Process) UnmarshalTOML(value any) error {
 	*p = Process{Preview: true}
 	switch v := value.(type) {
@@ -334,7 +354,7 @@ func ReadManifest(root string) (*Manifest, error) {
 	path := filepath.Join(root, "ship.toml")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("ship.toml not found")
+		return nil, manifestError("ship.toml not found")
 	}
 	var raw rawManifest
 	// Strict decoding: removed fields (`runtime`, `[build]`, `[services]`,
@@ -342,15 +362,15 @@ func ReadManifest(root string) (*Manifest, error) {
 	// check time instead of silently becoming no-ops.
 	dec := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
 	if err := dec.Decode(&raw); err != nil {
-		return nil, fmt.Errorf("failed to parse ship.toml: %s", strictErrorMessage(err))
+		return nil, manifestError(fmt.Sprintf("failed to parse ship.toml: %s", strictErrorMessage(err)))
 	}
 	processes, err := parseProcessMap(raw.Processes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse ship.toml: %s", err)
+		return nil, manifestError(fmt.Sprintf("failed to parse ship.toml: %s", err))
 	}
 	routes, err := parseRouteMap(raw.Routes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse ship.toml: %s", err)
+		return nil, manifestError(fmt.Sprintf("failed to parse ship.toml: %s", err))
 	}
 	manifest := Manifest{
 		Name:             raw.Name,
@@ -634,7 +654,7 @@ func LoadAppContext(root string, envName string) (*AppContext, error) {
 		return nil, err
 	}
 	if len(errors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(errors, "\n"))
+		return nil, manifestError(errors...)
 	}
 
 	routes := manifest.Routes

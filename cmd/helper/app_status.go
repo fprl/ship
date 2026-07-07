@@ -25,27 +25,27 @@ type appStatusCmd struct {
 
 func (c appStatusCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	out, err := podmanPSContainers(c.App, c.Env)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	processes := containersToProcesses(out)
 	if err := attachProcessReleaseMetadata(c.App, c.Env, processes); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	envKnown := envIdentityExists(c.App, c.Env)
 	static, err := activeStaticStatus(c.App, c.Env)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	release := activeStatusRelease(runningProcesses(processes), static)
 	if c.JSON {
 		payload := statusPayload{App: c.App, Env: c.Env, Release: release, Static: static, Processes: processes}
 		buf, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		fmt.Println(string(buf))
 		return nil
@@ -64,21 +64,21 @@ type appListCmd struct {
 func (c appListCmd) Run() error {
 	out, err := podmanPSAllContainers()
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	identityApps, err := identityAppEnvs()
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	apps := mergeAppEnvs(identityApps, containersToAppEnvs(out))
 	if err := attachAppListRuntimeMetadata(apps); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if c.JSON {
 		payload := appListPayload{Apps: apps}
 		buf, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		fmt.Println(string(buf))
 		return nil
@@ -101,11 +101,11 @@ type appLogsCmd struct {
 
 func (c appLogsCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	containerName, err := resolveLogContainer(c.App, c.Env, c.Process)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	args := []string{"logs"}
 	if c.Follow {

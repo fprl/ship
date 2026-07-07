@@ -38,12 +38,12 @@ func (c cloudflareSetupTunnelCmd) Run() error {
 
 	accID, err := cloudflare.CloudflareAccountId(token, c.AccountID)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 
 	tunnelID, err := cloudflare.EnsureCloudflareTunnel(token, accID, c.Name)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 
 	q := url.Values{}
@@ -61,7 +61,7 @@ func (c cloudflareSetupTunnelCmd) Run() error {
 
 	err = store.AtomicWrite(cloudflare.CloudflaredTunnelTokenPath(), []byte(tunnelToken+"\n"), 0640)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 
 	_ = exec.Command("chown", "root:cloudflared", cloudflare.CloudflaredTunnelTokenPath()).Run()
@@ -69,7 +69,7 @@ func (c cloudflareSetupTunnelCmd) Run() error {
 	stateStore := store.Default()
 	cfState, err := stateStore.ReadCloudflare()
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	cfState.AccountID = accID
 	cfState.TunnelID = tunnelID
@@ -77,7 +77,7 @@ func (c cloudflareSetupTunnelCmd) Run() error {
 
 	err = stateStore.WriteCloudflare(*cfState)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 
 	fmt.Printf("Cloudflare tunnel ready: %s (%s)\n", c.Name, tunnelID)
@@ -101,12 +101,12 @@ func (c cloudflarePublishCmd) Run() error {
 			}, "\n"))
 			return nil
 		}
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 
 	msg, err := ingress.Publish(c.Host, c.App)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	fmt.Println(msg)
 	return nil
@@ -131,12 +131,12 @@ func (c cloudflareRemoveCmd) Run() error {
 			fmt.Println("Cloudflare API publishing is not configured; no Cloudflare routes to remove.")
 			return nil
 		}
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 
 	removed, err := ingress.Remove(c.Host, c.App)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 
 	if len(removed) == 0 {

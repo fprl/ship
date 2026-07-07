@@ -15,15 +15,15 @@ type appWhyCmd struct {
 
 func (c appWhyCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	entry, err := readLatestDeployJournalEntry(c.App, c.Env)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	buf, err := json.MarshalIndent(entry, "", "  ")
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	fmt.Println(string(buf))
 	return nil

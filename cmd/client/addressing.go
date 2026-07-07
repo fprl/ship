@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/errcat"
 	"github.com/fprl/simple-vps/internal/names"
 )
 
@@ -64,7 +65,10 @@ func resolveDeployAddress(root, explicitEnv, branchFlag string) (deployAddress, 
 	}
 	dirty, err := gitWorktreeDirty(root, staticServeDirs(ctx.Routes))
 	if err != nil {
-		return deployAddress{}, fmt.Errorf("git status failed\nnext: check that Git is installed and this is a valid Git worktree")
+		return deployAddress{}, errcat.New(errcat.CodeOperationFailed, errcat.Fields{
+			"detail":  "git status failed; check that Git is installed and this is a valid Git worktree",
+			"command": "git status",
+		})
 	}
 	address := deployAddress{
 		EnvName:          envName,
@@ -113,11 +117,7 @@ func envNameForBranch(branch, productionBranch string) (string, error) {
 	}
 	envName := sanitizeBranchEnvName(branch)
 	if envName == "" {
-		return "", codedNextError(
-			"unmappable_branch_name",
-			fmt.Sprintf("branch %q does not produce a valid environment name", branch),
-			"rename the branch",
-		)
+		return "", errcat.New(errcat.CodeUnmappableBranchName, errcat.Fields{"branch": fmt.Sprintf("%q", branch)})
 	}
 	return envName, nil
 }
@@ -130,11 +130,7 @@ func deployBranch(state gitState, branchFlag string) (string, error) {
 		return branchFlag, nil
 	}
 	if branchFlag != "" {
-		return "", codedNextError(
-			"branch_flag_requires_detached_head",
-			"--branch is only accepted on ship when HEAD is detached",
-			"remove --branch or check out the branch before deploying",
-		)
+		return "", errcat.New(errcat.CodeBranchFlagRequiresDetachedHead, nil)
 	}
 	return state.Branch, nil
 }
@@ -171,11 +167,7 @@ func gitIsAncestor(root, ancestor, descendant string) (bool, error) {
 }
 
 func notAGitRepoError() error {
-	return codedNextError(
-		"not_a_git_repo",
-		"current directory is not inside a Git worktree",
-		"git init && git add . && git commit -m \"initial ship app\"",
-	)
+	return errcat.New(errcat.CodeNotAGitRepo, nil)
 }
 
 func detachedHeadRequiresBranchError(command string) error {
@@ -183,13 +175,5 @@ func detachedHeadRequiresBranchError(command string) error {
 	if command == "ship" {
 		next = "ship --branch <name>"
 	}
-	return codedNextError(
-		"detached_head_requires_branch",
-		"HEAD is detached; pass --branch <name> so ship can resolve the environment",
-		next,
-	)
-}
-
-func codedNextError(code, message, next string) error {
-	return fmt.Errorf("%s: %s\nnext: %s", code, message, next)
+	return errcat.New(errcat.CodeDetachedHeadRequiresBranch, errcat.Fields{"command": next})
 }

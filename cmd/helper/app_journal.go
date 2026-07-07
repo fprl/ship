@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fprl/simple-vps/internal/errcat"
 	"github.com/fprl/simple-vps/internal/identity"
 	"github.com/fprl/simple-vps/internal/utils"
 )
@@ -173,7 +174,10 @@ func readDeployJournalEntries(app, env string) ([]deployJournalEntry, error) {
 }
 
 func noDeployJournalError(app, env string) error {
-	return fmt.Errorf("no_deploys: no deploys recorded for %s (%s)\nnext: ship", app, env)
+	return errcat.New(errcat.CodeNoDeploys, errcat.Fields{
+		"app": app,
+		"env": env,
+	})
 }
 
 func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease string, actor deployIdentity, startedAt time.Time, err error) (deployJournalEntry, []string) {

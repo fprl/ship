@@ -40,12 +40,12 @@ func toolStatus(tool string) string {
 func CmdStatus(jsonFlag bool) {
 	report, err := hostStatusReportFor(store.Default(), host.SystemServiceStatus, toolStatus)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if jsonFlag {
 		buf, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		fmt.Println(string(buf))
 		return

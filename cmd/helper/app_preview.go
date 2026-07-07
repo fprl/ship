@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fprl/simple-vps/internal/errcat"
 	"github.com/fprl/simple-vps/internal/identity"
 	"github.com/fprl/simple-vps/internal/names"
 	"github.com/fprl/simple-vps/internal/utils"
@@ -42,13 +43,13 @@ type appPreviewResolveOrCreateCmd struct {
 
 func (c appPreviewResolveOrCreateCmd) Run() error {
 	if err := validatePreviewAppBranch(c.App, c.Branch); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	var env string
 	withAppNamedLock(c.App, previewMapLock, func() {
 		resolved, err := resolveOrCreatePreview(c.App, c.Branch, time.Now().UTC())
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		env = resolved
 	})
@@ -63,14 +64,14 @@ type appPreviewResolveCmd struct {
 
 func (c appPreviewResolveCmd) Run() error {
 	if err := validatePreviewAppBranch(c.App, c.Branch); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	file, ok, err := findPreviewByBranch(c.App, c.Branch)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if !ok {
-		utils.Die(unknownPreviewBranchError(c.Branch).Error(), 1)
+		utils.DieError(unknownPreviewBranchError(c.Branch), 1)
 	}
 	fmt.Println(file.Env)
 	return nil
@@ -83,18 +84,18 @@ type appPreviewPinCmd struct {
 
 func (c appPreviewPinCmd) Run() error {
 	if err := validatePreviewAppBranch(c.App, c.Branch); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	file, ok, err := findPreviewByBranch(c.App, c.Branch)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if !ok {
-		utils.Die(unknownPreviewBranchError(c.Branch).Error(), 1)
+		utils.DieError(unknownPreviewBranchError(c.Branch), 1)
 	}
 	withAppEnvLock(file.App, file.Env, func() {
 		if err := pinPreview(file.App, file.Env, true); err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 	})
 	fmt.Printf("Pinned %s (%s) for branch %s\n", file.App, file.Env, c.Branch)
@@ -108,18 +109,18 @@ type appPreviewUnpinCmd struct {
 
 func (c appPreviewUnpinCmd) Run() error {
 	if err := validatePreviewAppBranch(c.App, c.Branch); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	file, ok, err := findPreviewByBranch(c.App, c.Branch)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if !ok {
-		utils.Die(unknownPreviewBranchError(c.Branch).Error(), 1)
+		utils.DieError(unknownPreviewBranchError(c.Branch), 1)
 	}
 	withAppEnvLock(file.App, file.Env, func() {
 		if err := pinPreview(file.App, file.Env, false); err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 	})
 	fmt.Printf("Unpinned %s (%s) for branch %s\n", file.App, file.Env, c.Branch)
@@ -347,5 +348,8 @@ func randomPreviewSuffix() (string, error) {
 }
 
 func unknownPreviewBranchError(branch string) error {
-	return fmt.Errorf("unknown_preview_branch: no preview environment is mapped for branch %q\nnext: ship", branch)
+	return errcat.New(errcat.CodeUnknownPreviewBranch, errcat.Fields{
+		"branch":  fmt.Sprintf("%q", branch),
+		"command": "git checkout " + utils.ShellEscape(branch) + " && ship",
+	})
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/errcat"
 )
 
 type deployedReleaseStatus struct {
@@ -52,11 +53,10 @@ func fetchDeployedCommit(runner sshRunner, ctx *config.AppContext) (string, bool
 }
 
 func behindProductionError(deployed, detail string) error {
-	return codedNextError(
-		"behind_production",
-		fmt.Sprintf("deployed commit %s %s", shortCommitForDisplay(deployed), detail),
-		"git pull",
-	)
+	return errcat.New(errcat.CodeBehindProduction, errcat.Fields{
+		"deployed": shortCommitForDisplay(deployed),
+		"detail":   detail,
+	})
 }
 
 func shortCommitForDisplay(commit string) string {

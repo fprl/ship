@@ -10,6 +10,8 @@ import (
 	"github.com/fprl/simple-vps/cmd/client"
 	"github.com/fprl/simple-vps/cmd/helper"
 	"github.com/fprl/simple-vps/cmd/hostinstall"
+	"github.com/fprl/simple-vps/internal/errcat"
+	"github.com/fprl/simple-vps/internal/utils"
 	"github.com/fprl/simple-vps/internal/version"
 )
 
@@ -488,6 +490,7 @@ func boxTarget(configPath, target string) (string, error) {
 
 func main() {
 	args := cliArgs(os.Args[1:])
+	utils.SetErrorJSON(wantsJSONError(args) || os.Getenv("SHIP_ERROR_JSON") == "1")
 	parser, err := kong.New(
 		&cli{},
 		kong.Name("ship"),
@@ -501,16 +504,34 @@ func main() {
 	}
 	ctx, err := parser.Parse(args)
 	if err != nil {
-		parser.Errorf("%s", err)
-		os.Exit(2)
+		utils.DieError(errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  err.Error(),
+			"command": "ship help",
+		}), 2)
 	}
 	if err := ctx.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
-		os.Exit(commandErrorExitCode(err))
+		utils.DieError(err, commandErrorExitCode(err))
 	}
 }
 
+func wantsJSONError(args []string) bool {
+	for _, arg := range args {
+		if arg == "--json" || strings.HasPrefix(arg, "--json=") {
+			return true
+		}
+	}
+	return false
+}
+
 func commandErrorExitCode(err error) int {
+	if coded, ok := errcat.As(err); ok {
+		switch coded.Code() {
+		case errcat.CodeUsageError, errcat.CodeManifestInvalid:
+			return 2
+		default:
+			return 1
+		}
+	}
 	text := err.Error()
 	switch {
 	case strings.Contains(text, client.ManifestFile),

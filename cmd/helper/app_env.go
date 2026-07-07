@@ -37,7 +37,7 @@ type appSetupEnvCmd struct {
 
 func (c appSetupEnvCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	withAppEnvLock(c.App, c.Env, func() {
 		c.runLocked(true)
@@ -47,7 +47,7 @@ func (c appSetupEnvCmd) Run() error {
 
 func (c appSetupEnvCmd) runLocked(printSummary bool) {
 	if err := setupEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if printSummary {
 		fmt.Printf("App %s (%s) is ready at %s\n", c.App, c.Env, identity.EnvRoot(c.App, c.Env))
@@ -153,7 +153,7 @@ type appDestroyEnvCmd struct {
 
 func (c appDestroyEnvCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	withAppEnvLock(c.App, c.Env, func() {
 		c.runLocked(true)
@@ -164,7 +164,7 @@ func (c appDestroyEnvCmd) Run() error {
 func (c appDestroyEnvCmd) runLocked(printSummary bool) {
 	summary, err := destroyEnv(c.App, c.Env, c.Purge)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if printSummary {
 		fmt.Print(renderDestroyText(c.App, c.Env, summary))

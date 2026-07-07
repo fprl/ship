@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/errcat"
 )
 
 func writeClientManifest(t *testing.T, root string, body string) {
@@ -149,7 +150,7 @@ func TestSanitizeBranchEnvName(t *testing.T) {
 
 func TestEnvNameForBranchRejectsUnmappableBranchName(t *testing.T) {
 	_, err := envNameForBranch("日本語", "main")
-	if err == nil || !strings.Contains(err.Error(), "unmappable_branch_name") || !strings.Contains(err.Error(), "next: rename the branch") {
+	if !errcat.Is(err, errcat.CodeUnmappableBranchName) || !strings.Contains(err.Error(), "next: git branch -m <new-name>") {
 		t.Fatalf("expected unmappable_branch_name with rename guidance, got %v", err)
 	}
 }
@@ -218,12 +219,12 @@ func TestResolveDeployAddressDetachedBranchGate(t *testing.T) {
 	writeClientManifest(t, root, clientContainerManifest())
 	initCommittedGitApp(t, root, "main")
 
-	if _, err := resolveDeployAddress(root, "", "feat/x"); err == nil || !strings.Contains(err.Error(), "branch_flag_requires_detached_head") {
+	if _, err := resolveDeployAddress(root, "", "feat/x"); !errcat.Is(err, errcat.CodeBranchFlagRequiresDetachedHead) {
 		t.Fatalf("expected checked-out --branch rejection, got %v", err)
 	}
 
 	runGit(t, root, "checkout", "--detach")
-	if _, err := resolveDeployAddress(root, "", ""); err == nil || !strings.Contains(err.Error(), "detached_head_requires_branch") {
+	if _, err := resolveDeployAddress(root, "", ""); !errcat.Is(err, errcat.CodeDetachedHeadRequiresBranch) {
 		t.Fatalf("expected detached HEAD rejection, got %v", err)
 	}
 
@@ -242,7 +243,7 @@ func TestResolveDeployAddressReportsNotGitRepo(t *testing.T) {
 	writeClientManifest(t, root, clientContainerManifest())
 
 	_, err := resolveDeployAddress(root, "", "")
-	if err == nil || !strings.Contains(err.Error(), "not_a_git_repo") || !strings.Contains(err.Error(), "next:") {
+	if !errcat.Is(err, errcat.CodeNotAGitRepo) || !strings.Contains(err.Error(), "next:") {
 		t.Fatalf("expected not_a_git_repo with next step, got %v", err)
 	}
 }
@@ -361,7 +362,7 @@ func TestPrepareDeployRoutesRejectsMultipleProcessesWithoutWeb(t *testing.T) {
 		},
 	}
 	_, err := prepareDeployRoutes(ctx, "prod", deployRouteOptions{BoxIP: "203.0.113.7"})
-	if err == nil || !strings.Contains(err.Error(), "multi_process_no_web_route") {
+	if !errcat.Is(err, errcat.CodeMultiProcessNoWebRoute) {
 		t.Fatalf("expected multi-process/no-web error, got %v", err)
 	}
 }
@@ -476,7 +477,7 @@ func TestEnforceProductionAncestryRejectsBehindProduction(t *testing.T) {
 	}}
 
 	err := enforceProductionAncestry(root, runner, ctx, first)
-	if err == nil || !strings.Contains(err.Error(), "behind_production") || !strings.Contains(err.Error(), "next: git pull") {
+	if !errcat.Is(err, errcat.CodeBehindProduction) || !strings.Contains(err.Error(), "next: git pull") {
 		t.Fatalf("expected behind_production, got %v", err)
 	}
 }
@@ -514,15 +515,18 @@ func TestResolveReadPreviewEnvPropagatesUnknownBranchError(t *testing.T) {
 	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@example.com"}
 	command := serverAppPreviewResolveCommand("api", "feat/x")
 	runner := &fakeSSHRunner{failures: map[string]string{
-		command: "Error: unknown_preview_branch: no preview environment is mapped for branch \"feat/x\"\nnext: ship\n",
+		command: errcat.New(errcat.CodeUnknownPreviewBranch, errcat.Fields{
+			"branch":  "\"feat/x\"",
+			"command": "git checkout feat/x && ship",
+		}).JSONLine(),
 	}}
 
 	_, err := resolveReadPreviewEnv(runner, ctx, readAddress{PreviewBranch: "feat/x"})
 	if err == nil {
 		t.Fatal("expected unknown preview branch error")
 	}
-	want := "unknown_preview_branch: no preview environment is mapped for branch \"feat/x\"\nnext: ship"
-	if err.Error() != want {
+	want := "preview environment lookup failed\nno preview environment is mapped for branch \"feat/x\"\nnext: git checkout feat/x && ship"
+	if !errcat.Is(err, errcat.CodeUnknownPreviewBranch) || err.Error() != want {
 		t.Fatalf("unexpected error:\nwant: %q\n got: %q", want, err.Error())
 	}
 	if len(runner.commands) != 1 || runner.commands[0] != command {
@@ -945,7 +949,7 @@ func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", false)
 	actor := testDeployIdentity()
 	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, actor, false)
-	want := "sudo -n /usr/local/bin/ship server app apply --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
+	want := "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app apply --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -955,7 +959,7 @@ func TestServerAppApplyCommandSupportsRebuild(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", true)
 	actor := testDeployIdentity()
 	got := serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, actor, true)
-	want := "sudo -n /usr/local/bin/ship server app apply --rebuild --dirty --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
+	want := "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app apply --rebuild --dirty --tarball /tmp/simple-vps-deploy/x.tar --manifest /tmp/simple-vps-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -976,7 +980,7 @@ func testLocalDeployPlan(release string, dirty bool) localDeployPlan {
 
 func TestServerAppSetupEnvCommand(t *testing.T) {
 	got := serverAppSetupEnvCommand("api", "production")
-	want := "sudo -n /usr/local/bin/ship server app setup-env api production"
+	want := "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app setup-env api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -984,13 +988,13 @@ func TestServerAppSetupEnvCommand(t *testing.T) {
 
 func TestServerAppPreflightCommandIncludesRequiredSecrets(t *testing.T) {
 	got := serverAppPreflightCommand("api", "production", []string{"DATABASE_URL", "API_KEY"})
-	want := "sudo -n /usr/local/bin/ship server app preflight --secret DATABASE_URL --secret API_KEY api production"
+	want := "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app preflight --secret DATABASE_URL --secret API_KEY api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})
-	want = "sudo -n /usr/local/bin/ship server app preflight --json --secret DATABASE_URL api production"
+	want = "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app preflight --json --secret DATABASE_URL api production"
 	if got != want {
 		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
 	}
@@ -998,13 +1002,13 @@ func TestServerAppPreflightCommandIncludesRequiredSecrets(t *testing.T) {
 
 func TestServerAppListCommandSupportsJSON(t *testing.T) {
 	got := serverAppListCommand(false)
-	want := "sudo -n /usr/local/bin/ship server app list"
+	want := "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app list"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppListCommand(true)
-	want = "sudo -n /usr/local/bin/ship server app list --json"
+	want = "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app list --json"
 	if got != want {
 		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1012,7 +1016,7 @@ func TestServerAppListCommandSupportsJSON(t *testing.T) {
 
 func TestServerAppWhyCommandUsesJSON(t *testing.T) {
 	got := serverAppWhyCommand("api", "prod")
-	want := "sudo -n /usr/local/bin/ship server app why --json api prod"
+	want := "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app why --json api prod"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1021,13 +1025,13 @@ func TestServerAppWhyCommandUsesJSON(t *testing.T) {
 func TestServerAppRollbackCommandSupportsRelease(t *testing.T) {
 	actor := testDeployIdentity()
 	got := serverAppRollbackCommand("api", "production", "", actor)
-	want := "sudo -n /usr/local/bin/ship server app rollback --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
+	want := "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app rollback --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppRollbackCommand("api", "production", "abc1234", actor)
-	want = "sudo -n /usr/local/bin/ship server app rollback --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production abc1234"
+	want = "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app rollback --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production abc1234"
 	if got != want {
 		t.Fatalf("unexpected release command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1128,27 +1132,27 @@ func TestServerAppBackupCommands(t *testing.T) {
 		{
 			name: "create",
 			got:  serverAppBackupCommand("api", "production", "", false),
-			want: "sudo -n /usr/local/bin/ship server app backup create api production",
+			want: "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app backup create api production",
 		},
 		{
 			name: "create json",
 			got:  serverAppBackupCommand("api", "production", "", true),
-			want: "sudo -n /usr/local/bin/ship server app backup create --json api production",
+			want: "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app backup create --json api production",
 		},
 		{
 			name: "create to",
 			got:  serverAppBackupCommand("api", "production", "/tmp/backups", false),
-			want: "sudo -n /usr/local/bin/ship server app backup create --to /tmp/backups api production",
+			want: "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app backup create --to /tmp/backups api production",
 		},
 		{
 			name: "restore",
 			got:  serverAppRestoreCommand("api", "production", "backup-id", false),
-			want: "sudo -n /usr/local/bin/ship server app backup restore --from backup-id api production",
+			want: "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app backup restore --from backup-id api production",
 		},
 		{
 			name: "restore dry run",
 			got:  serverAppRestoreCommand("api", "production", "backup-id", true),
-			want: "sudo -n /usr/local/bin/ship server app backup restore --from backup-id --dry-run api production",
+			want: "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app backup restore --from backup-id --dry-run api production",
 		},
 	}
 	for _, tt := range tests {
@@ -1162,13 +1166,13 @@ func TestServerAppBackupCommands(t *testing.T) {
 
 func TestServerAppDestroyEnvCommand(t *testing.T) {
 	got := serverAppDestroyEnvCommand("api", "production", false)
-	want := "sudo -n /usr/local/bin/ship server app destroy-env api production"
+	want := "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app destroy-env api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppDestroyEnvCommand("api", "production", true)
-	want = "sudo -n /usr/local/bin/ship server app destroy-env --purge api production"
+	want = "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app destroy-env --purge api production"
 	if got != want {
 		t.Fatalf("unexpected purge command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1183,22 +1187,22 @@ func TestServerAppPreviewCommands(t *testing.T) {
 		{
 			name: "resolve or create",
 			got:  serverAppPreviewResolveOrCreateCommand("api", "feat/x"),
-			want: "sudo -n /usr/local/bin/ship server app preview resolve-or-create api feat/x",
+			want: "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app preview resolve-or-create api feat/x",
 		},
 		{
 			name: "resolve",
 			got:  serverAppPreviewResolveCommand("api", "feat/x"),
-			want: "sudo -n /usr/local/bin/ship server app preview resolve api feat/x",
+			want: "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app preview resolve api feat/x",
 		},
 		{
 			name: "pin",
 			got:  serverAppPreviewPinCommand("api", "feat/x"),
-			want: "sudo -n /usr/local/bin/ship server app preview pin api feat/x",
+			want: "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app preview pin api feat/x",
 		},
 		{
 			name: "unpin",
 			got:  serverAppPreviewUnpinCommand("api", "feat/x"),
-			want: "sudo -n /usr/local/bin/ship server app preview unpin api feat/x",
+			want: "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app preview unpin api feat/x",
 		},
 	}
 	for _, tt := range tests {
@@ -1219,12 +1223,12 @@ func TestServerDoctorCommandSupportsJSON(t *testing.T) {
 		{
 			name: "doctor text",
 			got:  serverDoctorCommand(false),
-			want: "sudo -n /usr/local/bin/ship server doctor",
+			want: "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server doctor",
 		},
 		{
 			name: "doctor json",
 			got:  serverDoctorCommand(true),
-			want: "sudo -n /usr/local/bin/ship server doctor --json",
+			want: "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server doctor --json",
 		},
 	}
 
@@ -1239,13 +1243,13 @@ func TestServerDoctorCommandSupportsJSON(t *testing.T) {
 
 func TestServerAppSecretListCommandSupportsJSON(t *testing.T) {
 	got := serverAppSecretListCommand("api", "production", false)
-	want := "sudo -n /usr/local/bin/ship server app secret list api production"
+	want := "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app secret list api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppSecretListCommand("api", "production", true)
-	want = "sudo -n /usr/local/bin/ship server app secret list --json api production"
+	want = "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app secret list --json api production"
 	if got != want {
 		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1322,11 +1326,8 @@ func TestDeployRemotePreflightFailsMissingSecrets(t *testing.T) {
 	}}
 
 	err := deployRemotePreflight(runner, ctx)
-	if err == nil || !strings.Contains(err.Error(), "missing secret DATABASE_URL") || !strings.Contains(err.Error(), "ship secret set DATABASE_URL") {
+	if !errcat.Is(err, errcat.CodeSecretMissing) || !strings.Contains(err.Error(), "missing secret DATABASE_URL") || !strings.Contains(err.Error(), "ship secret set DATABASE_URL") {
 		t.Fatalf("expected missing secret hint, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "No remote files, routes, or containers were changed.") {
-		t.Fatalf("expected read-only preflight boundary in error, got %v", err)
 	}
 }
 

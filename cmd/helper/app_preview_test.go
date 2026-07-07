@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fprl/simple-vps/internal/errcat"
 	"github.com/fprl/simple-vps/internal/identity"
 	"github.com/fprl/simple-vps/internal/secrets"
 )
@@ -222,10 +223,10 @@ func TestReapExpiredPreviewsDestroysUnpinnedPurgesSecretsAndSkipsPinnedAndProd(t
 }
 
 func TestUnknownPreviewBranchErrorText(t *testing.T) {
-	got := unknownPreviewBranchError("feat/x").Error()
-	want := "unknown_preview_branch: no preview environment is mapped for branch \"feat/x\"\nnext: ship"
-	if got != want {
-		t.Fatalf("unexpected error:\nwant: %q\n got: %q", want, got)
+	err := unknownPreviewBranchError("feat/x")
+	want := "preview environment lookup failed\nno preview environment is mapped for branch \"feat/x\"\nnext: git checkout feat/x && ship"
+	if !errcat.Is(err, errcat.CodeUnknownPreviewBranch) || err.Error() != want {
+		t.Fatalf("unexpected error:\nwant: %q\n got: %q", want, err.Error())
 	}
 }
 

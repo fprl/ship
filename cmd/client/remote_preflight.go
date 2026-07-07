@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/errcat"
 )
 
 func deployRemotePreflight(runner sshRunner, ctx *config.AppContext) error {
@@ -18,7 +19,7 @@ func deployRemotePreflight(runner sshRunner, ctx *config.AppContext) error {
 		return err
 	}
 	if !report.Healthy {
-		return deployPreflightError(renderRemotePreflightFindings(report))
+		return remotePreflightError(report, false)
 	}
 	return nil
 }
@@ -35,7 +36,7 @@ func ensureRemoteEnvReadyForDeploy(runner sshRunner, ctx *config.AppContext) err
 		return nil
 	}
 	if !remotePreflightOnlyNeedsEnvPreparation(report) {
-		return deployPreflightError(renderRemotePreflightFindings(report))
+		return remotePreflightError(report, false)
 	}
 	if _, err := runSSHRequired(runner, ctx.Server, serverAppSetupEnvCommand(ctx.AppName, ctx.EnvName), "failed to prepare app environment"); err != nil {
 		return err
@@ -45,20 +46,27 @@ func ensureRemoteEnvReadyForDeploy(runner sshRunner, ctx *config.AppContext) err
 		return deployPreflightAfterPreparationError(preflightErrorDetail(err))
 	}
 	if !report.Healthy {
-		return deployPreflightAfterPreparationError(renderRemotePreflightFindings(report))
+		return remotePreflightError(report, true)
 	}
 	return nil
 }
 
 func deployHostPreflight(runner sshRunner, ctx *config.AppContext) error {
-	if _, err := runSSHRequired(runner, ctx.Server, "true", fmt.Sprintf("SSH failed for %s", ctx.Server)); err != nil {
-		return deployPreflightError(err.Error())
+	if stdout, stderr, code, err := runner.RunSSH(ctx.Server, "true"); err != nil || code != 0 {
+		return errcat.New(errcat.CodeSSHUnreachable, errcat.Fields{
+			"target": ctx.Server,
+			"detail": commandDetail(stdout, stderr, "remote SSH command failed"),
+		})
 	}
-	if _, err := runSSHRequired(runner, ctx.Server, "test -x /usr/local/bin/ship", "missing ship server API at /usr/local/bin/ship; run `ship box init "+ctx.Server+"` for this VPS"); err != nil {
-		return deployPreflightError(err.Error())
+	if stdout, stderr, code, err := runner.RunSSH(ctx.Server, "test -x /usr/local/bin/ship"); err != nil || code != 0 {
+		return errcat.New(errcat.CodeBoxNotInitialized, errcat.Fields{"target": ctx.Server, "detail": commandDetail(stdout, stderr, "missing ship server API")})
 	}
-	if _, err := runSSHRequired(runner, ctx.Server, "command -v rsync >/dev/null", "missing required server tool: rsync; rerun `ship box init "+ctx.Server+"`"); err != nil {
-		return deployPreflightError(err.Error())
+	if stdout, stderr, code, err := runner.RunSSH(ctx.Server, "command -v rsync >/dev/null"); err != nil || code != 0 {
+		_ = commandDetail(stdout, stderr, "missing rsync")
+		return errcat.New(errcat.CodeBoxMissingTool, errcat.Fields{
+			"target": ctx.Server,
+			"tool":   "rsync",
+		})
 	}
 	return nil
 }
@@ -74,6 +82,9 @@ func fetchRemotePreflightReport(runner sshRunner, ctx *config.AppContext) (remot
 	if err == nil && code == 0 {
 		return remotePreflightReport{}, deployPreflightError("invalid preflight response from host")
 	}
+	if coded, ok := remoteCodedError(stdout, stderr); ok {
+		return remotePreflightReport{}, coded
+	}
 	detail := strings.TrimSpace(stdout)
 	if detail == "" {
 		detail = strings.TrimSpace(stderr)
@@ -82,6 +93,18 @@ func fetchRemotePreflightReport(runner sshRunner, ctx *config.AppContext) (remot
 		detail = "no error detail"
 	}
 	return remotePreflightReport{}, deployPreflightError(detail)
+}
+
+func commandDetail(stdout, stderr, fallback string) string {
+	detail := strings.TrimSpace(stderr)
+	if detail == "" {
+		detail = strings.TrimSpace(stdout)
+	}
+	if detail == "" {
+		detail = fallback
+	}
+	detail = strings.TrimPrefix(detail, "Error: ")
+	return detail
 }
 
 type remotePreflightReport struct {
@@ -125,6 +148,46 @@ func renderRemotePreflightFindings(report remotePreflightReport) string {
 	return strings.Join(lines, "\n")
 }
 
+func remotePreflightError(report remotePreflightReport, afterPreparation bool) error {
+	if err := codedRemotePreflightIssue(report); err != nil {
+		return err
+	}
+	if afterPreparation {
+		return deployPreflightAfterPreparationError(renderRemotePreflightFindings(report))
+	}
+	return deployPreflightError(renderRemotePreflightFindings(report))
+}
+
+func codedRemotePreflightIssue(report remotePreflightReport) error {
+	for _, issue := range report.Issues {
+		if issue.Code != string(errcat.CodeSecretMissing) {
+			continue
+		}
+		cause, remediation := splitPreflightIssueRemediation(issue.Message)
+		err := errcat.New(errcat.CodeSecretMissing, errcat.Fields{
+			"secret":  "required secret",
+			"scope":   "target environment",
+			"command": remediation,
+		})
+		return errcat.WithCause(err, cause)
+	}
+	return nil
+}
+
+func splitPreflightIssueRemediation(message string) (string, string) {
+	message = strings.TrimSpace(message)
+	if lines := strings.Split(message, "\n"); len(lines) >= 3 && strings.HasPrefix(lines[len(lines)-1], "next: ") {
+		return strings.TrimSpace(lines[1]), strings.TrimSpace(strings.TrimPrefix(lines[len(lines)-1], "next: "))
+	}
+	if cause, rest, ok := strings.Cut(message, "; run `"); ok {
+		return strings.TrimSpace(cause), strings.TrimSuffix(strings.TrimSpace(rest), "`")
+	}
+	if message == "" {
+		message = "missing required secret"
+	}
+	return message, "ship secret set KEY"
+}
+
 func remotePreflightFindingMessages(report remotePreflightReport) []string {
 	if len(report.Findings) > 0 {
 		return report.Findings
@@ -153,7 +216,9 @@ func deployPreflightError(detail string) error {
 	if detail == "" {
 		detail = "no error detail"
 	}
-	return fmt.Errorf("deploy preflight failed before upload/build/mutation:\n%s\nNo remote files, routes, or containers were changed.", detail)
+	return errcat.New(errcat.CodeRemotePreflightFailed, errcat.Fields{
+		"detail": detail + "\nNo remote files, routes, or containers were changed.",
+	})
 }
 
 func deployPreflightAfterPreparationError(detail string) error {
@@ -161,12 +226,20 @@ func deployPreflightAfterPreparationError(detail string) error {
 	if detail == "" {
 		detail = "no error detail"
 	}
-	return fmt.Errorf("deploy preflight failed after preparing the app environment:\n%s\nNo release was uploaded, built, or routed.", detail)
+	return errcat.New(errcat.CodeRemotePreflightAfterPrepareFailed, errcat.Fields{
+		"detail": detail + "\nNo release was uploaded, built, or routed.",
+	})
 }
 
 func preflightErrorDetail(err error) string {
 	if err == nil {
 		return ""
+	}
+	if coded, ok := errcat.As(err); ok {
+		detail := coded.Cause()
+		detail = strings.TrimSuffix(detail, "No remote files, routes, or containers were changed.")
+		detail = strings.TrimSuffix(detail, "No release was uploaded, built, or routed.")
+		return strings.TrimSpace(detail)
 	}
 	detail := err.Error()
 	prefix := "deploy preflight failed before upload/build/mutation:"

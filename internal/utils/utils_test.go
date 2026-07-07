@@ -1,9 +1,12 @@
 package utils
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fprl/simple-vps/internal/errcat"
 )
 
 func TestRunCheckedWithTimeout(t *testing.T) {
@@ -36,5 +39,27 @@ func TestUsageOrManifestFailureClassification(t *testing.T) {
 		if usageOrManifestFailure(message) {
 			t.Fatalf("expected operation failure for %q", message)
 		}
+	}
+}
+
+func TestMissingManifestRemediatesShipInit(t *testing.T) {
+	err := errors.New("this is a project command, but /tmp/app/ship.toml was not found.\nRun it from a directory containing ship.toml.\nTo start a new project, run `ship init`.")
+	coded := normalizeExitError(err, 2)
+	if coded.Code() != errcat.CodeManifestInvalid {
+		t.Fatalf("code = %s, want %s", coded.Code(), errcat.CodeManifestInvalid)
+	}
+	if coded.Remediation() != "ship init" {
+		t.Fatalf("remediation = %q, want ship init", coded.Remediation())
+	}
+}
+
+func TestInvalidManifestRemediatesFixShipToml(t *testing.T) {
+	err := errors.New("failed to parse ship.toml: unknown field \"runtime\"")
+	coded := normalizeExitError(err, 2)
+	if coded.Code() != errcat.CodeManifestInvalid {
+		t.Fatalf("code = %s, want %s", coded.Code(), errcat.CodeManifestInvalid)
+	}
+	if coded.Remediation() != "fix ship.toml" {
+		t.Fatalf("remediation = %q, want fix ship.toml", coded.Remediation())
 	}
 }

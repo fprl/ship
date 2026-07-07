@@ -21,7 +21,7 @@ type destroyEnvFunc func(app, env string, purge bool) (destroySummary, error)
 func (envReapCmd) Run() error {
 	count, err := reapExpiredPreviews(time.Now().UTC(), destroyEnv)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if count == 0 {
 		fmt.Println("No expired preview envs.")

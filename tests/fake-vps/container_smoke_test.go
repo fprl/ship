@@ -266,7 +266,8 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	if noWhy.err == nil {
 		t.Fatal("why before any deploy should fail")
 	}
-	assertContains(t, noWhy.stdout+noWhy.stderr, "no_deploys")
+	assertContains(t, noWhy.stdout+noWhy.stderr, "deploy journal lookup failed")
+	assertContains(t, noWhy.stdout+noWhy.stderr, "no deploys recorded")
 	assertContains(t, noWhy.stdout+noWhy.stderr, "next: ship")
 
 	secretValue := "releasefail-secret-token"
@@ -470,8 +471,13 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	if rejected.err == nil {
 		t.Fatal("production branch deploy should reject a dirty worktree")
 	}
-	assertContains(t, rejected.stdout+rejected.stderr, "dirty_worktree")
-	assertContains(t, rejected.stdout+rejected.stderr, "next: git commit")
+	if rejected.stdout != "" {
+		t.Fatalf("dirty_worktree human error should not write stdout, got:\n%s", rejected.stdout)
+	}
+	wantDirty := "Production ship failed\nproduction branch \"stable\" has uncommitted changes\nnext: git add . && git commit -m \"<message>\"\n"
+	if rejected.stderr != wantDirty {
+		t.Fatalf("dirty_worktree shape mismatch\nwant:\n%s\ngot:\n%s", wantDirty, rejected.stderr)
+	}
 	if err := os.Remove(filepath.Join(app, "dirty.txt")); err != nil {
 		t.Fatal(err)
 	}
@@ -485,7 +491,8 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	if behind.err == nil {
 		t.Fatal("production deploy from behind checkout should fail")
 	}
-	assertContains(t, behind.stdout+behind.stderr, "behind_production")
+	assertContains(t, behind.stdout+behind.stderr, "Production ship failed")
+	assertContains(t, behind.stdout+behind.stderr, "deployed commit")
 	assertContains(t, behind.stdout+behind.stderr, "next: git pull")
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feat/x")
@@ -515,14 +522,16 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	if checkedOutBranchFlag.err == nil {
 		t.Fatal("deploy --branch should fail while a branch is checked out")
 	}
-	assertContains(t, checkedOutBranchFlag.stdout+checkedOutBranchFlag.stderr, "branch_flag_requires_detached_head")
+	assertContains(t, checkedOutBranchFlag.stdout+checkedOutBranchFlag.stderr, "branch resolution failed")
+	assertContains(t, checkedOutBranchFlag.stdout+checkedOutBranchFlag.stderr, "--branch is only accepted")
 
 	e.mustRun(t, app, nil, "git", "checkout", "--detach")
 	detachedWithoutBranch := e.runSimpleVPS(t, app, nil)
 	if detachedWithoutBranch.err == nil {
 		t.Fatal("detached HEAD deploy without --branch should fail")
 	}
-	assertContains(t, detachedWithoutBranch.stdout+detachedWithoutBranch.stderr, "detached_head_requires_branch")
+	assertContains(t, detachedWithoutBranch.stdout+detachedWithoutBranch.stderr, "branch resolution failed")
+	assertContains(t, detachedWithoutBranch.stdout+detachedWithoutBranch.stderr, "HEAD is detached")
 	e.simpleVPS(t, app, nil, "--branch", "feat/x")
 	if again := previewEnvForBranch(t, e, "branchapi", "feat/x"); again != featEnv {
 		t.Fatalf("re-ship should keep preview env stable: first=%s second=%s", featEnv, again)
@@ -569,8 +578,9 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	if unknown.err == nil {
 		t.Fatal("pin for an unmapped preview branch should fail")
 	}
-	assertContains(t, unknown.stdout+unknown.stderr, "unknown_preview_branch")
-	assertContains(t, unknown.stdout+unknown.stderr, "next: ship")
+	assertContains(t, unknown.stdout+unknown.stderr, "preview environment lookup failed")
+	assertContains(t, unknown.stdout+unknown.stderr, "no preview environment is mapped")
+	assertContains(t, unknown.stdout+unknown.stderr, "next: git checkout ghost/branch && ship")
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/lifecycle")
 	e.simpleVPS(t, app, nil)
@@ -1068,12 +1078,14 @@ web = { port = 3000 }
 	assertContains(t, prodEnv, "API_TOKEN=prod-token\n")
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/secrets")
-	failed := e.runSimpleVPS(t, app, nil)
+	failed := e.runSimpleVPS(t, app, nil, "--json")
 	if failed.err == nil {
 		t.Fatal("preview deploy should fail when only the Production secret exists")
 	}
-	assertContains(t, failed.stdout+failed.stderr, "secret_missing")
-	assertContains(t, failed.stdout+failed.stderr, "ship secret set api_token [--preview|--branch <name>]")
+	wantSecretJSON := "{\"error\":{\"code\":\"secret_missing\",\"message\":\"deploy is missing a required secret\",\"cause\":\"missing secret api_token for Preview branch \\\"feature/secrets\\\"\",\"remediation\":\"ship secret set api_token [--preview|--branch <name>]\"}}\n"
+	if failed.stdout != wantSecretJSON {
+		t.Fatalf("secret_missing json shape mismatch\nwant:\n%s\ngot:\n%s\nstderr:\n%s", wantSecretJSON, failed.stdout, failed.stderr)
+	}
 	previewEnv := previewEnvForBranch(t, e, "scope", "feature/secrets")
 	if leaked := e.dockerExec(t, "test ! -f "+identity.EnvFile("scope", previewEnv)+" || cat "+identity.EnvFile("scope", previewEnv)); strings.Contains(leaked, "prod-token") {
 		t.Fatalf("preview env received Production secret value:\n%s", leaked)

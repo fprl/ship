@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/errcat"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -108,13 +109,12 @@ func synthesizedRouteProcess(processes map[string]config.Process) (string, error
 		}
 	}
 	if len(processes) > 1 {
-		return "", codedNextError(
-			"multi_process_no_web_route",
-			`manifest declares multiple processes but no [routes] host and no process named "web"`,
-			`add a [routes] host or rename the public process to "web"`,
-		)
+		return "", errcat.New(errcat.CodeMultiProcessNoWebRoute, nil)
 	}
-	return "", fmt.Errorf("manifest must declare a routed process when [routes] is empty")
+	return "", errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
+		"details": "manifest must declare a routed process when [routes] is empty",
+		"command": "fix ship.toml",
+	})
 }
 
 func previewCollapsedRoutes(routes map[string]config.Route, envName, boxIP string) (map[string]config.Route, error) {

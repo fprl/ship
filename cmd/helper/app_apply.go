@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/errcat"
 	"github.com/fprl/simple-vps/internal/host"
 	"github.com/fprl/simple-vps/internal/identity"
 	"github.com/fprl/simple-vps/internal/utils"
@@ -50,13 +51,13 @@ type applyReleaseResult struct {
 
 func (c appApplyCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if err := validateRelease(c.SHA); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if _, err := c.releaseMetadata(); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	withAppEnvLock(c.App, c.Env, func() {
 		c.runLocked()
@@ -66,7 +67,7 @@ func (c appApplyCmd) Run() error {
 
 func (c appApplyCmd) runLocked() {
 	if err := c.runLockedE(); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 }
 
@@ -670,7 +671,7 @@ func resolveEnv(app, env string, literals map[string]string, refs map[string]str
 		secretKey := refs[envKey]
 		val, err := resolveSecretValue(app, env, secretKey)
 		if err != nil {
-			if strings.HasPrefix(err.Error(), "secret_missing:") {
+			if errcat.Is(err, errcat.CodeSecretMissing) {
 				return nil, annotateSecretMissingRef(err, envKey)
 			}
 			return nil, err
@@ -681,11 +682,11 @@ func resolveEnv(app, env string, literals map[string]string, refs map[string]str
 }
 
 func annotateSecretMissingRef(err error, envKey string) error {
-	lines := strings.SplitN(err.Error(), "\n", 2)
-	if len(lines) != 2 {
+	coded, ok := errcat.As(err)
+	if !ok {
 		return err
 	}
-	return fmt.Errorf("%s (referenced by %s)\n%s", lines[0], envKey, lines[1])
+	return errcat.WithCause(coded, fmt.Sprintf("%s (referenced by %s)", coded.Cause(), envKey))
 }
 
 func writeEnvFile(app, env string, vals map[string]string) error {

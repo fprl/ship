@@ -57,7 +57,7 @@ type normalizedInit struct {
 func CmdInit(root string, opts InitOptions) {
 	result, err := RunInit(root, opts)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	renderInitResult(result)
 }

@@ -36,12 +36,12 @@ func (c appBackupCreateCmd) Run() error {
 	withAppEnvLock(app, env, func() {
 		path, err := createBackup(app, env, c.To, time.Now().UTC())
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		if c.JSON {
 			item, err := backupInfoForPath(path)
 			if err != nil {
-				utils.Die(err.Error(), 1)
+				utils.DieError(err, 1)
 			}
 			buf, err := json.MarshalIndent(struct {
 				App    string     `json:"app"`
@@ -49,7 +49,7 @@ func (c appBackupCreateCmd) Run() error {
 				Backup backupInfo `json:"backup"`
 			}{App: app, Env: env, Backup: item}, "", "  ")
 			if err != nil {
-				utils.Die(err.Error(), 1)
+				utils.DieError(err, 1)
 			}
 			fmt.Println(string(buf))
 			return
@@ -70,7 +70,7 @@ func (c appBackupListCmd) Run() error {
 	app, env := validateBackupAppEnv(c.App, c.Env)
 	backups, err := listBackups(app, env, c.Dir)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if c.JSON {
 		buf, err := json.MarshalIndent(struct {
@@ -79,7 +79,7 @@ func (c appBackupListCmd) Run() error {
 			Backups []backupInfo `json:"backups"`
 		}{App: app, Env: env, Backups: backups}, "", "  ")
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		fmt.Println(string(buf))
 		return nil
@@ -101,7 +101,7 @@ func (c appBackupRmCmd) Run() error {
 	app, env := validateBackupAppEnv(c.App, c.Env)
 	path, err := resolveBackupPath(app, env, c.ID, c.Dir)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if err := os.Remove(path); err != nil {
 		utils.Die(fmt.Sprintf("remove backup %s: %v", path, err), 1)
@@ -123,7 +123,7 @@ func (c appBackupRestoreCmd) Run() error {
 	withAppEnvLock(app, env, func() {
 		result, err := restoreBackup(app, env, c.From, c.Dir, c.DryRun)
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		if c.DryRun {
 			fmt.Printf("Would restore %s (%s) from %s at release %s\n", result.App, result.Env, result.ID, result.Release)
@@ -136,7 +136,7 @@ func (c appBackupRestoreCmd) Run() error {
 
 func validateBackupAppEnv(app, env string) (string, string) {
 	if err := validateAppEnv(app, env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	return app, env
 }

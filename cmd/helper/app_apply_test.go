@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/errcat"
 	"github.com/fprl/simple-vps/internal/identity"
 	"github.com/fprl/simple-vps/internal/secrets"
 )
@@ -95,7 +96,7 @@ func TestResolveEnvPreviewMissingSecretUsesScopedRemediation(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected preview missing secret error")
 	}
-	if !strings.Contains(err.Error(), "secret_missing") ||
+	if !errcat.Is(err, errcat.CodeSecretMissing) ||
 		!strings.Contains(err.Error(), "ship secret set db_url [--preview|--branch <name>]") {
 		t.Fatalf("unexpected missing secret error: %v", err)
 	}

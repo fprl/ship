@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fprl/simple-vps/internal/errcat"
 )
 
 func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {
@@ -86,8 +88,9 @@ func TestLatestDeployJournalEntryNoDeploysError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected no_deploys error")
 	}
-	if got := err.Error(); got != "no_deploys: no deploys recorded for api (prod)\nnext: ship" {
-		t.Fatalf("unexpected no_deploys error:\n%s", got)
+	want := "deploy journal lookup failed\nno deploys recorded for api (prod)\nnext: ship"
+	if !errcat.Is(err, errcat.CodeNoDeploys) || err.Error() != want {
+		t.Fatalf("unexpected no_deploys error:\n%s", err.Error())
 	}
 }
 

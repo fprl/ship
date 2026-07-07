@@ -3,6 +3,7 @@ package utils
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/errcat"
 )
 
 var shellEscapeRe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
@@ -75,19 +79,131 @@ func (e *CommandError) CombinedOutput() string {
 	}
 }
 
+var errorJSON bool
+
+func SetErrorJSON(enabled bool) bool {
+	previous := errorJSON
+	errorJSON = enabled
+	return previous
+}
+
+func ErrorJSON() bool {
+	return errorJSON
+}
+
 func Die(message string, code int) {
+	DieError(errors.New(message), code)
+}
+
+func DieError(err error, code int) {
+	message := strings.TrimSpace(err.Error())
 	if code == 1 && usageOrManifestFailure(message) {
 		code = 2
 	}
-	fmt.Fprintf(os.Stderr, "Error: %s\n", message)
+	coded := normalizeExitError(err, code)
+	if codedExitCode(coded.Code()) == 2 {
+		code = 2
+	}
+	if errorJSON {
+		fmt.Println(coded.JSONLine())
+		os.Exit(code)
+	}
+	fmt.Fprintln(os.Stderr, coded.Human())
 	os.Exit(code)
 }
 
+func normalizeExitError(err error, code int) *errcat.Error {
+	if coded, ok := errcat.As(err); ok {
+		return coded
+	}
+	if details, ok := config.ManifestErrorDetails(err); ok {
+		return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
+			"details": manifestDetailsCause(details),
+			"command": manifestNextCommand(details),
+		})
+	}
+	message := strings.TrimSpace(err.Error())
+	if message == "" {
+		message = "no error detail"
+	}
+	if code == 2 {
+		if manifestFailure(message) {
+			return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
+				"details": message,
+				"command": manifestCommandFromMessage(message),
+			})
+		}
+		return errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  message,
+			"command": "ship help",
+		})
+	}
+	if manifestFailure(message) {
+		return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
+			"details": message,
+			"command": manifestCommandFromMessage(message),
+		})
+	}
+	return errcat.New(errcat.CodeOperationFailed, errcat.Fields{
+		"detail":  message,
+		"command": "ship status",
+	})
+}
+
+func manifestDetailsCause(details []string) string {
+	if len(details) == 0 {
+		return "no manifest detail"
+	}
+	if len(details) == 1 {
+		return details[0]
+	}
+	lines := []string{fmt.Sprintf("manifest has %d validation errors:", len(details))}
+	for _, detail := range details {
+		lines = append(lines, "  - "+detail)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func manifestNextCommand(details []string) string {
+	for _, detail := range details {
+		if manifestMissing(detail) {
+			return "ship init"
+		}
+	}
+	return "fix ship.toml"
+}
+
+func manifestCommandFromMessage(message string) string {
+	if manifestMissing(message) {
+		return "ship init"
+	}
+	return "fix ship.toml"
+}
+
+func manifestMissing(message string) bool {
+	return strings.Contains(message, "ship.toml not found") || strings.Contains(message, "ship.toml was not found")
+}
+
+func codedExitCode(code errcat.Code) int {
+	switch code {
+	case errcat.CodeUsageError,
+		errcat.CodeManifestInvalid,
+		errcat.CodeInvalidSecretKey,
+		errcat.CodeLogsFollowJSONConflict,
+		errcat.CodeBoxTargetRequired,
+		errcat.CodeInvalidBoxTarget:
+		return 2
+	default:
+		return 1
+	}
+}
+
 func usageOrManifestFailure(message string) bool {
+	if manifestFailure(message) {
+		return true
+	}
 	switch {
-	case strings.Contains(message, "ship.toml"),
-		strings.Contains(message, "manifest"),
-		strings.Contains(message, "--config"),
+	case strings.Contains(message, "--config"),
 		strings.Contains(message, "invalid app name"),
 		strings.Contains(message, "invalid env name"),
 		strings.Contains(message, "invalid template"),
@@ -96,6 +212,10 @@ func usageOrManifestFailure(message string) bool {
 	default:
 		return false
 	}
+}
+
+func manifestFailure(message string) bool {
+	return strings.Contains(message, "ship.toml") || strings.Contains(message, "manifest")
 }
 
 func RunChecked(name string, args []string, cwd string) ([]byte, error) {

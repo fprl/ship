@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/fprl/simple-vps/internal/config"
+	"github.com/fprl/simple-vps/internal/errcat"
 	"github.com/fprl/simple-vps/internal/names"
 	"github.com/fprl/simple-vps/internal/utils"
 )
@@ -285,6 +286,9 @@ type sshRunner interface {
 func runSSHRequired(runner sshRunner, server string, command string, errMsg string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
+		if coded, ok := remoteCodedError(stdout, stderr); ok {
+			return "", coded
+		}
 		detail := strings.TrimSpace(stderr)
 		if detail == "" {
 			detail = strings.TrimSpace(stdout)
@@ -300,6 +304,9 @@ func runSSHRequired(runner sshRunner, server string, command string, errMsg stri
 func runSSHDetail(runner sshRunner, server string, command string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
+		if coded, ok := remoteCodedError(stdout, stderr); ok {
+			return "", coded
+		}
 		detail := strings.TrimSpace(stderr)
 		if detail == "" {
 			detail = strings.TrimSpace(stdout)
@@ -313,16 +320,26 @@ func runSSHDetail(runner sshRunner, server string, command string) (string, erro
 	return stdout, nil
 }
 
+func remoteCodedError(stdout, stderr string) (*errcat.Error, bool) {
+	if coded, ok := errcat.ParseJSON(stdout); ok {
+		return coded, true
+	}
+	if coded, ok := errcat.ParseJSON(stderr); ok {
+		return coded, true
+	}
+	return nil, false
+}
+
 func runSSHChecked(runner sshRunner, server string, command string, errMsg string) string {
 	stdout, err := runSSHRequired(runner, server, command, errMsg)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	return stdout
 }
 
 func serverCommand(args ...string) string {
-	parts := []string{"sudo", "-n", "/usr/local/bin/ship", "server"}
+	parts := []string{"sudo", "-n", "env", "SHIP_ERROR_JSON=1", "/usr/local/bin/ship", "server"}
 	for _, arg := range args {
 		parts = append(parts, utils.ShellEscape(arg))
 	}
@@ -496,13 +513,13 @@ func serverAppWhyCommand(appName, envName string) string {
 func CmdSSHCurrent(root string) {
 	read, err := currentReadContext(root, "ssh")
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer read.Runner.Close()
 
 	err = read.Runner.RunSSHPassthrough(read.AppContext.Server, "")
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 }
 
@@ -648,23 +665,23 @@ type statusEnvJSON struct {
 func CmdStatus(root string, jsonFlag bool) {
 	ctx, err := config.LoadAppContext(root, productionEnvName)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer runner.Close()
 
 	out := runSSHChecked(runner, ctx.Server, serverAppListCommand(true), "status failed")
 	payload, err := statusFromAppList(ctx, out)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if jsonFlag {
 		buf, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		fmt.Println(string(buf))
 		return
@@ -695,13 +712,13 @@ type whyJournalProbe struct {
 func CmdWhy(root, branch string, jsonFlag bool) {
 	read, err := currentReadContextForBranch(root, "why", branch)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer read.Runner.Close()
 
 	out, err := runSSHDetail(read.Runner, read.AppContext.Server, serverAppWhyCommand(read.AppContext.AppName, read.EnvName))
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if jsonFlag {
 		fmt.Print(out)
@@ -920,14 +937,14 @@ func renderStatusSummary(payload statusPayload) string {
 
 func CmdBoxLs(server string, jsonFlag bool) {
 	if server == "" {
-		utils.Die("box target is required", 1)
+		utils.DieError(errcat.New(errcat.CodeBoxTargetRequired, errcat.Fields{"command": "ship box ls <ssh-target>"}), 2)
 	}
 	if !config.ValidateSshTarget(server) {
-		utils.Die("box target must be an SSH target like deploy@example.com", 1)
+		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "ship box ls deploy@example.com"}), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer runner.Close()
 
@@ -938,7 +955,7 @@ func CmdBoxLs(server string, jsonFlag bool) {
 func CmdRollback(root string, release string) {
 	read, err := currentReadContext(root, "rollback")
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer read.Runner.Close()
 
@@ -957,7 +974,7 @@ func rewriteRollbackSummary(out string, read readContext) string {
 func CmdSave(root string, dest string) {
 	read, err := currentReadContext(root, "save")
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer read.Runner.Close()
 
@@ -968,7 +985,7 @@ func CmdSave(root string, dest string) {
 func CmdRestore(root string, from string) {
 	read, err := currentReadContext(root, "restore")
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer read.Runner.Close()
 
@@ -987,15 +1004,15 @@ func rewriteRestoreSummary(out string, read readContext) string {
 func CmdRm(root string, branch string, confirm string) {
 	address, err := resolveReadAddress(root, "", branch, "rm")
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	baseCtx, err := config.LoadAppContext(root, productionEnvName)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer runner.Close()
 
@@ -1007,25 +1024,28 @@ func CmdRm(root string, branch string, confirm string) {
 		displayBranch = address.PreviewBranch
 		envName, err = resolveReadPreviewEnv(runner, baseCtx, address)
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 	} else if confirm != baseCtx.AppName {
-		utils.Die(fmt.Sprintf("Production rm requires --confirm %s", baseCtx.AppName), 1)
+		utils.DieError(errcat.New(errcat.CodeRmConfirmationRequired, errcat.Fields{
+			"app":    baseCtx.AppName,
+			"branch": displayBranch,
+		}), 1)
 	}
 
 	if _, err := runSSHRequired(runner, baseCtx.Server, serverAppDestroyEnvCommand(baseCtx.AppName, envName, true), "rm failed"); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	fmt.Printf("Removed %s %s\n", kind, displayBranch)
 }
 
 func CmdLogs(root string, process string, follow bool, tail int, jsonFlag bool) {
 	if follow && jsonFlag {
-		utils.Die("logs --json cannot be combined with --follow", 2)
+		utils.DieError(errcat.New(errcat.CodeLogsFollowJSONConflict, nil), 2)
 	}
 	read, err := currentReadContext(root, "logs")
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer read.Runner.Close()
 
@@ -1035,7 +1055,7 @@ func CmdLogs(root string, process string, follow bool, tail int, jsonFlag bool) 
 	cmdStr := serverAppLogsCommand(read.AppContext.AppName, read.EnvName, process, follow, tail)
 	if follow {
 		if err := read.Runner.RunSSHPassthrough(read.AppContext.Server, cmdStr); err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		return
 	}
@@ -1058,7 +1078,7 @@ func CmdLogs(root string, process string, follow bool, tail int, jsonFlag bool) 
 	}
 	buf, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	fmt.Println(string(buf))
 }
@@ -1097,13 +1117,11 @@ type secretContext struct {
 	Branch     string
 }
 
-func currentSecretContext(root, _ string, preview bool, branch string, createBranch bool) (secretContext, error) {
+func currentSecretContext(root, command string, preview bool, branch string, createBranch bool) (secretContext, error) {
 	if preview && branch != "" {
-		return secretContext{}, codedNextError(
-			"secret_scope_conflict",
-			"--preview and --branch cannot be combined",
-			"choose one secret scope",
-		)
+		return secretContext{}, errcat.New(errcat.CodeSecretScopeConflict, errcat.Fields{
+			"command": secretScopeConflictCommand(command),
+		})
 	}
 	ctx, err := config.LoadAppContext(root, productionEnvName)
 	if err != nil {
@@ -1154,6 +1172,17 @@ func currentSecretContext(root, _ string, preview bool, branch string, createBra
 	return secret, nil
 }
 
+func secretScopeConflictCommand(command string) string {
+	switch command {
+	case "secret ls":
+		return "ship secret ls --preview"
+	case "secret rm":
+		return "ship secret rm KEY --preview"
+	default:
+		return "ship secret set KEY --preview"
+	}
+}
+
 func (s secretContext) surface() string {
 	if s.Kind == "Production" {
 		return "Production " + s.Branch
@@ -1167,15 +1196,15 @@ func (s secretContext) surface() string {
 func CmdSecretSet(root string, key string, preview bool, branch string) {
 	secret, err := currentSecretContext(root, "secret set", preview, branch, true)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer secret.Runner.Close()
 	if err := envKeyValid(key); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	value, err := secretValueFromStdin()
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 
 	// Pipe the value over the helper's stdin — never argv, never a
@@ -1183,6 +1212,9 @@ func CmdSecretSet(root string, key string, preview bool, branch string) {
 	// /etc/simple-vps/secrets/<app>/<env>/<key>.
 	stdout, stderr, code, err := secret.Runner.RunSSHWithStdin(secret.AppContext.Server, serverAppSecretSetCommand(secret.AppContext.AppName, secret.EnvName, key), value)
 	if err != nil || code != 0 {
+		if coded, ok := remoteCodedError(stdout, stderr); ok {
+			utils.DieError(coded, 1)
+		}
 		detail := strings.TrimSpace(stderr)
 		if detail == "" {
 			detail = strings.TrimSpace(stdout)
@@ -1201,7 +1233,7 @@ func CmdSecretSet(root string, key string, preview bool, branch string) {
 func CmdSecretList(root string, jsonFlag bool, preview bool, branch string) {
 	secret, err := currentSecretContext(root, "secret ls", preview, branch, false)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer secret.Runner.Close()
 
@@ -1222,11 +1254,11 @@ func CmdSecretList(root string, jsonFlag bool, preview bool, branch string) {
 func CmdSecretRm(root string, key string, preview bool, branch string) {
 	secret, err := currentSecretContext(root, "secret rm", preview, branch, false)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer secret.Runner.Close()
 	if err := envKeyValid(key); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 
 	out := runSSHChecked(secret.Runner, secret.AppContext.Server, serverAppSecretRmCommand(secret.AppContext.AppName, secret.EnvName, key), "secret rm failed")
@@ -1247,26 +1279,27 @@ func readSurface(read readContext) (string, string) {
 func CmdPreviewPin(root string, branch string, pinned bool) {
 	ctx, err := config.LoadAppContext(root, productionEnvName)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	if branch == ctx.ProductionBranch {
-		utils.Die(codedNextError(
-			"production_branch_not_preview",
-			fmt.Sprintf("branch %q maps to production", branch),
-			"choose a preview branch",
-		).Error(), 1)
+		command := "ship pin <preview-branch>"
+		if !pinned {
+			command = "ship unpin <preview-branch>"
+		}
+		utils.DieError(errcat.New(errcat.CodeProductionBranchNotPreview, errcat.Fields{
+			"branch":  fmt.Sprintf("%q", branch),
+			"command": command,
+		}), 1)
 	}
 	previewBranch := sanitizeBranchEnvName(branch)
 	if previewBranch == "" {
-		utils.Die(codedNextError(
-			"unmappable_branch_name",
-			fmt.Sprintf("branch %q does not produce a valid environment name", branch),
-			"rename the branch",
-		).Error(), 1)
+		utils.DieError(errcat.New(errcat.CodeUnmappableBranchName, errcat.Fields{
+			"branch": fmt.Sprintf("%q", branch),
+		}), 1)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer runner.Close()
 
@@ -1276,7 +1309,7 @@ func CmdPreviewPin(root string, branch string, pinned bool) {
 	}
 	out, err := runSSHDetail(runner, ctx.Server, command)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	_ = out
 	if pinned {
@@ -1291,27 +1324,30 @@ func CmdPreviewPin(root string, branch string, pinned bool) {
 // binary's surface narrow.
 func envKeyValid(key string) error {
 	if !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(key) {
-		return fmt.Errorf("invalid secret key %q: must match ^[A-Za-z_][A-Za-z0-9_]*$", key)
+		return errcat.New(errcat.CodeInvalidSecretKey, errcat.Fields{"key": fmt.Sprintf("%q", key)})
 	}
 	return nil
 }
 
 func CmdBoxDoctor(server string, jsonFlag bool) {
 	if server == "" {
-		utils.Die("box target is required", 1)
+		utils.DieError(errcat.New(errcat.CodeBoxTargetRequired, errcat.Fields{"command": "ship box doctor <ssh-target>"}), 2)
 	}
 	if !config.ValidateSshTarget(server) {
-		utils.Die("box target must be an SSH target like deploy@example.com", 1)
+		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "ship box doctor deploy@example.com"}), 2)
 	}
 
 	runner, err := NewCommandRunner()
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	defer runner.Close()
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverDoctorCommand(jsonFlag))
 	if err != nil || code != 0 {
+		if coded, ok := remoteCodedError(stdout, stderr); ok {
+			utils.DieError(coded, 1)
+		}
 		if jsonFlag && json.Valid([]byte(stdout)) {
 			fmt.Print(stdout)
 			os.Exit(1)
@@ -1364,7 +1400,7 @@ func CmdShip(root string, branchName string, tlsMode string, jsonFlag bool, rebu
 	progress := newShipProgress()
 	result, err := runShip(root, branchName, tlsMode, rebuild, includeDotenv, &progress)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	result.DurationMs = time.Since(start).Milliseconds()
 	writeShipResult(result, jsonFlag)
@@ -1374,7 +1410,7 @@ func writeShipResult(result ShipResult, jsonFlag bool) {
 	if jsonFlag {
 		buf, err := json.Marshal(result)
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		fmt.Println(string(buf))
 		return
@@ -1388,11 +1424,7 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, inclu
 		return ShipResult{}, err
 	}
 	if address.ProductionBranch && address.Dirty {
-		return ShipResult{}, codedNextError(
-			"dirty_worktree",
-			fmt.Sprintf("production branch %q has uncommitted changes", address.Branch),
-			"git commit",
-		)
+		return ShipResult{}, errcat.New(errcat.CodeDirtyWorktree, errcat.Fields{"branch": fmt.Sprintf("%q", address.Branch)})
 	}
 	baseEnv := address.EnvName
 	if address.PreviewBranch != "" {
@@ -1431,7 +1463,7 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, inclu
 	}
 	diags.printTo(os.Stderr)
 	if diags.hasErrors() {
-		return ShipResult{}, fmt.Errorf("deploy blocked by local checks")
+		return ShipResult{}, deployDiagnosticsError(diags)
 	}
 	routePlan, err := prepareDeployRoutes(plan.Context, envName, deployRouteOptions{
 		Preview: address.PreviewBranch != "",
@@ -1520,6 +1552,62 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, inclu
 		Release:   plan.Release,
 		Processes: processNames(plan.Context.Processes),
 	}, nil
+}
+
+func deployDiagnosticsError(diags diagnostics) error {
+	messages := diags.errorMessages()
+	if localDeployDiagnostic(messages) {
+		return errcat.New(errcat.CodeDeployBlockedLocalChecks, errcat.Fields{
+			"detail":  strings.Join(messages, "\n"),
+			"command": localDeployRemediation(messages),
+		})
+	}
+	return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
+		"details": manifestDetailsForError(messages),
+		"command": "fix ship.toml",
+	})
+}
+
+func localDeployRemediation(messages []string) string {
+	for _, message := range messages {
+		switch {
+		case strings.Contains(message, "git repository not found"):
+			return "git init && git add . && git commit -m \"initial ship app\""
+		case strings.Contains(message, "git repository has no commits"):
+			return "git add . && git commit -m \"initial ship app\""
+		case strings.Contains(message, "working tree is dirty"):
+			return "git add . && git commit -m \"<message>\""
+		case strings.Contains(message, "refusing to deploy dotenv file:"):
+			return "ship --include-dotenv"
+		case strings.HasPrefix(message, "hash static assets:"):
+			return "<build command> && ship"
+		}
+	}
+	return "fix local checks"
+}
+
+func localDeployDiagnostic(messages []string) bool {
+	for _, message := range messages {
+		switch {
+		case strings.HasPrefix(message, "git "),
+			strings.Contains(message, "working tree is dirty"),
+			strings.HasPrefix(message, "hash static assets:"),
+			strings.Contains(message, "refusing to deploy dotenv file:"):
+			return true
+		}
+	}
+	return false
+}
+
+func manifestDetailsForError(details []string) string {
+	if len(details) == 1 {
+		return details[0]
+	}
+	lines := []string{fmt.Sprintf("manifest has %d validation errors:", len(details))}
+	for _, detail := range details {
+		lines = append(lines, "  - "+detail)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func processNames(processes map[string]config.Process) []string {
@@ -1877,7 +1965,7 @@ func dotenvError(dotenvs []string) error {
 	dotenvs = uniqueStrings(dotenvs)
 	sort.Strings(dotenvs)
 	if len(dotenvs) > 0 {
-		return fmt.Errorf("refusing to deploy dotenv file: %s; use --include-dotenv to bypass", strings.Join(dotenvs, ", "))
+		return errcat.New(errcat.CodeDotenvRejected, errcat.Fields{"files": strings.Join(dotenvs, ", ")})
 	}
 	return nil
 }

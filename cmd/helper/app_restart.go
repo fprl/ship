@@ -32,7 +32,7 @@ type appRestartCmd struct {
 
 func (c appRestartCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	withAppEnvLock(c.App, c.Env, func() {
 		c.runLocked()
@@ -43,7 +43,7 @@ func (c appRestartCmd) Run() error {
 func (c appRestartCmd) runLocked() {
 	targets, err := resolveRestartTargets(c.App, c.Env, c.Process)
 	if err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 
 	results := make([]processStatus, 0, len(targets))
@@ -57,7 +57,7 @@ func (c appRestartCmd) runLocked() {
 		// `exited`.
 		post, err := podmanPSContainers(c.App, c.Env)
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		state := postRestartState(post, t.Container)
 		if state != "running" {

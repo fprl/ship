@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/fprl/simple-vps/internal/errcat"
 	"github.com/fprl/simple-vps/internal/secrets"
 )
 
@@ -46,7 +47,15 @@ func secretLookupScopes(app, env string) (secretScopeInfo, []string, error) {
 
 func secretMissingError(key string, info secretScopeInfo) error {
 	if info.Preview {
-		return fmt.Errorf("secret_missing: missing secret %s for Preview branch %q\nnext: ship secret set %s [--preview|--branch <name>]", key, info.Branch, key)
+		return errcat.New(errcat.CodeSecretMissing, errcat.Fields{
+			"secret":  key,
+			"scope":   fmt.Sprintf("Preview branch %q", info.Branch),
+			"command": fmt.Sprintf("ship secret set %s [--preview|--branch <name>]", key),
+		})
 	}
-	return fmt.Errorf("secret_missing: missing secret %s for Production\nnext: ship secret set %s", key, key)
+	return errcat.New(errcat.CodeSecretMissing, errcat.Fields{
+		"secret":  key,
+		"scope":   "Production",
+		"command": fmt.Sprintf("ship secret set %s", key),
+	})
 }

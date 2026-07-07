@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/fprl/simple-vps/internal/errcat"
 	"github.com/fprl/simple-vps/internal/host"
 	"github.com/fprl/simple-vps/internal/identity"
 	"github.com/fprl/simple-vps/internal/secrets"
@@ -37,13 +38,13 @@ type appPreflightIssue struct {
 
 func (c appPreflightCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.Die(err.Error(), 1)
+		utils.DieError(err, 1)
 	}
 	report := appPreflightReportFor(c.App, c.Env, c.Secrets)
 	if c.JSON {
 		buf, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
-			utils.Die(err.Error(), 1)
+			utils.DieError(err, 1)
 		}
 		fmt.Println(string(buf))
 	} else {
@@ -71,17 +72,17 @@ func appPreflightReportFor(app, env string, requiredSecrets []string) appPreflig
 }
 
 const (
-	appPreflightHostNotInstalled = "host_not_installed"
-	appPreflightHostInvalid      = "host_invalid"
-	appPreflightMissingTool      = "missing_tool"
-	appPreflightDeployTmpMissing = "deploy_tmp_missing"
-	appPreflightDeployTmpInvalid = "deploy_tmp_invalid"
-	appPreflightEnvMissing       = "env_missing"
-	appPreflightEnvInvalid       = "env_invalid"
-	appPreflightIngressInvalid   = "ingress_invalid"
-	appPreflightSecretMissing    = "secret_missing"
-	appPreflightSecretInvalid    = "secret_invalid"
-	appPreflightSecretReadError  = "secret_read_error"
+	appPreflightHostNotInstalled = string(errcat.CodeHostNotInstalled)
+	appPreflightHostInvalid      = string(errcat.CodeHostInvalid)
+	appPreflightMissingTool      = string(errcat.CodeMissingTool)
+	appPreflightDeployTmpMissing = string(errcat.CodeDeployTmpMissing)
+	appPreflightDeployTmpInvalid = string(errcat.CodeDeployTmpInvalid)
+	appPreflightEnvMissing       = string(errcat.CodeEnvMissing)
+	appPreflightEnvInvalid       = string(errcat.CodeEnvInvalid)
+	appPreflightIngressInvalid   = string(errcat.CodeIngressInvalid)
+	appPreflightSecretMissing    = string(errcat.CodeSecretMissing)
+	appPreflightSecretInvalid    = string(errcat.CodeSecretInvalid)
+	appPreflightSecretReadError  = string(errcat.CodeSecretReadError)
 )
 
 func appPreflightIssues(app, env string, requiredSecrets []string) []appPreflightIssue {
@@ -154,13 +155,20 @@ func appPreflightIssues(app, env string, requiredSecrets []string) []appPrefligh
 			addIssue(appPreflightSecretInvalid, err.Error())
 			continue
 		}
-		if _, err := resolveSecretValue(app, env, key); err != nil && strings.HasPrefix(err.Error(), "secret_missing:") {
-			addIssue(appPreflightSecretMissing, err.Error())
+		if _, err := resolveSecretValue(app, env, key); err != nil && errcat.Is(err, errcat.CodeSecretMissing) {
+			addIssue(appPreflightSecretMissing, preflightIssueMessage(err))
 		} else if err != nil {
 			addIssue(appPreflightSecretReadError, fmt.Sprintf("read secret %s: %v", key, err))
 		}
 	}
 	return issues
+}
+
+func preflightIssueMessage(err error) string {
+	if coded, ok := errcat.As(err); ok {
+		return fmt.Sprintf("%s; run `%s`", coded.Cause(), coded.Remediation())
+	}
+	return err.Error()
 }
 
 func validateEnvIdentityFile(app, env string) error {
