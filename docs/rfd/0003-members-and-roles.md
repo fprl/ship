@@ -4,6 +4,12 @@
 and §7 attribution. Prerequisite for RFD-0002 (resident). Does not modify
 ship v1.
 
+> Update July 7, 2026: §7 attribution is built (the journal records SSH
+> key comment + git author on every mutation that writes one). This RFD
+> is the first promotion candidate after v1 ships — and becomes urgent
+> the day anyone wires `notify` to an agent runner, which must not
+> happen on a full-access key.
+
 ## Model
 
 A **member** is a name + SSH public key + role. Members is the surface;

@@ -4,6 +4,13 @@
 `notify`, doctor timer) and requires RFD-0003 (members). Does not modify
 ship v1.
 
+> Update July 7, 2026: the §7 substrate is now built — journal, `why`,
+> `notify` (four events with journal-grade payloads), doctor delta,
+> `ship docs`. Still missing before a resident can exist: the
+> `ship state --json` bundle below, and the agent role from RFD-0003.
+> Do not point `notify` at an autonomous runner holding a full-access
+> deploy key — that is the exact hole members closes.
+
 ## Naming
 
 - **doctor** = sensors: deterministic checks with static remediations
