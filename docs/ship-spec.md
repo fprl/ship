@@ -1,8 +1,8 @@
 # ship — implementation specification (v1)
 
-**Status: authoritative.** Where this document conflicts with `SPEC.md`
-(the current public contract), this document wins; `SPEC.md` describes the
-engine you are adapting, not the target.
+**Status: authoritative.** This is the only spec. The pre-ship contract
+(`SPEC.md`) was deleted after the adaptation completed; engine-behavior
+questions defer to the code and `docs/adr/`.
 
 ## North star
 
@@ -59,7 +59,7 @@ provisioning APIs, multi-box, dashboards, schedulers, TCP ingress,
 forge/webhook integrations, mounted-cargo fast path (deferred; current
 image-build deploy speed is acceptable).
 
-Read before starting: `SPEC.md`, `internal/config` (manifest schema),
+Read before starting: `internal/config` (manifest schema),
 `cmd/client` (CLI + deploy orchestration), `cmd/helper` (privileged on-host
 API), `cmd/hostinstall`, `tests/fake-vps`. The existing helper API and
 sudoers model stay as-is unless a section below says otherwise.
@@ -97,6 +97,10 @@ LOG_LEVEL    = "info"
 DATABASE_URL = "@secret"            # NEW shorthand: secret name = var name
 SMTP_URL     = "@secret:MAIL_URL"   # existing explicit form kept
 
+[env.preview]                       # optional; overlays [env] in previews only
+LOG_LEVEL    = "debug"
+POSTHOG_KEY  = "phc_test456"
+
 release = "npx drizzle-kit migrate" # top-level only; the [deploy] section is gone
 probe   = "/healthz"                # health check for the routed process
 notify  = "https://ntfy.sh/..."     # NEW: webhook, §7
@@ -108,9 +112,17 @@ Rules:
   `"@secret"` form resolves to a secret named after the variable.
 - `production_branch` (optional) names the branch that deploys to prod;
   default `main`, else `master`.
-- Per-env var sections (`[env.<name>.vars]`) are **removed** from the new
-  format: config rides the branch. The systematic per-environment values
-  are injected instead (§6).
+- `[env.preview]` (optional) overlays `[env]` for **preview envs only**:
+  keys merge, the preview value wins, production ignores the table
+  entirely. Values follow the same rules as `[env]`, including `@secret`
+  forms (resolved through the preview scope chain of §6). This is the
+  committed home for values that differ by env *class* and are neither
+  derivable from `SHIP_ENV` nor secret (e.g. a test analytics key). The
+  key `preview` is reserved under `[env]`; no other `[env.<name>]`
+  section exists.
+- Named per-env var sections (`[env.<name>.vars]`) are **removed**:
+  per-branch config rides the branch. The systematic per-environment
+  values are injected instead (§6).
 - `preview = false` on a process excludes it from preview environments.
 - Per-process `resources = { memory = "512m", cpus = 0.5 }` (existing
   engine knob) is kept.
@@ -174,7 +186,11 @@ the env identity file (extend the existing identity storage).
 
 ```
 ship                      deploy current branch; stdout = URL (see §5)
+                          flags: --tls internal (§8), --rebuild,
+                          --include-dotenv, --branch (detached HEAD only,
+                          §3), --json (§5)
 ship init                 scaffold ship.toml + Dockerfile (stack detection)
+ship help [verb] [--json] per-verb usage from the ship docs source (§9)
 ship status [--json]      all live envs for this app: branch, url, release,
                           who shipped, health, age, expires/pinned, dirty hint
 ship logs [process] [--follow] [--tail N]   current branch's env
