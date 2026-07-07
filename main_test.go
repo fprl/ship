@@ -72,10 +72,14 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"secret", "rm", "DATABASE_URL", "--branch", "feat/x"},
 		{"ssh"},
 		{"box", "init", "deploy@example.com"},
+		{"box", "add-key", "alice"},
+		{"box", "add-key", "alice", "deploy@example.com"},
 		{"box", "doctor", "deploy@example.com"},
 		{"box", "doctor", "deploy@example.com", "--json"},
 		{"box", "ls", "deploy@example.com"},
 		{"box", "ls", "deploy@example.com", "--json"},
+		{"box", "rm", "api", "--confirm", "api"},
+		{"box", "rm", "api", "deploy@example.com", "--confirm", "api"},
 		{"docs"},
 		{"help"},
 		{"help", "status"},
@@ -139,7 +143,7 @@ func TestBoxWithoutSubcommandShowsSubcommandHelp(t *testing.T) {
 	if strings.Contains(text, "--server") {
 		t.Fatalf("box without subcommand should not mention removed --server: %v", err)
 	}
-	for _, want := range []string{"init", "doctor", "ls"} {
+	for _, want := range []string{"init", "add-key", "doctor", "ls", "rm"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("box parse error should mention %q subcommand, got: %v", want, err)
 		}

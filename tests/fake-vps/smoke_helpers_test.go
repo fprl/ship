@@ -3,6 +3,7 @@ package fakevps
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -160,6 +161,51 @@ func (e *smokeEnv) sshBin() string {
 		return "ssh"
 	}
 	return filepath.Join(e.pathPrefix, "ssh")
+}
+
+func (e *smokeEnv) configureSSHWithKey(t *testing.T, keyPath string) string {
+	t.Helper()
+	portOutput := strings.TrimSpace(e.mustRun(t, e.repoRoot, nil, "docker", "port", e.container, "22/tcp"))
+	colon := strings.LastIndex(portOutput, ":")
+	if colon == -1 || colon == len(portOutput)-1 {
+		t.Fatalf("unexpected docker port output: %q", portOutput)
+	}
+	port := portOutput[colon+1:]
+
+	homeSSH := filepath.Join(e.tmp, "teammate-home", ".ssh")
+	if err := os.MkdirAll(homeSSH, 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := fmt.Sprintf(`Host fake-vps
+  HostName 127.0.0.1
+  Port %s
+  User deploy
+  IdentityFile %s
+  IdentitiesOnly yes
+  BatchMode yes
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+  LogLevel ERROR
+`, port, keyPath)
+	if err := os.WriteFile(filepath.Join(homeSSH, "config"), []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := filepath.Join(e.tmp, "teammate-bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"ssh", "scp"} {
+		hostBin, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrapper := fmt.Sprintf("#!/usr/bin/env bash\nexec %q -F %q \"$@\"\n", hostBin, filepath.Join(homeSSH, "config"))
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(wrapper), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return binDir
 }
 
 func (e *smokeEnv) mustRun(t *testing.T, dir string, extraEnv []string, name string, args ...string) string {

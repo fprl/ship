@@ -41,6 +41,9 @@ const (
 	CodeBoxTargetRequired                 Code = "box_target_required"
 	CodeInvalidBoxTarget                  Code = "invalid_box_target"
 	CodeRmConfirmationRequired            Code = "rm_confirmation_required"
+	CodeBoxRmConfirmationRequired         Code = "box_rm_confirmation_required"
+	CodeGitHubKeysUnavailable             Code = "github_keys_unavailable"
+	CodeSSHPublicKeyInvalid               Code = "ssh_public_key_invalid"
 	CodeDotenvRejected                    Code = "dotenv_rejected"
 	CodeHostNotInstalled                  Code = "host_not_installed"
 	CodeHostInvalid                       Code = "host_invalid"
@@ -247,6 +250,24 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "Production rm confirmation failed",
 		CauseTemplate:       "Production rm requires --confirm {app}",
 		RemediationTemplate: "ship rm {branch} --confirm {app}",
+	},
+	CodeBoxRmConfirmationRequired: {
+		Code:                CodeBoxRmConfirmationRequired,
+		MessageTemplate:     "box rm confirmation failed",
+		CauseTemplate:       "box rm requires --confirm {app}",
+		RemediationTemplate: "ship box rm {app} --confirm {app}",
+	},
+	CodeGitHubKeysUnavailable: {
+		Code:                CodeGitHubKeysUnavailable,
+		MessageTemplate:     "GitHub SSH key lookup failed",
+		CauseTemplate:       "no public SSH keys found for GitHub user {user}",
+		RemediationTemplate: "ship box add-key <path-to-public-key>",
+	},
+	CodeSSHPublicKeyInvalid: {
+		Code:                CodeSSHPublicKeyInvalid,
+		MessageTemplate:     "SSH public key is invalid",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "ship box add-key <github-user|key|path>",
 	},
 	CodeDotenvRejected: {
 		Code:                CodeDotenvRejected,

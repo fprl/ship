@@ -34,7 +34,7 @@ RUN chmod 0755 /usr/local/bin/ship /usr/local/bin/systemctl /usr/local/bin/caddy
   && mkdir -p /etc/ship/providers \
   && printf '%s\n' '{"routes":{},"version":1}' > /etc/ship/providers/cloudflare.json \
   && printf '%s\n' 'operator ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/operator \
-  && printf '%s\n' 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *' > /etc/sudoers.d/ship \
+  && printf '%s\n' 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key add *' > /etc/sudoers.d/ship \
   && chmod 0600 /etc/ship/providers/cloudflare.json \
   && chmod 0440 /etc/sudoers.d/operator /etc/sudoers.d/ship
 

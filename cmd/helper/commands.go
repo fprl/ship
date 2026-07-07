@@ -17,6 +17,7 @@ type ServerCmd struct {
 	Cloudflare cloudflareCmd `cmd:"" help:"Manage Cloudflare Tunnel ingress."`
 	App        appCmd        `cmd:"" help:"Manage app users, files, and processes."`
 	Env        envCmd        `cmd:"" help:"Manage host environments."`
+	Key        keyCmd        `cmd:"" help:"Manage deploy SSH keys."`
 }
 
 func (ServerCmd) BeforeApply() error {

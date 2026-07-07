@@ -355,8 +355,25 @@ func (c secretRmCmd) Run() error {
 
 type boxCmd struct {
 	Init   boxInitCmd   `cmd:"" help:"Install or converge a box."`
+	AddKey boxAddKeyCmd `cmd:"add-key" help:"Authorize an SSH public key for deploy access."`
 	Doctor boxDoctorCmd `cmd:"" help:"Run box diagnostics."`
 	Ls     boxLsCmd     `cmd:"ls" help:"List app environments visible on a box."`
+	Rm     boxRmCmd     `cmd:"rm" help:"Destroy an app and all its environments on a box."`
+}
+
+type boxAddKeyCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Source string `arg:"" help:"GitHub username, SSH public key string, or path to a .pub file."`
+	Target string `arg:"" optional:"" help:"SSH target. Defaults to ship.toml box when run in an app dir."`
+}
+
+func (c boxAddKeyCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box add-key <github-user|key|path> <ssh-target>")
+	if err != nil {
+		return err
+	}
+	client.CmdBoxAddKey(target, c.Source)
+	return nil
 }
 
 type boxLsCmd struct {
@@ -366,7 +383,7 @@ type boxLsCmd struct {
 }
 
 func (c boxLsCmd) Run() error {
-	target, err := boxTarget(c.Config, c.Target)
+	target, err := boxTargetFor(c.Config, c.Target, "ship box ls <ssh-target>")
 	if err != nil {
 		return err
 	}
@@ -381,11 +398,27 @@ type boxDoctorCmd struct {
 }
 
 func (c boxDoctorCmd) Run() error {
-	target, err := boxTarget(c.Config, c.Target)
+	target, err := boxTargetFor(c.Config, c.Target, "ship box doctor <ssh-target>")
 	if err != nil {
 		return err
 	}
 	client.CmdBoxDoctor(target, c.JSON)
+	return nil
+}
+
+type boxRmCmd struct {
+	Config  string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	App     string `arg:"" help:"App name to destroy."`
+	Target  string `arg:"" optional:"" help:"SSH target. Defaults to ship.toml box when run in an app dir."`
+	Confirm string `name:"confirm" help:"Required app-name confirmation."`
+}
+
+func (c boxRmCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box rm <app> <ssh-target> --confirm <app>")
+	if err != nil {
+		return err
+	}
+	client.CmdBoxRm(target, c.App, c.Confirm)
 	return nil
 }
 
@@ -500,12 +533,16 @@ func cliArgs(args []string) []string {
 }
 
 func boxTarget(configPath, target string) (string, error) {
+	return boxTargetFor(configPath, target, "ship box ls <ssh-target>")
+}
+
+func boxTargetFor(configPath, target, command string) (string, error) {
 	if target != "" {
 		return target, nil
 	}
 	root, err := projectAppRoot(configPath)
 	if err != nil {
-		return "", errcat.New(errcat.CodeBoxTargetRequired, errcat.Fields{"command": "ship box ls <ssh-target>"})
+		return "", errcat.New(errcat.CodeBoxTargetRequired, errcat.Fields{"command": command})
 	}
 	return client.BoxTarget(root)
 }

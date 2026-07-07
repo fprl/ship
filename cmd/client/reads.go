@@ -13,16 +13,28 @@ import (
 )
 
 type appListJSON struct {
-	Apps []appListEnvJSON `json:"apps"`
+	Apps []fleetAppJSON `json:"apps"`
 }
 
-type appListEnvJSON struct {
-	App       string              `json:"app"`
-	Env       string              `json:"env"`
-	Preview   *previewStatusJSON  `json:"preview,omitempty"`
-	ShippedBy *deployIdentityJSON `json:"shipped_by,omitempty"`
-	Processes []processJSON       `json:"processes"`
-	Static    *staticJSON         `json:"static,omitempty"`
+type fleetAppJSON struct {
+	App  string         `json:"app"`
+	Envs []fleetEnvJSON `json:"envs"`
+}
+
+type fleetEnvJSON struct {
+	Class          string              `json:"class"`
+	Branch         string              `json:"branch"`
+	URL            string              `json:"url"`
+	Env            string              `json:"env"`
+	CurrentRelease string              `json:"current_release"`
+	Health         string              `json:"health"`
+	AgeSeconds     int64               `json:"age_seconds"`
+	ExpiresAt      string              `json:"expires_at"`
+	Pinned         bool                `json:"pinned"`
+	Dirty          bool                `json:"dirty"`
+	ShippedBy      *deployIdentityJSON `json:"shipped_by,omitempty"`
+	Processes      []processJSON       `json:"processes"`
+	Static         *staticJSON         `json:"static,omitempty"`
 }
 
 type previewStatusJSON struct {
@@ -243,11 +255,13 @@ func statusFromAppList(ctx *config.AppContext, raw string) (statusPayload, error
 		return statusPayload{}, operationError(fmt.Sprintf("status failed: invalid app list JSON: %v", err), "ship status")
 	}
 	payload := statusPayload{App: ctx.AppName}
-	for _, item := range list.Apps {
-		if item.App != ctx.AppName {
+	for _, app := range list.Apps {
+		if app.App != ctx.AppName {
 			continue
 		}
-		payload.Envs = append(payload.Envs, statusEnvFromAppListItem(ctx, item))
+		for _, env := range app.Envs {
+			payload.Envs = append(payload.Envs, statusEnvFromFleetItem(ctx, env))
+		}
 	}
 	sort.Slice(payload.Envs, func(i, j int) bool {
 		if payload.Envs[i].Kind != payload.Envs[j].Kind {
@@ -258,62 +272,33 @@ func statusFromAppList(ctx *config.AppContext, raw string) (statusPayload, error
 	return payload, nil
 }
 
-func statusEnvFromAppListItem(ctx *config.AppContext, item appListEnvJSON) statusEnvJSON {
+func statusEnvFromFleetItem(ctx *config.AppContext, item fleetEnvJSON) statusEnvJSON {
 	kind := "Preview"
-	branch := item.Env
-	if item.Env == productionEnvName {
+	if item.Class == "production" {
 		kind = "Production"
+	}
+	branch := item.Branch
+	if branch == "" && kind == "Production" {
 		branch = ctx.ProductionBranch
 	}
-	expiresAt := ""
-	pinned := false
-	if item.Preview != nil {
-		branch = item.Preview.Branch
-		expiresAt = item.Preview.ExpiresAt
-		pinned = item.Preview.Pinned
+	url := item.URL
+	if url == "" {
+		url = deploymentURL(ctx, item.Env)
 	}
-	release, dirty, createdAt := appListActiveRelease(item)
 	return statusEnvJSON{
 		Kind:       kind,
 		Branch:     branch,
-		URL:        deploymentURL(ctx, item.Env),
+		URL:        url,
 		Env:        item.Env,
-		Release:    release,
-		Health:     appListHealth(item),
-		AgeSeconds: ageSeconds(createdAt),
-		ExpiresAt:  expiresAt,
-		Pinned:     pinned,
-		Dirty:      dirty,
+		Release:    item.CurrentRelease,
+		Health:     item.Health,
+		AgeSeconds: item.AgeSeconds,
+		ExpiresAt:  item.ExpiresAt,
+		Pinned:     item.Pinned,
+		Dirty:      item.Dirty,
 		ShippedBy:  item.ShippedBy,
 		Processes:  item.Processes,
 	}
-}
-
-func appListActiveRelease(item appListEnvJSON) (string, bool, string) {
-	if item.Static != nil && item.Static.Release != "" {
-		return item.Static.Release, item.Static.Dirty, item.Static.CreatedAt
-	}
-	for _, proc := range item.Processes {
-		if proc.Release != "" {
-			return proc.Release, proc.Dirty, proc.CreatedAt
-		}
-	}
-	return "", false, ""
-}
-
-func appListHealth(item appListEnvJSON) string {
-	if len(item.Processes) == 0 {
-		if item.Static != nil {
-			return "healthy"
-		}
-		return "stopped"
-	}
-	for _, proc := range item.Processes {
-		if proc.State != "running" {
-			return "degraded"
-		}
-	}
-	return "healthy"
 }
 
 func ageSeconds(createdAt string) int64 {

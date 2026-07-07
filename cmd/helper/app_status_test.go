@@ -3,6 +3,7 @@ package helper
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fprl/ship/internal/identity"
 )
@@ -140,28 +141,78 @@ func TestRenderStatusTextWithProcesses(t *testing.T) {
 }
 
 func TestRenderAppListTextEmpty(t *testing.T) {
-	out := renderAppListText(nil)
+	out := renderAppListText(appListPayload{})
 	if strings.TrimSpace(out) != "no apps found" {
 		t.Fatalf("unexpected empty app list text:\n%s", out)
 	}
 }
 
 func TestRenderAppListTextWithApps(t *testing.T) {
-	apps := []appEnvStatus{
+	payload := appListPayload{Apps: []fleetAppStatus{
 		{
 			App: "api",
-			Env: "production",
-			Processes: []processStatus{
-				{Process: "web", State: "running", Status: "Up 4 minutes", Release: "abc1234"},
+			Envs: []fleetEnvStatus{
+				{
+					Class:          "production",
+					Branch:         "main",
+					URL:            "https://api.example.com",
+					CurrentRelease: "abc1234",
+					Health:         "healthy",
+					Processes:      []processStatus{{Process: "web", State: "running", Status: "Up 4 minutes", Release: "abc1234"}},
+				},
 			},
 		},
+	}}
+	out := renderAppListText(payload)
+	for _, want := range []string{"APP", "api", "Production", "main", "https://api.example.com", "abc1234", "healthy"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("app list table missing %q:\n%s", want, out)
+		}
 	}
-	out := renderAppListText(apps)
-	if !strings.Contains(out, "api (production)") {
-		t.Fatalf("missing app header:\n%s", out)
+}
+
+func TestAppFleetFromStatusesSummarizesProductionAndPreview(t *testing.T) {
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	expires := now.Add(2 * time.Hour)
+	payload := appFleetFromStatuses([]appEnvStatus{
+		{
+			App: "api",
+			Env: productionEnvName,
+			ShippedBy: &deployIdentity{
+				SSHKeyComment: "fake-vps-smoke",
+				GitAuthor:     "Smoke <smoke@example.com>",
+			},
+			Processes: []processStatus{
+				{Process: "web", State: "running", Release: "abc1234", CreatedAt: now.Add(-time.Minute).Format(time.RFC3339Nano)},
+			},
+		},
+		{
+			App: "api",
+			Env: "feat-x-a1b2",
+			Preview: &identity.PreviewIdentity{
+				Branch:          "feat/x",
+				SanitizedBranch: "feat-x",
+				Env:             "feat-x-a1b2",
+				Suffix:          "a1b2",
+				LastShipAt:      now.Add(-time.Minute),
+				ExpiresAt:       &expires,
+				Pinned:          false,
+			},
+			Processes: []processStatus{
+				{Process: "web", State: "exited", Release: "def5678", CreatedAt: now.Add(-2 * time.Minute).Format(time.RFC3339Nano)},
+			},
+		},
+	}, now)
+	if len(payload.Apps) != 1 || len(payload.Apps[0].Envs) != 2 {
+		t.Fatalf("unexpected fleet payload: %+v", payload)
 	}
-	if !strings.Contains(out, "web") || !strings.Contains(out, "running (Up 4 minutes)") || !strings.Contains(out, "release=abc1234") {
-		t.Fatalf("missing process row:\n%s", out)
+	prod := payload.Apps[0].Envs[0]
+	if prod.Class != "production" || prod.Branch != "main" || prod.Env != productionEnvName || prod.CurrentRelease != "abc1234" || prod.Health != "healthy" || prod.AgeSeconds != 60 || prod.ShippedBy == nil {
+		t.Fatalf("bad production summary: %+v", prod)
+	}
+	preview := payload.Apps[0].Envs[1]
+	if preview.Class != "preview" || preview.Branch != "feat/x" || preview.Env != "feat-x-a1b2" || preview.CurrentRelease != "def5678" || preview.Health != "degraded" || preview.AgeSeconds != 120 || preview.ExpiresAt == "" || preview.Pinned {
+		t.Fatalf("bad preview summary: %+v", preview)
 	}
 }
 

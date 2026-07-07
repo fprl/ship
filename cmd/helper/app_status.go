@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/utils"
@@ -74,16 +75,16 @@ func (c appListCmd) Run() error {
 	if err := attachAppListRuntimeMetadata(apps); err != nil {
 		utils.DieError(err, 1)
 	}
+	fleet := appFleetFromStatuses(apps, time.Now().UTC())
 	if c.JSON {
-		payload := appListPayload{Apps: apps}
-		buf, err := json.MarshalIndent(payload, "", "  ")
+		buf, err := json.MarshalIndent(fleet, "", "  ")
 		if err != nil {
 			utils.DieError(err, 1)
 		}
 		fmt.Println(string(buf))
 		return nil
 	}
-	fmt.Print(renderAppListText(apps))
+	fmt.Print(renderAppListText(fleet))
 	return nil
 }
 
@@ -136,7 +137,28 @@ type statusPayload struct {
 }
 
 type appListPayload struct {
-	Apps []appEnvStatus `json:"apps"`
+	Apps []fleetAppStatus `json:"apps"`
+}
+
+type fleetAppStatus struct {
+	App  string           `json:"app"`
+	Envs []fleetEnvStatus `json:"envs"`
+}
+
+type fleetEnvStatus struct {
+	Class          string          `json:"class"`
+	Branch         string          `json:"branch"`
+	URL            string          `json:"url"`
+	Env            string          `json:"env"`
+	CurrentRelease string          `json:"current_release"`
+	Health         string          `json:"health"`
+	AgeSeconds     int64           `json:"age_seconds"`
+	ExpiresAt      string          `json:"expires_at"`
+	Pinned         bool            `json:"pinned"`
+	Dirty          bool            `json:"dirty"`
+	ShippedBy      *deployIdentity `json:"shipped_by,omitempty"`
+	Processes      []processStatus `json:"processes"`
+	Static         *staticStatus   `json:"static,omitempty"`
 }
 
 type appEnvStatus struct {
@@ -365,49 +387,167 @@ func renderStatusText(app, env string, processes []processStatus, envKnown bool,
 	return b.String()
 }
 
-func renderAppListText(apps []appEnvStatus) string {
-	if len(apps) == 0 {
+func renderAppListText(payload appListPayload) string {
+	if len(payload.Apps) == 0 {
 		return "no apps found\n"
 	}
 	var b strings.Builder
-	for _, app := range apps {
-		fmt.Fprintf(&b, "%s (%s)\n", app.App, app.Env)
-		if len(app.Processes) == 0 {
-			if app.Static == nil {
-				b.WriteString("  no processes\n")
-				continue
+	fmt.Fprintf(&b, "%-16s %-10s %-24s %-36s %-18s %-9s %-8s %-20s %s\n", "APP", "CLASS", "BRANCH", "URL", "RELEASE", "HEALTH", "AGE", "EXPIRES", "SHIPPED BY")
+	for _, app := range payload.Apps {
+		for _, env := range app.Envs {
+			class := "Production"
+			if env.Class == "preview" {
+				class = "Preview"
 			}
-		}
-		if app.Static != nil {
-			staticRelease := app.Static.Release
-			if app.Static.Dirty {
-				staticRelease += " (dirty)"
-			}
-			routes := "-"
-			if len(app.Static.Routes) > 0 {
-				routes = strings.Join(app.Static.Routes, ",")
-			}
-			fmt.Fprintf(&b, "  %-12s active  release=%s routes=%s\n", "static", staticRelease, routes)
-		}
-		if app.ShippedBy != nil {
-			fmt.Fprintf(&b, "  shipped by %s (ssh key: %s)\n", app.ShippedBy.GitAuthor, app.ShippedBy.SSHKeyComment)
-		}
-		for _, s := range app.Processes {
-			release := s.Release
+			release := env.CurrentRelease
 			if release == "" {
-				release = "?"
+				release = "-"
 			}
-			state := s.State
-			if s.Status != "" {
-				state = s.State + " (" + s.Status + ")"
-			}
-			if s.Dirty {
+			if env.Dirty {
 				release += " (dirty)"
 			}
-			fmt.Fprintf(&b, "  %-12s %s  release=%s\n", s.Process, state, release)
+			expires := "-"
+			if env.Class == "preview" {
+				if env.Pinned {
+					expires = "pinned"
+				} else if env.ExpiresAt != "" {
+					expires = env.ExpiresAt
+				}
+			}
+			shippedBy := "-"
+			if env.ShippedBy != nil {
+				shippedBy = fmt.Sprintf("%s (%s)", env.ShippedBy.GitAuthor, env.ShippedBy.SSHKeyComment)
+			}
+			fmt.Fprintf(&b, "%-16s %-10s %-24s %-36s %-18s %-9s %-8s %-20s %s\n",
+				app.App, class, env.Branch, dashIfEmptyText(env.URL), release, env.Health, renderAge(env.AgeSeconds), expires, shippedBy)
 		}
 	}
 	return b.String()
+}
+
+func dashIfEmptyText(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
+}
+
+func appFleetFromStatuses(statuses []appEnvStatus, now time.Time) appListPayload {
+	grouped := map[string][]fleetEnvStatus{}
+	for _, item := range statuses {
+		env := fleetEnvFromStatus(item, now)
+		grouped[item.App] = append(grouped[item.App], env)
+	}
+	apps := make([]fleetAppStatus, 0, len(grouped))
+	for app, envs := range grouped {
+		sort.Slice(envs, func(i, j int) bool {
+			if envs[i].Class != envs[j].Class {
+				return envs[i].Class == "production"
+			}
+			return envs[i].Branch < envs[j].Branch
+		})
+		apps = append(apps, fleetAppStatus{App: app, Envs: envs})
+	}
+	sort.Slice(apps, func(i, j int) bool { return apps[i].App < apps[j].App })
+	return appListPayload{Apps: apps}
+}
+
+func fleetEnvFromStatus(item appEnvStatus, now time.Time) fleetEnvStatus {
+	class := "production"
+	branch := "main"
+	expiresAt := ""
+	pinned := false
+	if item.Preview != nil {
+		class = "preview"
+		branch = item.Preview.Branch
+		pinned = item.Preview.Pinned
+		if item.Preview.ExpiresAt != nil {
+			expiresAt = item.Preview.ExpiresAt.Format(time.RFC3339Nano)
+		}
+	} else if item.Env != productionEnvName {
+		class = "preview"
+		branch = item.Env
+	}
+	url := ""
+	if ctx, cleanup, err := loadAppliedAppContext(item.App, item.Env); err == nil {
+		defer cleanup()
+		url = execDeploymentURL(ctx)
+		if item.Preview == nil && item.Env == productionEnvName {
+			branch = ctx.ProductionBranch
+		}
+	}
+	release := activeStatusRelease(item.Processes, item.Static)
+	currentRelease := ""
+	dirty := false
+	createdAt := ""
+	if release != nil {
+		currentRelease = release.Release
+		if release.Mixed {
+			currentRelease = "mixed"
+		}
+		dirty = release.Dirty
+		createdAt = release.CreatedAt
+	}
+	return fleetEnvStatus{
+		Class:          class,
+		Branch:         branch,
+		URL:            url,
+		Env:            item.Env,
+		CurrentRelease: currentRelease,
+		Health:         fleetHealth(item),
+		AgeSeconds:     fleetAgeSeconds(createdAt, now),
+		ExpiresAt:      expiresAt,
+		Pinned:         pinned,
+		Dirty:          dirty,
+		ShippedBy:      item.ShippedBy,
+		Processes:      item.Processes,
+		Static:         item.Static,
+	}
+}
+
+func fleetHealth(item appEnvStatus) string {
+	if len(item.Processes) == 0 {
+		if item.Static != nil {
+			return "healthy"
+		}
+		return "stopped"
+	}
+	for _, proc := range item.Processes {
+		if proc.State != "running" {
+			return "degraded"
+		}
+	}
+	return "healthy"
+}
+
+func fleetAgeSeconds(createdAt string, now time.Time) int64 {
+	if createdAt == "" {
+		return 0
+	}
+	t, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return 0
+	}
+	age := now.Sub(t)
+	if age < 0 {
+		return 0
+	}
+	return int64(age.Seconds())
+}
+
+func renderAge(seconds int64) string {
+	switch {
+	case seconds <= 0:
+		return "-"
+	case seconds < 60:
+		return fmt.Sprintf("%ds", seconds)
+	case seconds < 3600:
+		return fmt.Sprintf("%dm", seconds/60)
+	case seconds < 86400:
+		return fmt.Sprintf("%dh", seconds/3600)
+	default:
+		return fmt.Sprintf("%dd", seconds/86400)
+	}
 }
 
 func attachAppListRuntimeMetadata(apps []appEnvStatus) error {

@@ -528,6 +528,18 @@ var verbs = []Verb{
 		Errors:    []string{"invalid_box_target", "operation_failed"},
 	},
 	{
+		Verb:    "box add-key",
+		Purpose: "Authorize SSH public key access for the box deploy user.",
+		Usage:   "ship box add-key <github-user|key|path> [ssh-target]",
+		Flags: []Flag{
+			{Name: "github-user|key|path", Purpose: "A GitHub username, literal SSH public key, or path to a .pub file."},
+			{Name: "ssh-target", Purpose: "SSH target. Defaults to ship.toml box when run in an app directory."},
+		},
+		ExitCodes: normalExit,
+		Errors:    []string{"box_target_required", "invalid_box_target", "github_keys_unavailable", "ssh_public_key_invalid", "operation_failed"},
+		Notes:     []string{"Bare GitHub usernames fetch https://github.com/<user>.keys. Existing keys are deduplicated by key material."},
+	},
+	{
 		Verb:    "box doctor",
 		Purpose: "Run box diagnostics.",
 		Usage:   "ship box doctor [ssh-target] [--json]",
@@ -547,13 +559,25 @@ var verbs = []Verb{
 		Usage:   "ship box ls [ssh-target] [--json]",
 		Flags: []Flag{
 			{Name: "ssh-target", Purpose: "SSH target. Defaults to ship.toml box when run in an app directory."},
-			{Name: "--json", Purpose: "Emit the host app list JSON."},
+			{Name: "--json", Purpose: "Emit the fleet view JSON."},
 		},
 		JSONSchema: schema(
-			`{"apps":[{"app":"api","env":"prod","preview":{"branch":"feat/x","sanitized_branch":"feat-x","env":"feat-x-a1b2","suffix":"a1b2","last_ship_at":"...","expires_at":"...","pinned":false},"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running"}],"static":{"release":"abc123","routes":["example.com"]}}]}`,
+			`{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"prod","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "operation_failed"},
+	},
+	{
+		Verb:    "box rm",
+		Purpose: "Destroy an app and all of its environments on a box.",
+		Usage:   "ship box rm <app> [ssh-target] --confirm <app>",
+		Flags: []Flag{
+			{Name: "app", Purpose: "App name to destroy."},
+			{Name: "ssh-target", Purpose: "SSH target. Defaults to ship.toml box when run in an app directory."},
+			{Name: "--confirm", Value: "<app>", Purpose: "Required app-name confirmation."},
+		},
+		ExitCodes: normalExit,
+		Errors:    []string{"box_rm_confirmation_required", "box_target_required", "invalid_box_target", "operation_failed"},
 	},
 	{
 		Verb:      "docs",

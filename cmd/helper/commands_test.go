@@ -33,6 +33,7 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"cloudflare", "setup-tunnel", "--name", "ship", "--account-id", "account-test", "--token-file", "/tmp/token"},
 		{"app", "setup-env", "api", "production"},
 		{"app", "preflight", "--secret", "DATABASE_URL", "--json", "api", "production"},
+		{"app", "destroy", "api"},
 		{"app", "destroy-env", "api", "production"},
 		{"app", "destroy-env", "--purge", "api", "production"},
 		{"app", "apply", "--tarball", "/tmp/ship-deploy/x.tar", "--manifest", "/tmp/ship-deploy/x.toml", "--sha", "deadbeef", "--base-commit", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "--created-at", "2026-05-30T14:30:12Z", "api", "production"},
@@ -61,6 +62,7 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "backup", "restore", "--from", "backup-id", "api", "production"},
 		{"app", "backup", "restore", "--from", "backup-id", "--dry-run", "api", "production"},
 		{"env", "reap"},
+		{"key", "add", "--comment", "alice"},
 	}
 
 	for _, tt := range tests {

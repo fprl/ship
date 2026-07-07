@@ -199,6 +199,14 @@ Secret scoping:
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `invalid_box_target`, `operation_failed`
 
+### `box add-key`
+- Purpose: Authorize SSH public key access for the box deploy user.
+- Usage: `ship box add-key <github-user|key|path> [ssh-target]`
+- Arguments and flags: `github-user|key|path`: A GitHub username, literal SSH public key, or path to a .pub file; `ssh-target`: SSH target. Defaults to ship.toml box when run in an app directory.
+- Notes: Bare GitHub usernames fetch https://github.com/<user>.keys. Existing keys are deduplicated by key material.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `box_target_required`, `invalid_box_target`, `github_keys_unavailable`, `ssh_public_key_invalid`, `operation_failed`
+
 ### `box doctor`
 - Purpose: Run box diagnostics.
 - Usage: `ship box doctor [ssh-target] [--json]`
@@ -210,10 +218,17 @@ Secret scoping:
 ### `box ls`
 - Purpose: List app environments visible on a box.
 - Usage: `ship box ls [ssh-target] [--json]`
-- Arguments and flags: `ssh-target`: SSH target. Defaults to ship.toml box when run in an app directory; `--json`: Emit the host app list JSON.
-- `--json` stdout schema: `{"apps":[{"app":"api","env":"prod","preview":{"branch":"feat/x","sanitized_branch":"feat-x","env":"feat-x-a1b2","suffix":"a1b2","last_ship_at":"...","expires_at":"...","pinned":false},"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running"}],"static":{"release":"abc123","routes":["example.com"]}}]}`
+- Arguments and flags: `ssh-target`: SSH target. Defaults to ship.toml box when run in an app directory; `--json`: Emit the fleet view JSON.
+- `--json` stdout schema: `{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"prod","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_target_required`, `invalid_box_target`, `ssh_unreachable`, `box_not_initialized`, `operation_failed`
+
+### `box rm`
+- Purpose: Destroy an app and all of its environments on a box.
+- Usage: `ship box rm <app> [ssh-target] --confirm <app>`
+- Arguments and flags: `app`: App name to destroy; `ssh-target`: SSH target. Defaults to ship.toml box when run in an app directory; `--confirm <app>`: Required app-name confirmation.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `box_rm_confirmation_required`, `box_target_required`, `invalid_box_target`, `operation_failed`
 
 ### `docs`
 - Purpose: Print this complete agent contract.
@@ -271,6 +286,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `behind_production`: Production ship failed; cause: deployed commit {deployed} {detail}; remediation: `git pull`.
 - `box_missing_tool`: box preflight failed; cause: required server tool is missing on {target}: {tool}; remediation: `ship box init {target}`.
 - `box_not_initialized`: box preflight failed; cause: ship server API is missing at /usr/local/bin/ship on {target}; remediation: `ship box init {target}`.
+- `box_rm_confirmation_required`: box rm confirmation failed; cause: box rm requires --confirm {app}; remediation: `ship box rm {app} --confirm {app}`.
 - `box_target_required`: box target is required; cause: this command needs an SSH target outside an app directory; remediation: `{command}`; defaults: `command="ship box ls <ssh-target>"`.
 - `branch_flag_requires_detached_head`: branch resolution failed; cause: --branch is only accepted on ship when HEAD is detached; remediation: `ship`.
 - `deploy_blocked_local_checks`: deploy blocked by local checks; cause: {detail}; remediation: `{command}`; defaults: `command="fix local checks", detail="local checks reported errors; see stderr above"`.
@@ -282,6 +298,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `dotenv_rejected`: deploy artifact contains dotenv files; cause: refusing to deploy dotenv file: {files}; remediation: `ship --include-dotenv`.
 - `env_invalid`: app environment preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `env_missing`: app environment preflight failed; cause: {detail}; remediation: `ship`.
+- `github_keys_unavailable`: GitHub SSH key lookup failed; cause: no public SSH keys found for GitHub user {user}; remediation: `ship box add-key <path-to-public-key>`.
 - `host_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `host_not_installed`: host preflight failed; cause: host is not installed; remediation: `ship box init <ssh-target>`.
 - `ingress_invalid`: ingress preflight failed; cause: {detail}; remediation: `ship box doctor`.
@@ -304,6 +321,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `secret_missing`: deploy is missing a required secret; cause: missing secret {secret} for {scope}; remediation: `{command}`.
 - `secret_read_error`: secret preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `secret_scope_conflict`: secret scope is invalid; cause: --preview and --branch cannot be combined; remediation: `{command}`; defaults: `command="ship secret set KEY --preview"`.
+- `ssh_public_key_invalid`: SSH public key is invalid; cause: {detail}; remediation: `ship box add-key <github-user|key|path>`.
 - `ssh_unreachable`: box preflight failed; cause: SSH failed for {target}: {detail}; remediation: `ssh {target}`.
 - `unknown_preview_branch`: preview environment lookup failed; cause: no preview environment is mapped for branch {branch}; remediation: `{command}`; defaults: `command="git checkout <branch> && ship"`.
 - `unmappable_branch_name`: branch resolution failed; cause: branch {branch} does not produce a valid environment name; remediation: `git branch -m <new-name>`.

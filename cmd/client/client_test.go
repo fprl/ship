@@ -902,6 +902,7 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "backup create", command: serverAppBackupCommand("api", "production", "")},
 		{name: "backup to", command: serverAppBackupCommand("api", "production", "/tmp/backups")},
 		{name: "restore", command: serverAppRestoreCommand("api", "production", "backup-id")},
+		{name: "destroy app", command: serverAppDestroyCommand("api")},
 		{name: "destroy env purge", command: serverAppDestroyEnvCommand("api", "production")},
 		{name: "preview resolve or create", command: serverAppPreviewResolveOrCreateCommand("api", "feat/x")},
 		{name: "preview resolve", command: serverAppPreviewResolveCommand("api", "feat/x")},
@@ -912,6 +913,7 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "secret list json", command: serverAppSecretListCommand("api", "production", true)},
 		{name: "secret rm", command: serverAppSecretRmCommand("api", "production", "DATABASE_URL")},
 		{name: "why", command: serverAppWhyCommand("api", "production")},
+		{name: "key add", command: serverKeyAddCommand("alice")},
 	}
 
 	for _, tt := range commands {
@@ -936,7 +938,8 @@ func assertServerCommandCoveredBySudoers(t *testing.T, command string) {
 func serverSubcommandCoveredBySudoers(subcommand string) bool {
 	return strings.HasPrefix(subcommand, "app ") ||
 		subcommand == "doctor" ||
-		strings.HasPrefix(subcommand, "doctor ")
+		strings.HasPrefix(subcommand, "doctor ") ||
+		strings.HasPrefix(subcommand, "key add ")
 }
 
 func TestServerAppSetupEnvCommand(t *testing.T) {
@@ -1095,7 +1098,7 @@ func TestStatusFromAppListIncludesShippedBy(t *testing.T) {
 			"api.example.com": {Host: "api.example.com", Process: "web"},
 		},
 	}
-	raw := `{"apps":[{"app":"api","env":"prod","shipped_by":{"ssh_key_comment":"fake-vps-smoke","git_author":"Smoke <smoke@example.com>"},"processes":[{"process":"web","container":"api-web","state":"running","release":"abc1234","created_at":"2026-07-07T10:00:00Z"}]}]}`
+	raw := `{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"prod","current_release":"abc1234","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"fake-vps-smoke","git_author":"Smoke <smoke@example.com>"},"processes":[{"process":"web","container":"api-web","state":"running","release":"abc1234","created_at":"2026-07-07T10:00:00Z"}]}]}]}`
 	payload, err := statusFromAppList(ctx, raw)
 	if err != nil {
 		t.Fatal(err)

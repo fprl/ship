@@ -5,6 +5,7 @@ package helper
 type appCmd struct {
 	SetupEnv   appSetupEnvCmd   `cmd:"setup-env" help:"Create the per-env Linux user, directories, and Podman network."`
 	Preflight  appPreflightCmd  `cmd:"preflight" help:"Run read-only deploy preflight checks for one app env."`
+	Destroy    appDestroyCmd    `cmd:"destroy" help:"Tear down every environment for one app."`
 	DestroyEnv appDestroyEnvCmd `cmd:"destroy-env" help:"Tear down one env: containers, files, user, network."`
 	Apply      appApplyCmd      `cmd:"apply" help:"Build the image, start processes, and apply the Caddy fragment from an uploaded manifest."`
 	List       appListCmd       `cmd:"list" help:"List app environments visible on this host."`

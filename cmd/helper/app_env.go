@@ -156,6 +156,49 @@ func applyEnvLayoutPerms(app, env string) error {
 }
 
 // appDestroyEnvCmd removes one env's containers, files, user, and network.
+type appDestroyCmd struct {
+	App string `arg:"" help:"App name."`
+}
+
+func (c appDestroyCmd) Run() error {
+	if !names.AppRe.MatchString(c.App) {
+		utils.DieError(fmt.Errorf("invalid app name: %q", c.App), 1)
+	}
+	envs, err := appEnvsForDestroy(c.App)
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	if len(envs) == 0 {
+		fmt.Printf("No environments found for %s\n", c.App)
+		return nil
+	}
+	fmt.Printf("Destroying %s (%d envs)\n", c.App, len(envs))
+	for _, env := range envs {
+		withAppEnvLock(c.App, env, func() {
+			summary, err := destroyEnv(c.App, env, true)
+			if err != nil {
+				utils.DieError(err, 1)
+			}
+			fmt.Print(renderDestroyText(c.App, env, summary))
+		})
+	}
+	return nil
+}
+
+func appEnvsForDestroy(app string) ([]string, error) {
+	apps, err := identityAppEnvs()
+	if err != nil {
+		return nil, err
+	}
+	var envs []string
+	for _, item := range apps {
+		if item.App == app {
+			envs = append(envs, item.Env)
+		}
+	}
+	return envs, nil
+}
+
 type appDestroyEnvCmd struct {
 	App   string `arg:"" help:"App name."`
 	Env   string `arg:"" help:"Env name."`

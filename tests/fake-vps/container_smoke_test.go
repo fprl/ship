@@ -58,6 +58,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("notify webhook events", env.testNotifyWebhooks)
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
 	t.Run("phase 1 acceptance init ship branch and sslip", env.testPhase1AcceptanceAndZeroDNS)
+	t.Run("box add-key authorizes teammate ship", env.testBoxAddKey)
 	t.Run("release command failure leaves old traffic unchanged", env.testReleaseCommandFailure)
 	t.Run("probe failure explains old traffic kept serving", env.testProbeFailureWhy)
 	t.Run("caddy switch failure restores runtime state", env.testCaddySwitchFailureRollback)
@@ -74,6 +75,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("preview env overlay applies before secret resolution", env.testPreviewEnvOverlay)
 	t.Run("exec runs one-off commands in the release environment", env.testExec)
 	t.Run("status + logs surface deployed processes without SSHing in", env.testStatusAndLogs)
+	t.Run("box rm destroys an app fleet", env.testBoxRm)
 	t.Run("rm tears down one app environment", env.testDestroy)
 }
 
@@ -764,12 +766,111 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	if unpinned.Preview == nil || unpinned.Preview.Pinned || unpinned.Preview.ExpiresAt == nil {
 		t.Fatalf("unpin should restore expiry: %+v", unpinned.Preview)
 	}
+	fleet := fleetPayloadForBox(t, e, app)
+	prodFleet := fleetEnvByAppClassBranch(t, fleet, "previewapi", "production", "main")
+	if prodFleet.Env != productionEnv || prodFleet.URL != "https://preview.example.com" || prodFleet.CurrentRelease == "" || prodFleet.Health != "healthy" || prodFleet.ExpiresAt != "" || prodFleet.Pinned || prodFleet.ShippedBy == nil {
+		t.Fatalf("production fleet summary missing fields: %+v", prodFleet)
+	}
+	previewFleet := fleetEnvByAppClassBranch(t, fleet, "previewapi", "preview", "feature/lifecycle")
+	if previewFleet.Env != previewEnv || !strings.Contains(previewFleet.URL, previewEnv+".") || previewFleet.CurrentRelease == "" || previewFleet.Health != "healthy" || previewFleet.ExpiresAt == "" || previewFleet.Pinned || previewFleet.ShippedBy == nil {
+		t.Fatalf("preview fleet summary missing fields: %+v", previewFleet)
+	}
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "previewapi", previewEnv)
 	reapOutput := e.dockerExec(t, "/usr/local/bin/ship server env reap")
 	assertContains(t, reapOutput, "Reaped preview previewapi ("+previewEnv+") branch=feature/lifecycle")
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("previewapi", previewEnv))
 	e.dockerExec(t, "test ! -e /etc/ship/secrets/previewapi/"+previewEnv)
 	e.dockerExec(t, "test -e "+identity.EnvRoot("previewapi", "prod"))
+}
+
+func (e *smokeEnv) testBoxAddKey(t *testing.T) {
+	e.ensureSmokeHostSeed(t)
+	app := filepath.Join(e.tmp, "key-api")
+	mustMkdir(t, app)
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "keyapi"
+box = "fake-vps"
+probe = "/health"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"key.example.com" = "web"
+`)
+	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+
+	keyPath := filepath.Join(e.tmp, "teammate")
+	keyComment := filepath.Base(keyPath + ".pub")
+	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", keyComment, "-f", keyPath)
+
+	out := e.ship(t, app, nil, "box", "add-key", keyPath+".pub")
+	assertContains(t, out, "Authorized 1 SSH key")
+	again := e.ship(t, app, nil, "box", "add-key", keyPath+".pub")
+	assertContains(t, again, "already authorized")
+	authorized := e.dockerExec(t, "cat /home/deploy/.ssh/authorized_keys")
+	assertContains(t, authorized, keyComment)
+
+	teammatePrefix := e.configureSSHWithKey(t, keyPath)
+	oldPrefix := e.pathPrefix
+	e.pathPrefix = teammatePrefix
+	t.Cleanup(func() { e.pathPrefix = oldPrefix })
+
+	url := strings.TrimSpace(e.ship(t, app, nil))
+	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, url)
+	status := statusEnvByKind(t, e, app, "Production")
+	if status.ShippedBy == nil || status.ShippedBy.SSHKeyComment != keyComment {
+		t.Fatalf("ship with added key should attribute the teammate key, got %+v", status.ShippedBy)
+	}
+}
+
+func (e *smokeEnv) testBoxRm(t *testing.T) {
+	app := filepath.Join(e.tmp, "box-rm-api")
+	mustMkdir(t, app)
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "boxrmapi"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"boxrm.example.com" = "web"
+`)
+	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+	e.ship(t, app, []byte("prod-cleanup"), "secret", "set", "cleanup_key")
+	e.ship(t, app, nil)
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/box-rm")
+	e.ship(t, app, []byte("preview-cleanup"), "secret", "set", "cleanup_key", "--branch", "feature/box-rm")
+	e.ship(t, app, nil)
+	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "boxrmapi", "feature/box-rm")
+
+	missingConfirm := e.runShip(t, e.repoRoot, nil, "box", "rm", "boxrmapi", "fake-vps")
+	if missingConfirm.err == nil {
+		t.Fatal("box rm without confirmation should fail")
+	}
+	assertContains(t, missingConfirm.stdout+missingConfirm.stderr, "box rm requires --confirm boxrmapi")
+
+	out := e.ship(t, e.repoRoot, nil, "box", "rm", "boxrmapi", "fake-vps", "--confirm", "boxrmapi")
+	assertContains(t, out, "Destroying boxrmapi (2 envs)")
+	assertContains(t, out, "Destroyed boxrmapi ("+productionEnv+")")
+	assertContains(t, out, "Destroyed boxrmapi ("+previewEnv+")")
+	assertContains(t, out, "secrets: purged")
+
+	for _, env := range []string{productionEnv, previewEnv} {
+		e.dockerExec(t, "test ! -e "+identity.EnvRoot("boxrmapi", env))
+		e.dockerExec(t, "test ! -e /etc/ship/secrets/boxrmapi/"+env)
+		e.dockerExec(t, "test ! -e "+identity.CaddyFragmentFile("boxrmapi", env))
+	}
 }
 
 func (e *smokeEnv) testBackupRestore(t *testing.T) {
@@ -958,11 +1059,18 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	rawListJSON := e.ship(t, app, nil, "box", "ls", "--json")
 	var listPayload struct {
 		Apps []struct {
-			App       string `json:"app"`
-			Env       string `json:"env"`
-			Processes []struct {
-				Process string `json:"process"`
-			} `json:"processes"`
+			App  string `json:"app"`
+			Envs []struct {
+				Class          string `json:"class"`
+				Branch         string `json:"branch"`
+				Env            string `json:"env"`
+				URL            string `json:"url"`
+				CurrentRelease string `json:"current_release"`
+				Health         string `json:"health"`
+				Processes      []struct {
+					Process string `json:"process"`
+				} `json:"processes"`
+			} `json:"envs"`
 		} `json:"apps"`
 	}
 	if err := json.Unmarshal([]byte(rawListJSON), &listPayload); err != nil {
@@ -970,8 +1078,13 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	}
 	foundStatic := false
 	for _, listed := range listPayload.Apps {
-		if listed.App == "site" && listed.Env == productionEnv && len(listed.Processes) == 0 {
-			foundStatic = true
+		if listed.App != "site" {
+			continue
+		}
+		for _, env := range listed.Envs {
+			if env.Class == "production" && env.Env == productionEnv && env.CurrentRelease == oldRelease && env.Health == "healthy" && len(env.Processes) == 0 && env.URL == "https://static.example.com" {
+				foundStatic = true
+			}
 		}
 	}
 	if !foundStatic {
@@ -1433,12 +1546,26 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 	rawListJSON := e.ship(t, app, nil, "box", "ls", "--json")
 	var listPayload struct {
 		Apps []struct {
-			App       string `json:"app"`
-			Env       string `json:"env"`
-			Processes []struct {
-				Process string `json:"process"`
-				State   string `json:"state"`
-			} `json:"processes"`
+			App  string `json:"app"`
+			Envs []struct {
+				Class          string `json:"class"`
+				Branch         string `json:"branch"`
+				Env            string `json:"env"`
+				URL            string `json:"url"`
+				CurrentRelease string `json:"current_release"`
+				Health         string `json:"health"`
+				AgeSeconds     int64  `json:"age_seconds"`
+				ExpiresAt      string `json:"expires_at"`
+				Pinned         bool   `json:"pinned"`
+				ShippedBy      *struct {
+					SSHKeyComment string `json:"ssh_key_comment"`
+					GitAuthor     string `json:"git_author"`
+				} `json:"shipped_by"`
+				Processes []struct {
+					Process string `json:"process"`
+					State   string `json:"state"`
+				} `json:"processes"`
+			} `json:"envs"`
 		} `json:"apps"`
 	}
 	if err := json.Unmarshal([]byte(rawListJSON), &listPayload); err != nil {
@@ -1449,8 +1576,24 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 	}
 	found := false
 	for _, listed := range listPayload.Apps {
-		if listed.App == "api" && listed.Env == productionEnv && len(listed.Processes) == 1 && listed.Processes[0].Process == "web" {
-			found = true
+		if listed.App != "api" {
+			continue
+		}
+		for _, env := range listed.Envs {
+			if env.Class == "production" &&
+				env.Branch == "main" &&
+				env.Env == productionEnv &&
+				env.URL == "https://api.example.com" &&
+				env.CurrentRelease != "" &&
+				env.Health == "healthy" &&
+				env.ExpiresAt == "" &&
+				!env.Pinned &&
+				env.ShippedBy != nil &&
+				env.ShippedBy.SSHKeyComment == "fake-vps-smoke" &&
+				len(env.Processes) == 1 &&
+				env.Processes[0].Process == "web" {
+				found = true
+			}
 		}
 	}
 	if !found {
@@ -1846,6 +1989,37 @@ type smokeStatusEnv struct {
 	} `json:"processes"`
 }
 
+type smokeFleetPayload struct {
+	Apps []smokeFleetApp `json:"apps"`
+}
+
+type smokeFleetApp struct {
+	App  string          `json:"app"`
+	Envs []smokeFleetEnv `json:"envs"`
+}
+
+type smokeFleetEnv struct {
+	Class          string `json:"class"`
+	Branch         string `json:"branch"`
+	URL            string `json:"url"`
+	Env            string `json:"env"`
+	CurrentRelease string `json:"current_release"`
+	Health         string `json:"health"`
+	AgeSeconds     int64  `json:"age_seconds"`
+	ExpiresAt      string `json:"expires_at"`
+	Pinned         bool   `json:"pinned"`
+	Dirty          bool   `json:"dirty"`
+	ShippedBy      *struct {
+		SSHKeyComment string `json:"ssh_key_comment"`
+		GitAuthor     string `json:"git_author"`
+	} `json:"shipped_by"`
+	Processes []struct {
+		Process string `json:"process"`
+		State   string `json:"state"`
+		Release string `json:"release"`
+	} `json:"processes"`
+}
+
 type smokeWhyEntry struct {
 	Outcome          string `json:"outcome"`
 	PreviousRelease  string `json:"previous_release"`
@@ -1898,6 +2072,32 @@ func statusEnvByBranch(t *testing.T, e *smokeEnv, app string, branch string) smo
 	}
 	t.Fatalf("status missing branch %s: %+v", branch, payload.Envs)
 	return smokeStatusEnv{}
+}
+
+func fleetPayloadForBox(t *testing.T, e *smokeEnv, app string) smokeFleetPayload {
+	t.Helper()
+	rawJSON := e.ship(t, app, nil, "box", "ls", "--json")
+	var payload smokeFleetPayload
+	if err := json.Unmarshal([]byte(rawJSON), &payload); err != nil {
+		t.Fatalf("box ls --json output not parseable as JSON: %v\nraw:\n%s", err, rawJSON)
+	}
+	return payload
+}
+
+func fleetEnvByAppClassBranch(t *testing.T, payload smokeFleetPayload, app, class, branch string) smokeFleetEnv {
+	t.Helper()
+	for _, listed := range payload.Apps {
+		if listed.App != app {
+			continue
+		}
+		for _, env := range listed.Envs {
+			if env.Class == class && env.Branch == branch {
+				return env
+			}
+		}
+	}
+	t.Fatalf("fleet missing %s %s %s: %+v", app, class, branch, payload.Apps)
+	return smokeFleetEnv{}
 }
 
 func backupIDFromSaveOutput(t *testing.T, output string) string {

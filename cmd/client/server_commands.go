@@ -76,6 +76,14 @@ func serverAppListCommand(jsonFlag bool) string {
 	return serverCommand("app", "list")
 }
 
+func serverAppDestroyCommand(appName string) string {
+	return serverCommand("app", "destroy", appName)
+}
+
+func serverKeyAddCommand(comment string) string {
+	return serverCommand("key", "add", "--comment", comment)
+}
+
 func serverAppLogsCommand(appName, envName, process string, follow bool, tail int) string {
 	args := []string{"app", "logs"}
 	if follow {
