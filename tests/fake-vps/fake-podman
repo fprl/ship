@@ -307,8 +307,11 @@ PY
     publish_host_port=""
     image=""
     data_mount=""
+    env_file=""
+    detached=0
     declare -a labels=()
     declare -a command_args=()
+    declare -a env_assignments=()
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --name)
@@ -324,10 +327,22 @@ PY
           publish_host_port="$(printf '%s' "$2" | awk -F: 'NF==3{print $2} NF==2{print $1}')"
           shift 2
           ;;
-        -d|--read-only|--rm)
+        -d)
+          detached=1
           shift
           ;;
-        --user|--cap-drop|--cap-add|--security-opt|--memory|--cpus|--pids-limit|--restart|--network|--tmpfs|--env-file)
+        -i|--interactive|-t|--tty|--read-only|--rm)
+          shift
+          ;;
+        --env-file)
+          env_file="$2"
+          shift 2
+          ;;
+        --env)
+          env_assignments+=("$2")
+          shift 2
+          ;;
+        --user|--cap-drop|--cap-add|--security-opt|--memory|--cpus|--pids-limit|--restart|--network|--tmpfs)
           shift 2
           ;;
         -v|--volume)
@@ -367,6 +382,31 @@ PY
         touch "$data_mount/release-ok"
       fi
       exit 0
+    fi
+
+    if [[ "$detached" != "1" ]]; then
+      declare -a run_env=()
+      if [[ -n "$env_file" && -f "$env_file" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+          [[ -n "$line" ]] && run_env+=("$line")
+        done < "$env_file"
+      fi
+      for assignment in "${env_assignments[@]:-}"; do
+        [[ -n "$assignment" ]] && run_env+=("$assignment")
+      done
+      declare -a mapped_command=()
+      for arg in "${command_args[@]:-}"; do
+        if [[ -n "$data_mount" ]]; then
+          mapped_command+=("${arg//\/data/$data_mount}")
+        else
+          mapped_command+=("$arg")
+        fi
+      done
+      if [[ ${#mapped_command[@]} -eq 0 ]]; then
+        exit 0
+      fi
+      env "${run_env[@]}" "${mapped_command[@]}"
+      exit $?
     fi
 
     labels_file="$state_dir/containers/$name.labels"

@@ -355,6 +355,31 @@ func TestBuildPodmanRunArgsLeavesProdUncappedByDefault(t *testing.T) {
 	}
 }
 
+func TestBuildPodmanExecRunArgsTTYOnlyWhenRequested(t *testing.T) {
+	command := []string{"env"}
+	injected := map[string]string{"SHIP_RELEASE": "abc123"}
+	base := buildPodmanExecRunArgs("api", "feat-x", "exec-name", identity.ImageTag("api", "feat-x", "abc123"), "999", "988", "abc123", command, injected, true, true, false)
+	joined := strings.Join(base, " ")
+	if strings.Contains(joined, " -t ") {
+		t.Fatalf("non-tty exec args should not request a tty: %s", joined)
+	}
+	if !strings.Contains(joined, "run --rm -i") {
+		t.Fatalf("exec args should keep stdin open without tty: %s", joined)
+	}
+	if !strings.Contains(joined, "--memory 512m") || !strings.Contains(joined, "--cpus 0.5") {
+		t.Fatalf("preview exec args should include default caps: %s", joined)
+	}
+	if !strings.Contains(joined, "--env-file "+identity.EnvFile("api", "feat-x")) {
+		t.Fatalf("exec args should include the runtime env file: %s", joined)
+	}
+
+	withTTY := buildPodmanExecRunArgs("api", "feat-x", "exec-name", identity.ImageTag("api", "feat-x", "abc123"), "999", "988", "abc123", command, injected, true, true, true)
+	joinedTTY := strings.Join(withTTY, " ")
+	if !strings.Contains(joinedTTY, " -t ") {
+		t.Fatalf("tty exec args should request a tty: %s", joinedTTY)
+	}
+}
+
 func TestRenderEnvFileEmitsSortedKeyValuePairs(t *testing.T) {
 	got := renderEnvFile(map[string]string{"LOG_LEVEL": "info", "DEBUG": "false", "PORT": "3000"})
 	want := "DEBUG=false\nLOG_LEVEL=info\nPORT=3000\n"

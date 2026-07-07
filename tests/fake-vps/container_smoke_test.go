@@ -3,9 +3,11 @@ package fakevps
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -61,8 +63,22 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("mixed container and static routes deploy as one release", env.testMixedContainerStaticLifecycle)
 	t.Run("@secret refs resolve through set/list/rm into the runtime env", env.testSecretLifecycle)
 	t.Run("preview secret scoping isolation", env.testPreviewSecretScoping)
+	t.Run("exec runs one-off commands in the release environment", env.testExec)
 	t.Run("status + logs surface deployed processes without SSHing in", env.testStatusAndLogs)
 	t.Run("rm tears down one app environment", env.testDestroy)
+}
+
+func (e *smokeEnv) assertShipSudoersMatchesRealHelperShape(t *testing.T) {
+	t.Helper()
+	e.ssh(t, "sudo -n /usr/local/bin/ship server app list --json >/dev/null")
+
+	result := e.run(t, e.repoRoot, nil, e.sshBin(), "fake-vps", "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app list --json")
+	if result.err == nil {
+		t.Fatalf("sudo accepted env-prefixed helper command; stdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	}
+	if strings.Contains(result.stdout, `"apps"`) {
+		t.Fatalf("env-prefixed helper command reached ship server app list; stdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	}
 }
 
 func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
@@ -72,6 +88,8 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	// Deploy needs a git tree (release id = git short SHA). Commit to
 	// stay on the canonical clean-tree path.
 	e.commitFixture(t, app)
+
+	e.assertShipSudoersMatchesRealHelperShape(t)
 
 	// The shared `ingress` Podman network and the host-side Caddy
 	// container would normally come from `ship box init`.
@@ -1127,6 +1145,67 @@ web = { port = 3000 }
 	assertContains(t, envFile, "API_TOKEN=shared-preview-token\n")
 	if strings.Contains(envFile, "branch-token") || strings.Contains(envFile, "prod-token") {
 		t.Fatalf("branch rm should fall back to shared preview only:\n%s", envFile)
+	}
+}
+
+func (e *smokeEnv) testExec(t *testing.T) {
+	app := filepath.Join(e.tmp, "exec-api")
+	mustMkdir(t, app)
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "execapi"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+
+[env]
+LOG_LEVEL = "info"
+DATABASE_URL = "@secret:db_url"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"exec.example.com" = "web"
+`)
+	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+
+	noRelease := e.runSimpleVPS(t, app, nil, "exec", "env")
+	if noRelease.err == nil {
+		t.Fatal("exec before first deploy should fail")
+	}
+	if noRelease.stdout != "" || !strings.Contains(noRelease.stderr, `"code":"no_deploys"`) || !strings.Contains(noRelease.stderr, `"remediation":"ship"`) {
+		t.Fatalf("exec no-release guard should be coded on stderr\nstdout:%s\nstderr:%s", noRelease.stdout, noRelease.stderr)
+	}
+
+	e.simpleVPS(t, app, []byte("postgres://exec-secret"), "secret", "set", "db_url")
+	e.simpleVPS(t, app, nil)
+	release := gitRelease(t, e, app)
+
+	envOut := e.simpleVPS(t, app, nil, "exec", "env")
+	for _, want := range []string{
+		"LOG_LEVEL=info\n",
+		"DATABASE_URL=postgres://exec-secret\n",
+		"SHIP_URL=https://exec.example.com\n",
+		"SHIP_BRANCH=main\n",
+		"SHIP_ENV=production\n",
+		"SHIP_RELEASE=" + release + "\n",
+	} {
+		assertContains(t, envOut, want)
+	}
+
+	failed := e.runSimpleVPS(t, app, nil, "exec", "sh", "-c", "exit 7")
+	var exitErr *exec.ExitError
+	if !errors.As(failed.err, &exitErr) || exitErr.ExitCode() != 7 {
+		t.Fatalf("exec should propagate command exit 7, got err=%v stdout=%s stderr=%s", failed.err, failed.stdout, failed.stderr)
+	}
+
+	e.simpleVPS(t, app, nil, "exec", "sh", "-c", "printf exec-data > /data/exec.txt")
+	got := strings.TrimSpace(e.simpleVPS(t, app, nil, "exec", "cat", "/data/exec.txt"))
+	if got != "exec-data" {
+		t.Fatalf("exec /data round-trip = %q, want exec-data", got)
 	}
 }
 

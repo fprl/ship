@@ -198,7 +198,7 @@ func containersToProcesses(entries []containerEntry) []processStatus {
 		// container it starts. Anything without it isn't ours and
 		// shouldn't surface in app status.
 		proc := e.Labels["simple-vps.process"]
-		if proc == "" || proc == "release" {
+		if proc == "" || isEphemeralProcess(proc) {
 			continue
 		}
 		name := ""
@@ -240,7 +240,7 @@ func containersToAppEnvs(entries []containerEntry) []appEnvStatus {
 		app := e.Labels["simple-vps.app"]
 		env := e.Labels["simple-vps.env"]
 		process := e.Labels["simple-vps.process"]
-		if app == "" || env == "" || process == "" || process == "release" {
+		if app == "" || env == "" || process == "" || isEphemeralProcess(process) {
 			continue
 		}
 		if e.Labels["simple-vps.infra_id"] != identity.InfraID(app, env) {

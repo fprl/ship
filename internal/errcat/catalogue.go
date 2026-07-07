@@ -1,6 +1,7 @@
 package errcat
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -395,11 +396,13 @@ func (e *Error) Object() ErrorObject {
 }
 
 func (e *Error) JSONLine() string {
-	data, err := json.Marshal(ErrorPayload{Error: e.Object()})
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(ErrorPayload{Error: e.Object()}); err != nil {
 		panic(err)
 	}
-	return string(data)
+	return strings.TrimSuffix(buf.String(), "\n")
 }
 
 func FromObject(obj ErrorObject) *Error {

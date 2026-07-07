@@ -563,7 +563,7 @@ func restoreEnvFile(app, env string, snapshot fileSnapshot) error {
 func containerNamesExceptRelease(entries []containerEntry, release string) []string {
 	var names []string
 	for _, e := range entries {
-		if e.Labels["simple-vps.process"] == "release" {
+		if isEphemeralProcess(e.Labels["simple-vps.process"]) {
 			continue
 		}
 		if e.Labels["simple-vps.release"] == release {

@@ -237,6 +237,30 @@ func (r *CommandRunner) RunSSHPassthrough(server string, command string) error {
 	return runCommandPassthrough("ssh", args)
 }
 
+func (r *CommandRunner) RunSSHPassthroughExitCode(server string, command string, tty bool) (int, error) {
+	var args []string
+	if len(r.SshOptions) > 0 {
+		args = append(args, r.SshOptions...)
+	}
+	if tty {
+		args = append(args, "-tt")
+	}
+	args = append(args, server, command)
+	cmd := exec.Command("ssh", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Run()
+	if err == nil {
+		return 0, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode(), nil
+	}
+	return 1, err
+}
+
 func (r *CommandRunner) Upload(local string, remote string, server string) error {
 	var args []string
 	if r.RsyncRemoteShell != "" {
@@ -339,7 +363,7 @@ func runSSHChecked(runner sshRunner, server string, command string, errMsg strin
 }
 
 func serverCommand(args ...string) string {
-	parts := []string{"sudo", "-n", "env", "SHIP_ERROR_JSON=1", "/usr/local/bin/ship", "server"}
+	parts := []string{"sudo", "-n", "/usr/local/bin/ship", "server"}
 	for _, arg := range args {
 		parts = append(parts, utils.ShellEscape(arg))
 	}
@@ -429,6 +453,16 @@ func serverAppLogsCommand(appName, envName, process string, follow bool, tail in
 	if process != "" {
 		args = append(args, process)
 	}
+	return serverCommand(args...)
+}
+
+func serverAppExecCommand(appName, envName string, tty bool, command []string) string {
+	args := []string{"app", "exec"}
+	if tty {
+		args = append(args, "--tty")
+	}
+	args = append(args, appName, envName, "--")
+	args = append(args, command...)
 	return serverCommand(args...)
 }
 
@@ -1081,6 +1115,35 @@ func CmdLogs(root string, process string, follow bool, tail int, jsonFlag bool) 
 		utils.DieError(err, 1)
 	}
 	fmt.Println(string(buf))
+}
+
+var stdinIsTerminal = func() bool {
+	info, err := os.Stdin.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0 && isTerminalFD(os.Stdin.Fd())
+}
+
+func CmdExec(root, branch string, command []string) {
+	if len(command) == 0 {
+		utils.DieError(errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  "ship exec requires a command",
+			"command": "ship exec <cmd> [args...]",
+		}), 2)
+	}
+	read, err := currentReadContextForBranch(root, "exec", branch)
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+
+	tty := stdinIsTerminal()
+	cmdStr := serverAppExecCommand(read.AppContext.AppName, read.EnvName, tty, command)
+	code, runErr := read.Runner.RunSSHPassthroughExitCode(read.AppContext.Server, cmdStr, tty)
+	read.Runner.Close()
+	if runErr != nil {
+		utils.DieError(runErr, 1)
+	}
+	if code != 0 {
+		os.Exit(code)
+	}
 }
 
 func splitLogLines(out string) []string {

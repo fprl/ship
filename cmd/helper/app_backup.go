@@ -408,7 +408,7 @@ func containersOutsideDesiredRelease(entries []containerEntry, app, env string, 
 	var names []string
 	for _, e := range entries {
 		process := e.Labels["simple-vps.process"]
-		if process == "" || process == "release" {
+		if process == "" || isEphemeralProcess(process) {
 			continue
 		}
 		if len(e.Names) == 0 {

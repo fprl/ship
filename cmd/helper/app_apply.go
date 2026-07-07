@@ -530,7 +530,7 @@ func containersForRemovedProcesses(entries []containerEntry, next map[string]con
 	var names []string
 	for _, e := range entries {
 		process := e.Labels["simple-vps.process"]
-		if process == "" || process == "release" {
+		if process == "" || isEphemeralProcess(process) {
 			continue
 		}
 		if _, ok := next[process]; ok {
@@ -547,7 +547,7 @@ func appContainerNames(entries []containerEntry) []string {
 	var names []string
 	for _, e := range entries {
 		process := e.Labels["simple-vps.process"]
-		if process == "" || process == "release" {
+		if process == "" || isEphemeralProcess(process) {
 			continue
 		}
 		if len(e.Names) > 0 {

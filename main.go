@@ -23,6 +23,7 @@ type cli struct {
 	Init     initCmd          `cmd:"" group:"project" help:"Create local project files and a ship.toml manifest."`
 	Status   statusCmd        `cmd:"" group:"project" help:"Show all live environments for this app."`
 	Logs     logsCmd          `cmd:"" group:"project" help:"Tail logs for the current branch environment."`
+	Exec     execCmd          `cmd:"" group:"project" help:"Run a one-off command in the current branch environment."`
 	Why      whyCmd           `cmd:"" group:"project" help:"Explain the latest deploy outcome for the current branch environment."`
 	Rollback rollbackCmd      `cmd:"" group:"project" help:"Roll back the current branch environment."`
 	Rm       rmCmd            `cmd:"rm" group:"project" help:"Remove an environment by branch name."`
@@ -170,6 +171,21 @@ func (c logsCmd) Run() error {
 		return err
 	}
 	client.CmdLogs(root, c.Process, c.Follow, c.Tail, c.JSON)
+	return nil
+}
+
+type execCmd struct {
+	Config  string   `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	Branch  string   `name:"branch" help:"Branch name to inspect."`
+	Command []string `arg:"" required:"" passthrough:"" help:"Command and arguments to run."`
+}
+
+func (c execCmd) Run() error {
+	root, err := projectAppRoot(c.Config)
+	if err != nil {
+		return err
+	}
+	client.CmdExec(root, c.Branch, c.Command)
 	return nil
 }
 
@@ -490,7 +506,7 @@ func boxTarget(configPath, target string) (string, error) {
 
 func main() {
 	args := cliArgs(os.Args[1:])
-	utils.SetErrorJSON(wantsJSONError(args) || os.Getenv("SHIP_ERROR_JSON") == "1")
+	utils.SetErrorJSON(wantsJSONError(args) || os.Getenv("SHIP_ERROR_JSON") == "1" || wantsServerJSONError(args))
 	parser, err := kong.New(
 		&cli{},
 		kong.Name("ship"),
@@ -510,6 +526,9 @@ func main() {
 		}), 2)
 	}
 	if err := ctx.Run(); err != nil {
+		if wantsServerAppExecError(args) {
+			dieServerAppExecError(err, commandErrorExitCode(err))
+		}
 		utils.DieError(err, commandErrorExitCode(err))
 	}
 }
@@ -521,6 +540,25 @@ func wantsJSONError(args []string) bool {
 		}
 	}
 	return false
+}
+
+func wantsServerJSONError(args []string) bool {
+	return len(args) > 0 && args[0] == "server"
+}
+
+func wantsServerAppExecError(args []string) bool {
+	return len(args) >= 3 && args[0] == "server" && args[1] == "app" && args[2] == "exec"
+}
+
+func dieServerAppExecError(err error, code int) {
+	if coded, ok := errcat.As(err); ok {
+		if coded.Code() == errcat.CodeUsageError || coded.Code() == errcat.CodeManifestInvalid {
+			code = 2
+		}
+		fmt.Fprintln(os.Stderr, coded.JSONLine())
+		os.Exit(code)
+	}
+	utils.DieError(err, code)
 }
 
 func commandErrorExitCode(err error) int {
