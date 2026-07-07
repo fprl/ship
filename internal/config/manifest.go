@@ -39,6 +39,8 @@ const (
 	secretPrefix = "@secret:"
 )
 
+const ProductionEnvName = "prod"
+
 type Resources struct {
 	Memory *string  `toml:"memory"`
 	CPUs   *float64 `toml:"cpus"`
@@ -74,9 +76,11 @@ type Manifest struct {
 	Processes        map[string]Process `toml:"processes"`
 	Routes           map[string]Route   `toml:"routes"`
 	Env              map[string]any     `toml:"env"`
-	Release          string             `toml:"release"`
-	Probe            string             `toml:"probe"`
-	Notify           string             `toml:"notify"`
+	EnvPreview       map[string]any     `toml:"-"`
+	envSubtables     []string
+	Release          string `toml:"release"`
+	Probe            string `toml:"probe"`
+	Notify           string `toml:"notify"`
 }
 
 type rawManifest struct {
@@ -363,18 +367,44 @@ func ReadManifest(root string) (*Manifest, error) {
 	if err != nil {
 		return nil, manifestError(fmt.Sprintf("failed to parse ship.toml: %s", err))
 	}
+	env, envPreview, envSubtables := splitEnvTables(raw.Env)
 	manifest := Manifest{
 		Name:             raw.Name,
 		Box:              raw.Box,
 		ProductionBranch: raw.ProductionBranch,
 		Processes:        processes,
 		Routes:           hydrateRouteKeys(routes),
-		Env:              raw.Env,
+		Env:              env,
+		EnvPreview:       envPreview,
+		envSubtables:     envSubtables,
 		Release:          raw.Release,
 		Probe:            raw.Probe,
 		Notify:           raw.Notify,
 	}
 	return &manifest, nil
+}
+
+func splitEnvTables(raw map[string]any) (map[string]any, map[string]any, []string) {
+	if len(raw) == 0 {
+		return nil, nil, nil
+	}
+	env := make(map[string]any, len(raw))
+	var preview map[string]any
+	var subtables []string
+	for key, value := range raw {
+		table, isTable := value.(map[string]any)
+		if key == "preview" && isTable {
+			preview = table
+			continue
+		}
+		if isTable {
+			subtables = append(subtables, key)
+			continue
+		}
+		env[key] = value
+	}
+	sort.Strings(subtables)
+	return env, preview, subtables
 }
 
 func strictErrorMessage(err error) string {
@@ -615,7 +645,9 @@ func CheckLoadedManifest(root string, envName string, manifest *Manifest) ([]str
 		errors = append(errors, fmt.Sprintf("invalid env name: %s", envName))
 	}
 
-	validateVarsBlock(manifest.Env, &errors)
+	validateVarsBlock("[env]", manifest.Env, true, &errors)
+	validateEnvSubtables(manifest.envSubtables, &errors)
+	validateVarsBlock("[env.preview]", manifest.EnvPreview, false, &errors)
 	validateProbe(manifest.Probe, &errors)
 	validateNotify(manifest.Notify, &errors)
 
@@ -631,7 +663,7 @@ func CheckLoadedManifest(root string, envName string, manifest *Manifest) ([]str
 	if shape == ShapeStatic && manifest.Release != "" {
 		errors = append(errors, "release is only supported for container apps")
 	}
-	if shape == ShapeStatic && len(manifest.Env) > 0 {
+	if shape == ShapeStatic && hasEnvConfig(manifest) {
 		errors = append(errors, "[env] is only supported for container apps")
 	}
 
@@ -663,7 +695,7 @@ func LoadAppContextFromManifest(root string, envName string, manifest *Manifest)
 		dockerfile = filepath.Join(root, "Dockerfile")
 	}
 
-	vars, secretRefs := splitVarsBlock(manifest.Env)
+	vars, secretRefs := splitVarsBlock(effectiveEnvBlock(manifest, envName))
 
 	return &AppContext{
 		AppName:          manifest.Name,
@@ -726,9 +758,42 @@ func splitVarsBlock(vars map[string]any) (map[string]string, map[string]string) 
 	return literals, refs
 }
 
-func validateVarsBlock(vars map[string]any, errors *[]string) {
-	for key, raw := range vars {
-		label := fmt.Sprintf("[env].%s", key)
+func effectiveEnvBlock(manifest *Manifest, envName string) map[string]any {
+	if !isPreviewEnvName(envName) || len(manifest.EnvPreview) == 0 {
+		return manifest.Env
+	}
+	merged := make(map[string]any, len(manifest.Env)+len(manifest.EnvPreview))
+	for key, value := range manifest.Env {
+		merged[key] = value
+	}
+	for key, value := range manifest.EnvPreview {
+		merged[key] = value
+	}
+	return merged
+}
+
+func isPreviewEnvName(envName string) bool {
+	return envName != "" && envName != ProductionEnvName
+}
+
+func hasEnvConfig(manifest *Manifest) bool {
+	return len(manifest.Env) > 0 || len(manifest.EnvPreview) > 0 || len(manifest.envSubtables) > 0
+}
+
+func validateEnvSubtables(subtables []string, errors *[]string) {
+	for _, name := range subtables {
+		*errors = append(*errors, fmt.Sprintf("[env.%s] is not supported; only [env.preview] exists. Per-branch values ride branches or --branch secrets.", name))
+	}
+}
+
+func validateVarsBlock(table string, vars map[string]any, reservePreview bool, errors *[]string) {
+	for _, key := range sortedAnyKeys(vars) {
+		raw := vars[key]
+		label := fmt.Sprintf("%s.%s", table, key)
+		if reservePreview && key == "preview" {
+			*errors = append(*errors, fmt.Sprintf("%s is reserved for the [env.preview] overlay; choose another environment variable name", label))
+			continue
+		}
 		if !EnvKeyRe.MatchString(key) {
 			*errors = append(*errors, fmt.Sprintf("%s key must match ^[A-Za-z_][A-Za-z0-9_]*$", label))
 			continue
@@ -754,6 +819,15 @@ func validateVarsBlock(vars map[string]any, errors *[]string) {
 			*errors = append(*errors, fmt.Sprintf("%s must be a string; arrays and tables are not supported", label))
 		}
 	}
+}
+
+func sortedAnyKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func validateProductionBranch(branch string) bool {

@@ -71,6 +71,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("mixed container and static routes deploy as one release", env.testMixedContainerStaticLifecycle)
 	t.Run("@secret refs resolve through set/list/rm into the runtime env", env.testSecretLifecycle)
 	t.Run("preview secret scoping isolation", env.testPreviewSecretScoping)
+	t.Run("preview env overlay applies before secret resolution", env.testPreviewEnvOverlay)
 	t.Run("exec runs one-off commands in the release environment", env.testExec)
 	t.Run("status + logs surface deployed processes without SSHing in", env.testStatusAndLogs)
 	t.Run("rm tears down one app environment", env.testDestroy)
@@ -1267,6 +1268,63 @@ web = { port = 3000 }
 	assertContains(t, envFile, "API_TOKEN=shared-preview-token\n")
 	if strings.Contains(envFile, "branch-token") || strings.Contains(envFile, "prod-token") {
 		t.Fatalf("branch rm should fall back to shared preview only:\n%s", envFile)
+	}
+}
+
+func (e *smokeEnv) testPreviewEnvOverlay(t *testing.T) {
+	e.ensureSmokeHostSeed(t)
+
+	app := filepath.Join(e.tmp, "preview-env-overlay")
+	mustMkdir(t, app)
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "overlay"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+
+[env]
+LOG_LEVEL = "info"
+BASE_ONLY = "kept"
+API_TOKEN = "@secret:prod_token"
+
+[env.preview]
+LOG_LEVEL = "debug"
+PREVIEW_ONLY = "yes"
+API_TOKEN = "@secret"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"overlay.example.com" = "web"
+`)
+	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+
+	e.ship(t, app, []byte("prod-base-token"), "secret", "set", "prod_token")
+	e.ship(t, app, []byte("prod-leak-token"), "secret", "set", "API_TOKEN")
+	e.ship(t, app, []byte("shared-preview-token"), "secret", "set", "API_TOKEN", "--preview")
+	e.ship(t, app, nil)
+	prodEnv := e.dockerExec(t, "cat "+identity.EnvFile("overlay", productionEnv))
+	assertContains(t, prodEnv, "LOG_LEVEL=info\n")
+	assertContains(t, prodEnv, "BASE_ONLY=kept\n")
+	assertContains(t, prodEnv, "API_TOKEN=prod-base-token\n")
+	if strings.Contains(prodEnv, "PREVIEW_ONLY=") || strings.Contains(prodEnv, "shared-preview-token") {
+		t.Fatalf("Production env should ignore [env.preview]:\n%s", prodEnv)
+	}
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/env-overlay")
+	e.ship(t, app, nil)
+	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "overlay", "feature/env-overlay")
+	previewEnvFile := e.dockerExec(t, "cat "+identity.EnvFile("overlay", previewEnv))
+	assertContains(t, previewEnvFile, "LOG_LEVEL=debug\n")
+	assertContains(t, previewEnvFile, "BASE_ONLY=kept\n")
+	assertContains(t, previewEnvFile, "PREVIEW_ONLY=yes\n")
+	assertContains(t, previewEnvFile, "API_TOKEN=shared-preview-token\n")
+	if strings.Contains(previewEnvFile, "prod-base-token") || strings.Contains(previewEnvFile, "prod-leak-token") {
+		t.Fatalf("Preview env should resolve overlay @secret through Preview scopes only:\n%s", previewEnvFile)
 	}
 }
 

@@ -98,6 +98,60 @@ func TestCheckManifestAcceptsContainerV2(t *testing.T) {
 	}
 }
 
+func TestLoadAppContextAppliesPreviewEnvOverlay(t *testing.T) {
+	root := t.TempDir()
+	writeDockerfile(t, root, "FROM alpine\nEXPOSE 3000\n")
+	writeManifest(t, root, `name = "api"
+box = "deploy@example.com"
+
+[env]
+LOG_LEVEL = "info"
+BASE_ONLY = "kept"
+DATABASE_URL = "@secret:PROD_DB"
+
+[env.preview]
+LOG_LEVEL = "debug"
+DATABASE_URL = "@secret:PREVIEW_DB"
+API_TOKEN = "@secret"
+SMTP_URL = "@secret:MAIL_URL"
+
+[processes]
+web = { port = 3000 }
+`)
+
+	prod, err := LoadAppContext(root, ProductionEnvName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prod.Vars["LOG_LEVEL"] != "info" || prod.Vars["BASE_ONLY"] != "kept" {
+		t.Fatalf("Production vars should use base [env] only: %+v", prod.Vars)
+	}
+	if prod.SecretRefs["DATABASE_URL"] != "PROD_DB" {
+		t.Fatalf("Production secret refs should ignore [env.preview]: %+v", prod.SecretRefs)
+	}
+	if _, ok := prod.SecretRefs["API_TOKEN"]; ok {
+		t.Fatalf("Production secret refs should not include preview-only key: %+v", prod.SecretRefs)
+	}
+
+	preview, err := LoadAppContext(root, "feat-x-ab12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Vars["LOG_LEVEL"] != "debug" || preview.Vars["BASE_ONLY"] != "kept" {
+		t.Fatalf("Preview vars should merge base with overlay winning: %+v", preview.Vars)
+	}
+	wants := map[string]string{
+		"DATABASE_URL": "PREVIEW_DB",
+		"API_TOKEN":    "API_TOKEN",
+		"SMTP_URL":     "MAIL_URL",
+	}
+	for envKey, secretKey := range wants {
+		if preview.SecretRefs[envKey] != secretKey {
+			t.Fatalf("preview secret ref %s = %q, want %q in %+v", envKey, preview.SecretRefs[envKey], secretKey, preview.SecretRefs)
+		}
+	}
+}
+
 func TestReadManifestRejectsProcessRouteTableWithTLS(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
@@ -257,13 +311,13 @@ web = "bun run src/server.ts"
 	}
 }
 
-func TestCheckManifestRejectsPerEnvTables(t *testing.T) {
+func TestCheckManifestRejectsUnknownEnvSubtables(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
 	writeManifest(t, root, `name = "api"
 box = "deploy@example.com"
 
-[env.production.vars]
+[env.staging]
 LOG_LEVEL = "debug"
 
 [processes]
@@ -274,8 +328,32 @@ web = { port = 3000 }
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(errors, "[env].production must be a string; arrays and tables are not supported") {
-		t.Fatalf("expected per-env table rejection, got %v", errors)
+	want := "[env.staging] is not supported; only [env.preview] exists. Per-branch values ride branches or --branch secrets."
+	if !slices.Contains(errors, want) {
+		t.Fatalf("expected %q, got %v", want, errors)
+	}
+}
+
+func TestCheckManifestRejectsReservedEnvPreviewKey(t *testing.T) {
+	root := t.TempDir()
+	writeDockerfile(t, root, "FROM alpine\n")
+	writeManifest(t, root, `name = "api"
+box = "deploy@example.com"
+
+[env]
+preview = "literal"
+
+[processes]
+web = { port = 3000 }
+`)
+
+	errors, _, err := CheckManifest(root, ProductionEnvName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[env].preview is reserved for the [env.preview] overlay; choose another environment variable name"
+	if !slices.Contains(errors, want) {
+		t.Fatalf("expected %q, got %v", want, errors)
 	}
 }
 

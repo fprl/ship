@@ -632,6 +632,18 @@ Truth stores:
 - Use manifest snapshots to answer "what did this release intend?"
 - Use box state to answer "what is live now?"
 
+Manifest env:
+
+- ` + "`[env]`" + ` defines committed container environment variables for every deploy.
+- Values are strings. ` + "`\"@secret\"`" + ` means secret name equals the env key;
+  ` + "`\"@secret:NAME\"`" + ` points at a different secret key.
+- ` + "`[env.preview]`" + ` overlays ` + "`[env]`" + ` for Preview only. Keys merge, and the
+  Preview value wins. Production ignores the overlay.
+- ` + "`[env.preview]`" + ` secrets resolve through Preview secret scoping: branch first,
+  then shared Preview, never Production.
+- The scalar key ` + "`preview`" + ` is reserved under ` + "`[env]`" + `, and no other
+  ` + "`[env.<name>]`" + ` table exists.
+
 Secret scoping:
 
 - ` + "`ship secret set KEY`" + ` stores the Production value.
