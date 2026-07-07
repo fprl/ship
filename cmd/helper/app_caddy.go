@@ -16,10 +16,6 @@ func caddyfilePath(app, env string) string {
 	return identity.CaddyFragmentFile(app, env)
 }
 
-func renderAppCaddyfile(app, env string, ctx *config.AppContext, release string) (string, error) {
-	return renderAppCaddyfileWithProcessNames(app, env, ctx, release, nil)
-}
-
 func renderAppCaddyfileWithProcessNames(app, env string, ctx *config.AppContext, release string, processNames map[string]string) (string, error) {
 	type hostKey struct {
 		host string

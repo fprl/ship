@@ -2,7 +2,6 @@ package helper
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"os/exec"
@@ -15,8 +14,6 @@ import (
 
 type cloudflareCmd struct {
 	SetupTunnel cloudflareSetupTunnelCmd `cmd:"setup-tunnel" help:"Create or update the Cloudflare tunnel token."`
-	Publish     cloudflarePublishCmd     `cmd:"" help:"Publish a hostname through Cloudflare."`
-	Remove      cloudflareRemoveCmd      `cmd:"" help:"Remove Cloudflare hostnames."`
 }
 
 type cloudflareSetupTunnelCmd struct {
@@ -81,71 +78,5 @@ func (c cloudflareSetupTunnelCmd) Run() error {
 	}
 
 	fmt.Printf("Cloudflare tunnel ready: %s (%s)\n", c.Name, tunnelID)
-	return nil
-}
-
-type cloudflarePublishCmd struct {
-	Host string `arg:"" help:"Public hostname."`
-	App  string `required:"" help:"App name."`
-}
-
-func (c cloudflarePublishCmd) Run() error {
-	ingress, err := cloudflare.NewCloudflareIngress()
-	if err != nil {
-		if errors.Is(err, cloudflare.ErrNotConfigured) {
-			fmt.Println(strings.Join([]string{
-				"Cloudflare API publishing is not configured; configure this hostname in Cloudflare:",
-				fmt.Sprintf("  public hostname: %s", c.Host),
-				"  service: http://127.0.0.1:8080",
-				"Local Caddy route publishing will continue.",
-			}, "\n"))
-			return nil
-		}
-		utils.DieError(err, 1)
-	}
-
-	msg, err := ingress.Publish(c.Host, c.App)
-	if err != nil {
-		utils.DieError(err, 1)
-	}
-	fmt.Println(msg)
-	return nil
-}
-
-type cloudflareRemoveCmd struct {
-	Host string `arg:"" optional:"" help:"Public hostname."`
-	App  string `help:"App name."`
-}
-
-func (c cloudflareRemoveCmd) Run() error {
-	hasHost := c.Host != ""
-	hasApp := c.App != ""
-
-	if hasHost == hasApp {
-		utils.Die("provide exactly one of host or --app", 1)
-	}
-
-	ingress, err := cloudflare.NewCloudflareIngress()
-	if err != nil {
-		if errors.Is(err, cloudflare.ErrNotConfigured) {
-			fmt.Println("Cloudflare API publishing is not configured; no Cloudflare routes to remove.")
-			return nil
-		}
-		utils.DieError(err, 1)
-	}
-
-	removed, err := ingress.Remove(c.Host, c.App)
-	if err != nil {
-		utils.DieError(err, 1)
-	}
-
-	if len(removed) == 0 {
-		fmt.Println("No Cloudflare routes matched")
-		return nil
-	}
-
-	for _, h := range removed {
-		fmt.Printf("Removed Cloudflare route: %s\n", h)
-	}
 	return nil
 }

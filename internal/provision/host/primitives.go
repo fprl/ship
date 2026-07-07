@@ -44,15 +44,6 @@ type LineInFile struct {
 	Mode   os.FileMode
 }
 
-type BlockInFile struct {
-	Path       string
-	MarkerName string
-	Block      string
-	Owner      string
-	Group      string
-	Mode       os.FileMode
-}
-
 type UfwRule struct {
 	Rule   string
 	Delete bool
@@ -548,32 +539,6 @@ func EnsureLineInFile(apply Apply, change LineInFile) (bool, error) {
 	return EnsureFile(apply, File{Path: change.Path, Content: content, Owner: change.Owner, Group: change.Group, Mode: change.Mode})
 }
 
-func EnsureBlockInFile(apply Apply, change BlockInFile) (bool, error) {
-	if strings.TrimSpace(change.MarkerName) == "" {
-		return false, errors.New("block marker name is required")
-	}
-	begin := "# BEGIN " + change.MarkerName
-	end := "# END " + change.MarkerName
-	block := begin + "\n" + strings.TrimRight(change.Block, "\r\n") + "\n" + end
-
-	current, err := apply.Runner.ReadFile(apply.ContextOrBackground(), change.Path)
-	if err != nil {
-		if !errors.Is(err, ErrNotExist) {
-			return false, err
-		}
-		current = FileState{Owner: change.Owner, Group: change.Group, Mode: change.Mode}
-	}
-	text := strings.ReplaceAll(string(current.Content), "\r\n", "\n")
-	next, changed := replaceMarkedBlock(text, begin, end, block)
-	if current.Owner != change.Owner || current.Group != change.Group || current.Mode.Perm() != change.Mode.Perm() {
-		changed = true
-	}
-	if !changed {
-		return false, nil
-	}
-	return EnsureFile(apply, File{Path: change.Path, Content: []byte(next), Owner: change.Owner, Group: change.Group, Mode: change.Mode})
-}
-
 func EnsureUfwRule(apply Apply, rule UfwRule) (bool, error) {
 	if strings.TrimSpace(rule.Rule) == "" {
 		return false, errors.New("ufw rule is required")
@@ -735,26 +700,4 @@ func joinLines(lines []string, finalNewline bool) []byte {
 		content += "\n"
 	}
 	return []byte(content)
-}
-
-func replaceMarkedBlock(text string, begin string, end string, block string) (string, bool) {
-	if text == "" {
-		return block + "\n", true
-	}
-	start := strings.Index(text, begin)
-	stop := strings.Index(text, end)
-	if start >= 0 && stop >= start {
-		stop += len(end)
-		next := text[:start] + block + text[stop:]
-		if !strings.HasSuffix(next, "\n") {
-			next += "\n"
-		}
-		return next, next != text
-	}
-	var out bytes.Buffer
-	out.WriteString(strings.TrimRight(text, "\n"))
-	out.WriteString("\n")
-	out.WriteString(block)
-	out.WriteString("\n")
-	return out.String(), true
 }

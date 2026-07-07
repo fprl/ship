@@ -222,38 +222,6 @@ func TestRenderInitResultDoesNotCreateNestedGitRepoInMonorepo(t *testing.T) {
 	}
 }
 
-func TestInitFirstRunFlowRequiresCommitBeforeCheck(t *testing.T) {
-	root := t.TempDir()
-	if _, err := RunInit(root, InitOptions{
-		Template: "static",
-		Name:     "api",
-		Server:   "deploy@example.com",
-		Host:     "api.example.com",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	diags, err := checkDiagnostics(root, "production")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !diags.hasErrors() || !strings.Contains(strings.Join(diags.errorMessages(), "\n"), "git repository not found") {
-		t.Fatalf("expected missing git diagnostic before first commit:\n%+v", diags)
-	}
-
-	runGit(t, root, "init")
-	runGit(t, root, "add", ".")
-	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "initial ship app")
-
-	diags, err = checkDiagnostics(root, "production")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diags.hasErrors() {
-		t.Fatalf("check should pass after first commit:\n%+v", diags)
-	}
-}
-
 func TestRunInitKeepsExistingManifestAndScaffoldsMissingFiles(t *testing.T) {
 	root := t.TempDir()
 	manifestPath := filepath.Join(root, "ship.toml")

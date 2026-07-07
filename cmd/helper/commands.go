@@ -13,7 +13,6 @@ var requireRoot = func() error {
 }
 
 type ServerCmd struct {
-	Status     statusCmd     `cmd:"" help:"Show host status."`
 	Doctor     doctorCmd     `cmd:"" help:"Run host diagnostics."`
 	Cloudflare cloudflareCmd `cmd:"" help:"Manage Cloudflare Tunnel ingress."`
 	App        appCmd        `cmd:"" help:"Manage app users, files, and processes."`

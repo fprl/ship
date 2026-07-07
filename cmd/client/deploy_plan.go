@@ -11,7 +11,6 @@ import (
 )
 
 type localDeployOptions struct {
-	AllowDirty    bool
 	IncludeDotenv bool
 }
 
@@ -25,26 +24,6 @@ type localDeployPlan struct {
 }
 
 const timeRFC3339UTC = time.RFC3339Nano
-
-func checkDiagnostics(root, envName string) (diagnostics, error) {
-	errors, warnings, err := config.CheckManifest(root, envName)
-	if err != nil {
-		return nil, err
-	}
-	out := manifestDiagnostics(errors, warnings)
-	if envName == "" || out.hasErrors() {
-		return out, nil
-	}
-	plan, deployDiags, err := buildLocalDeployPlan(root, envName, localDeployOptions{})
-	if err != nil {
-		return nil, err
-	}
-	out = append(out, deployDiags...)
-	if !out.hasErrors() {
-		out = append(out, secretReferenceDiagnostics(plan.Context)...)
-	}
-	return out, nil
-}
 
 func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localDeployPlan, diagnostics, error) {
 	errors, warnings, err := config.CheckManifest(root, envName)
@@ -88,14 +67,6 @@ func buildLocalDeployPlan(root, envName string, opts localDeployOptions) (localD
 		return plan, diags, nil
 	}
 	plan.Dirty = dirty
-	if dirty && !opts.AllowDirty {
-		diags = append(diags, diagnostic{
-			Level:   diagnosticError,
-			Message: "working tree is dirty",
-			Hint:    "Commit changes before shipping Production. Preview branches can ship dirty worktrees.",
-		})
-		return plan, diags, nil
-	}
 	if dirty {
 		plan.Release = dirtyReleaseID(shortCommit, plan.CreatedAt)
 	}
@@ -167,22 +138,6 @@ func gitCommitHint(err error) string {
 	default:
 		return "Run this from a committed Git checkout. Dirty deploys still need a base commit."
 	}
-}
-
-func secretReferenceDiagnostics(ctx *config.AppContext) diagnostics {
-	keys := secretRefKeys(ctx.SecretRefs)
-	if len(keys) == 0 {
-		return nil
-	}
-	out := make(diagnostics, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, diagnostic{
-			Level:   diagnosticWarning,
-			Message: fmt.Sprintf("secret %s must be set before deploy", key),
-			Hint:    fmt.Sprintf("Run:\n  printf '%%s' \"$%s\" | ship secret set %s", key, key),
-		})
-	}
-	return out
 }
 
 func gitWorktreeDirty(root string, ignoreDirs []string) (bool, error) {

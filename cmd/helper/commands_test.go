@@ -26,15 +26,11 @@ func parseServerCommand(t *testing.T, args ...string) *ServerCmd {
 
 func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 	tests := [][]string{
-		{"status"},
-		{"status", "--json"},
 		{"doctor"},
 		{"doctor", "--json"},
 		{"doctor", "--box-target", "deploy@example.com", "--json"},
 		{"doctor", "record"},
 		{"cloudflare", "setup-tunnel", "--name", "ship", "--account-id", "account-test", "--token-file", "/tmp/token"},
-		{"cloudflare", "publish", "--app", "api", "api.example.com"},
-		{"cloudflare", "remove", "--app", "api"},
 		{"app", "setup-env", "api", "production"},
 		{"app", "preflight", "--secret", "DATABASE_URL", "--json", "api", "production"},
 		{"app", "destroy-env", "api", "production"},
@@ -58,15 +54,10 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "logs", "api", "production", "web"},
 		{"app", "logs", "--follow", "api", "production", "web"},
 		{"app", "logs", "--tail=50", "api", "production"},
-		{"app", "restart", "api", "production"},
-		{"app", "restart", "api", "production", "web"},
 		{"app", "rollback", "api", "production"},
 		{"app", "backup", "create", "api", "production"},
 		{"app", "backup", "create", "--json", "api", "production"},
 		{"app", "backup", "create", "--to", "/tmp/backups", "api", "production"},
-		{"app", "backup", "list", "api", "production"},
-		{"app", "backup", "list", "--json", "api", "production"},
-		{"app", "backup", "rm", "api", "production", "backup-id"},
 		{"app", "backup", "restore", "--from", "backup-id", "api", "production"},
 		{"app", "backup", "restore", "--from", "backup-id", "--dry-run", "api", "production"},
 		{"env", "reap"},
@@ -85,10 +76,15 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 
 func TestServerCLIRejectsRemovedCompatibilityCommands(t *testing.T) {
 	tests := [][]string{
-		{"app", "restart", "--json", "api", "production"},
+		{"status"},
+		{"cloudflare", "publish", "--app", "api", "api.example.com"},
+		{"cloudflare", "remove", "--app", "api"},
+		{"app", "restart", "api", "production"},
 		{"app", "rollback", "--json", "api", "production"},
 		{"app", "backup", "api", "production"},
 		{"app", "backup", "--json", "api", "production"},
+		{"app", "backup", "list", "api", "production"},
+		{"app", "backup", "rm", "api", "production", "backup-id"},
 		{"app", "backup", "--json", "list", "api", "production"},
 		{"app", "backup", "--from", "backup-id", "restore", "api", "production"},
 	}

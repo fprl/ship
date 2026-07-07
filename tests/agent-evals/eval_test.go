@@ -391,7 +391,6 @@ func (e *evalCase) commandEnv(extra []string) []string {
 	}
 	pathParts = append(pathParts, os.Getenv("PATH"))
 	env = setEnv(env, "PATH", strings.Join(pathParts, string(os.PathListSeparator)))
-	env = setEnv(env, "SHIP_EVAL_FAKE_VPS", "fake-vps")
 	return append(env, extra...)
 }
 

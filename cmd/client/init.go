@@ -22,7 +22,6 @@ const (
 type InitOptions struct {
 	Template string
 	Name     string
-	Env      string
 	Server   string
 	Host     string
 	Port     int
@@ -30,7 +29,6 @@ type InitOptions struct {
 
 type InitResult struct {
 	AppName    string
-	Env        string
 	Template   string
 	Root       string
 	ConfigPath string
@@ -46,7 +44,6 @@ type initFile struct {
 type normalizedInit struct {
 	template string
 	name     string
-	env      string
 	server   string
 	host     string
 	port     int
@@ -91,7 +88,6 @@ func RunInit(root string, opts InitOptions) (InitResult, error) {
 
 	result := InitResult{
 		AppName:    normalized.name,
-		Env:        normalized.env,
 		Template:   normalized.template,
 		Root:       absRoot,
 		ConfigPath: manifestPath,
@@ -171,14 +167,6 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 		return normalizedInit{}, fmt.Errorf("invalid app name %q: must match %s", name, names.AppPattern)
 	}
 
-	env := strings.ToLower(strings.TrimSpace(opts.Env))
-	if env == "" {
-		env = "production"
-	}
-	if !names.EnvRe.MatchString(env) {
-		return normalizedInit{}, fmt.Errorf("invalid env name %q: must match %s", env, names.EnvPattern)
-	}
-
 	server := strings.TrimSpace(opts.Server)
 	if server == "" {
 		server = "deploy@example.com"
@@ -201,7 +189,7 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 		if port != 0 {
 			return normalizedInit{}, fmt.Errorf("--port is not used with --template static")
 		}
-		return normalizedInit{template: template, name: name, env: env, server: server, host: host}, nil
+		return normalizedInit{template: template, name: name, server: server, host: host}, nil
 	}
 	if port == 0 {
 		port = 3000
@@ -216,7 +204,6 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 	return normalizedInit{
 		template: template,
 		name:     name,
-		env:      env,
 		server:   server,
 		host:     host,
 		port:     port,

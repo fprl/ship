@@ -24,13 +24,6 @@ func DeployTmpDir() string {
 	return "/tmp/simple-vps-deploy"
 }
 
-// RequireRoot exits the process if it isn't running as root.
-func RequireRoot() {
-	if os.Geteuid() != 0 {
-		utils.Die("this command must run as root", 1)
-	}
-}
-
 // PathIsRelativeTo reports whether target is the same as base or lives
 // under it after symlink-free cleanup. Used by ValidateDeployTmpSource
 // to confine uploaded paths to /tmp/simple-vps-deploy.
@@ -53,7 +46,7 @@ func CommandSucceeds(name string, args ...string) bool {
 }
 
 // SystemServiceStatus returns a one-word state for a systemd unit (or
-// `exit N` / `error` on failure). Used by `server status`.
+// `exit N` / `error` on failure). Used by host doctor checks.
 func SystemServiceStatus(service string) string {
 	cmd := exec.Command(utils.SystemctlBin(), "is-active", service)
 	output, err := cmd.CombinedOutput()

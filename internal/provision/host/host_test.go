@@ -410,7 +410,7 @@ func TestEnsureSudoersFileRejectsUnsafeName(t *testing.T) {
 }
 
 func testDeploySudoers() []byte {
-	return []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server status, /usr/local/bin/ship server status *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *")
+	return []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *")
 }
 
 func TestEnsureDirectoryRejectsExistingNonDirectory(t *testing.T) {
@@ -471,7 +471,7 @@ func TestEnsureSystemdUnitWritesUnitReloadsDaemonThenRunsRequestedAction(t *test
 	changed, err := EnsureSystemdUnit(apply, SystemdUnit{
 		Name:    "caddy.service",
 		Content: []byte("[Unit]\nDescription=Caddy\n"),
-		Action:  Reloaded,
+		Action:  Restarted,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -482,7 +482,7 @@ func TestEnsureSystemdUnitWritesUnitReloadsDaemonThenRunsRequestedAction(t *test
 
 	wantCommands := []Command{
 		{Program: "systemctl", Args: []string{"daemon-reload"}},
-		{Program: "systemctl", Args: []string{"reload", "caddy.service"}},
+		{Program: "systemctl", Args: []string{"restart", "caddy.service"}},
 	}
 	if !reflect.DeepEqual(runner.commands, wantCommands) {
 		t.Fatalf("unexpected commands:\nwant: %+v\n got: %+v", wantCommands, runner.commands)
@@ -610,52 +610,6 @@ func TestEnsureUserSkipsAlreadyConvergedUser(t *testing.T) {
 	}
 	if len(runner.commands) != 2 {
 		t.Fatalf("expected only getent probes, got %+v", runner.commands)
-	}
-}
-
-func TestEnsureBlockInFileReplacesMarkedBlock(t *testing.T) {
-	runner := newFakeRunner()
-	runner.files["/etc/example.conf"] = FileState{
-		Content: []byte("one\n# BEGIN ship\nold\n# END ship\nlast\n"),
-		Owner:   "root",
-		Group:   "root",
-		Mode:    0644,
-	}
-	apply := Apply{Context: context.Background(), Runner: runner}
-
-	changed, err := EnsureBlockInFile(apply, BlockInFile{
-		Path:       "/etc/example.conf",
-		MarkerName: "ship",
-		Block:      "new",
-		Owner:      "root",
-		Group:      "root",
-		Mode:       0644,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed {
-		t.Fatal("expected block replacement to change file")
-	}
-	got := string(runner.files["/etc/example.conf"].Content)
-	want := "one\n# BEGIN ship\nnew\n# END ship\nlast\n"
-	if got != want {
-		t.Fatalf("unexpected content:\nwant %q\n got %q", want, got)
-	}
-
-	changed, err = EnsureBlockInFile(apply, BlockInFile{
-		Path:       "/etc/example.conf",
-		MarkerName: "ship",
-		Block:      "new",
-		Owner:      "root",
-		Group:      "root",
-		Mode:       0644,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if changed {
-		t.Fatal("expected identical block to be unchanged")
 	}
 }
 

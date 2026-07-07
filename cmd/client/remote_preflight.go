@@ -10,20 +10,6 @@ import (
 	"github.com/fprl/simple-vps/internal/errcat"
 )
 
-func deployRemotePreflight(runner sshRunner, ctx *config.AppContext) error {
-	if err := deployHostPreflight(runner, ctx); err != nil {
-		return err
-	}
-	report, err := fetchRemotePreflightReport(runner, ctx)
-	if err != nil {
-		return err
-	}
-	if !report.Healthy {
-		return remotePreflightError(report, false)
-	}
-	return nil
-}
-
 func ensureRemoteEnvReadyForDeploy(runner sshRunner, ctx *config.AppContext) error {
 	if err := deployHostPreflight(runner, ctx); err != nil {
 		return err
@@ -61,8 +47,7 @@ func deployHostPreflight(runner sshRunner, ctx *config.AppContext) error {
 	if stdout, stderr, code, err := runner.RunSSH(ctx.Server, "test -x /usr/local/bin/ship"); err != nil || code != 0 {
 		return errcat.New(errcat.CodeBoxNotInitialized, errcat.Fields{"target": ctx.Server, "detail": commandDetail(stdout, stderr, "missing ship server API")})
 	}
-	if stdout, stderr, code, err := runner.RunSSH(ctx.Server, "command -v rsync >/dev/null"); err != nil || code != 0 {
-		_ = commandDetail(stdout, stderr, "missing rsync")
+	if _, _, code, err := runner.RunSSH(ctx.Server, "command -v rsync >/dev/null"); err != nil || code != 0 {
 		return errcat.New(errcat.CodeBoxMissingTool, errcat.Fields{
 			"target": ctx.Server,
 			"tool":   "rsync",
@@ -136,9 +121,6 @@ func parseRemotePreflightReport(out string) (remotePreflightReport, bool) {
 func renderRemotePreflightFindings(report remotePreflightReport) string {
 	findings := remotePreflightFindingMessages(report)
 	if len(findings) == 0 {
-		if report.Healthy {
-			return fmt.Sprintf("preflight for %s (%s) returned no findings", report.App, report.Env)
-		}
 		return fmt.Sprintf("preflight for %s (%s) failed without findings", report.App, report.Env)
 	}
 	var lines []string
@@ -235,19 +217,10 @@ func preflightErrorDetail(err error) string {
 	if err == nil {
 		return ""
 	}
-	if coded, ok := errcat.As(err); ok {
-		detail := coded.Cause()
-		detail = strings.TrimSuffix(detail, "No remote files, routes, or containers were changed.")
-		detail = strings.TrimSuffix(detail, "No release was uploaded, built, or routed.")
-		return strings.TrimSpace(detail)
-	}
-	detail := err.Error()
-	prefix := "deploy preflight failed before upload/build/mutation:"
-	if strings.HasPrefix(detail, prefix) {
-		detail = strings.TrimSpace(strings.TrimPrefix(detail, prefix))
-	}
-	suffix := "No remote files, routes, or containers were changed."
-	detail = strings.TrimSpace(strings.TrimSuffix(detail, suffix))
+	coded, _ := errcat.As(err)
+	detail := coded.Cause()
+	detail = strings.TrimSuffix(detail, "No remote files, routes, or containers were changed.")
+	detail = strings.TrimSuffix(detail, "No release was uploaded, built, or routed.")
 	return strings.TrimSpace(detail)
 }
 

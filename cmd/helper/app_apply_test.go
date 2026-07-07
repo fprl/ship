@@ -402,7 +402,7 @@ func TestRenderAppCaddyfileProcessRouteUsesVersionedContainerDNS(t *testing.T) {
 			"app": {Host: "api.example.com", Process: "web"},
 		},
 	}
-	got, err := renderAppCaddyfile("api", "production", ctx, "abc123")
+	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +439,7 @@ func TestRenderAppCaddyfileStaticPathUsesHandlePath(t *testing.T) {
 			"docs": {Host: "example.com", Path: "/docs", Serve: "docs-dist"},
 		},
 	}
-	got, err := renderAppCaddyfile("site", "production", ctx, "abc123")
+	got, err := renderAppCaddyfileWithProcessNames("site", "production", ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -464,7 +464,7 @@ func TestRenderAppCaddyfileOrdersLongestPathFirst(t *testing.T) {
 			"api":  {Host: "example.com", Path: "/docs/api", Process: "web"},
 		},
 	}
-	got, err := renderAppCaddyfile("api", "production", ctx, "abc123")
+	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,7 +488,7 @@ func TestRenderAppCaddyfileMixedRoutesUseOneRelease(t *testing.T) {
 			"docs": {Host: "example.com", Path: "/docs", Serve: "docs-dist"},
 		},
 	}
-	got, err := renderAppCaddyfile("api", "production", ctx, "abc123")
+	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,7 +509,7 @@ func TestRenderAppCaddyfileGroupsEmptyTLSWithAuto(t *testing.T) {
 			"docs": {Host: "example.com", Path: "/docs", Serve: "docs-dist", TLS: "auto"},
 		},
 	}
-	got, err := renderAppCaddyfile("api", "production", ctx, "abc123")
+	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -526,7 +526,7 @@ func TestRenderAppCaddyfileEmitsInternalTLS(t *testing.T) {
 			"app": {Host: "example.com", Process: "web", TLS: "internal"},
 		},
 	}
-	got, err := renderAppCaddyfile("api", "production", ctx, "abc123")
+	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,7 +541,7 @@ func TestRenderAppCaddyfileRedirectRouteQuotesTarget(t *testing.T) {
 			"r": {Host: "old.example.com", Redirect: "new.example.com"},
 		},
 	}
-	got, err := renderAppCaddyfile("api", "production", ctx, "abc123")
+	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,7 +557,7 @@ func TestRenderAppCaddyfileRejectsProcessWithoutPort(t *testing.T) {
 			"r": {Host: "x.example.com", Process: "worker"},
 		},
 	}
-	if _, err := renderAppCaddyfile("api", "production", ctx, "abc123"); err == nil {
+	if _, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil); err == nil {
 		t.Fatal("expected error for process route pointing at portless process")
 	}
 }

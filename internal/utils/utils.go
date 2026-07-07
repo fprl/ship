@@ -5,10 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -31,13 +29,6 @@ func BackupDir() string {
 		return p
 	}
 	return "/etc/simple-vps/backups"
-}
-
-func CaddyBin() string {
-	if b := os.Getenv("SHIP_CADDY_BIN"); b != "" {
-		return b
-	}
-	return "caddy"
 }
 
 func SystemctlBin() string {
@@ -85,10 +76,6 @@ func SetErrorJSON(enabled bool) bool {
 	previous := errorJSON
 	errorJSON = enabled
 	return previous
-}
-
-func ErrorJSON() bool {
-	return errorJSON
 }
 
 func Die(message string, code int) {
@@ -284,37 +271,4 @@ func runChecked(ctx context.Context, timeout time.Duration, name string, args []
 		return nil, cmdErr
 	}
 	return stdout.Bytes(), nil
-}
-
-func BackupFile(path string) (string, error) {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return "", nil
-	}
-
-	backupDir := BackupDir()
-	if err := os.MkdirAll(backupDir, 0755); err != nil {
-		return "", err
-	}
-
-	stamp := time.Now().UTC().Format("20060102T150405Z")
-	filename := fmt.Sprintf("%s.%s", filepath.Base(path), stamp)
-	backupPath := filepath.Join(backupDir, filename)
-
-	srcFile, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer srcFile.Close()
-
-	destFile, err := os.OpenFile(backupPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return "", err
-	}
-	defer destFile.Close()
-
-	if _, err := io.Copy(destFile, srcFile); err != nil {
-		return "", err
-	}
-
-	return backupPath, nil
 }

@@ -114,9 +114,8 @@ func (c initCmd) Run() error {
 }
 
 type shipCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Branch string `name:"branch" hidden:"" help:"Branch name to use when HEAD is detached."`
-	// TODO(§8): document --tls internal in the Phase 2/3 docs pass.
+	Config        string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	Branch        string `name:"branch" hidden:"" help:"Branch name to use when HEAD is detached."`
 	TLS           string `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode for this deploy."`
 	JSON          bool   `name:"json" help:"Emit structured deployment JSON instead of the URL."`
 	Rebuild       bool   `name:"rebuild" hidden:"" help:"Refresh base images and bypass Podman's build cache."`
@@ -384,7 +383,6 @@ func (c boxDoctorCmd) Run() error {
 type boxInitCmd struct {
 	Target                   string `arg:"" help:"SSH target like deploy@example.com."`
 	Mode                     string `enum:"auto,local,remote" default:"auto" help:"Execution mode."`
-	TargetHost               string `name:"host" hidden:"" help:"Target VPS host for remote mode."`
 	BootstrapUser            string `help:"SSH user for remote bootstrap."`
 	SSHKey                   string `name:"ssh-key" help:"SSH private key for remote mode."`
 	OperatorSSHPublicKeyFile string `help:"SSH public key file for operator access."`
@@ -415,9 +413,6 @@ func (c boxInitCmd) Run() error {
 	opts.TargetHost = c.Target
 	if c.Mode != "" {
 		opts.Mode = c.Mode
-	}
-	if c.TargetHost != "" {
-		opts.TargetHost = c.TargetHost
 	}
 	if c.BootstrapUser != "" {
 		opts.BootstrapUser = c.BootstrapUser

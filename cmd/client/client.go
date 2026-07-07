@@ -382,19 +382,8 @@ func serverAppSetupEnvCommand(appName string, envName string) string {
 	return serverCommand("app", "setup-env", appName, envName)
 }
 
-func serverAppPreflightCommand(appName string, envName string, requiredSecrets []string) string {
-	return serverAppPreflightCommandWithJSON(appName, envName, requiredSecrets, false)
-}
-
 func serverAppPreflightJSONCommand(appName string, envName string, requiredSecrets []string) string {
-	return serverAppPreflightCommandWithJSON(appName, envName, requiredSecrets, true)
-}
-
-func serverAppPreflightCommandWithJSON(appName string, envName string, requiredSecrets []string, jsonFlag bool) string {
-	args := []string{"app", "preflight"}
-	if jsonFlag {
-		args = append(args, "--json")
-	}
+	args := []string{"app", "preflight", "--json"}
 	for _, secret := range requiredSecrets {
 		args = append(args, "--secret", secret)
 	}
@@ -428,11 +417,8 @@ func serverAppApplyCommand(appName string, envName string, tarballPath string, m
 	return serverCommand(args...)
 }
 
-func serverAppStatusCommand(appName, envName string, jsonFlag bool) string {
-	if jsonFlag {
-		return serverCommand("app", "status", "--json", appName, envName)
-	}
-	return serverCommand("app", "status", appName, envName)
+func serverAppStatusCommand(appName, envName string) string {
+	return serverCommand("app", "status", "--json", appName, envName)
 }
 
 func serverAppListCommand(jsonFlag bool) string {
@@ -480,11 +466,8 @@ func serverAppRollbackCommand(appName, envName, release string, actor deployIden
 	return serverCommand(args...)
 }
 
-func serverAppBackupCommand(appName, envName, dest string, jsonFlag bool) string {
+func serverAppBackupCommand(appName, envName, dest string) string {
 	args := []string{"app", "backup", "create"}
-	if jsonFlag {
-		args = append(args, "--json")
-	}
 	if dest != "" {
 		args = append(args, "--to", dest)
 	}
@@ -492,20 +475,14 @@ func serverAppBackupCommand(appName, envName, dest string, jsonFlag bool) string
 	return serverCommand(args...)
 }
 
-func serverAppRestoreCommand(appName, envName, from string, dryRun bool) string {
+func serverAppRestoreCommand(appName, envName, from string) string {
 	args := []string{"app", "backup", "restore", "--from", from}
-	if dryRun {
-		args = append(args, "--dry-run")
-	}
 	args = append(args, appName, envName)
 	return serverCommand(args...)
 }
 
-func serverAppDestroyEnvCommand(appName, envName string, purge bool) string {
-	args := []string{"app", "destroy-env"}
-	if purge {
-		args = append(args, "--purge")
-	}
+func serverAppDestroyEnvCommand(appName, envName string) string {
+	args := []string{"app", "destroy-env", "--purge"}
 	args = append(args, appName, envName)
 	return serverCommand(args...)
 }
@@ -608,7 +585,7 @@ func currentReadContext(root, command string) (readContext, error) {
 }
 
 func currentReadContextForBranch(root, command, branch string) (readContext, error) {
-	address, err := resolveReadAddress(root, "", branch, command)
+	address, err := resolveReadAddress(root, branch, command)
 	if err != nil {
 		return readContext{}, err
 	}
@@ -1024,7 +1001,7 @@ func CmdSave(root string, dest string) {
 	}
 	defer read.Runner.Close()
 
-	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppBackupCommand(read.AppContext.AppName, read.EnvName, dest, false), "save failed")
+	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppBackupCommand(read.AppContext.AppName, read.EnvName, dest), "save failed")
 	fmt.Print(out)
 }
 
@@ -1036,7 +1013,7 @@ func CmdRestore(root string, from string) {
 	defer read.Runner.Close()
 
 	runSSHChecked(read.Runner, read.AppContext.Server, serverAppSetupEnvCommand(read.AppContext.AppName, read.EnvName), "restore setup failed")
-	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppRestoreCommand(read.AppContext.AppName, read.EnvName, from, false), "restore failed")
+	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppRestoreCommand(read.AppContext.AppName, read.EnvName, from), "restore failed")
 	fmt.Print(rewriteRestoreSummary(out, read))
 }
 
@@ -1048,7 +1025,7 @@ func rewriteRestoreSummary(out string, read readContext) string {
 }
 
 func CmdRm(root string, branch string, confirm string) {
-	address, err := resolveReadAddress(root, "", branch, "rm")
+	address, err := resolveReadAddress(root, branch, "rm")
 	if err != nil {
 		utils.DieError(err, 1)
 	}
@@ -1079,7 +1056,7 @@ func CmdRm(root string, branch string, confirm string) {
 		}), 1)
 	}
 
-	if _, err := runSSHRequired(runner, baseCtx.Server, serverAppDestroyEnvCommand(baseCtx.AppName, envName, true), "rm failed"); err != nil {
+	if _, err := runSSHRequired(runner, baseCtx.Server, serverAppDestroyEnvCommand(baseCtx.AppName, envName), "rm failed"); err != nil {
 		utils.DieError(err, 1)
 	}
 	fmt.Printf("Removed %s %s\n", kind, displayBranch)
@@ -1366,7 +1343,7 @@ func CmdPreviewPin(root string, branch string, pinned bool) {
 			"command": command,
 		}), 1)
 	}
-	previewBranch := sanitizeBranchEnvName(branch)
+	previewBranch := names.SanitizeBranchEnvName(branch)
 	if previewBranch == "" {
 		utils.DieError(errcat.New(errcat.CodeUnmappableBranchName, errcat.Fields{
 			"branch": fmt.Sprintf("%q", branch),
@@ -1494,7 +1471,7 @@ func writeShipResult(result ShipResult, jsonFlag bool) {
 }
 
 func runShip(root string, branchName string, tlsMode string, rebuild bool, includeDotenv bool, progress *shipProgress) (ShipResult, error) {
-	address, err := resolveDeployAddress(root, "", branchName)
+	address, err := resolveDeployAddress(root, branchName)
 	if err != nil {
 		return ShipResult{}, err
 	}
@@ -1530,7 +1507,6 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, inclu
 
 	boxIP := resolveBoxIPv4(runner, ctx.Server)
 	plan, diags, err := buildLocalDeployPlan(root, envName, localDeployOptions{
-		AllowDirty:    !address.ProductionBranch,
 		IncludeDotenv: includeDotenv,
 	})
 	if err != nil {
@@ -1663,8 +1639,6 @@ func localDeployRemediation(messages []string) string {
 			return "git init && git add . && git commit -m \"initial ship app\""
 		case strings.Contains(message, "git repository has no commits"):
 			return "git add . && git commit -m \"initial ship app\""
-		case strings.Contains(message, "working tree is dirty"):
-			return "git add . && git commit -m \"<message>\""
 		case strings.Contains(message, "refusing to deploy dotenv file:"):
 			return "ship --include-dotenv"
 		case strings.HasPrefix(message, "hash static assets:"):
@@ -1678,7 +1652,6 @@ func localDeployDiagnostic(messages []string) bool {
 	for _, message := range messages {
 		switch {
 		case strings.HasPrefix(message, "git "),
-			strings.Contains(message, "working tree is dirty"),
 			strings.HasPrefix(message, "hash static assets:"),
 			strings.Contains(message, "refusing to deploy dotenv file:"):
 			return true
@@ -2052,10 +2025,7 @@ func dotenvError(dotenvs []string) error {
 	}
 	dotenvs = uniqueStrings(dotenvs)
 	sort.Strings(dotenvs)
-	if len(dotenvs) > 0 {
-		return errcat.New(errcat.CodeDotenvRejected, errcat.Fields{"files": strings.Join(dotenvs, ", ")})
-	}
-	return nil
+	return errcat.New(errcat.CodeDotenvRejected, errcat.Fields{"files": strings.Join(dotenvs, ", ")})
 }
 
 func uniqueStrings(values []string) []string {

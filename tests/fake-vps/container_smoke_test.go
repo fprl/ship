@@ -1495,23 +1495,6 @@ web = { port = 3000, resources = { memory = "512m", cpus = 0.5 } }
 	`)
 }
 
-func writeDirtyFixture(t *testing.T, app string) {
-	t.Helper()
-	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
-CMD ["/bin/sh", "-c", "sleep 3600"]
-`)
-	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "dirtyapi"
-box = "fake-vps"
-probe = "/health"
-
-[processes]
-web = { port = 3000 }
-
-[routes]
-"dirty.example.com" = "web"
-`)
-}
-
 func writeBranchFixture(t *testing.T, app string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine

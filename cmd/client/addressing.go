@@ -31,16 +31,8 @@ type readAddress struct {
 	ProductionBranch bool
 }
 
-func sanitizeBranchEnvName(branch string) string {
-	return names.SanitizeBranchEnvName(branch)
-}
-
-func resolveDeployAddress(root, explicitEnv, branchFlag string) (deployAddress, error) {
-	baseEnv := explicitEnv
-	if baseEnv == "" {
-		baseEnv = productionEnvName
-	}
-	baseCtx, err := config.LoadAppContext(root, baseEnv)
+func resolveDeployAddress(root, branchFlag string) (deployAddress, error) {
+	baseCtx, err := config.LoadAppContext(root, productionEnvName)
 	if err != nil {
 		return deployAddress{}, err
 	}
@@ -52,12 +44,9 @@ func resolveDeployAddress(root, explicitEnv, branchFlag string) (deployAddress, 
 	if err != nil {
 		return deployAddress{}, err
 	}
-	envName := explicitEnv
-	if envName == "" {
-		envName, err = envNameForBranch(branch, baseCtx.ProductionBranch)
-		if err != nil {
-			return deployAddress{}, err
-		}
+	envName, err := envNameForBranch(branch, baseCtx.ProductionBranch)
+	if err != nil {
+		return deployAddress{}, err
 	}
 	ctx, err := config.LoadAppContext(root, envName)
 	if err != nil {
@@ -76,16 +65,13 @@ func resolveDeployAddress(root, explicitEnv, branchFlag string) (deployAddress, 
 		ProductionBranch: branch == baseCtx.ProductionBranch,
 		Dirty:            dirty,
 	}
-	if explicitEnv == "" && !address.ProductionBranch {
+	if !address.ProductionBranch {
 		address.PreviewBranch = branch
 	}
 	return address, nil
 }
 
-func resolveReadAddress(root, explicitEnv, branchFlag, command string) (readAddress, error) {
-	if explicitEnv != "" {
-		return readAddress{EnvName: explicitEnv}, nil
-	}
+func resolveReadAddress(root, branchFlag, command string) (readAddress, error) {
 	baseCtx, err := config.LoadAppContext(root, productionEnvName)
 	if err != nil {
 		return readAddress{}, err
@@ -115,7 +101,7 @@ func envNameForBranch(branch, productionBranch string) (string, error) {
 	if branch == productionBranch {
 		return productionEnvName, nil
 	}
-	envName := sanitizeBranchEnvName(branch)
+	envName := names.SanitizeBranchEnvName(branch)
 	if envName == "" {
 		return "", errcat.New(errcat.CodeUnmappableBranchName, errcat.Fields{"branch": fmt.Sprintf("%q", branch)})
 	}

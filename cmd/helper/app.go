@@ -9,7 +9,6 @@ type appCmd struct {
 	Apply      appApplyCmd      `cmd:"apply" help:"Build the image, start processes, and apply the Caddy fragment from an uploaded manifest."`
 	List       appListCmd       `cmd:"list" help:"List app environments visible on this host."`
 	Status     appStatusCmd     `cmd:"status" help:"Show running processes for one (app, env) pair."`
-	Restart    appRestartCmd    `cmd:"restart" help:"Bounce running containers for one (app, env) pair via podman restart."`
 	Rollback   appRollbackCmd   `cmd:"rollback" help:"Run an older image release for one (app, env) pair."`
 	Exec       appExecCmd       `cmd:"exec" help:"Run a one-off command in a fresh container for one (app, env) pair."`
 	Why        appWhyCmd        `cmd:"why" help:"Show the latest deploy journal entry for one (app, env)."`

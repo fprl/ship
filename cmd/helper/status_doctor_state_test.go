@@ -12,22 +12,6 @@ import (
 	"github.com/fprl/simple-vps/internal/store"
 )
 
-func TestStatusStateLinesReportsNotInstalledWithoutRawOpenError(t *testing.T) {
-	stateStore := store.Store{Root: t.TempDir()}
-
-	lines, err := statusStateLines(stateStore)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := strings.Join(lines, "\n")
-	if !strings.Contains(text, "state: not installed") {
-		t.Fatalf("expected not installed status, got:\n%s", text)
-	}
-	if strings.Contains(text, "open ") {
-		t.Fatalf("status leaked raw open error:\n%s", text)
-	}
-}
-
 func TestDoctorHostStateCheckReportsMissingHostWithoutRawError(t *testing.T) {
 	root := t.TempDir()
 	stateStore := store.Store{Root: root}
@@ -52,29 +36,6 @@ func TestDoctorHostStateCheckClearsAfterValidHost(t *testing.T) {
 	check := doctorHostStateCheck(stateStore, "fake-vps")
 	if check.Status != doctorStatusOK {
 		t.Fatalf("expected ok check for a valid host, got: %+v", check)
-	}
-}
-
-func TestHostStatusReportUsesInjectedChecks(t *testing.T) {
-	stateStore := store.Store{Root: t.TempDir()}
-	writeValidHost(t, stateStore.HostPath())
-
-	report, err := hostStatusReportFor(
-		stateStore,
-		func(service string) string { return "service:" + service },
-		func(tool string) string { return "tool:" + tool },
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !report.State.Installed || report.State.Status != "installed" {
-		t.Fatalf("unexpected state: %+v", report.State)
-	}
-	if report.Services["caddy"] != "service:caddy" {
-		t.Fatalf("unexpected services: %+v", report.Services)
-	}
-	if report.Tools["podman"] != "tool:podman" {
-		t.Fatalf("unexpected tools: %+v", report.Tools)
 	}
 }
 
@@ -297,7 +258,7 @@ func TestRecordDoctorRunPersistsChecksAndDelta(t *testing.T) {
 }
 
 func TestHelperSudoRegexRequiresServerSubtree(t *testing.T) {
-	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server status, /usr/local/bin/ship server status *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *"
+	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *"
 	if !HelperSudoRe.MatchString(good) {
 		t.Fatal("expected server subtree sudoers grant to match")
 	}
@@ -318,7 +279,7 @@ func setupDoctorSudoers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "operator"), []byte("operator ALL=(ALL) NOPASSWD:ALL\n"), 0440); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ship"), []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server status, /usr/local/bin/ship server status *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *\n"), 0440); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ship"), []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *\n"), 0440); err != nil {
 		t.Fatal(err)
 	}
 }

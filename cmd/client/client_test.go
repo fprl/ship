@@ -127,27 +127,6 @@ func TestDirtyReleaseIDIncludesBaseCommit(t *testing.T) {
 	}
 }
 
-func TestSanitizeBranchEnvName(t *testing.T) {
-	tests := []struct {
-		branch string
-		want   string
-	}{
-		{branch: "feat/x", want: "feat-x"},
-		{branch: "--Feat///X--", want: "feat-x"},
-		{branch: "mañana/Über", want: "ma-ana-ber"},
-		{branch: "こんにちは-feature", want: "feature"},
-		{branch: strings.Repeat("a", 40), want: strings.Repeat("a", 28)},
-		{branch: strings.Repeat("a", 27) + "/x", want: strings.Repeat("a", 27)},
-	}
-	for _, tt := range tests {
-		t.Run(tt.branch, func(t *testing.T) {
-			if got := sanitizeBranchEnvName(tt.branch); got != tt.want {
-				t.Fatalf("sanitizeBranchEnvName(%q) = %q, want %q", tt.branch, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestEnvNameForBranchRejectsUnmappableBranchName(t *testing.T) {
 	_, err := envNameForBranch("日本語", "main")
 	if !errcat.Is(err, errcat.CodeUnmappableBranchName) || !strings.Contains(err.Error(), "next: git branch -m <new-name>") {
@@ -161,7 +140,7 @@ func TestResolveDeployAddressMapsBranchesToEnvs(t *testing.T) {
 	writeClientManifest(t, root, clientContainerManifest())
 	initCommittedGitApp(t, root, "main")
 
-	addr, err := resolveDeployAddress(root, "", "")
+	addr, err := resolveDeployAddress(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +149,7 @@ func TestResolveDeployAddressMapsBranchesToEnvs(t *testing.T) {
 	}
 
 	runGit(t, root, "checkout", "-B", "feat/x")
-	addr, err = resolveDeployAddress(root, "", "")
+	addr, err = resolveDeployAddress(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +174,7 @@ web = { port = 3000 }
 `)
 	initCommittedGitApp(t, root, "main")
 
-	addr, err := resolveDeployAddress(root, "", "")
+	addr, err := resolveDeployAddress(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +183,7 @@ web = { port = 3000 }
 	}
 
 	runGit(t, root, "checkout", "-B", "stable")
-	addr, err = resolveDeployAddress(root, "", "")
+	addr, err = resolveDeployAddress(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,16 +198,16 @@ func TestResolveDeployAddressDetachedBranchGate(t *testing.T) {
 	writeClientManifest(t, root, clientContainerManifest())
 	initCommittedGitApp(t, root, "main")
 
-	if _, err := resolveDeployAddress(root, "", "feat/x"); !errcat.Is(err, errcat.CodeBranchFlagRequiresDetachedHead) {
+	if _, err := resolveDeployAddress(root, "feat/x"); !errcat.Is(err, errcat.CodeBranchFlagRequiresDetachedHead) {
 		t.Fatalf("expected checked-out --branch rejection, got %v", err)
 	}
 
 	runGit(t, root, "checkout", "--detach")
-	if _, err := resolveDeployAddress(root, "", ""); !errcat.Is(err, errcat.CodeDetachedHeadRequiresBranch) {
+	if _, err := resolveDeployAddress(root, ""); !errcat.Is(err, errcat.CodeDetachedHeadRequiresBranch) {
 		t.Fatalf("expected detached HEAD rejection, got %v", err)
 	}
 
-	addr, err := resolveDeployAddress(root, "", "feat/x")
+	addr, err := resolveDeployAddress(root, "feat/x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +221,7 @@ func TestResolveDeployAddressReportsNotGitRepo(t *testing.T) {
 	writeClientDockerfile(t, root)
 	writeClientManifest(t, root, clientContainerManifest())
 
-	_, err := resolveDeployAddress(root, "", "")
+	_, err := resolveDeployAddress(root, "")
 	if !errcat.Is(err, errcat.CodeNotAGitRepo) || !strings.Contains(err.Error(), "next:") {
 		t.Fatalf("expected not_a_git_repo with next step, got %v", err)
 	}
@@ -439,7 +418,7 @@ func TestResolveDeployAddressDetectsStagedAndUnstagedDirtyState(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "unstaged.txt"), []byte("dirty"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	addr, err := resolveDeployAddress(root, "", "")
+	addr, err := resolveDeployAddress(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +427,7 @@ func TestResolveDeployAddressDetectsStagedAndUnstagedDirtyState(t *testing.T) {
 	}
 
 	runGit(t, root, "add", "unstaged.txt")
-	addr, err = resolveDeployAddress(root, "", "")
+	addr, err = resolveDeployAddress(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +452,7 @@ func TestEnforceProductionAncestryRejectsBehindProduction(t *testing.T) {
 
 	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@example.com"}
 	runner := &fakeSSHRunner{responses: map[string]string{
-		serverAppStatusCommand("api", "prod", true): `{"app":"api","env":"prod","release":{"release":"` + deployed[:12] + `","base_commit":"` + deployed + `","source":"process"},"processes":[]}`,
+		serverAppStatusCommand("api", "prod"): `{"app":"api","env":"prod","release":{"release":"` + deployed[:12] + `","base_commit":"` + deployed + `","source":"process"},"processes":[]}`,
 	}}
 
 	err := enforceProductionAncestry(root, runner, ctx, first)
@@ -497,14 +476,14 @@ func TestEnforceProductionAncestryAllowsFirstDeployAndAncestor(t *testing.T) {
 
 	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@example.com"}
 	firstDeploy := &fakeSSHRunner{responses: map[string]string{
-		serverAppStatusCommand("api", "prod", true): `{"app":"api","env":"prod","processes":[]}`,
+		serverAppStatusCommand("api", "prod"): `{"app":"api","env":"prod","processes":[]}`,
 	}}
 	if err := enforceProductionAncestry(root, firstDeploy, ctx, head); err != nil {
 		t.Fatalf("first deploy should skip ancestry check: %v", err)
 	}
 
 	ancestor := &fakeSSHRunner{responses: map[string]string{
-		serverAppStatusCommand("api", "prod", true): `{"app":"api","env":"prod","release":{"release":"` + first[:12] + `","base_commit":"` + first + `","source":"process"},"processes":[]}`,
+		serverAppStatusCommand("api", "prod"): `{"app":"api","env":"prod","release":{"release":"` + first[:12] + `","base_commit":"` + first + `","source":"process"},"processes":[]}`,
 	}}
 	if err := enforceProductionAncestry(root, ancestor, ctx, head); err != nil {
 		t.Fatalf("ancestor deployed commit should pass: %v", err)
@@ -531,32 +510,6 @@ func TestResolveReadPreviewEnvPropagatesUnknownBranchError(t *testing.T) {
 	}
 	if len(runner.commands) != 1 || runner.commands[0] != command {
 		t.Fatalf("unexpected commands: %v", runner.commands)
-	}
-}
-
-func TestCheckAndDeployShareDirtyWorktreeDiagnostic(t *testing.T) {
-	root := t.TempDir()
-	writeClientDockerfile(t, root)
-	writeClientManifest(t, root, clientContainerManifest())
-	runGit(t, root, "init")
-	runGit(t, root, "add", ".")
-	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
-	if err := os.WriteFile(filepath.Join(root, "dirty.txt"), []byte("dirty"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	checkDiags, err := checkDiagnostics(root, "production")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, deployDiags, err := buildLocalDeployPlan(root, "production", localDeployOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	checkErrors := checkDiags.errorMessages()
-	deployErrors := deployDiags.errorMessages()
-	if len(checkErrors) != 1 || len(deployErrors) != 1 || checkErrors[0] != deployErrors[0] || checkErrors[0] != "working tree is dirty" {
-		t.Fatalf("check/deploy diagnostics diverged:\ncheck=%v\ndeploy=%v", checkErrors, deployErrors)
 	}
 }
 
@@ -614,62 +567,6 @@ func TestCommandRunnerEnvKeyUsesNormalKnownHosts(t *testing.T) {
 	assertSSHOptionSequence(t, runner.SshOptions, "-o", "IdentitiesOnly=yes")
 	if strings.Contains(strings.Join(runner.SshOptions, " "), "UserKnownHostsFile") {
 		t.Fatalf("env key should use normal known_hosts, got %v", runner.SshOptions)
-	}
-}
-
-func TestCheckDiagnosticsExplainsMissingGitRepo(t *testing.T) {
-	root := t.TempDir()
-	writeClientDockerfile(t, root)
-	writeClientManifest(t, root, clientContainerManifest())
-
-	diags, err := checkDiagnostics(root, "production")
-	if err != nil {
-		t.Fatal(err)
-	}
-	errors := diags.errorMessages()
-	if len(errors) != 1 || errors[0] != "git repository not found" {
-		t.Fatalf("unexpected diagnostics: %+v", diags)
-	}
-	if !strings.Contains(diags[0].Hint, "git init") {
-		t.Fatalf("expected git init hint, got %q", diags[0].Hint)
-	}
-}
-
-func TestCheckDiagnosticsListsRequiredSecretsWithoutFailing(t *testing.T) {
-	root := t.TempDir()
-	writeClientDockerfile(t, root)
-	writeClientManifest(t, root, `name = "api"
-box = "deploy@example.com"
-probe = "/health"
-
-[env]
-DATABASE_URL = "@secret:DATABASE_URL"
-
-[processes]
-web = { port = 3000 }
-
-[routes]
-"api.example.com" = "web"
-`)
-	runGit(t, root, "init")
-	runGit(t, root, "add", ".")
-	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
-
-	diags, err := checkDiagnostics(root, "production")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diags.hasErrors() {
-		t.Fatalf("secret guidance should not fail local check: %+v", diags)
-	}
-	if len(diags) != 1 || diags[0].Level != diagnosticWarning {
-		t.Fatalf("expected one warning, got %+v", diags)
-	}
-	if !strings.Contains(diags[0].Message, "secret DATABASE_URL must be set before deploy") {
-		t.Fatalf("unexpected secret message: %q", diags[0].Message)
-	}
-	if !strings.Contains(diags[0].Hint, "ship secret set DATABASE_URL") {
-		t.Fatalf("unexpected secret hint: %q", diags[0].Hint)
 	}
 }
 
@@ -988,11 +885,9 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "doctor text", command: serverDoctorCommand("deploy@example.com", false)},
 		{name: "doctor json", command: serverDoctorCommand("deploy@example.com", true)},
 		{name: "setup env", command: serverAppSetupEnvCommand("api", "production")},
-		{name: "preflight", command: serverAppPreflightCommand("api", "production", []string{"DATABASE_URL"})},
 		{name: "preflight json", command: serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})},
 		{name: "apply", command: serverAppApplyCommand("api", "production", "/tmp/simple-vps-deploy/x.tar", "/tmp/simple-vps-deploy/x.toml", plan, actor, true)},
-		{name: "status text", command: serverAppStatusCommand("api", "production", false)},
-		{name: "status json", command: serverAppStatusCommand("api", "production", true)},
+		{name: "status json", command: serverAppStatusCommand("api", "production")},
 		{name: "list text", command: serverAppListCommand(false)},
 		{name: "list json", command: serverAppListCommand(true)},
 		{name: "logs", command: serverAppLogsCommand("api", "production", "web", false, 50)},
@@ -1001,13 +896,10 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "exec tty", command: serverAppExecCommand("api", "production", true, []string{"env"})},
 		{name: "rollback latest", command: serverAppRollbackCommand("api", "production", "", actor)},
 		{name: "rollback release", command: serverAppRollbackCommand("api", "production", "abc1234", actor)},
-		{name: "backup create", command: serverAppBackupCommand("api", "production", "", false)},
-		{name: "backup json", command: serverAppBackupCommand("api", "production", "", true)},
-		{name: "backup to", command: serverAppBackupCommand("api", "production", "/tmp/backups", false)},
-		{name: "restore", command: serverAppRestoreCommand("api", "production", "backup-id", false)},
-		{name: "restore dry run", command: serverAppRestoreCommand("api", "production", "backup-id", true)},
-		{name: "destroy env", command: serverAppDestroyEnvCommand("api", "production", false)},
-		{name: "destroy env purge", command: serverAppDestroyEnvCommand("api", "production", true)},
+		{name: "backup create", command: serverAppBackupCommand("api", "production", "")},
+		{name: "backup to", command: serverAppBackupCommand("api", "production", "/tmp/backups")},
+		{name: "restore", command: serverAppRestoreCommand("api", "production", "backup-id")},
+		{name: "destroy env purge", command: serverAppDestroyEnvCommand("api", "production")},
 		{name: "preview resolve or create", command: serverAppPreviewResolveOrCreateCommand("api", "feat/x")},
 		{name: "preview resolve", command: serverAppPreviewResolveCommand("api", "feat/x")},
 		{name: "preview pin", command: serverAppPreviewPinCommand("api", "feat/x")},
@@ -1040,8 +932,6 @@ func assertServerCommandCoveredBySudoers(t *testing.T, command string) {
 
 func serverSubcommandCoveredBySudoers(subcommand string) bool {
 	return strings.HasPrefix(subcommand, "app ") ||
-		subcommand == "status" ||
-		strings.HasPrefix(subcommand, "status ") ||
 		subcommand == "doctor" ||
 		strings.HasPrefix(subcommand, "doctor ")
 }
@@ -1054,17 +944,11 @@ func TestServerAppSetupEnvCommand(t *testing.T) {
 	}
 }
 
-func TestServerAppPreflightCommandIncludesRequiredSecrets(t *testing.T) {
-	got := serverAppPreflightCommand("api", "production", []string{"DATABASE_URL", "API_KEY"})
-	want := "sudo -n /usr/local/bin/ship server app preflight --secret DATABASE_URL --secret API_KEY api production"
+func TestServerAppPreflightJSONCommandIncludesRequiredSecrets(t *testing.T) {
+	got := serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL", "API_KEY"})
+	want := "sudo -n /usr/local/bin/ship server app preflight --json --secret DATABASE_URL --secret API_KEY api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
-	}
-
-	got = serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})
-	want = "sudo -n /usr/local/bin/ship server app preflight --json --secret DATABASE_URL api production"
-	if got != want {
-		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
 	}
 }
 
@@ -1233,28 +1117,18 @@ func TestServerAppBackupCommands(t *testing.T) {
 	}{
 		{
 			name: "create",
-			got:  serverAppBackupCommand("api", "production", "", false),
+			got:  serverAppBackupCommand("api", "production", ""),
 			want: "sudo -n /usr/local/bin/ship server app backup create api production",
 		},
 		{
-			name: "create json",
-			got:  serverAppBackupCommand("api", "production", "", true),
-			want: "sudo -n /usr/local/bin/ship server app backup create --json api production",
-		},
-		{
 			name: "create to",
-			got:  serverAppBackupCommand("api", "production", "/tmp/backups", false),
+			got:  serverAppBackupCommand("api", "production", "/tmp/backups"),
 			want: "sudo -n /usr/local/bin/ship server app backup create --to /tmp/backups api production",
 		},
 		{
 			name: "restore",
-			got:  serverAppRestoreCommand("api", "production", "backup-id", false),
+			got:  serverAppRestoreCommand("api", "production", "backup-id"),
 			want: "sudo -n /usr/local/bin/ship server app backup restore --from backup-id api production",
-		},
-		{
-			name: "restore dry run",
-			got:  serverAppRestoreCommand("api", "production", "backup-id", true),
-			want: "sudo -n /usr/local/bin/ship server app backup restore --from backup-id --dry-run api production",
 		},
 	}
 	for _, tt := range tests {
@@ -1267,16 +1141,10 @@ func TestServerAppBackupCommands(t *testing.T) {
 }
 
 func TestServerAppDestroyEnvCommand(t *testing.T) {
-	got := serverAppDestroyEnvCommand("api", "production", false)
-	want := "sudo -n /usr/local/bin/ship server app destroy-env api production"
+	got := serverAppDestroyEnvCommand("api", "production")
+	want := "sudo -n /usr/local/bin/ship server app destroy-env --purge api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
-	}
-
-	got = serverAppDestroyEnvCommand("api", "production", true)
-	want = "sudo -n /usr/local/bin/ship server app destroy-env --purge api production"
-	if got != want {
-		t.Fatalf("unexpected purge command:\nwant: %s\n got: %s", want, got)
 	}
 }
 
@@ -1385,52 +1253,6 @@ func (f *fakeSSHRunner) RunSSH(_ string, command string) (string, string, int, e
 		return out, "", 0, nil
 	}
 	return "", fmt.Sprintf("unexpected command: %s", command), 1, nil
-}
-
-func TestDeployRemotePreflightIsReadOnlyAndChecksSecrets(t *testing.T) {
-	ctx := &config.AppContext{
-		AppName:    "api",
-		EnvName:    "production",
-		Server:     "deploy@example.com",
-		SecretRefs: map[string]string{"DATABASE_URL": "DATABASE_URL"},
-	}
-	runner := &fakeSSHRunner{responses: map[string]string{
-		"true":                        `ok`,
-		"test -x /usr/local/bin/ship": "",
-		"command -v rsync >/dev/null": "",
-		serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"}): `{"app":"api","env":"production","healthy":true,"findings":[]}`,
-	}}
-
-	if err := deployRemotePreflight(runner, ctx); err != nil {
-		t.Fatal(err)
-	}
-	joined := strings.Join(runner.commands, "\n")
-	for _, mutating := range []string{"mkdir", "setup-env", "apply", "podman run", "podman rm"} {
-		if strings.Contains(joined, mutating) {
-			t.Fatalf("preflight ran mutating command %q:\n%s", mutating, joined)
-		}
-	}
-}
-
-func TestDeployRemotePreflightFailsMissingSecrets(t *testing.T) {
-	ctx := &config.AppContext{
-		AppName:    "api",
-		EnvName:    "production",
-		Server:     "deploy@example.com",
-		SecretRefs: map[string]string{"DATABASE_URL": "DATABASE_URL"},
-	}
-	runner := &fakeSSHRunner{responses: map[string]string{
-		"true":                        `ok`,
-		"test -x /usr/local/bin/ship": "",
-		"command -v rsync >/dev/null": "",
-	}, failures: map[string]string{
-		serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"}): `{"app":"api","env":"production","healthy":false,"issues":[{"code":"secret_missing","message":"missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL` + "`" + `"}],"findings":["missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL` + "`" + `"]}`,
-	}}
-
-	err := deployRemotePreflight(runner, ctx)
-	if !errcat.Is(err, errcat.CodeSecretMissing) || !strings.Contains(err.Error(), "missing secret DATABASE_URL") || !strings.Contains(err.Error(), "ship secret set DATABASE_URL") {
-		t.Fatalf("expected missing secret hint, got %v", err)
-	}
 }
 
 func TestEnsureRemoteEnvReadyPreparesMissingEnv(t *testing.T) {

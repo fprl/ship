@@ -526,62 +526,6 @@ PY
     exit 0
     ;;
 
-  restart)
-    # `podman restart [flags] <name>` — kill the existing listener
-    # and spawn a fresh one. Container metadata (labels, image, port
-    # file) is preserved; this matches real podman's "same container,
-    # new process" contract that the helper relies on for `app
-    # restart`. Caddy is re-bound to its published port; app
-    # containers get a new free port written back into the same
-    # .port file.
-    while [[ $# -gt 0 ]]; do
-      case "$1" in
-        -t|--time)
-          shift 2 ;;
-        *)
-          break ;;
-      esac
-    done
-    name="${1:-}"
-    if [[ -z "$name" || ! -f "$state_dir/containers/$name.labels" ]]; then
-      echo "fake podman: no such container: $name" >&2
-      exit 1
-    fi
-    listener="$state_dir/listeners/$name.pid"
-    if [[ -f "$listener" ]]; then
-      kill "$(cat "$listener")" 2>/dev/null || true
-      rm -f "$listener"
-    fi
-    image=""
-    image_file="$state_dir/containers/$name.image"
-    [[ -f "$image_file" ]] && image="$(cat "$image_file")"
-    port_file="$state_dir/containers/$name.port"
-    if [[ "$image" == *caddy* ]]; then
-      bind_port="$(cat "$port_file" 2>/dev/null || echo 80)"
-      python3 -u "$(dirname "$0")/fake-podman.caddy.py" "$bind_port" "$state_dir" \
-        >/dev/null 2>"$state_dir/listeners/$name.log" &
-      pid=$!
-      echo "$pid" > "$listener"
-    else
-      python3 -u "$(dirname "$0")/fake-podman.app.py" "$port_file" \
-        >/dev/null 2>"$state_dir/listeners/$name.log" &
-      pid=$!
-      echo "$pid" > "$listener"
-    fi
-    # Wait briefly for the listener to bind so the post-restart
-    # `podman ps` (in `server app restart`) sees State=running.
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-      if [[ -f "$port_file" ]]; then
-        p="$(cat "$port_file" 2>/dev/null)"
-        if [[ -n "$p" ]] && python3 -c "import socket,sys; s=socket.socket(); s.settimeout(0.2); sys.exit(0 if s.connect_ex(('127.0.0.1', int(sys.argv[1])))==0 else 1)" "$p" 2>/dev/null; then
-          break
-        fi
-      fi
-      sleep 0.1
-    done
-    exit 0
-    ;;
-
   *)
     echo "fake podman: unsupported verb: $verb" >&2
     exit 1

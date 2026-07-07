@@ -29,11 +29,6 @@ func prepareDeployRoutes(ctx *config.AppContext, envName string, opts deployRout
 	if tlsMode == "auto" {
 		tlsMode = ""
 	}
-	switch tlsMode {
-	case "", "internal":
-	default:
-		return deployRoutePlan{}, fmt.Errorf("invalid tls mode %q", opts.TLS)
-	}
 
 	hadConfiguredRoutes := hasConfiguredRouteHost(ctx.Routes)
 	routes := cloneRoutes(ctx.Routes)

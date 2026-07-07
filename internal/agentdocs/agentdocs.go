@@ -36,12 +36,6 @@ type Verb struct {
 	Notes      []string
 }
 
-func Verbs() []Verb {
-	out := make([]Verb, len(verbs))
-	copy(out, verbs)
-	return out
-}
-
 func VerbNames() []string {
 	out := make([]string, 0, len(verbs))
 	for _, verb := range verbs {

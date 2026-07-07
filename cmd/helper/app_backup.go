@@ -19,8 +19,6 @@ import (
 
 type appBackupCmd struct {
 	Create  appBackupCreateCmd  `cmd:"" help:"Create an app backup."`
-	List    appBackupListCmd    `cmd:"" help:"List app backups."`
-	Rm      appBackupRmCmd      `cmd:"rm" help:"Remove one app backup."`
 	Restore appBackupRestoreCmd `cmd:"" help:"Restore an app backup."`
 }
 
@@ -56,57 +54,6 @@ func (c appBackupCreateCmd) Run() error {
 		}
 		fmt.Printf("Created backup %s\n", path)
 	})
-	return nil
-}
-
-type appBackupListCmd struct {
-	App  string `arg:"" help:"App name."`
-	Env  string `arg:"" help:"Env name."`
-	Dir  string `name:"dir" help:"Backup directory for ID lookup. Supports plain paths and file:// URLs."`
-	JSON bool   `name:"json" help:"Emit structured JSON instead of plain backup IDs."`
-}
-
-func (c appBackupListCmd) Run() error {
-	app, env := validateBackupAppEnv(c.App, c.Env)
-	backups, err := listBackups(app, env, c.Dir)
-	if err != nil {
-		utils.DieError(err, 1)
-	}
-	if c.JSON {
-		buf, err := json.MarshalIndent(struct {
-			App     string       `json:"app"`
-			Env     string       `json:"env"`
-			Backups []backupInfo `json:"backups"`
-		}{App: app, Env: env, Backups: backups}, "", "  ")
-		if err != nil {
-			utils.DieError(err, 1)
-		}
-		fmt.Println(string(buf))
-		return nil
-	}
-	for _, b := range backups {
-		fmt.Println(b.ID)
-	}
-	return nil
-}
-
-type appBackupRmCmd struct {
-	App string `arg:"" help:"App name."`
-	Env string `arg:"" help:"Env name."`
-	ID  string `arg:"" help:"Backup ID to remove."`
-	Dir string `name:"dir" help:"Backup directory for ID lookup. Supports plain paths and file:// URLs."`
-}
-
-func (c appBackupRmCmd) Run() error {
-	app, env := validateBackupAppEnv(c.App, c.Env)
-	path, err := resolveBackupPath(app, env, c.ID, c.Dir)
-	if err != nil {
-		utils.DieError(err, 1)
-	}
-	if err := os.Remove(path); err != nil {
-		utils.Die(fmt.Sprintf("remove backup %s: %v", path, err), 1)
-	}
-	fmt.Printf("Removed backup %s\n", filepath.Base(path))
 	return nil
 }
 
@@ -625,38 +572,6 @@ func resolveBackupPath(app, env, idOrPath, dir string) (string, error) {
 		return filepath.Join(base, idOrPath), nil
 	}
 	return filepath.Join(base, idOrPath+".tar"), nil
-}
-
-func listBackups(app, env, dir string) ([]backupInfo, error) {
-	base, err := backupDir(app, env, dir)
-	if err != nil {
-		return nil, err
-	}
-	entries, err := os.ReadDir(base)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var out []backupInfo
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".tar") {
-			continue
-		}
-		path := filepath.Join(base, entry.Name())
-		info, err := entry.Info()
-		if err != nil {
-			return nil, err
-		}
-		item := backupInfo{ID: strings.TrimSuffix(entry.Name(), ".tar"), Path: path, Size: info.Size()}
-		if err := addBackupMetadata(path, &item); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
-	return out, nil
 }
 
 func backupInfoForPath(path string) (backupInfo, error) {

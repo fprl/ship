@@ -76,8 +76,6 @@ type SystemdAction string
 const (
 	NoSystemdAction SystemdAction = ""
 	Started         SystemdAction = "start"
-	Stopped         SystemdAction = "stop"
-	Reloaded        SystemdAction = "reload"
 	Restarted       SystemdAction = "restart"
 )
 
@@ -186,13 +184,7 @@ func EnsureSystemdUnit(apply Apply, unit SystemdUnit) (bool, error) {
 			return false, err
 		}
 		return unitChanged || changed, nil
-	case Stopped:
-		changed, err := ensureServiceStopped(apply, unit.Name)
-		if err != nil {
-			return false, err
-		}
-		return unitChanged || changed, nil
-	case Reloaded, Restarted:
+	case Restarted:
 		if err := runSystemctl(apply, string(unit.Action), unit.Name); err != nil {
 			return false, err
 		}
@@ -208,10 +200,7 @@ func systemdActionWouldChange(apply Apply, unit SystemdUnit) (bool, error) {
 	case Started:
 		active, err := serviceIsActive(apply, unit.Name)
 		return !active, err
-	case Stopped:
-		active, err := serviceIsActive(apply, unit.Name)
-		return active, err
-	case Reloaded, Restarted:
+	case Restarted:
 		return true, nil
 	default:
 		return false, fmt.Errorf("unsupported systemd action: %s", unit.Action)
@@ -220,7 +209,7 @@ func systemdActionWouldChange(apply Apply, unit SystemdUnit) (bool, error) {
 
 func validSystemdAction(action SystemdAction) bool {
 	switch action {
-	case NoSystemdAction, Started, Stopped, Reloaded, Restarted:
+	case NoSystemdAction, Started, Restarted:
 		return true
 	default:
 		return false
@@ -265,20 +254,6 @@ func waitServiceActive(apply Apply, name string) error {
 		}
 	}
 	return fmt.Errorf("service %s did not become active after start; inspect with `journalctl -u %s`", name, name)
-}
-
-func ensureServiceStopped(apply Apply, name string) (bool, error) {
-	active, err := serviceIsActive(apply, name)
-	if err != nil {
-		return false, err
-	}
-	if !active {
-		return false, nil
-	}
-	if err := runSystemctl(apply, "stop", name); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func serviceIsActive(apply Apply, name string) (bool, error) {

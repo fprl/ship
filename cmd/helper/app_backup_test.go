@@ -37,15 +37,6 @@ func TestRestoreDryRunRejectsMismatchedReleaseMetadata(t *testing.T) {
 	}
 }
 
-func TestListBackupsRejectsMissingReleaseMetadata(t *testing.T) {
-	dir := t.TempDir()
-	writeTestBackupTar(t, dir, "20260530T143012Z-abc1234.tar", nil)
-	_, err := listBackups("api", "production", dir)
-	if err == nil || !strings.Contains(err.Error(), "backup release metadata") {
-		t.Fatalf("expected list to reject old backup shape, got %v", err)
-	}
-}
-
 func TestBackupInfoForPathReadsRequiredReleaseMetadata(t *testing.T) {
 	dir := t.TempDir()
 	meta, err := newReleaseMetadata("abc1234", false, "abc1234abc1234abc1234abc1234abc1234abc1234", "2026-05-30T14:30:12Z")
