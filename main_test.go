@@ -2,14 +2,19 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/alecthomas/kong"
 	"github.com/fprl/simple-vps/cmd/client"
+	"github.com/fprl/simple-vps/internal/agentdocs"
+	"github.com/fprl/simple-vps/internal/errcat"
 )
 
 func newTestParser(t *testing.T) *kong.Kong {
@@ -71,6 +76,11 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"box", "doctor", "deploy@example.com", "--json"},
 		{"box", "ls", "deploy@example.com"},
 		{"box", "ls", "deploy@example.com", "--json"},
+		{"docs"},
+		{"help"},
+		{"help", "status"},
+		{"help", "status", "--json"},
+		{"help", "secret", "ls", "--json"},
 		{"version"},
 	}
 	for _, tt := range tests {
@@ -153,7 +163,7 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	}
 	_, _ = parser.Parse([]string{"--help"})
 	text := stdout.String() + stderr.String()
-	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "pin", "unpin", "save", "restore", "ssh", "secret <command>", "box <command>", "version"} {
+	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "pin", "unpin", "save", "restore", "ssh", "secret <command>", "box <command>", "docs", "help", "version"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("top-level help should mention %q, got:\n%s", want, text)
 		}
@@ -165,10 +175,138 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	}
 }
 
+func TestAgentDocsErrcatDrift(t *testing.T) {
+	section := markdownSection(t, embeddedAgentDocs, "<!-- BEGIN GENERATED ERRCAT -->", "<!-- END GENERATED ERRCAT -->")
+	got := regexCaptures(t, section, regexp.MustCompile("(?m)^- `([a-z0-9_]+)`:"))
+	want := make([]string, 0, len(errcat.Catalogue()))
+	for _, entry := range errcat.Catalogue() {
+		want = append(want, string(entry.Code))
+	}
+	assertSameStrings(t, got, want)
+}
+
+func TestAgentDocsVerbDrift(t *testing.T) {
+	section := markdownSection(t, embeddedAgentDocs, "<!-- BEGIN VERBS -->", "<!-- END VERBS -->")
+	got := regexCaptures(t, section, regexp.MustCompile("(?m)^### `([^`]+)`$"))
+	want := parserPublicVerbs(t)
+	assertSameStrings(t, got, want)
+	assertSameStrings(t, agentdocs.VerbNames(), want)
+}
+
+func TestShipDocsSmoke(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeShipDocs(&out); err != nil {
+		t.Fatal(err)
+	}
+	if lines := strings.Count(out.String(), "\n"); lines == 0 {
+		t.Fatalf("ship docs line count = %d, want > 0", lines)
+	}
+}
+
+func TestShipHelpJSONForEveryPublicVerb(t *testing.T) {
+	for _, verb := range parserPublicVerbs(t) {
+		t.Run(strings.ReplaceAll(verb, " ", "_"), func(t *testing.T) {
+			args := append([]string{"help"}, strings.Fields(verb)...)
+			args = append(args, "--json")
+			if _, err := newTestParser(t).Parse(args); err != nil {
+				t.Fatalf("parse ship %s failed: %v", strings.Join(args, " "), err)
+			}
+			var out bytes.Buffer
+			if err := writeShipHelp(&out, verb, true); err != nil {
+				t.Fatalf("ship help %s --json failed: %v", verb, err)
+			}
+			var payload struct {
+				Verb    string           `json:"verb"`
+				Purpose string           `json:"purpose"`
+				Usage   string           `json:"usage"`
+				Flags   []agentdocs.Flag `json:"flags"`
+				Errors  []string         `json:"errors"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+				t.Fatalf("help json did not parse: %v\n%s", err, out.String())
+			}
+			if payload.Verb != verb || payload.Purpose == "" || payload.Usage == "" || payload.Flags == nil || payload.Errors == nil {
+				t.Fatalf("help json schema mismatch for %q: %+v", verb, payload)
+			}
+		})
+	}
+}
+
 func TestCLIArgsShowsHelpForNoArgsOutsideApp(t *testing.T) {
 	got := cliArgs(nil)
 	if len(got) != 1 || got[0] != "--help" {
 		t.Fatalf("cliArgs(nil) = %v, want [--help]", got)
+	}
+}
+
+func parserPublicVerbs(t *testing.T) []string {
+	t.Helper()
+	parser := newTestParser(t)
+	seen := map[string]bool{}
+	if parser.Model.Node.DefaultCmd != nil {
+		seen["ship"] = true
+	}
+	collectPublicCommandLeaves(parser.Model.Node, nil, seen)
+	out := make([]string, 0, len(seen))
+	for verb := range seen {
+		out = append(out, verb)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func collectPublicCommandLeaves(node *kong.Node, path []string, out map[string]bool) {
+	for _, child := range node.Children {
+		if child.Hidden {
+			continue
+		}
+		next := append(append([]string(nil), path...), child.Name)
+		if child.Leaf() {
+			out[strings.Join(next, " ")] = true
+			continue
+		}
+		collectPublicCommandLeaves(child, next, out)
+	}
+}
+
+func markdownSection(t *testing.T, doc, start, end string) string {
+	t.Helper()
+	startIdx := strings.Index(doc, start)
+	if startIdx < 0 {
+		t.Fatalf("markdown section missing start marker %q", start)
+	}
+	startIdx += len(start)
+	endIdx := strings.Index(doc[startIdx:], end)
+	if endIdx < 0 {
+		t.Fatalf("markdown section missing end marker %q", end)
+	}
+	return doc[startIdx : startIdx+endIdx]
+}
+
+func regexCaptures(t *testing.T, text string, re *regexp.Regexp) []string {
+	t.Helper()
+	matches := re.FindAllStringSubmatch(text, -1)
+	out := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) != 2 {
+			t.Fatalf("unexpected regex match shape: %v", match)
+		}
+		out = append(out, match[1])
+	}
+	if len(out) == 0 {
+		t.Fatalf("no matches for %s", re.String())
+	}
+	return out
+}
+
+func assertSameStrings(t *testing.T, got, want []string) {
+	t.Helper()
+	got = append([]string(nil), got...)
+	want = append([]string(nil), want...)
+	sort.Strings(got)
+	sort.Strings(want)
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("string set mismatch\ngot:  %v\nwant: %v", got, want)
 	}
 }
 

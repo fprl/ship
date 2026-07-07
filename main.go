@@ -34,6 +34,8 @@ type cli struct {
 	SSH      sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the current branch environment."`
 	Secret   secretCmd        `cmd:"" group:"project" help:"Manage secrets for the current branch environment."`
 	Box      boxCmd           `cmd:"" group:"host" help:"Install or inspect a ship box."`
+	Docs     docsCmd          `cmd:"" group:"global" help:"Print the agent contract."`
+	Help     helpCmd          `cmd:"" group:"global" help:"Show usage for one verb."`
 	Version  versionCmd       `cmd:"" group:"global" help:"Print the ship version."`
 	Server   helper.ServerCmd `cmd:"" hidden:"" group:"global" help:"Privileged host API."`
 }
