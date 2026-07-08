@@ -73,8 +73,11 @@ This RFD re-opens only that slice; CoW filesystems stay dropped.
 
 ## Open questions
 
-- Opt-in vs default: `[data] fork = true` in the manifest, or fork by
-  default with an opt-out? (Prod PII lands in previews — see next.)
+- ~~Opt-in vs default~~ **Decided (Franco, July 8): opt-in.** Forks
+  happen only when the manifest asks (`[data] fork = true` or similar):
+  prod PII must never land in previews by default, some apps want
+  clean-slate previews, and disk is not free. Default stays empty
+  `/data`.
 - Sanitization: an optional `fork_sanitize` command run inside the
   preview env against the forked data before its first release.
 - Refresh semantics: fork once at env creation, or re-fork on every ship?
