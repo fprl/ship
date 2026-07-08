@@ -3,7 +3,7 @@
 Use this before cutting preview or stable releases.
 
 ```bash
-VERSION=v0.8.0
+VERSION=v0.1.0
 ```
 
 ## Local Gates

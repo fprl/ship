@@ -13,7 +13,7 @@ usage() {
 Usage:
   curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | bash
 
-  install.sh [-v latest|v0.8.0] [--bin-dir ~/.local/bin]
+  install.sh [-v latest|v0.1.0] [--bin-dir ~/.local/bin]
 
 Installs the ship CLI on this machine. It does not provision a VPS.
 After this, run:

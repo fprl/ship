@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+This is the v0.1.0 release draft for the ship product pivot.
+
+### Added
+
+- New `ship` CLI surface: running `ship` in a repo deploys the current Git
+  branch, with the branch acting as the environment selector.
+- Production/Preview model: `production_branch` maps to Production, every other
+  branch maps to a Preview with a persisted branch mapping, generated URL, TTL,
+  `ship pin`, `ship unpin`, and the host-side preview reaper.
+- Successful non-JSON deploys now print only the live URL to stdout; progress,
+  diagnostics, and next steps stay on stderr.
+- Deploy journals and `ship why` record/explain failed deploy attempts,
+  including release/probe failures and the previous release that stayed live.
+- `notify` webhook support for deploy, recovery, reaper, and doctor events.
+- Doctor v2 through `ship box doctor`, backed by structured host checks and
+  `doctor.json` state.
+- `ship exec -- <cmd...>` for one-off commands inside the current branch
+  environment with resolved env and `/data` mounted.
+- `docs/AGENT.md`, `ship docs`, `ship help <verb> --json`, and static
+  bash/zsh/fish completions for agents and shells.
+- Agent eval suite covering missing secrets, failing release commands, probe
+  failures, missing Dockerfiles, expired preview references, and dirty branch
+  state.
+- Secret scoping for Production, shared Preview, and branch Preview values;
+  Preview never falls back to Production. `ship secret set --from <file>` adds
+  dotenv bulk import with optional `--replace`.
+- Box fleet and access commands: `ship box ls`, `ship box rm`, and
+  `ship box add-key`.
+- `[env.preview]` manifest overlay for Preview-only environment variables.
+- `install.sh` for local CLI installation from GitHub release assets, with
+  checksum verification and `latest` resolution through `fprl/ship`.
+
+### Changed
+
+- The project was renamed from Simple VPS to ship: the module is now
+  `github.com/fprl/ship`, the binary is `ship`, the manifest is `ship.toml`,
+  release assets are named `ship-<os>-<arch>`, and on-box identifiers use
+  `/etc/ship`, `/tmp/ship-deploy`, `/run/ship/locks`, `/usr/local/bin/ship`,
+  `/var/apps/<app>.<env>`, and `ship/*` image names.
+- The manifest is repo-first: `box` replaces the old server wording, `[env]`
+  replaces `[vars]`, `[env.preview]` handles Preview overrides, and top-level
+  `release`, `probe`, and `notify` replace the old deploy-focused shape.
+- Host operations moved behind the `box` noun: install/converge, diagnostics,
+  fleet reads, app removal, and deploy-key authorization are all `ship box ...`.
+- Backups are now `ship save` and `ship restore --from ...`, aligned with the
+  branch-selected environment model.
+
+### Breaking
+
+- This is a new product surface. The old `simple-vps` CLI and compatibility
+  aliases are gone: no `simple-vps` binary, no public `deploy`, `check`,
+  `setup`, `restart`, `destroy`, `app`, or `host` command groups, no `--env`
+  environment selector, and no positional environment arguments.
+- The old manifest name and fields are gone: `simple-vps.toml`, `[vars]`,
+  `[deploy]`, `server`, `secret list`, `secret put`, `backup ...`, and
+  environment-specific manifest tables from the Simple VPS line are not carried
+  forward.
+
 ## v0.7.0 - 2026-05-30
 
 ### Added

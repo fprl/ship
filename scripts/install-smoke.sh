@@ -62,3 +62,27 @@ got="$("$install_dir/ship" version)"
 if [[ "$got" != "v-test" ]]; then
   die "installed binary returned $got"
 fi
+
+latest_version="v-latest"
+latest_release_dir="$tmp_dir/release/$latest_version"
+latest_install_dir="$tmp_dir/latest-bin"
+api_dir="$tmp_dir/api/releases"
+mkdir -p "$latest_release_dir" "$latest_install_dir" "$api_dir"
+
+cat > "$latest_release_dir/$asset" <<'SH'
+#!/usr/bin/env bash
+printf 'v-latest\n'
+SH
+
+printf '%s  %s\n' "$(sha256_file "$latest_release_dir/$asset")" "$asset" > "$latest_release_dir/SHA256SUMS"
+printf '{"tag_name":"%s"}\n' "$latest_version" > "$api_dir/latest"
+
+SHIP_RELEASE_BASE_URL="file://$tmp_dir/release" \
+  SHIP_RELEASE_API_BASE_URL="file://$tmp_dir/api" \
+  SHIP_INSTALL_DIR="$latest_install_dir" \
+  bash "$repo_root/install.sh" >/tmp/ship-install-smoke-latest.out
+
+got="$("$latest_install_dir/ship" version)"
+if [[ "$got" != "v-latest" ]]; then
+  die "latest install returned $got"
+fi

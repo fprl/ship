@@ -288,6 +288,31 @@ func TestCompletionHelpMentionsInstallLines(t *testing.T) {
 	}
 }
 
+func TestReleaseWorkflowUploadsInstallerAndExpectedAssets(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	start := strings.Index(text, "gh release upload \"$TAG\"")
+	if start < 0 {
+		t.Fatalf("release workflow is missing gh release upload command")
+	}
+	block := text[start:]
+	for _, want := range []string{
+		"dist/ship-linux-amd64",
+		"dist/ship-linux-arm64",
+		"dist/ship-darwin-amd64",
+		"dist/ship-darwin-arm64",
+		"dist/SHA256SUMS",
+		"install.sh",
+	} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("release upload assets should include %q, got:\n%s", want, block)
+		}
+	}
+}
+
 func TestCLIArgsShowsHelpForNoArgsOutsideApp(t *testing.T) {
 	got := cliArgs(nil)
 	if len(got) != 1 || got[0] != "--help" {
