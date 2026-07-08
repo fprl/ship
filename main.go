@@ -478,8 +478,7 @@ type boxInitCmd struct {
 	BootstrapUser            string `help:"SSH user for remote bootstrap."`
 	SSHKey                   string `name:"ssh-key" help:"SSH private key for remote mode."`
 	OperatorSSHPublicKeyFile string `help:"SSH public key file for operator access."`
-	DeploySSHPublicKeyFile   string `help:"SSH public key file for deploy access."`
-	SharedKey                bool   `help:"Reuse operator SSH key for deploy."`
+	DeploySSHPublicKeyFile   string `help:"SSH public key file for deploy access. Default: your bootstrap key becomes the first member."`
 	OperatorUser             string `help:"Operator user."`
 	DeployUser               string `help:"Deploy user."`
 	Timezone                 string `help:"Host timezone."`
@@ -566,7 +565,6 @@ func (c boxInitCmd) Run() error {
 	if c.InstallLitestream != nil {
 		opts.InstallLitestream = *c.InstallLitestream
 	}
-	opts.SharedKey = c.SharedKey
 	opts.CheckMode = c.CheckMode
 	opts.AssumeYes = c.AssumeYes
 	return hostinstall.NewInstaller().RunOptions(opts)

@@ -516,17 +516,7 @@ func TestResolveReadPreviewEnvPropagatesUnknownBranchError(t *testing.T) {
 	}
 }
 
-func TestCommandRunnerUsesDefaultDeployKeyWhenPresent(t *testing.T) {
-	home := t.TempDir()
-	sshDir := filepath.Join(home, ".ssh")
-	if err := os.Mkdir(sshDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	defaultKey := filepath.Join(sshDir, "ship-deploy")
-	if err := os.WriteFile(defaultKey, []byte("key"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", home)
+func TestCommandRunnerWithoutEnvKeyUsesNoImplicitIdentityFile(t *testing.T) {
 	t.Setenv("SHIP_SSH_KEY", "")
 
 	runner, err := NewCommandRunner()
@@ -535,26 +525,12 @@ func TestCommandRunnerUsesDefaultDeployKeyWhenPresent(t *testing.T) {
 	}
 	defer runner.Close()
 
-	assertSSHOptionSequence(t, runner.SshOptions, "-i", defaultKey)
-	assertSSHOptionSequence(t, runner.SshOptions, "-o", "IdentitiesOnly=yes")
-	if strings.Contains(strings.Join(runner.SshOptions, " "), "UserKnownHostsFile") {
-		t.Fatalf("default key path should use normal known_hosts, got %v", runner.SshOptions)
+	joined := strings.Join(runner.SshOptions, " ")
+	if strings.Contains(joined, "-i") {
+		t.Fatalf("identity file should only be set for explicit SHIP_SSH_KEY, got %v", runner.SshOptions)
 	}
-}
-
-func TestCommandRunnerDoesNotForceMissingDefaultDeployKey(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("SHIP_SSH_KEY", "")
-
-	runner, err := NewCommandRunner()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer runner.Close()
-
-	if strings.Contains(strings.Join(runner.SshOptions, " "), "ship-deploy") {
-		t.Fatalf("missing default key should not be forced, got %v", runner.SshOptions)
+	if strings.Contains(joined, "IdentitiesOnly=yes") {
+		t.Fatalf("IdentitiesOnly should only be set for explicit SHIP_SSH_KEY, got %v", runner.SshOptions)
 	}
 }
 

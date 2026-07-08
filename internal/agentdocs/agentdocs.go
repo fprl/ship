@@ -752,8 +752,7 @@ var verbs = []Verb{
 			{Name: "--bootstrap-user", Value: "<user>", Purpose: "SSH user for remote bootstrap."},
 			{Name: "--ssh-key", Value: "<path>", Purpose: "SSH private key for remote mode."},
 			{Name: "--operator-ssh-public-key-file", Value: "<path>", Purpose: "SSH public key file for operator access."},
-			{Name: "--deploy-ssh-public-key-file", Value: "<path>", Purpose: "SSH public key file for deploy access."},
-			{Name: "--shared-key", Purpose: "Reuse the operator SSH key for deploy access."},
+			{Name: "--deploy-ssh-public-key-file", Value: "<path>", Purpose: "SSH public key file for deploy access. Default: your bootstrap key becomes the first member."},
 			{Name: "--operator-user", Value: "<user>", Purpose: "Operator user."},
 			{Name: "--deploy-user", Value: "<user>", Purpose: "Deploy user."},
 			{Name: "--timezone", Value: "<tz>", Purpose: "Host timezone."},
@@ -993,7 +992,7 @@ const outputAndDataContracts = `
 Each env has an append-only ` + "`journal.jsonl`" + `. Each line is:
 
 ` + "```json" + `
-{"schema_version":1,"app":"api","env":"prod","outcome":"deployed | aborted_build | aborted_release | aborted_probe | rolled_back","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","failing_step":"build | release | probe","stderr_tail":"last scrubbed stderr lines","identity":{"ssh_key_comment":"ship-deploy","git_author":"Name <name@example.com>"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
+{"schema_version":1,"app":"api","env":"prod","outcome":"deployed | aborted_build | aborted_release | aborted_probe | rolled_back","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","failing_step":"build | release | probe","stderr_tail":"last scrubbed stderr lines","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
 ` + "```" + `
 
 ## Notify payload schemas

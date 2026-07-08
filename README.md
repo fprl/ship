@@ -35,6 +35,20 @@ Start with a fresh Ubuntu box, then converge it:
 ship box init deploy@203.0.113.7
 ```
 
+`box init` promotes the SSH keys already in root's `authorized_keys` on the VPS.
+Your bootstrap key becomes the first deploy member. For split-key or CI setups,
+pass `--deploy-ssh-public-key-file`; otherwise no key flags are needed.
+
+If the provider gave you a root password instead of installing your SSH key:
+
+```bash
+ssh-copy-id root@203.0.113.7
+ship box init deploy@203.0.113.7
+```
+
+ship never uses password auth itself; hardening disables password login after
+the install.
+
 The installer output is a host-convergence log. It ends with the next commands
 to run, including `ship box doctor ...` and `ship init --box ... --host
 <app-domain>`.
@@ -165,7 +179,7 @@ probable cause: probe returned HTTP 502 with body: upstream listened on 3000, pr
 stderr tail:
 HTTP status 502: upstream listened on 3000, probed 3999
 traffic: old release abc123 kept serving; failed probes never receive traffic with the current engine.
-shipped by: Name <name@example.com> (ssh key: ship-deploy)
+shipped by: Name <name@example.com> (ssh key: alice)
 next: fix the process port or probe path in ship.toml, then ship
 ```
 
@@ -190,7 +204,7 @@ If `notify` is set in `ship.toml`, ship posts failure and recovery events:
     "failing_step": "probe",
     "stderr_tail": "HTTP status 502...",
     "identity": {
-      "ssh_key_comment": "ship-deploy",
+      "ssh_key_comment": "alice",
       "git_author": "Name <name@example.com>"
     },
     "probe": {

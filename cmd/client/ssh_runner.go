@@ -22,12 +22,6 @@ func NewCommandRunner() (*CommandRunner, error) {
 	sshOpts := []string{"-o", "BatchMode=yes"}
 	key := os.Getenv("SHIP_SSH_KEY")
 	if key == "" {
-		if defaultKey, ok := defaultDeployKeyPath(); ok {
-			sshOpts = append(sshOpts,
-				"-i", defaultKey,
-				"-o", "IdentitiesOnly=yes",
-			)
-		}
 		return &CommandRunner{
 			SshOptions:       sshOpts,
 			RsyncRemoteShell: sshRemoteShell(sshOpts),
@@ -61,19 +55,6 @@ func NewCommandRunner() (*CommandRunner, error) {
 		RsyncRemoteShell: sshRemoteShell(sshOpts),
 		TempDir:          dir,
 	}, nil
-}
-
-func defaultDeployKeyPath() (string, bool) {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return "", false
-	}
-	path := filepath.Join(home, ".ssh", "ship-deploy")
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return "", false
-	}
-	return path, true
 }
 
 func sshRemoteShell(sshOpts []string) string {

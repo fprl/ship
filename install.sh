@@ -18,8 +18,6 @@ Usage:
 Installs the ship CLI on this machine. It does not provision a VPS.
 After this, run:
 
-  test -f ~/.ssh/ship-deploy || ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/ship-deploy
-  test -f ~/.ssh/ship-deploy.pub || ssh-keygen -y -f ~/.ssh/ship-deploy > ~/.ssh/ship-deploy.pub
   ship box init <ssh-target>
 
 Environment:

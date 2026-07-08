@@ -4,16 +4,20 @@ import (
 	"bytes"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/fprl/ship/internal/errcat"
 )
 
+const (
+	alicePublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/ alice"
+	bobPublicKey   = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICtppnbbz76teU3iU6BguTmo//WITtYN35e4gSER6UNt bob"
+)
+
 func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
-	operatorKeyFile := writeKeyFile(t, "ssh-ed25519 AAAAoperator test-operator\n")
-	deployKeyFile := writeKeyFile(t, "ssh-ed25519 AAAAdeploy test-deploy\n")
+	operatorKeyFile := writeKeyFile(t, alicePublicKey+"\n")
+	deployKeyFile := writeKeyFile(t, bobPublicKey+"\n")
 
 	opts := DefaultOptions(nil)
 	opts.Mode = "remote"
@@ -36,7 +40,7 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = resolveSSHKeyPlan(plan, false, "")
+	_, err = resolveSSHKeyPlan(plan, false, "", "root@203.0.113.10")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,72 +80,40 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 	}
 }
 
-func TestBuildPlanDefaultsDeployPublicKey(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	defaultPub := filepath.Join(home, ".ssh", "ship-deploy.pub")
-	if err := os.MkdirAll(filepath.Dir(defaultPub), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(defaultPub, []byte("ssh-ed25519 AAAAdeploy test-deploy\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+func TestResolveSSHKeyPlanPromotesBootstrapKeys(t *testing.T) {
+	plan := Plan{Mode: "remote"}
 
-	opts := DefaultOptions(nil)
-	opts.Mode = "remote"
-	opts.TargetHost = "203.0.113.10"
-
-	plan, err := BuildPlan(opts, false, false)
+	keys, err := resolveSSHKeyPlan(plan, false, alicePublicKey+"\n"+bobPublicKey+"\n", "root@203.0.113.10")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.DeploySSHPublicKeyFile != defaultPub {
-		t.Fatalf("DeploySSHPublicKeyFile = %q, want %q", plan.DeploySSHPublicKeyFile, defaultPub)
+	if len(keys.Deploy) != 2 || len(keys.Operator) != 2 {
+		t.Fatalf("expected bootstrap keys for deploy and operator: %+v", keys)
+	}
+	if keys.Deploy[0].Comment != "alice" || !keys.Deploy[0].Promoted {
+		t.Fatalf("unexpected promoted key metadata: %+v", keys.Deploy[0])
+	}
+	if keys.Operator[0].Promoted {
+		t.Fatalf("operator fallback should not print as promoted member: %+v", keys.Operator[0])
 	}
 }
 
 func TestResolveSSHKeyPlanMissingDeployKeyUsesErrcat(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
 	plan := Plan{Mode: "remote"}
 
-	_, err := resolveSSHKeyPlan(plan, false, "")
+	_, err := resolveSSHKeyPlan(plan, false, "", "root@203.0.113.10")
 	if err == nil {
 		t.Fatal("expected missing deploy key error")
 	}
 	if !errcat.Is(err, errcat.CodeDeployKeyMissing) {
 		t.Fatalf("code = %v, want %s", err, errcat.CodeDeployKeyMissing)
 	}
-	wantNext := "next: ssh-keygen -q -t ed25519 -N '' -f " + filepath.Join(home, ".ssh", "ship-deploy")
+	wantNext := "next: ssh-copy-id root@203.0.113.10"
 	if !strings.Contains(err.Error(), wantNext) {
 		t.Fatalf("expected remediation %q, got:\n%v", wantNext, err)
 	}
-	if strings.Contains(errcatCause(t, err), "ssh-keygen") {
-		t.Fatalf("cause should not contain remediation, got %q", errcatCause(t, err))
-	}
-}
-
-func TestResolveSSHKeyPlanMissingOperatorKeyUsesErrcat(t *testing.T) {
-	rootKeysPath := filepath.Join(t.TempDir(), ".ssh", "authorized_keys")
-	plan := Plan{
-		Mode:                   "local",
-		DeploySSHPublicKeyFile: writeKeyFile(t, "ssh-ed25519 AAAAdeploy test-deploy\n"),
-	}
-
-	_, err := resolveSSHKeyPlan(plan, true, rootKeysPath)
-	if err == nil {
-		t.Fatal("expected missing operator key error")
-	}
-	if !errcat.Is(err, errcat.CodeOperatorKeyMissing) {
-		t.Fatalf("code = %v, want %s", err, errcat.CodeOperatorKeyMissing)
-	}
-	privateKey := filepath.Join(filepath.Dir(rootKeysPath), "ship-operator")
-	wantNext := "next: ssh-keygen -q -t ed25519 -N '' -f " + privateKey + " && cat " + privateKey + ".pub >> " + rootKeysPath
-	if !strings.Contains(err.Error(), wantNext) {
-		t.Fatalf("expected remediation %q, got:\n%v", wantNext, err)
-	}
-	if strings.Contains(errcatCause(t, err), "ssh-keygen") {
-		t.Fatalf("cause should not contain remediation, got %q", errcatCause(t, err))
+	if !strings.Contains(errcatCause(t, err), "provider gave a password") {
+		t.Fatalf("cause should explain password-provisioned remediation, got %q", errcatCause(t, err))
 	}
 }
 
@@ -156,8 +128,8 @@ func TestRemoteLocalInstallCommandEnablesLitestreamExplicitly(t *testing.T) {
 	opts := DefaultOptions(nil)
 	opts.Mode = "remote"
 	opts.TargetHost = "203.0.113.12"
-	opts.OperatorSSHPublicKeyFile = writeKeyFile(t, "ssh-ed25519 AAAAoperator test-operator\n")
-	opts.DeploySSHPublicKeyFile = writeKeyFile(t, "ssh-ed25519 AAAAdeploy test-deploy\n")
+	opts.OperatorSSHPublicKeyFile = writeKeyFile(t, alicePublicKey+"\n")
+	opts.DeploySSHPublicKeyFile = writeKeyFile(t, bobPublicKey+"\n")
 	opts.Ingress = "public"
 	opts.Admin = "public-ssh"
 	opts.InstallLitestream = true
@@ -204,24 +176,19 @@ func TestPrintNextStepsForRemoteInstall(t *testing.T) {
 	}
 }
 
-func TestPrintNextStepsOmitsDefaultDeployKeyEnv(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	defaultPub := filepath.Join(home, ".ssh", "ship-deploy.pub")
-
+func TestPrintNextStepsForPromotedBootstrapKeyOmitsKeyEnv(t *testing.T) {
 	var out bytes.Buffer
 	installer := NewInstaller()
 	installer.Stdout = &out
 	installer.printNextSteps(Plan{
-		Mode:                   "remote",
-		TargetHost:             "203.0.113.12",
-		DeployUser:             "deploy",
-		DeploySSHPublicKeyFile: defaultPub,
+		Mode:       "remote",
+		TargetHost: "203.0.113.12",
+		DeployUser: "deploy",
 	})
 
 	text := out.String()
 	if strings.Contains(text, "SHIP_SSH_KEY") || strings.Contains(text, "SHIP_KNOWN_HOSTS") {
-		t.Fatalf("default deploy key should not require env exports:\n%s", text)
+		t.Fatalf("bootstrap-promoted key should not require env exports:\n%s", text)
 	}
 	if !strings.Contains(text, "1. ship box doctor deploy@203.0.113.12") {
 		t.Fatalf("expected box doctor to be first step:\n%s", text)
@@ -239,51 +206,6 @@ func TestHostInstallSSHAcceptsNewHostKeysOnly(t *testing.T) {
 		if !contains(args, want) {
 			t.Fatalf("expected ssh args to contain %q, got %v", want, args)
 		}
-	}
-}
-
-func TestDeployPrivateKeyHintSupportsSharedKey(t *testing.T) {
-	got := deployPrivateKeyHint(Plan{
-		SharedKey:                true,
-		OperatorSSHPublicKeyFile: "/keys/operator.pub",
-	})
-	if got != "/keys/operator" {
-		t.Fatalf("deployPrivateKeyHint = %q", got)
-	}
-}
-
-func TestSharedKeyRendersForOperatorAndDeploy(t *testing.T) {
-	operatorKeyFile := writeKeyFile(t, "ssh-ed25519 AAAAoperator test-operator\n")
-
-	opts := DefaultOptions(nil)
-	opts.Mode = "remote"
-	opts.TargetHost = "203.0.113.11"
-	opts.OperatorSSHPublicKeyFile = operatorKeyFile
-	opts.SharedKey = true
-	opts.Tailscale = false
-	opts.CloudflareTunnel = false
-
-	plan, err := BuildPlan(opts, false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keys, err := resolveSSHKeyPlan(plan, false, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if plan.TailscaleAuthMode != "disabled" {
-		t.Fatalf("unexpected tailscale auth mode: %s", plan.TailscaleAuthMode)
-	}
-	if plan.CloudflareServiceMode != "disabled" {
-		t.Fatalf("unexpected cloudflare mode: %s", plan.CloudflareServiceMode)
-	}
-
-	if keys.Operator != "ssh-ed25519 AAAAoperator test-operator" {
-		t.Fatalf("unexpected operator key: %q", keys.Operator)
-	}
-	if keys.Deploy != keys.Operator {
-		t.Fatalf("expected deploy key to reuse operator key, got %q", keys.Deploy)
 	}
 }
 
@@ -307,7 +229,7 @@ func TestInstallPresetsMapToProviderFlags(t *testing.T) {
 			opts := DefaultOptions(nil)
 			opts.Mode = "remote"
 			opts.TargetHost = "203.0.113.20"
-			opts.DeploySSHPublicKeyFile = writeKeyFile(t, "ssh-ed25519 AAAAdeploy test-deploy\n")
+			opts.DeploySSHPublicKeyFile = writeKeyFile(t, bobPublicKey+"\n")
 			opts.Ingress = tt.ingress
 			opts.Admin = tt.admin
 
@@ -431,6 +353,30 @@ func TestPreflightSSHIncludesSSHError(t *testing.T) {
 		"SSH preflight failed for root@203.0.113.10: ssh command failed: Host key verification failed",
 		"Host key verification failed",
 		"next: ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new root@203.0.113.10",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to contain %q, got %v", want, err)
+		}
+	}
+}
+
+func TestPreflightSSHPublicKeyFailureSuggestsSSHCopyID(t *testing.T) {
+	installer := NewInstaller()
+	installer.remoteOut = func(plan Plan, command string) (string, error) {
+		return "", errors.New("root@203.0.113.10: Permission denied (publickey).")
+	}
+
+	err := installer.preflightSSH(Plan{BootstrapUser: "root", TargetHost: "203.0.113.10"})
+	if err == nil {
+		t.Fatal("expected SSH preflight error")
+	}
+	if !errcat.Is(err, errcat.CodeDeployKeyMissing) {
+		t.Fatalf("code = %v, want %s", err, errcat.CodeDeployKeyMissing)
+	}
+	for _, want := range []string{
+		"SSH public-key auth failed for root@203.0.113.10",
+		"provider gave a password",
+		"next: ssh-copy-id root@203.0.113.10",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error to contain %q, got %v", want, err)

@@ -11,13 +11,6 @@ curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | ba
 The installer writes `ship` to `~/.local/bin` by default and prints the exact
 `PATH` line if your shell cannot find it.
 
-Create the default deploy key expected by `box init`:
-
-```bash
-test -f ~/.ssh/ship-deploy || ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/ship-deploy
-test -f ~/.ssh/ship-deploy.pub || ssh-keygen -y -f ~/.ssh/ship-deploy > ~/.ssh/ship-deploy.pub
-```
-
 ## 2. Converge the box
 
 Run this against the fresh VPS:
@@ -25,6 +18,21 @@ Run this against the fresh VPS:
 ```bash
 ship box init deploy@203.0.113.7
 ```
+
+`box init` promotes the SSH keys already in root's `authorized_keys` on the
+VPS. The key your provider injected for the first login becomes the first
+deploy member; no key flags are needed.
+
+If your provider gave you a root password instead of installing your SSH key,
+install your key once, then run `box init`:
+
+```bash
+ssh-copy-id root@203.0.113.7
+ship box init deploy@203.0.113.7
+```
+
+ship uses key auth only. During hardening it disables password login
+permanently.
 
 Ingress modes are selected with `--ingress public|cloudflare|private`.
 `public` opens Caddy on 80/443, `cloudflare` runs Cloudflare Tunnel and keeps

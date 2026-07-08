@@ -373,9 +373,13 @@ var catalogue = map[Code]Entry{
 	},
 	CodeDeployKeyMissing: {
 		Code:                CodeDeployKeyMissing,
-		MessageTemplate:     "deploy SSH key is missing",
-		CauseTemplate:       "no SSH public key source found for deploy user",
+		MessageTemplate:     "bootstrap SSH key is missing",
+		CauseTemplate:       "{detail}",
 		RemediationTemplate: "{command}",
+		Defaults: Fields{
+			"detail":  "bootstrap authorized_keys is empty",
+			"command": "ssh-copy-id root@<ip>",
+		},
 	},
 	CodeOperatorKeyMissing: {
 		Code:                CodeOperatorKeyMissing,

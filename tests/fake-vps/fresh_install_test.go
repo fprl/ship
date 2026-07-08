@@ -31,42 +31,89 @@ func TestFreshHostInstall(t *testing.T) {
 
 	env.assertHostDoctorNotInstalled(t)
 
-	keyPath := filepath.Join(env.tmp, "operator.pub")
-	mustWrite(t, keyPath, "ssh-ed25519 AAAAoperator test-operator\n")
+	bootstrapKeys := env.ssh(t, "cat /root/.ssh/authorized_keys")
 
-	first := env.installHost(t, keyPath)
+	first, firstOutput := env.installHost(t, "")
 	if first <= 0 {
 		t.Fatalf("first install changed %d operations, want > 0", first)
 	}
+	assertContains(t, firstOutput, "member added: fake-vps-smoke (ssh-ed25519 SHA256:")
+	assertContains(t, firstOutput, ", from root's authorized keys)")
 
 	env.assertFreshHostInstalled(t)
+	env.assertDeployAuthorizedKeys(t, bootstrapKeys)
+	env.assertPromotedMemberVisible(t)
 	env.assertHostDoctorHealthy(t)
 
 	env.ssh(t, "mkdir -p /var/apps/api.production/data && printf sentinel > /var/apps/api.production/data/sentinel && chmod 600 /var/apps/api.production/data/sentinel")
-	second := env.installHost(t, keyPath)
+	second, _ := env.installHost(t, "")
 	if second != 0 {
 		t.Fatalf("second install changed %d operations, want 0", second)
 	}
 	assertEqual(t, strings.TrimSpace(env.ssh(t, "cat /var/apps/api.production/data/sentinel")), "sentinel")
 	assertEqual(t, strings.TrimSpace(env.ssh(t, "stat -c '%a' /var/apps/api.production/data/sentinel")), "600")
 
+	explicitKeyPath := filepath.Join(env.tmp, "explicit-deploy")
+	env.mustRun(t, env.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "explicit-deploy", "-f", explicitKeyPath)
+	_, _ = env.installHost(t, explicitKeyPath+".pub")
+	explicitKey := strings.TrimSpace(readFile(t, explicitKeyPath+".pub"))
+	env.assertDeployAuthorizedKeys(t, explicitKey)
+
 	env.assertDoctorRecordingDeltaForStoppedReaper(t)
 }
 
-func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {
-	t.Helper()
-	result := e.runShip(t, e.repoRoot, nil,
+func TestFreshHostInstallEmptyAuthorizedKeysNoFlag(t *testing.T) {
+	if os.Getenv("SHIP_RUN_FAKE_VPS_SMOKE") != "1" {
+		t.Skip("set SHIP_RUN_FAKE_VPS_SMOKE=1 to run Docker-backed fake VPS smoke")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	t.Cleanup(cancel)
+
+	env := newSmokeEnvWithImage(t, ctx, freshHostImage, filepath.Join(h.RepoRootForTest(t), "tests/fake-vps/Dockerfile.install"))
+	env.buildBinaries(t)
+	env.buildImage(t)
+	env.startContainer(t)
+	env.configureSSH(t, "root")
+	env.allowSSHWithEmptyRootAuthorizedKeys(t)
+	env.waitForSSH(t)
+
+	result := env.runShip(t, env.repoRoot, nil,
 		"box", "init", "fake-vps",
 		"--mode", "remote",
 		"--bootstrap-user", "root",
-		"--operator-ssh-public-key-file", publicKeyFile,
-		"--shared-key",
 		"--timezone", "Europe/Madrid",
 		"--locale", "en_US.UTF-8",
 		"--no-tailscale",
 		"--no-cloudflare-tunnel",
 		"--no-litestream",
 	)
+	if result.err == nil {
+		t.Fatalf("ship box init should fail with empty bootstrap authorized_keys\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	}
+	output := result.stdout + result.stderr
+	assertContains(t, output, "bootstrap SSH key is missing")
+	assertContains(t, output, "bootstrap authorized_keys is empty")
+	assertContains(t, output, "provider gave a password")
+	assertContains(t, output, "next: ssh-copy-id root@fake-vps")
+}
+
+func (e *smokeEnv) installHost(t *testing.T, deployPublicKeyFile string) (int, string) {
+	t.Helper()
+	args := []string{
+		"box", "init", "fake-vps",
+		"--mode", "remote",
+		"--bootstrap-user", "root",
+		"--timezone", "Europe/Madrid",
+		"--locale", "en_US.UTF-8",
+		"--no-tailscale",
+		"--no-cloudflare-tunnel",
+		"--no-litestream",
+	}
+	if deployPublicKeyFile != "" {
+		args = append(args, "--deploy-ssh-public-key-file", deployPublicKeyFile)
+	}
+	result := e.runShip(t, e.repoRoot, nil, args...)
 	// Always log the install output. When a downstream assertion fails
 	// (e.g., last_apply.status != "ok") the install transcript is the
 	// only place that names the failing op; `t.Logf` is printed when
@@ -80,7 +127,7 @@ func (e *smokeEnv) installHost(t *testing.T, publicKeyFile string) int {
 	// VPS. The trailing `Apply ... changed N operations` stdout line
 	// can be dropped by SSH pipe-close races on some Linux/Docker
 	// runners; host.json is the authoritative record (ADR-0002 §2).
-	return changedOperationsFromHostState(t, e)
+	return changedOperationsFromHostState(t, e), result.stdout
 }
 
 func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
@@ -91,8 +138,8 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	assertContains(t, e.ssh(t, "id -nG operator"), "sudo")
 	e.ssh(t, "grep -q 'operator ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/operator")
 	e.ssh(t, "grep -Fq 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *' /etc/sudoers.d/ship")
-	e.ssh(t, "grep -q 'ssh-ed25519 AAAAoperator test-operator' /home/operator/.ssh/authorized_keys")
-	e.ssh(t, "grep -q 'ssh-ed25519 AAAAoperator test-operator' /home/deploy/.ssh/authorized_keys")
+	e.ssh(t, "grep -q 'fake-vps-smoke' /home/operator/.ssh/authorized_keys")
+	e.ssh(t, "grep -q 'fake-vps-smoke' /home/deploy/.ssh/authorized_keys")
 	e.ssh(t, "test -d /etc/ship/backups && test -d /etc/ship/providers && test -d /etc/ship/secrets")
 	assertEqual(t, strings.TrimSpace(e.ssh(t, "stat -c '%a' /etc/ship/secrets")), "700")
 	assertEqual(t, strings.TrimSpace(e.ssh(t, "stat -c '%a' /tmp/ship-deploy")), "1777")
@@ -171,6 +218,41 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	}
 	assertEqual(t, strings.TrimSpace(e.ssh(t, "cat /run/ship-fresh-host/timezone")), "Europe/Madrid")
 	assertEqual(t, strings.TrimSpace(e.ssh(t, "cat /run/ship-fresh-host/locale")), "en_US.UTF-8")
+}
+
+func (e *smokeEnv) assertDeployAuthorizedKeys(t *testing.T, want string) {
+	t.Helper()
+	got := strings.TrimSpace(e.ssh(t, "cat /home/deploy/.ssh/authorized_keys"))
+	assertEqual(t, got, strings.TrimSpace(want))
+}
+
+func (e *smokeEnv) assertPromotedMemberVisible(t *testing.T) {
+	t.Helper()
+	app := filepath.Join(e.tmp, "member-list")
+	mustMkdir(t, app)
+	mustWrite(t, filepath.Join(app, "Dockerfile"), "FROM alpine\nCMD [\"sleep\", \"3600\"]\n")
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "memberlist"
+box = "fake-vps"
+
+[processes]
+web = { port = 3000 }
+`)
+	list := e.ship(t, app, nil, "member", "ls")
+	assertContains(t, list, "fake-vps-smoke ssh-ed25519 SHA256:")
+}
+
+func (e *smokeEnv) allowSSHWithEmptyRootAuthorizedKeys(t *testing.T) {
+	t.Helper()
+	e.dockerExec(t, "cp /root/.ssh/authorized_keys /root/.ssh/bootstrap_authorized_keys && : > /root/.ssh/authorized_keys && if grep -Eq '^#?AuthorizedKeysFile' /etc/ssh/sshd_config; then sed -ri 's|^#?AuthorizedKeysFile.*|AuthorizedKeysFile .ssh/bootstrap_authorized_keys .ssh/authorized_keys|' /etc/ssh/sshd_config; else printf '\\nAuthorizedKeysFile .ssh/bootstrap_authorized_keys .ssh/authorized_keys\\n' >> /etc/ssh/sshd_config; fi && pkill -HUP sshd")
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {

@@ -3,6 +3,8 @@ package hostinstall
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -42,7 +44,6 @@ type Options struct {
 	InstallLitestream        bool
 	CheckMode                bool
 	AssumeYes                bool
-	SharedKey                bool
 }
 
 type Plan struct {
@@ -71,7 +72,6 @@ type Plan struct {
 	InstallDocker            bool
 	InstallLitestream        bool
 	CheckMode                bool
-	SharedKey                bool
 }
 
 type Installer struct {
@@ -256,11 +256,6 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 	if operatorKeyFile == "" && opts.SSHKey != "" && fileExists(opts.SSHKey+".pub") {
 		operatorKeyFile = opts.SSHKey + ".pub"
 	}
-	if deployKeyFile == "" && !opts.SharedKey {
-		if defaultDeployKey, ok := defaultDeployPublicKeyPath(); ok {
-			deployKeyFile = defaultDeployKey
-		}
-	}
 
 	return Plan{
 		Mode:                     mode,
@@ -288,7 +283,6 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 		InstallDocker:            opts.InstallDocker,
 		InstallLitestream:        opts.InstallLitestream,
 		CheckMode:                opts.CheckMode,
-		SharedKey:                opts.SharedKey,
 	}, nil
 }
 
@@ -330,13 +324,20 @@ func applyInstallPresets(opts Options) (Options, error) {
 }
 
 func (i *Installer) runRemote(plan Plan) error {
-	keyPlan, err := resolveSSHKeyPlan(plan, false, "")
-	if err != nil {
-		return err
-	}
-
 	i.info("Running in remote mode against %s", plan.TargetHost)
 	if err := i.preflightSSH(plan); err != nil {
+		return err
+	}
+	bootstrapKeys := ""
+	var err error
+	if planNeedsBootstrapAuthorizedKeys(plan) {
+		bootstrapKeys, err = i.remoteBootstrapAuthorizedKeys(plan)
+		if err != nil {
+			return err
+		}
+	}
+	keyPlan, err := resolveSSHKeyPlan(plan, true, bootstrapKeys, sshCopyIDTarget(plan))
+	if err != nil {
 		return err
 	}
 
@@ -370,11 +371,13 @@ func (i *Installer) runRemote(plan Plan) error {
 		if err := i.remoteCommand(plan, cmd); err != nil {
 			return hostInstallApplyError(plan, err)
 		}
+		i.printPromotedMembers(keyPlan)
 		return nil
 	}
 	if err := i.remoteCommand(plan, "sudo -n "+cmd); err != nil {
 		return hostInstallApplyError(plan, err)
 	}
+	i.printPromotedMembers(keyPlan)
 	return nil
 }
 
@@ -384,7 +387,11 @@ func (i *Installer) runLocal(plan Plan) error {
 			"command": "sudo " + boxInitCommand("localhost", "--mode", "local"),
 		})
 	}
-	keyPlan, err := resolveSSHKeyPlan(plan, true, "/root/.ssh/authorized_keys")
+	bootstrapKeys, err := readOptionalFile("/root/.ssh/authorized_keys")
+	if err != nil {
+		return err
+	}
+	keyPlan, err := resolveSSHKeyPlan(plan, true, bootstrapKeys, sshCopyIDTarget(plan))
 	if err != nil {
 		return err
 	}
@@ -398,8 +405,8 @@ func (i *Installer) runLocal(plan Plan) error {
 	summary, err := provision.RunInstall(context.Background(), local.Runner{}, provision.InstallOptions{
 		OperatorUser:           plan.OperatorUser,
 		DeployUser:             plan.DeployUser,
-		OperatorSSHPublicKeys:  nonEmptyStrings(keyPlan.Operator),
-		DeploySSHPublicKeys:    nonEmptyStrings(keyPlan.Deploy),
+		OperatorSSHPublicKeys:  keyLines(keyPlan.Operator),
+		DeploySSHPublicKeys:    keyLines(keyPlan.Deploy),
 		Timezone:               plan.Timezone,
 		Locale:                 plan.Locale,
 		Ingress:                plan.Ingress,
@@ -421,19 +428,26 @@ func (i *Installer) runLocal(plan Plan) error {
 		return hostInstallApplyError(plan, err)
 	}
 	i.info("Apply %s changed %d operations", summary.ApplyID, summary.OperationsChanged)
+	i.printPromotedMembers(keyPlan)
 	return nil
 }
 
 func (i *Installer) dumpInstallPlan(plan Plan) error {
 	requireOperatorKey := false
-	rootKeysPath := ""
+	bootstrapKeys := ""
+	bootstrapSource := "remote bootstrap authorized_keys"
 	if plan.Mode == "local" {
 		requireOperatorKey = true
-		rootKeysPath = "/root/.ssh/authorized_keys"
+		bootstrapSource = "/root/.ssh/authorized_keys"
+		var err error
+		bootstrapKeys, err = readOptionalFile("/root/.ssh/authorized_keys")
+		if err != nil {
+			return err
+		}
 	}
 
-	keyPlan, err := resolveSSHKeyPlan(plan, requireOperatorKey, rootKeysPath)
-	if err != nil {
+	keyPlan, err := resolveSSHKeyPlan(plan, requireOperatorKey, bootstrapKeys, sshCopyIDTarget(plan))
+	if err != nil && plan.Mode == "local" {
 		return err
 	}
 
@@ -442,7 +456,6 @@ func (i *Installer) dumpInstallPlan(plan Plan) error {
 	fmt.Fprintf(i.Stdout, "plan.bootstrap_user=%s\n", plan.BootstrapUser)
 	fmt.Fprintf(i.Stdout, "plan.operator_user=%s\n", plan.OperatorUser)
 	fmt.Fprintf(i.Stdout, "plan.deploy_user=%s\n", plan.DeployUser)
-	fmt.Fprintf(i.Stdout, "plan.shared_key=%s\n", boolText(plan.SharedKey))
 	fmt.Fprintf(i.Stdout, "plan.ingress=%s\n", plan.Ingress)
 	fmt.Fprintf(i.Stdout, "plan.admin=%s\n", plan.Admin)
 	fmt.Fprintf(i.Stdout, "plan.tailscale=%s\n", boolText(plan.Tailscale))
@@ -452,8 +465,13 @@ func (i *Installer) dumpInstallPlan(plan Plan) error {
 	fmt.Fprintf(i.Stdout, "plan.docker=%s\n", boolText(plan.InstallDocker))
 	fmt.Fprintf(i.Stdout, "plan.litestream=%s\n", boolText(plan.InstallLitestream))
 	fmt.Fprintf(i.Stdout, "plan.check_mode=%s\n", boolText(plan.CheckMode))
-	fmt.Fprintf(i.Stdout, "plan.operator_key=%s\n", presentOrMissing(keyPlan.Operator, "present", "missing"))
-	fmt.Fprintf(i.Stdout, "plan.deploy_key=%s\n", presentOrMissing(keyPlan.Deploy, "present", "missing"))
+	if err != nil {
+		fmt.Fprintf(i.Stdout, "plan.operator_key=%s\n", keyPlanSource(plan.OperatorSSHPublicKeyFile, bootstrapSource))
+		fmt.Fprintf(i.Stdout, "plan.deploy_key=%s\n", keyPlanSource(plan.DeploySSHPublicKeyFile, bootstrapSource))
+	} else {
+		fmt.Fprintf(i.Stdout, "plan.operator_key=%s\n", presentOrMissingKeys(keyPlan.Operator, "present", "missing"))
+		fmt.Fprintf(i.Stdout, "plan.deploy_key=%s\n", presentOrMissingKeys(keyPlan.Deploy, "present", "missing"))
+	}
 	if plan.Mode == "remote" {
 		fmt.Fprintln(i.Stdout, "--- remote-local-command ---")
 		fmt.Fprintln(i.Stdout, remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/ship-operator.pub", "/tmp/ship-deploy.pub"))
@@ -512,8 +530,15 @@ func (i *Installer) prepareGoHelperBinaries(repoRoot string, target string) (str
 func (i *Installer) preflightSSH(plan Plan) error {
 	output, err := i.remoteOutput(plan, "echo connected")
 	if err != nil {
+		detail := oneLineError(err)
+		if publicKeyAuthFailure(detail) {
+			return deployKeyMissingError(
+				fmt.Sprintf("SSH public-key auth failed for %s; the provider gave a password; this installs your key using it once; ship's hardening then disables password login permanently", bootstrapSSHTarget(plan)),
+				sshCopyIDTarget(plan),
+			)
+		}
 		return errcat.New(errcat.CodeHostInstallSSHFailed, errcat.Fields{
-			"detail":  fmt.Sprintf("SSH preflight failed for %s: %s", bootstrapSSHTarget(plan), oneLineError(err)),
+			"detail":  fmt.Sprintf("SSH preflight failed for %s: %s", bootstrapSSHTarget(plan), detail),
 			"command": sshCommand(plan, ""),
 		})
 	}
@@ -525,6 +550,15 @@ func (i *Installer) preflightSSH(plan Plan) error {
 	}
 	fmt.Fprintln(i.Stdout, "connected")
 	return nil
+}
+
+func (i *Installer) remoteBootstrapAuthorizedKeys(plan Plan) (string, error) {
+	command := "if test -f ~/.ssh/authorized_keys; then cat ~/.ssh/authorized_keys; fi"
+	out, err := i.remoteOutput(plan, command)
+	if err != nil {
+		return "", remoteInstallCommandError(plan, "read bootstrap authorized_keys on target", command, err)
+	}
+	return out, nil
 }
 
 func (i *Installer) remoteArch(plan Plan) (string, error) {
@@ -585,12 +619,14 @@ func (i *Installer) copyRemote(plan Plan, src string, dst string) error {
 
 func (i *Installer) writeRemoteKeyFiles(plan Plan, keys keyPlan) (string, string, func(), error) {
 	var paths []string
-	writeKey := func(name string, key string) (string, error) {
-		if key == "" {
+	writeKey := func(name string, keys []plannedKey) (string, error) {
+		lines := keyLines(keys)
+		if len(lines) == 0 {
 			return "", nil
 		}
 		path := "/tmp/ship-" + name + ".pub"
-		cmd := "printf '%s\n' " + utils.ShellEscape(key) + " > " + utils.ShellEscape(path) + " && chmod 0600 " + utils.ShellEscape(path)
+		content := strings.Join(lines, "\n") + "\n"
+		cmd := "printf %s " + utils.ShellEscape(content) + " > " + utils.ShellEscape(path) + " && chmod 0600 " + utils.ShellEscape(path)
 		if err := i.remoteCommand(plan, cmd); err != nil {
 			return "", remoteInstallCommandError(plan, "write "+name+" SSH public key on target", cmd, err)
 		}
@@ -691,37 +727,55 @@ func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string,
 }
 
 type keyPlan struct {
-	Operator string
-	Deploy   string
+	Operator []plannedKey
+	Deploy   []plannedKey
 }
 
-func resolveSSHKeyPlan(plan Plan, requireOperator bool, rootKeysPath string) (keyPlan, error) {
-	operatorKey, err := readPublicKeyFile(plan.OperatorSSHPublicKeyFile)
+type plannedKey struct {
+	Line        string
+	Type        string
+	Body        string
+	Comment     string
+	Fingerprint string
+	Promoted    bool
+}
+
+func resolveSSHKeyPlan(plan Plan, requireOperator bool, bootstrapAuthorizedKeys string, passwordTarget string) (keyPlan, error) {
+	operatorKeys, err := readPublicKeyFile(plan.OperatorSSHPublicKeyFile)
 	if err != nil {
 		return keyPlan{}, err
 	}
-	deployKey, err := readPublicKeyFile(plan.DeploySSHPublicKeyFile)
+	deployKeys, err := readPublicKeyFile(plan.DeploySSHPublicKeyFile)
 	if err != nil {
 		return keyPlan{}, err
 	}
 
-	if deployKey == "" {
-		if plan.SharedKey {
-			deployKey = operatorKey
-		} else {
-			return keyPlan{}, errcat.New(errcat.CodeDeployKeyMissing, errcat.Fields{
-				"command": keygenCommand(defaultDeployPrivateKeyCandidate()),
-			})
+	var bootstrapKeys []plannedKey
+	if len(operatorKeys) == 0 || len(deployKeys) == 0 {
+		bootstrapKeys = parseBootstrapAuthorizedKeys(bootstrapAuthorizedKeys)
+	}
+
+	if len(deployKeys) == 0 {
+		if len(bootstrapKeys) == 0 {
+			return keyPlan{}, deployKeyMissingError(
+				"bootstrap authorized_keys is empty; the provider gave a password; this installs your key using it once; ship's hardening then disables password login permanently",
+				passwordTarget,
+			)
 		}
+		deployKeys = markPromoted(bootstrapKeys, true)
 	}
 
-	if requireOperator && operatorKey == "" && !nonEmptyFile(rootKeysPath) {
+	if len(operatorKeys) == 0 && len(bootstrapKeys) > 0 {
+		operatorKeys = markPromoted(bootstrapKeys, false)
+	}
+
+	if requireOperator && len(operatorKeys) == 0 {
 		return keyPlan{}, errcat.New(errcat.CodeOperatorKeyMissing, errcat.Fields{
-			"command": operatorKeygenCommand(rootKeysPath),
+			"command": "ssh-copy-id " + passwordTarget,
 		})
 	}
 
-	return keyPlan{Operator: operatorKey, Deploy: deployKey}, nil
+	return keyPlan{Operator: operatorKeys, Deploy: deployKeys}, nil
 }
 
 func locateRepoRoot() (string, error) {
@@ -791,26 +845,197 @@ func helperBinariesExist(dir string) bool {
 		fileExists(filepath.Join(dir, "ship-linux-arm64"))
 }
 
-func readPublicKeyFile(path string) (string, error) {
+func readPublicKeyFile(path string) ([]plannedKey, error) {
 	if path == "" {
-		return "", nil
+		return nil, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", errcat.New(errcat.CodeSSHPublicKeyFileMissing, errcat.Fields{
+		return nil, errcat.New(errcat.CodeSSHPublicKeyFileMissing, errcat.Fields{
 			"path":    path,
 			"command": keygenCommand(privateKeyPathForPublic(path)),
 		})
 	}
-	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r", ""), "\n") {
+	keys, err := normalizePublicKeys(string(data), false)
+	if err != nil {
+		return nil, err
+	}
+	if len(keys) == 0 {
+		return nil, errcat.New(errcat.CodeSSHPublicKeyFileEmpty, errcat.Fields{
+			"path":    path,
+			"command": publicKeyFromPrivateCommand(path),
+		})
+	}
+	return keys, nil
+}
+
+func parseBootstrapAuthorizedKeys(raw string) []plannedKey {
+	keys, _ := normalizePublicKeys(raw, true)
+	return markPromoted(keys, true)
+}
+
+func normalizePublicKeys(raw string, skipInvalid bool) ([]plannedKey, error) {
+	var keys []plannedKey
+	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r", ""), "\n") {
 		line = strings.TrimSpace(line)
-		if line != "" {
-			return line, nil
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, err := normalizePublicKeyLine(line)
+		if err != nil {
+			if skipInvalid {
+				continue
+			}
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
+func normalizePublicKeyLine(line string) (plannedKey, error) {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return plannedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "public key line must contain key type and key body"})
+	}
+	if !supportedPublicKeyType(fields[0]) {
+		return plannedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": fmt.Sprintf("unsupported public key type %q", fields[0])})
+	}
+	if fields[1] == "" {
+		return plannedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "public key body is empty"})
+	}
+	fingerprint, err := publicKeyFingerprint(fields[1])
+	if err != nil {
+		return plannedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": err.Error()})
+	}
+	comment := ""
+	if len(fields) > 2 {
+		comment = strings.Join(fields[2:], " ")
+	}
+	comment = strings.Join(strings.Fields(comment), " ")
+	if comment == "" {
+		comment = "ship-member"
+	}
+	return plannedKey{
+		Line:        fields[0] + " " + fields[1] + " " + comment,
+		Type:        fields[0],
+		Body:        fields[1],
+		Comment:     comment,
+		Fingerprint: fingerprint,
+	}, nil
+}
+
+func supportedPublicKeyType(value string) bool {
+	switch value {
+	case "ssh-ed25519", "ssh-rsa",
+		"ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+		"sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com":
+		return true
+	default:
+		return false
+	}
+}
+
+func publicKeyFingerprint(body string) (string, error) {
+	blob, err := base64.StdEncoding.DecodeString(body)
+	if err != nil {
+		return "", fmt.Errorf("public key body is not valid base64")
+	}
+	if len(blob) == 0 {
+		return "", fmt.Errorf("public key body is empty")
+	}
+	sum := sha256.Sum256(blob)
+	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:]), nil
+}
+
+func markPromoted(keys []plannedKey, promoted bool) []plannedKey {
+	out := make([]plannedKey, len(keys))
+	for index, key := range keys {
+		key.Promoted = promoted
+		out[index] = key
+	}
+	return out
+}
+
+func keyLines(keys []plannedKey) []string {
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if strings.TrimSpace(key.Line) != "" {
+			out = append(out, key.Line)
 		}
 	}
-	return "", errcat.New(errcat.CodeSSHPublicKeyFileEmpty, errcat.Fields{
-		"path":    path,
-		"command": publicKeyFromPrivateCommand(path),
+	return out
+}
+
+func (i *Installer) printPromotedMembers(keys keyPlan) {
+	for _, key := range keys.Deploy {
+		if !key.Promoted {
+			continue
+		}
+		fmt.Fprintf(i.Stdout, "member added: %s (%s %s, from root's authorized keys)\n", key.Comment, key.Type, key.Fingerprint)
+	}
+}
+
+func deployKeyMissingError(detail string, passwordTarget string) error {
+	if strings.TrimSpace(passwordTarget) == "" {
+		passwordTarget = "root@<ip>"
+	}
+	return errcat.New(errcat.CodeDeployKeyMissing, errcat.Fields{
+		"detail":  detail,
+		"command": "ssh-copy-id " + passwordTarget,
+	})
+}
+
+func publicKeyAuthFailure(detail string) bool {
+	detail = strings.ToLower(detail)
+	return strings.Contains(detail, "permission denied") && strings.Contains(detail, "publickey")
+}
+
+func sshCopyIDTarget(plan Plan) string {
+	host := hostOnly(plan.TargetHost)
+	if host == "" || host == "localhost" {
+		host = "localhost"
+	}
+	return "root@" + host
+}
+
+func hostOnly(target string) string {
+	target = strings.TrimSpace(target)
+	if at := strings.LastIndex(target, "@"); at >= 0 && at < len(target)-1 {
+		return target[at+1:]
+	}
+	return target
+}
+
+func planNeedsBootstrapAuthorizedKeys(plan Plan) bool {
+	return plan.OperatorSSHPublicKeyFile == "" || plan.DeploySSHPublicKeyFile == ""
+}
+
+func keyPlanSource(path string, bootstrapSource string) string {
+	if path != "" {
+		return "file:" + path
+	}
+	return bootstrapSource
+}
+
+func presentOrMissingKeys(value []plannedKey, present string, missing string) string {
+	if len(value) != 0 {
+		return present
+	}
+	return missing
+}
+
+func readOptionalFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return string(data), nil
+	}
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	return "", errcat.New(errcat.CodeOperationFailed, errcat.Fields{
+		"detail":  "read " + path + ": " + oneLineError(err),
+		"command": "sudo " + boxInitCommand("localhost", "--mode", "local"),
 	})
 }
 
@@ -873,16 +1098,6 @@ func presentOrMissing(value string, present string, missing string) string {
 		return present
 	}
 	return missing
-}
-
-func nonEmptyStrings(values ...string) []string {
-	var out []string
-	for _, value := range values {
-		if value != "" {
-			out = append(out, value)
-		}
-	}
-	return out
 }
 
 func installUsageError(detail, command string) error {
@@ -1056,14 +1271,6 @@ func keygenCommand(path string) string {
 	return "ssh-keygen -q -t ed25519 -N '' -f " + shellArg(path)
 }
 
-func operatorKeygenCommand(rootKeysPath string) string {
-	if strings.TrimSpace(rootKeysPath) == "" {
-		rootKeysPath = "/root/.ssh/authorized_keys"
-	}
-	privateKey := filepath.Join(filepath.Dir(rootKeysPath), "ship-operator")
-	return keygenCommand(privateKey) + " && cat " + shellArg(privateKey+".pub") + " >> " + shellArg(rootKeysPath)
-}
-
 func privateKeyPathForPublic(path string) string {
 	if strings.HasSuffix(path, ".pub") {
 		return strings.TrimSuffix(path, ".pub")
@@ -1125,7 +1332,7 @@ func (i *Installer) printNextSteps(plan Plan) {
 	server := plan.DeployUser + "@" + plan.TargetHost
 	fmt.Fprintln(i.Stdout, "Next:")
 	step := 1
-	if privateKey := deployPrivateKeyHint(plan); privateKey != "" && !isDefaultDeployPrivateKey(privateKey) {
+	if privateKey := deployPrivateKeyHint(plan); privateKey != "" {
 		fmt.Fprintf(i.Stdout, "%d. export SHIP_SSH_KEY=\"$(cat %s)\"\n", step, utils.ShellEscape(privateKey))
 		step++
 	}
@@ -1136,33 +1343,10 @@ func (i *Installer) printNextSteps(plan Plan) {
 
 func deployPrivateKeyHint(plan Plan) string {
 	pub := plan.DeploySSHPublicKeyFile
-	if pub == "" && plan.SharedKey {
-		pub = plan.OperatorSSHPublicKeyFile
-	}
 	if strings.HasSuffix(pub, ".pub") {
 		return strings.TrimSuffix(pub, ".pub")
 	}
 	return ""
-}
-
-func defaultDeployPublicKeyPath() (string, bool) {
-	path := defaultDeployPrivateKeyCandidate() + ".pub"
-	if !fileExists(path) {
-		return "", false
-	}
-	return path, true
-}
-
-func defaultDeployPrivateKeyCandidate() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return "~/.ssh/ship-deploy"
-	}
-	return filepath.Join(home, ".ssh", "ship-deploy")
-}
-
-func isDefaultDeployPrivateKey(path string) bool {
-	return path == defaultDeployPrivateKeyCandidate()
 }
 
 func fileExists(path string) bool {
