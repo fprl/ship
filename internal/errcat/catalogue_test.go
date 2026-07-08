@@ -39,7 +39,12 @@ func TestCatalogueCompleteness(t *testing.T) {
 		}
 	}
 
-	used := errcatCodeUses(t, root, constants)
+	used, scanned := errcatCodeUses(t, root, constants)
+	for _, rel := range []string{"cmd/hostinstall/install.go", "cmd/hostinstall/helper_binary.go"} {
+		if !scanned[rel] {
+			t.Fatalf("%s was not scanned for errcat code uses", rel)
+		}
+	}
 	for code := range catalogueCodes {
 		if !used[code] {
 			t.Fatalf("catalogue code %q is not constructed or referenced by production code", code)
@@ -98,9 +103,10 @@ func catalogueConstants(t *testing.T, path string) map[string]Code {
 	return out
 }
 
-func errcatCodeUses(t *testing.T, root string, constants map[string]Code) map[Code]bool {
+func errcatCodeUses(t *testing.T, root string, constants map[string]Code) (map[Code]bool, map[string]bool) {
 	t.Helper()
 	used := map[Code]bool{}
+	scanned := map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -128,6 +134,11 @@ func errcatCodeUses(t *testing.T, root string, constants map[string]Code) map[Co
 		if len(aliases) == 0 {
 			return nil
 		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		scanned[filepath.ToSlash(rel)] = true
 		ast.Inspect(file, func(node ast.Node) bool {
 			switch n := node.(type) {
 			case *ast.SelectorExpr:
@@ -165,7 +176,7 @@ func errcatCodeUses(t *testing.T, root string, constants map[string]Code) map[Co
 	if err != nil {
 		t.Fatal(err)
 	}
-	return used
+	return used, scanned
 }
 
 func errcatAliases(file *ast.File) map[string]bool {

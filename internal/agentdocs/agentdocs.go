@@ -774,7 +774,14 @@ var verbs = []Verb{
 			{Name: "--yes", Purpose: "Non-interactive mode."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"invalid_box_target", "operation_failed"},
+		Errors: []string{
+			"usage_error", "invalid_box_target", "deploy_key_missing", "operator_key_missing",
+			"ssh_private_key_missing", "ssh_public_key_file_missing", "ssh_public_key_file_empty",
+			"host_install_requires_root", "host_install_ssh_failed", "unsupported_target_architecture",
+			"host_helper_unavailable", "host_helper_download_failed", "host_install_unsupported_os",
+			"host_install_missing_tool", "host_install_permission_denied", "host_install_apply_failed",
+			"operation_failed",
+		},
 	},
 	{
 		Verb:    "member add",

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/version"
 )
 
@@ -23,7 +24,7 @@ func TestPrepareRemoteHelperUsesConfiguredHelperDir(t *testing.T) {
 	installer := NewInstaller()
 	installer.Env = map[string]string{"SHIP_HELPER_DIR": dir}
 
-	got, cleanup, err := installer.prepareRemoteHelperBinary("amd64")
+	got, cleanup, err := installer.prepareRemoteHelperBinary(helperTestPlan(), "amd64")
 	defer cleanup()
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +55,7 @@ func TestPrepareRemoteHelperDownloadsReleaseAsset(t *testing.T) {
 	installer := NewInstaller()
 	installer.Env = map[string]string{"SHIP_RELEASE_BASE_URL": server.URL}
 
-	got, cleanup, err := installer.prepareRemoteHelperBinary("arm64")
+	got, cleanup, err := installer.prepareRemoteHelperBinary(helperTestPlan(), "arm64")
 	defer cleanup()
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +115,7 @@ func TestPrepareRemoteHelperReleaseBuildPrefersDownloadOverRepoRoot(t *testing.T
 	installer := NewInstaller()
 	installer.Env = map[string]string{"SHIP_RELEASE_BASE_URL": server.URL}
 
-	got, cleanup, err := installer.prepareRemoteHelperBinary("amd64")
+	got, cleanup, err := installer.prepareRemoteHelperBinary(helperTestPlan(), "amd64")
 	defer cleanup()
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +156,7 @@ func TestPrepareRemoteHelperUsesReleaseToken(t *testing.T) {
 		"GH_TOKEN":              "test-token",
 	}
 
-	_, cleanup, err := installer.prepareRemoteHelperBinary("amd64")
+	_, cleanup, err := installer.prepareRemoteHelperBinary(helperTestPlan(), "amd64")
 	defer cleanup()
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +205,7 @@ func TestPrepareRemoteHelperFallsBackToGitHubAssetAPI(t *testing.T) {
 		"GH_TOKEN":                  "test-token",
 	}
 
-	got, cleanup, err := installer.prepareRemoteHelperBinary("amd64")
+	got, cleanup, err := installer.prepareRemoteHelperBinary(helperTestPlan(), "amd64")
 	defer cleanup()
 	if err != nil {
 		t.Fatal(err)
@@ -238,13 +239,16 @@ func TestPrepareRemoteHelperRejectsChecksumMismatch(t *testing.T) {
 	installer := NewInstaller()
 	installer.Env = map[string]string{"SHIP_RELEASE_BASE_URL": server.URL}
 
-	_, cleanup, err := installer.prepareRemoteHelperBinary("amd64")
+	_, cleanup, err := installer.prepareRemoteHelperBinary(helperTestPlan(), "amd64")
 	defer cleanup()
 	if err == nil {
 		t.Fatal("expected checksum mismatch to fail")
 	}
 	if !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("expected checksum mismatch error, got %v", err)
+	}
+	if !errcat.Is(err, errcat.CodeHostHelperDownloadFailed) {
+		t.Fatalf("code = %v, want %s", err, errcat.CodeHostHelperDownloadFailed)
 	}
 }
 
@@ -264,4 +268,8 @@ func TestReleaseVersionDetection(t *testing.T) {
 func sha256SumLine(name string, data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]) + "  " + name + "\n"
+}
+
+func helperTestPlan() Plan {
+	return Plan{TargetHost: "203.0.113.10", BootstrapUser: "root", Mode: "remote"}
 }

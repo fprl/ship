@@ -58,6 +58,20 @@ const (
 	CodeIngressInvalid                    Code = "ingress_invalid"
 	CodeSecretInvalid                     Code = "secret_invalid"
 	CodeSecretReadError                   Code = "secret_read_error"
+	CodeDeployKeyMissing                  Code = "deploy_key_missing"
+	CodeOperatorKeyMissing                Code = "operator_key_missing"
+	CodeSSHPrivateKeyMissing              Code = "ssh_private_key_missing"
+	CodeSSHPublicKeyFileMissing           Code = "ssh_public_key_file_missing"
+	CodeSSHPublicKeyFileEmpty             Code = "ssh_public_key_file_empty"
+	CodeHostInstallRequiresRoot           Code = "host_install_requires_root"
+	CodeHostInstallSSHFailed              Code = "host_install_ssh_failed"
+	CodeUnsupportedTargetArchitecture     Code = "unsupported_target_architecture"
+	CodeHostHelperUnavailable             Code = "host_helper_unavailable"
+	CodeHostHelperDownloadFailed          Code = "host_helper_download_failed"
+	CodeHostInstallUnsupportedOS          Code = "host_install_unsupported_os"
+	CodeHostInstallMissingTool            Code = "host_install_missing_tool"
+	CodeHostInstallPermissionDenied       Code = "host_install_permission_denied"
+	CodeHostInstallApplyFailed            Code = "host_install_apply_failed"
 )
 
 type Fields map[string]string
@@ -356,6 +370,92 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "secret preflight failed",
 		CauseTemplate:       "{detail}",
 		RemediationTemplate: "ship box doctor",
+	},
+	CodeDeployKeyMissing: {
+		Code:                CodeDeployKeyMissing,
+		MessageTemplate:     "deploy SSH key is missing",
+		CauseTemplate:       "no SSH public key source found for deploy user",
+		RemediationTemplate: "{command}",
+	},
+	CodeOperatorKeyMissing: {
+		Code:                CodeOperatorKeyMissing,
+		MessageTemplate:     "operator SSH key is missing",
+		CauseTemplate:       "no SSH public key source found for operator user",
+		RemediationTemplate: "{command}",
+	},
+	CodeSSHPrivateKeyMissing: {
+		Code:                CodeSSHPrivateKeyMissing,
+		MessageTemplate:     "SSH private key is missing",
+		CauseTemplate:       "SSH private key file not found: {path}",
+		RemediationTemplate: "{command}",
+	},
+	CodeSSHPublicKeyFileMissing: {
+		Code:                CodeSSHPublicKeyFileMissing,
+		MessageTemplate:     "SSH public key file is missing",
+		CauseTemplate:       "SSH public key file not found: {path}",
+		RemediationTemplate: "{command}",
+	},
+	CodeSSHPublicKeyFileEmpty: {
+		Code:                CodeSSHPublicKeyFileEmpty,
+		MessageTemplate:     "SSH public key file is empty",
+		CauseTemplate:       "SSH public key file is empty: {path}",
+		RemediationTemplate: "{command}",
+	},
+	CodeHostInstallRequiresRoot: {
+		Code:                CodeHostInstallRequiresRoot,
+		MessageTemplate:     "local host install needs root",
+		CauseTemplate:       "local mode must run as root",
+		RemediationTemplate: "{command}",
+	},
+	CodeHostInstallSSHFailed: {
+		Code:                CodeHostInstallSSHFailed,
+		MessageTemplate:     "host install SSH failed",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "{command}",
+	},
+	CodeUnsupportedTargetArchitecture: {
+		Code:                CodeUnsupportedTargetArchitecture,
+		MessageTemplate:     "host architecture is unsupported",
+		CauseTemplate:       "target architecture {arch} is not supported",
+		RemediationTemplate: "ship box init <amd64-or-arm64-ssh-target>",
+	},
+	CodeHostHelperUnavailable: {
+		Code:                CodeHostHelperUnavailable,
+		MessageTemplate:     "host install helper is unavailable",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "{command}",
+		Defaults:            Fields{"command": "SHIP_REPO_ROOT=<path-to-ship-checkout> ship box init <ssh-target>"},
+	},
+	CodeHostHelperDownloadFailed: {
+		Code:                CodeHostHelperDownloadFailed,
+		MessageTemplate:     "host install helper download failed",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "{command}",
+		Defaults:            Fields{"command": "SHIP_REPO_ROOT=<path-to-ship-checkout> ship box init <ssh-target>"},
+	},
+	CodeHostInstallUnsupportedOS: {
+		Code:                CodeHostInstallUnsupportedOS,
+		MessageTemplate:     "host OS is unsupported",
+		CauseTemplate:       "host install requires Ubuntu/Debian apt tooling; missing {tool}",
+		RemediationTemplate: "ship box init <ubuntu-24.04-ssh-target>",
+	},
+	CodeHostInstallMissingTool: {
+		Code:                CodeHostInstallMissingTool,
+		MessageTemplate:     "host install dependency is missing",
+		CauseTemplate:       "missing required host tool: {tool}",
+		RemediationTemplate: "sudo apt-get update && sudo apt-get install -y {tool}",
+	},
+	CodeHostInstallPermissionDenied: {
+		Code:                CodeHostInstallPermissionDenied,
+		MessageTemplate:     "host install needs elevated permissions",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "{command}",
+	},
+	CodeHostInstallApplyFailed: {
+		Code:                CodeHostInstallApplyFailed,
+		MessageTemplate:     "host provisioning failed",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "{command}",
 	},
 }
 

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/provision"
 	"github.com/fprl/ship/internal/provision/local"
 	"github.com/fprl/ship/internal/utils"
@@ -140,7 +141,7 @@ func (i *Installer) RunOptions(opts Options) error {
 	case "local":
 		err = i.runLocal(plan)
 	default:
-		err = fmt.Errorf("invalid mode: %s", plan.Mode)
+		err = internalInstallError(fmt.Sprintf("invalid resolved install mode: %s", plan.Mode), boxInitCommand(plan.TargetHost))
 	}
 	if err != nil {
 		return err
@@ -197,54 +198,57 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 		}
 	}
 	if mode != "local" && mode != "remote" {
-		return Plan{}, fmt.Errorf("invalid mode: %s (expected local, remote, or auto)", opts.Mode)
+		return Plan{}, installUsageError(fmt.Sprintf("invalid mode: %s (expected local, remote, or auto)", opts.Mode), boxInitCommand(opts.TargetHost, "--mode", "auto"))
 	}
 
 	if mode == "remote" {
 		if opts.TargetHost == "" {
-			return Plan{}, errors.New("TARGET_HOST is required in remote mode.")
+			return Plan{}, installUsageError("TARGET_HOST is required in remote mode", boxInitCommand("", "--mode", "remote"))
 		}
 		if opts.BootstrapUser == "" {
-			return Plan{}, errors.New("BOOTSTRAP_USER is required in remote mode.")
+			return Plan{}, installUsageError("BOOTSTRAP_USER is required in remote mode", boxInitCommand(opts.TargetHost, "--bootstrap-user", "root"))
 		}
 		if opts.SSHKey != "" && !fileExists(opts.SSHKey) {
-			return Plan{}, fmt.Errorf("SSH key file not found: %s", opts.SSHKey)
+			return Plan{}, errcat.New(errcat.CodeSSHPrivateKeyMissing, errcat.Fields{
+				"path":    opts.SSHKey,
+				"command": boxInitCommand(opts.TargetHost, "--ssh-key", "<path-to-existing-private-key>"),
+			})
 		}
 	}
 
 	if opts.OperatorUser == opts.DeployUser {
-		return Plan{}, errors.New("Operator and deploy users must be different.")
+		return Plan{}, installUsageError("Operator and deploy users must be different", boxInitCommand(opts.TargetHost, "--operator-user", "operator", "--deploy-user", "deploy"))
 	}
 	if !opts.Tailscale {
 		if opts.TailscaleAuthKey != "" {
-			return Plan{}, errors.New("--tailscale-auth-key requires Tailscale to be enabled.")
+			return Plan{}, installUsageError("--tailscale-auth-key requires Tailscale to be enabled", boxInitCommand(opts.TargetHost, "--tailscale", "--tailscale-auth-key", "<key>"))
 		}
 		if opts.TailscaleHostname != "" {
-			return Plan{}, errors.New("--tailscale-hostname requires Tailscale to be enabled.")
+			return Plan{}, installUsageError("--tailscale-hostname requires Tailscale to be enabled", boxInitCommand(opts.TargetHost, "--tailscale", "--tailscale-hostname", "<name>"))
 		}
 	}
 	if !opts.CloudflareTunnel {
 		if opts.CloudflareTunnelToken != "" {
-			return Plan{}, errors.New("--cloudflare-tunnel-token requires Cloudflare Tunnel to be enabled.")
+			return Plan{}, installUsageError("--cloudflare-tunnel-token requires Cloudflare Tunnel to be enabled", boxInitCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-tunnel-token", "<token>"))
 		}
 		if opts.CloudflareAPIToken != "" {
-			return Plan{}, errors.New("--cloudflare-api-token requires Cloudflare Tunnel to be enabled.")
+			return Plan{}, installUsageError("--cloudflare-api-token requires Cloudflare Tunnel to be enabled", boxInitCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-api-token", "<token>"))
 		}
 		if opts.CloudflareAccountID != "" {
-			return Plan{}, errors.New("--cloudflare-account-id requires Cloudflare Tunnel to be enabled.")
+			return Plan{}, installUsageError("--cloudflare-account-id requires Cloudflare Tunnel to be enabled", boxInitCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-account-id", "<account-id>"))
 		}
 		if opts.CloudflareTunnelConfig != "" {
-			return Plan{}, errors.New("--cloudflare-tunnel-config requires Cloudflare Tunnel to be enabled.")
+			return Plan{}, installUsageError("--cloudflare-tunnel-config requires Cloudflare Tunnel to be enabled", boxInitCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-tunnel-config", "<path>"))
 		}
 	}
 	if opts.CloudflareAPIToken != "" && opts.CloudflareTunnelToken != "" {
-		return Plan{}, errors.New("use either --cloudflare-api-token or --cloudflare-tunnel-token, not both.")
+		return Plan{}, installUsageError("use either --cloudflare-api-token or --cloudflare-tunnel-token, not both", boxInitCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-api-token", "<token>"))
 	}
 	if opts.CloudflareAPIToken != "" && opts.CloudflareTunnelConfig != "" {
-		return Plan{}, errors.New("use either --cloudflare-api-token or --cloudflare-tunnel-config, not both.")
+		return Plan{}, installUsageError("use either --cloudflare-api-token or --cloudflare-tunnel-config, not both", boxInitCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-api-token", "<token>"))
 	}
 	if opts.CloudflareTunnelToken != "" && opts.CloudflareTunnelConfig != "" {
-		return Plan{}, errors.New("use either --cloudflare-tunnel-token or --cloudflare-tunnel-config, not both.")
+		return Plan{}, installUsageError("use either --cloudflare-tunnel-token or --cloudflare-tunnel-config, not both", boxInitCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-tunnel-token", "<token>"))
 	}
 
 	operatorKeyFile := opts.OperatorSSHPublicKeyFile
@@ -304,7 +308,7 @@ func applyInstallPresets(opts Options) (Options, error) {
 	case "private":
 		opts.CloudflareTunnel = false
 	default:
-		return Options{}, fmt.Errorf("invalid ingress mode: %s (expected public, cloudflare, or private)", opts.Ingress)
+		return Options{}, installUsageError(fmt.Sprintf("invalid ingress mode: %s (expected public, cloudflare, or private)", opts.Ingress), boxInitCommand("", "--ingress", "public"))
 	}
 
 	switch opts.Admin {
@@ -320,7 +324,7 @@ func applyInstallPresets(opts Options) (Options, error) {
 	case "tailscale":
 		opts.Tailscale = true
 	default:
-		return Options{}, fmt.Errorf("invalid admin mode: %s (expected public-ssh or tailscale)", opts.Admin)
+		return Options{}, installUsageError(fmt.Sprintf("invalid admin mode: %s (expected public-ssh or tailscale)", opts.Admin), boxInitCommand("", "--admin", "public-ssh"))
 	}
 	return opts, nil
 }
@@ -340,7 +344,7 @@ func (i *Installer) runRemote(plan Plan) error {
 	if err != nil {
 		return err
 	}
-	helper, cleanupHelper, err := i.prepareRemoteHelperBinary(arch)
+	helper, cleanupHelper, err := i.prepareRemoteHelperBinary(plan, arch)
 	if err != nil {
 		return err
 	}
@@ -348,10 +352,11 @@ func (i *Installer) runRemote(plan Plan) error {
 
 	remoteHelper := "/tmp/ship-host-install"
 	if err := i.copyRemote(plan, helper, remoteHelper); err != nil {
-		return err
+		return remoteInstallTransferError(plan, "copy helper binary to target", err)
 	}
-	if err := i.remoteCommand(plan, "chmod 0755 "+utils.ShellEscape(remoteHelper)); err != nil {
-		return err
+	chmodHelperCommand := "chmod 0755 " + utils.ShellEscape(remoteHelper)
+	if err := i.remoteCommand(plan, chmodHelperCommand); err != nil {
+		return remoteInstallCommandError(plan, "chmod helper binary on target", chmodHelperCommand, err)
 	}
 	operatorKeyFile, deployKeyFile, cleanupKeys, err := i.writeRemoteKeyFiles(plan, keyPlan)
 	if err != nil {
@@ -362,14 +367,22 @@ func (i *Installer) runRemote(plan Plan) error {
 	cmd := remoteLocalInstallCommand(remoteHelper, plan, operatorKeyFile, deployKeyFile)
 	i.step("Running Go provisioner on target")
 	if plan.BootstrapUser == "root" {
-		return i.remoteCommand(plan, cmd)
+		if err := i.remoteCommand(plan, cmd); err != nil {
+			return hostInstallApplyError(plan, err)
+		}
+		return nil
 	}
-	return i.remoteCommand(plan, "sudo -n "+cmd)
+	if err := i.remoteCommand(plan, "sudo -n "+cmd); err != nil {
+		return hostInstallApplyError(plan, err)
+	}
+	return nil
 }
 
 func (i *Installer) runLocal(plan Plan) error {
 	if i.geteuid() != 0 {
-		return errors.New("local mode must run as root")
+		return errcat.New(errcat.CodeHostInstallRequiresRoot, errcat.Fields{
+			"command": "sudo " + boxInitCommand("localhost", "--mode", "local"),
+		})
 	}
 	keyPlan, err := resolveSSHKeyPlan(plan, true, "/root/.ssh/authorized_keys")
 	if err != nil {
@@ -378,7 +391,7 @@ func (i *Installer) runLocal(plan Plan) error {
 
 	helperPath, err := os.Executable()
 	if err != nil {
-		return err
+		return internalInstallError("resolve current executable failed: "+oneLineError(err), boxInitCommand("localhost", "--mode", "local"))
 	}
 
 	i.info("Running in local mode on localhost")
@@ -405,7 +418,7 @@ func (i *Installer) runLocal(plan Plan) error {
 		HelperBinaryPath:       helperPath,
 	})
 	if err != nil {
-		return err
+		return hostInstallApplyError(plan, err)
 	}
 	i.info("Apply %s changed %d operations", summary.ApplyID, summary.OperationsChanged)
 	return nil
@@ -448,7 +461,7 @@ func (i *Installer) dumpInstallPlan(plan Plan) error {
 	return nil
 }
 
-func (i *Installer) prepareGoHelperBinaries(repoRoot string) (string, func(), error) {
+func (i *Installer) prepareGoHelperBinaries(repoRoot string, target string) (string, func(), error) {
 	distDir := filepath.Join(repoRoot, "dist")
 	if helperBinariesExist(distDir) {
 		i.info("Using prebuilt ship Go helper binaries from %s", distDir)
@@ -456,16 +469,25 @@ func (i *Installer) prepareGoHelperBinaries(repoRoot string) (string, func(), er
 	}
 
 	if _, err := i.look("go"); err != nil {
-		return "", func() {}, errors.New("ship Go helper binaries are required, but no prebuilt dist/ binaries were found and Go is not installed")
+		return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+			"detail":  "ship Go helper binaries are required, but no prebuilt dist/ binaries were found and Go is not installed",
+			"command": "SHIP_HELPER_DIR=<dir-containing-ship-linux-amd64-and-ship-linux-arm64> " + boxInitCommand(target),
+		})
 	}
 
 	if !fileExists(filepath.Join(repoRoot, "go.mod")) {
-		return "", func() {}, fmt.Errorf("ship Go module not found at %s; cannot prepare helper binaries", repoRoot)
+		return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+			"detail":  fmt.Sprintf("ship Go module not found at %s", repoRoot),
+			"command": "SHIP_REPO_ROOT=<path-to-ship-checkout> " + boxInitCommand(target),
+		})
 	}
 
 	outputDir, err := os.MkdirTemp("", "ship-helper-")
 	if err != nil {
-		return "", func() {}, err
+		return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+			"detail":  "create temporary helper build dir failed: " + oneLineError(err),
+			"command": "TMPDIR=/tmp " + boxInitCommand(target),
+		})
 	}
 
 	i.info("Building ship Go helper binaries")
@@ -478,7 +500,10 @@ func (i *Installer) prepareGoHelperBinaries(repoRoot string) (string, func(), er
 		cmd.Stderr = i.Stderr
 		if err := cmd.Run(); err != nil {
 			_ = os.RemoveAll(outputDir)
-			return "", func() {}, err
+			return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+				"detail":  fmt.Sprintf("build Linux helper for %s failed: %s", arch, oneLineError(err)),
+				"command": helperBuildCommand(arch),
+			})
 		}
 	}
 	return outputDir, func() { _ = os.RemoveAll(outputDir) }, nil
@@ -487,17 +512,16 @@ func (i *Installer) prepareGoHelperBinaries(repoRoot string) (string, func(), er
 func (i *Installer) preflightSSH(plan Plan) error {
 	output, err := i.remoteOutput(plan, "echo connected")
 	if err != nil {
-		var msg bytes.Buffer
-		fmt.Fprintf(&msg, "SSH preflight failed for %s@%s.", plan.BootstrapUser, plan.TargetHost)
-		if plan.SSHKey == "" {
-			msg.WriteString("\nRemote mode expects SSH key-based auth (via ssh config/agent/default keys).")
-			msg.WriteString("\nIf you only have password credentials, SSH to the VPS first and use --mode local.")
-		}
-		msg.WriteString("\nCheck host, credentials, and key access.")
-		return fmt.Errorf("%s\n%s", msg.String(), err)
+		return errcat.New(errcat.CodeHostInstallSSHFailed, errcat.Fields{
+			"detail":  fmt.Sprintf("SSH preflight failed for %s: %s", bootstrapSSHTarget(plan), oneLineError(err)),
+			"command": sshCommand(plan, ""),
+		})
 	}
 	if strings.TrimSpace(output) != "connected" {
-		return fmt.Errorf("SSH preflight failed for %s@%s: expected connected sentinel, got %q", plan.BootstrapUser, plan.TargetHost, strings.TrimSpace(output))
+		return errcat.New(errcat.CodeHostInstallSSHFailed, errcat.Fields{
+			"detail":  fmt.Sprintf("SSH preflight expected connected sentinel from %s, got %q", bootstrapSSHTarget(plan), strings.TrimSpace(output)),
+			"command": sshCommand(plan, "echo connected"),
+		})
 	}
 	fmt.Fprintln(i.Stdout, "connected")
 	return nil
@@ -514,7 +538,9 @@ func (i *Installer) remoteArch(plan Plan) (string, error) {
 	case "aarch64", "arm64":
 		return "arm64", nil
 	default:
-		return "", fmt.Errorf("unsupported target architecture: %s", strings.TrimSpace(output))
+		return "", errcat.New(errcat.CodeUnsupportedTargetArchitecture, errcat.Fields{
+			"arch": strings.TrimSpace(output),
+		})
 	}
 }
 
@@ -528,7 +554,14 @@ func (i *Installer) remoteOutput(plan Plan, command string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("ssh command failed: %s: %w", strings.TrimSpace(stderr.String()), err)
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = oneLineError(err)
+		}
+		return "", errcat.New(errcat.CodeHostInstallSSHFailed, errcat.Fields{
+			"detail":  fmt.Sprintf("SSH command failed for %s: %s", bootstrapSSHTarget(plan), oneLine(detail)),
+			"command": sshCommand(plan, command),
+		})
 	}
 	return stdout.String(), nil
 }
@@ -559,7 +592,7 @@ func (i *Installer) writeRemoteKeyFiles(plan Plan, keys keyPlan) (string, string
 		path := "/tmp/ship-" + name + ".pub"
 		cmd := "printf '%s\n' " + utils.ShellEscape(key) + " > " + utils.ShellEscape(path) + " && chmod 0600 " + utils.ShellEscape(path)
 		if err := i.remoteCommand(plan, cmd); err != nil {
-			return "", err
+			return "", remoteInstallCommandError(plan, "write "+name+" SSH public key on target", cmd, err)
 		}
 		paths = append(paths, path)
 		return path, nil
@@ -676,12 +709,16 @@ func resolveSSHKeyPlan(plan Plan, requireOperator bool, rootKeysPath string) (ke
 		if plan.SharedKey {
 			deployKey = operatorKey
 		} else {
-			return keyPlan{}, fmt.Errorf("No SSH public key source found for deploy user.\nCreate the default deploy key with `ssh-keygen -q -t ed25519 -N '' -f %s`, provide --deploy-ssh-public-key-file, or pass --shared-key to reuse the operator key.", defaultDeployPrivateKeyCandidate())
+			return keyPlan{}, errcat.New(errcat.CodeDeployKeyMissing, errcat.Fields{
+				"command": keygenCommand(defaultDeployPrivateKeyCandidate()),
+			})
 		}
 	}
 
 	if requireOperator && operatorKey == "" && !nonEmptyFile(rootKeysPath) {
-		return keyPlan{}, fmt.Errorf("No SSH public key source found for operator user.\nProvide --operator-ssh-public-key-file, or create %s first.\nThis protects against locking yourself out when password auth is disabled.", rootKeysPath)
+		return keyPlan{}, errcat.New(errcat.CodeOperatorKeyMissing, errcat.Fields{
+			"command": operatorKeygenCommand(rootKeysPath),
+		})
 	}
 
 	return keyPlan{Operator: operatorKey, Deploy: deployKey}, nil
@@ -705,12 +742,18 @@ func locateRepoRoot() (string, error) {
 		if repoLooksValid(candidate) {
 			abs, err := filepath.Abs(candidate)
 			if err != nil {
-				return "", err
+				return "", errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+					"detail":  "resolve ship repo root failed: " + oneLineError(err),
+					"command": "SHIP_REPO_ROOT=<path-to-ship-checkout> ship box init <ssh-target>",
+				})
 			}
 			return abs, nil
 		}
 	}
-	return "", errors.New("ship Go module was not found; run from a checkout or set SHIP_REPO_ROOT")
+	return "", errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+		"detail":  "ship Go module was not found",
+		"command": "SHIP_REPO_ROOT=<path-to-ship-checkout> ship box init <ssh-target>",
+	})
 }
 
 func repoLooksValid(dir string) bool {
@@ -754,7 +797,10 @@ func readPublicKeyFile(path string) (string, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("SSH public key file not found: %s", path)
+		return "", errcat.New(errcat.CodeSSHPublicKeyFileMissing, errcat.Fields{
+			"path":    path,
+			"command": keygenCommand(privateKeyPathForPublic(path)),
+		})
 	}
 	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r", ""), "\n") {
 		line = strings.TrimSpace(line)
@@ -762,7 +808,10 @@ func readPublicKeyFile(path string) (string, error) {
 			return line, nil
 		}
 	}
-	return "", fmt.Errorf("SSH public key file is empty: %s", path)
+	return "", errcat.New(errcat.CodeSSHPublicKeyFileEmpty, errcat.Fields{
+		"path":    path,
+		"command": publicKeyFromPrivateCommand(path),
+	})
 }
 
 func runPassthrough(name string, args []string, cwd string) error {
@@ -771,9 +820,19 @@ func runPassthrough(name string, args []string, cwd string) error {
 		cmd.Dir = cwd
 	}
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = io.MultiWriter(os.Stdout, &stdout)
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
+	if err := cmd.Run(); err != nil {
+		return &utils.CommandError{
+			Name:   name,
+			Args:   append([]string(nil), args...),
+			Stdout: stdout.String(),
+			Stderr: stderr.String(),
+			Err:    err,
+		}
+	}
+	return nil
 }
 
 func environMap() map[string]string {
@@ -824,6 +883,239 @@ func nonEmptyStrings(values ...string) []string {
 		}
 	}
 	return out
+}
+
+func installUsageError(detail, command string) error {
+	return errcat.New(errcat.CodeUsageError, errcat.Fields{
+		"detail":  detail,
+		"command": command,
+	})
+}
+
+func internalInstallError(detail string, command string) error {
+	return errcat.New(errcat.CodeOperationFailed, errcat.Fields{
+		"detail":  detail,
+		"command": command,
+	})
+}
+
+func remoteInstallTransferError(plan Plan, action string, err error) error {
+	if coded, ok := errcat.As(err); ok {
+		return coded
+	}
+	return errcat.New(errcat.CodeHostInstallSSHFailed, errcat.Fields{
+		"detail":  action + " failed for " + bootstrapSSHTarget(plan) + ": " + oneLineError(err),
+		"command": boxInitCommand(plan.TargetHost, "--mode", "remote"),
+	})
+}
+
+func remoteInstallCommandError(plan Plan, action string, command string, err error) error {
+	if coded, ok := errcat.As(err); ok {
+		return coded
+	}
+	if permissionFailure(err) {
+		return errcat.New(errcat.CodeHostInstallPermissionDenied, errcat.Fields{
+			"detail":  action + " failed for " + bootstrapSSHTarget(plan) + ": " + oneLineError(err),
+			"command": hostInstallPermissionCommand(plan),
+		})
+	}
+	return errcat.New(errcat.CodeHostInstallSSHFailed, errcat.Fields{
+		"detail":  action + " failed for " + bootstrapSSHTarget(plan) + ": " + oneLineError(err),
+		"command": sshCommand(plan, command),
+	})
+}
+
+func hostInstallApplyError(plan Plan, err error) error {
+	if coded, ok := errcat.As(err); ok {
+		return coded
+	}
+	if tool, ok := missingExecutable(err); ok {
+		if tool == "apt-get" || tool == "dpkg-query" {
+			return errcat.New(errcat.CodeHostInstallUnsupportedOS, errcat.Fields{"tool": tool})
+		}
+		return errcat.New(errcat.CodeHostInstallMissingTool, errcat.Fields{"tool": tool})
+	}
+	if permissionFailure(err) {
+		return errcat.New(errcat.CodeHostInstallPermissionDenied, errcat.Fields{
+			"detail":  oneLineError(err),
+			"command": hostInstallPermissionCommand(plan),
+		})
+	}
+	return errcat.New(errcat.CodeHostInstallApplyFailed, errcat.Fields{
+		"detail":  oneLineError(err),
+		"command": hostInstallRetryCommand(plan),
+	})
+}
+
+func missingExecutable(err error) (string, bool) {
+	var execErr *exec.Error
+	if errors.As(err, &execErr) && errors.Is(execErr.Err, exec.ErrNotFound) {
+		return execErr.Name, true
+	}
+	detail := oneLineError(err)
+	if strings.Contains(detail, "executable file not found") {
+		start := strings.Index(detail, `"`)
+		if start >= 0 {
+			rest := detail[start+1:]
+			end := strings.Index(rest, `"`)
+			if end > 0 {
+				return rest[:end], true
+			}
+		}
+	}
+	for _, tool := range []string{"apt-get", "dpkg-query", "systemctl", "visudo", "curl", "gpg", "ufw", "podman"} {
+		if strings.Contains(detail, tool) && strings.Contains(strings.ToLower(detail), "not found") {
+			return tool, true
+		}
+	}
+	return "", false
+}
+
+func permissionFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsPermission(err) || errors.Is(err, os.ErrPermission) {
+		return true
+	}
+	detail := strings.ToLower(oneLineError(err))
+	return strings.Contains(detail, "permission denied") ||
+		strings.Contains(detail, "operation not permitted") ||
+		strings.Contains(detail, "sudo: a password is required") ||
+		strings.Contains(detail, "sudo: a terminal is required")
+}
+
+func hostInstallPermissionCommand(plan Plan) string {
+	if plan.Mode == "local" || plan.TargetHost == "" || plan.TargetHost == "localhost" {
+		return "sudo " + boxInitCommand("localhost", "--mode", "local")
+	}
+	return boxInitCommand(plan.TargetHost, "--mode", "remote", "--bootstrap-user", "root")
+}
+
+func hostInstallRetryCommand(plan Plan) string {
+	if plan.Mode == "local" || plan.TargetHost == "" || plan.TargetHost == "localhost" {
+		return "sudo " + boxInitCommand("localhost", "--mode", "local")
+	}
+	return boxInitCommand(plan.TargetHost, "--mode", "remote")
+}
+
+func boxInitCommand(target string, extra ...string) string {
+	args := []string{"ship", "box", "init", targetOrPlaceholder(target)}
+	args = append(args, extra...)
+	return shellCommand(args)
+}
+
+func sshCommand(plan Plan, command string) string {
+	args := []string{"ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"}
+	if plan.SSHKey != "" {
+		args = append(args, "-i", plan.SSHKey)
+	}
+	args = append(args, bootstrapSSHTarget(plan))
+	if command != "" {
+		args = append(args, command)
+	}
+	return shellCommand(args)
+}
+
+func bootstrapSSHTarget(plan Plan) string {
+	target := targetOrPlaceholder(plan.TargetHost)
+	if strings.Contains(target, "@") || plan.BootstrapUser == "" {
+		return target
+	}
+	return plan.BootstrapUser + "@" + target
+}
+
+func targetOrPlaceholder(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "<ssh-target>"
+	}
+	return target
+}
+
+func shellCommand(args []string) string {
+	parts := make([]string, 0, len(args))
+	for _, arg := range args {
+		parts = append(parts, shellArg(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+func shellArg(arg string) string {
+	if isPlaceholder(arg) {
+		return arg
+	}
+	return utils.ShellEscape(arg)
+}
+
+func isPlaceholder(arg string) bool {
+	return strings.HasPrefix(arg, "<") && strings.HasSuffix(arg, ">")
+}
+
+func keygenCommand(path string) string {
+	return "ssh-keygen -q -t ed25519 -N '' -f " + shellArg(path)
+}
+
+func operatorKeygenCommand(rootKeysPath string) string {
+	if strings.TrimSpace(rootKeysPath) == "" {
+		rootKeysPath = "/root/.ssh/authorized_keys"
+	}
+	privateKey := filepath.Join(filepath.Dir(rootKeysPath), "ship-operator")
+	return keygenCommand(privateKey) + " && cat " + shellArg(privateKey+".pub") + " >> " + shellArg(rootKeysPath)
+}
+
+func privateKeyPathForPublic(path string) string {
+	if strings.HasSuffix(path, ".pub") {
+		return strings.TrimSuffix(path, ".pub")
+	}
+	return path
+}
+
+func publicKeyFromPrivateCommand(path string) string {
+	return "ssh-keygen -y -f " + shellArg(privateKeyPathForPublic(path)) + " > " + shellArg(path)
+}
+
+func helperBuildCommand(arch string) string {
+	arch = oneLine(arch)
+	return "CGO_ENABLED=0 GOOS=linux GOARCH=" + shellArg(arch) + " go build -trimpath -ldflags='-s -w' -o " + shellArg(filepath.Join("dist", "ship-linux-"+arch)) + " ."
+}
+
+func helperDownloadCommand(target string, baseURL string, token string) string {
+	if baseURL != defaultReleaseBaseURL {
+		return "SHIP_RELEASE_BASE_URL=" + shellArg(defaultReleaseBaseURL) + " " + boxInitCommand(target)
+	}
+	if token == "" {
+		return "SHIP_RELEASE_TOKEN=<token> " + boxInitCommand(target)
+	}
+	return "SHIP_REPO_ROOT=<path-to-ship-checkout> " + boxInitCommand(target)
+}
+
+func helperDownloadError(detail string, command string) error {
+	return errcat.New(errcat.CodeHostHelperDownloadFailed, errcat.Fields{
+		"detail":  oneLine(detail),
+		"command": command,
+	})
+}
+
+func oneLineError(err error) string {
+	if err == nil {
+		return "no error detail"
+	}
+	var commandErr *utils.CommandError
+	if errors.As(err, &commandErr) {
+		if output := oneLine(commandErr.CombinedOutput()); output != "no error detail" {
+			return output
+		}
+	}
+	return oneLine(err.Error())
+}
+
+func oneLine(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if value == "" {
+		return "no error detail"
+	}
+	return value
 }
 
 func (i *Installer) printNextSteps(plan Plan) {

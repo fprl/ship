@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fprl/ship/internal/errcat"
 )
 
 func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
@@ -95,6 +97,51 @@ func TestBuildPlanDefaultsDeployPublicKey(t *testing.T) {
 	}
 	if plan.DeploySSHPublicKeyFile != defaultPub {
 		t.Fatalf("DeploySSHPublicKeyFile = %q, want %q", plan.DeploySSHPublicKeyFile, defaultPub)
+	}
+}
+
+func TestResolveSSHKeyPlanMissingDeployKeyUsesErrcat(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	plan := Plan{Mode: "remote"}
+
+	_, err := resolveSSHKeyPlan(plan, false, "")
+	if err == nil {
+		t.Fatal("expected missing deploy key error")
+	}
+	if !errcat.Is(err, errcat.CodeDeployKeyMissing) {
+		t.Fatalf("code = %v, want %s", err, errcat.CodeDeployKeyMissing)
+	}
+	wantNext := "next: ssh-keygen -q -t ed25519 -N '' -f " + filepath.Join(home, ".ssh", "ship-deploy")
+	if !strings.Contains(err.Error(), wantNext) {
+		t.Fatalf("expected remediation %q, got:\n%v", wantNext, err)
+	}
+	if strings.Contains(errcatCause(t, err), "ssh-keygen") {
+		t.Fatalf("cause should not contain remediation, got %q", errcatCause(t, err))
+	}
+}
+
+func TestResolveSSHKeyPlanMissingOperatorKeyUsesErrcat(t *testing.T) {
+	rootKeysPath := filepath.Join(t.TempDir(), ".ssh", "authorized_keys")
+	plan := Plan{
+		Mode:                   "local",
+		DeploySSHPublicKeyFile: writeKeyFile(t, "ssh-ed25519 AAAAdeploy test-deploy\n"),
+	}
+
+	_, err := resolveSSHKeyPlan(plan, true, rootKeysPath)
+	if err == nil {
+		t.Fatal("expected missing operator key error")
+	}
+	if !errcat.Is(err, errcat.CodeOperatorKeyMissing) {
+		t.Fatalf("code = %v, want %s", err, errcat.CodeOperatorKeyMissing)
+	}
+	privateKey := filepath.Join(filepath.Dir(rootKeysPath), "ship-operator")
+	wantNext := "next: ssh-keygen -q -t ed25519 -N '' -f " + privateKey + " && cat " + privateKey + ".pub >> " + rootKeysPath
+	if !strings.Contains(err.Error(), wantNext) {
+		t.Fatalf("expected remediation %q, got:\n%v", wantNext, err)
+	}
+	if strings.Contains(errcatCause(t, err), "ssh-keygen") {
+		t.Fatalf("cause should not contain remediation, got %q", errcatCause(t, err))
 	}
 }
 
@@ -309,6 +356,15 @@ func contains(values []string, want string) bool {
 	return false
 }
 
+func errcatCause(t *testing.T, err error) string {
+	t.Helper()
+	coded, ok := errcat.As(err)
+	if !ok {
+		t.Fatalf("expected errcat error, got %v", err)
+	}
+	return coded.Cause()
+}
+
 func TestCloudflareTokenRequiresTunnel(t *testing.T) {
 	opts := DefaultOptions(nil)
 	opts.Mode = "remote"
@@ -321,7 +377,7 @@ func TestCloudflareTokenRequiresTunnel(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected invalid Cloudflare options to fail")
 	}
-	if !strings.Contains(err.Error(), "--cloudflare-api-token requires Cloudflare Tunnel to be enabled.") {
+	if !strings.Contains(err.Error(), "--cloudflare-api-token requires Cloudflare Tunnel to be enabled") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -368,10 +424,13 @@ func TestPreflightSSHIncludesSSHError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected SSH preflight error")
 	}
+	if !errcat.Is(err, errcat.CodeHostInstallSSHFailed) {
+		t.Fatalf("code = %v, want %s", err, errcat.CodeHostInstallSSHFailed)
+	}
 	for _, want := range []string{
-		"SSH preflight failed for root@203.0.113.10",
-		"Check host, credentials, and key access.",
+		"SSH preflight failed for root@203.0.113.10: ssh command failed: Host key verification failed",
 		"Host key verification failed",
+		"next: ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new root@203.0.113.10",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error to contain %q, got %v", want, err)

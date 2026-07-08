@@ -197,7 +197,7 @@ Secret scoping:
 - Usage: `ship box init <ssh-target> [flags]`
 - Arguments and flags: `ssh-target`: SSH target like deploy@example.com; `--mode auto|local|remote` default `auto`: Execution mode; `--host <host>`: Target VPS host for remote bootstrap; `--bootstrap-user <user>`: SSH user for remote bootstrap; `--ssh-key <path>`: SSH private key for remote mode; `--operator-ssh-public-key-file <path>`: SSH public key file for operator access; `--deploy-ssh-public-key-file <path>`: SSH public key file for deploy access; `--shared-key`: Reuse the operator SSH key for deploy access; `--operator-user <user>`: Operator user; `--deploy-user <user>`: Deploy user; `--timezone <tz>`: Host timezone; `--locale <locale>`: Host locale; `--ingress public|cloudflare|private`: Ingress mode; `--admin public-ssh|tailscale`: Admin access mode; `--tailscale / --no-tailscale`: Install and configure Tailscale; `--tailscale-auth-key <key>`: Tailscale auth key; `--tailscale-hostname <name>`: Tailscale hostname; `--cloudflare-tunnel / --no-cloudflare-tunnel`: Install and configure Cloudflare Tunnel; `--cloudflare-api-token <token>`: Cloudflare API token; `--cloudflare-account-id <id>`: Cloudflare account ID; `--cloudflare-tunnel-token <token>`: Cloudflare tunnel token; `--cloudflare-tunnel-config <path>`: Cloudflare tunnel config path; `--docker / --no-docker`: Install Docker; `--litestream / --no-litestream`: Install Litestream; `--check`: Plan changes without mutating the host; `--yes`: Non-interactive mode.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `invalid_box_target`, `operation_failed`
+- Common error codes: `usage_error`, `invalid_box_target`, `deploy_key_missing`, `operator_key_missing`, `ssh_private_key_missing`, `ssh_public_key_file_missing`, `ssh_public_key_file_empty`, `host_install_requires_root`, `host_install_ssh_failed`, `unsupported_target_architecture`, `host_helper_unavailable`, `host_helper_download_failed`, `host_install_unsupported_os`, `host_install_missing_tool`, `host_install_permission_denied`, `host_install_apply_failed`, `operation_failed`
 
 ### `member add`
 - Purpose: Authorize SSH public key access for a deploy member.
@@ -314,6 +314,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `box_target_required`: box target is required; cause: this command needs an SSH target outside an app directory; remediation: `{command}`; defaults: `command="ship box ls <ssh-target>"`.
 - `branch_flag_requires_detached_head`: branch resolution failed; cause: --branch is only accepted on ship when HEAD is detached; remediation: `ship`.
 - `deploy_blocked_local_checks`: deploy blocked by local checks; cause: {detail}; remediation: `{command}`; defaults: `command="fix local checks", detail="local checks reported errors; see stderr above"`.
+- `deploy_key_missing`: deploy SSH key is missing; cause: no SSH public key source found for deploy user; remediation: `{command}`.
 - `deploy_tmp_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `deploy_tmp_missing`: host preflight failed; cause: deploy tmp dir is missing: {path}; remediation: `ship box init <ssh-target>`.
 - `detached_head_requires_branch`: branch resolution failed; cause: HEAD is detached; pass --branch <name> so ship can resolve the environment; remediation: `{command}`.
@@ -324,6 +325,14 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `env_invalid`: app environment preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `env_missing`: app environment preflight failed; cause: {detail}; remediation: `ship`.
 - `github_keys_unavailable`: GitHub SSH key lookup failed; cause: no public SSH keys found for GitHub user {user}; remediation: `ship member add <path-to-public-key>`.
+- `host_helper_download_failed`: host install helper download failed; cause: {detail}; remediation: `{command}`; defaults: `command="SHIP_REPO_ROOT=<path-to-ship-checkout> ship box init <ssh-target>"`.
+- `host_helper_unavailable`: host install helper is unavailable; cause: {detail}; remediation: `{command}`; defaults: `command="SHIP_REPO_ROOT=<path-to-ship-checkout> ship box init <ssh-target>"`.
+- `host_install_apply_failed`: host provisioning failed; cause: {detail}; remediation: `{command}`.
+- `host_install_missing_tool`: host install dependency is missing; cause: missing required host tool: {tool}; remediation: `sudo apt-get update && sudo apt-get install -y {tool}`.
+- `host_install_permission_denied`: host install needs elevated permissions; cause: {detail}; remediation: `{command}`.
+- `host_install_requires_root`: local host install needs root; cause: local mode must run as root; remediation: `{command}`.
+- `host_install_ssh_failed`: host install SSH failed; cause: {detail}; remediation: `{command}`.
+- `host_install_unsupported_os`: host OS is unsupported; cause: host install requires Ubuntu/Debian apt tooling; missing {tool}; remediation: `ship box init <ubuntu-24.04-ssh-target>`.
 - `host_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `host_not_installed`: host preflight failed; cause: host is not installed; remediation: `ship box init <ssh-target>`.
 - `ingress_invalid`: ingress preflight failed; cause: {detail}; remediation: `ship box doctor`.
@@ -338,6 +347,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `no_deploys`: deploy journal lookup failed; cause: no deploys recorded for {app} ({env}); remediation: `ship`.
 - `not_a_git_repo`: git worktree required; cause: current directory is not inside a Git worktree; remediation: `git init && git add . && git commit -m "initial ship app"`.
 - `operation_failed`: operation failed; cause: {detail}; remediation: `{command}`; defaults: `command="ship status"`.
+- `operator_key_missing`: operator SSH key is missing; cause: no SSH public key source found for operator user; remediation: `{command}`.
 - `probe_failed`: probe failed; cause: {detail}; remediation: `ship why`.
 - `production_branch_not_preview`: preview command failed; cause: branch {branch} maps to Production; remediation: `{command}`; defaults: `command="ship pin <preview-branch>"`.
 - `release_command_failed`: release command failed; cause: {detail}; remediation: `ship why`.
@@ -348,9 +358,13 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `secret_missing`: deploy is missing a required secret; cause: missing secret {secret} for {scope}; remediation: `{command}`.
 - `secret_read_error`: secret preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `secret_scope_conflict`: secret scope is invalid; cause: --preview and --branch cannot be combined; remediation: `{command}`; defaults: `command="ship secret set KEY --preview"`.
+- `ssh_private_key_missing`: SSH private key is missing; cause: SSH private key file not found: {path}; remediation: `{command}`.
+- `ssh_public_key_file_empty`: SSH public key file is empty; cause: SSH public key file is empty: {path}; remediation: `{command}`.
+- `ssh_public_key_file_missing`: SSH public key file is missing; cause: SSH public key file not found: {path}; remediation: `{command}`.
 - `ssh_public_key_invalid`: SSH public key is invalid; cause: {detail}; remediation: `ship member add <github-user|key|path>`.
 - `ssh_unreachable`: box preflight failed; cause: SSH failed for {target}: {detail}; remediation: `ssh {target}`.
 - `unknown_preview_branch`: preview environment lookup failed; cause: no preview environment is mapped for branch {branch}; remediation: `{command}`; defaults: `command="git checkout <branch> && ship"`.
 - `unmappable_branch_name`: branch resolution failed; cause: branch {branch} does not produce a valid environment name; remediation: `git branch -m <new-name>`.
+- `unsupported_target_architecture`: host architecture is unsupported; cause: target architecture {arch} is not supported; remediation: `ship box init <amd64-or-arm64-ssh-target>`.
 - `usage_error`: command usage failed; cause: {detail}; remediation: `{command}`; defaults: `command="ship help"`.
 <!-- END GENERATED ERRCAT -->

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/version"
 )
 
@@ -25,20 +25,20 @@ const (
 
 var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$`)
 
-func (i *Installer) prepareRemoteHelperBinary(arch string) (string, func(), error) {
+func (i *Installer) prepareRemoteHelperBinary(plan Plan, arch string) (string, func(), error) {
 	name := "ship-linux-" + arch
-	if helper, ok, err := i.localHelperBinary(name); err != nil {
+	if helper, ok, err := i.localHelperBinary(plan, name); err != nil {
 		return "", func() {}, err
 	} else if ok {
 		return helper, func() {}, nil
 	}
 
 	if isReleaseVersion(version.Version) {
-		return i.downloadReleaseHelperBinary(version.Version, name)
+		return i.downloadReleaseHelperBinary(plan, version.Version, name)
 	}
 
 	if repoRoot, err := locateRepoRoot(); err == nil {
-		helperDir, cleanup, err := i.prepareGoHelperBinaries(repoRoot)
+		helperDir, cleanup, err := i.prepareGoHelperBinaries(repoRoot, plan.TargetHost)
 		if err != nil {
 			return "", cleanup, err
 		}
@@ -47,19 +47,28 @@ func (i *Installer) prepareRemoteHelperBinary(arch string) (string, func(), erro
 			return helper, cleanup, nil
 		}
 		cleanup()
-		return "", func() {}, fmt.Errorf("ship helper binary not found for target architecture %s: %s", arch, helper)
+		return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+			"detail":  "ship helper binary not found for target architecture " + arch + ": " + helper,
+			"command": helperBuildCommand(arch),
+		})
 	}
 
-	return "", func() {}, fmt.Errorf("ship Linux helper binary %q is required for remote install. Run from a checkout, place %q beside this binary, set SHIP_HELPER_DIR, or use a tagged release build that can download the matching helper asset", name, name)
+	return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+		"detail":  "ship Linux helper binary " + name + " is required for remote install",
+		"command": "SHIP_REPO_ROOT=<path-to-ship-checkout> " + boxInitCommand(plan.TargetHost),
+	})
 }
 
-func (i *Installer) localHelperBinary(name string) (string, bool, error) {
+func (i *Installer) localHelperBinary(plan Plan, name string) (string, bool, error) {
 	if exact := strings.TrimSpace(i.Env["SHIP_LINUX_HELPER"]); exact != "" {
 		if fileExists(exact) {
 			i.info("Using ship Linux helper binary from %s", exact)
 			return exact, true, nil
 		}
-		return "", false, fmt.Errorf("SHIP_LINUX_HELPER does not exist or is not executable: %s", exact)
+		return "", false, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+			"detail":  "SHIP_LINUX_HELPER does not point at an existing helper binary: " + exact,
+			"command": "SHIP_LINUX_HELPER=<path-to-" + name + "> " + boxInitCommand(plan.TargetHost),
+		})
 	}
 
 	var candidates []string
@@ -83,73 +92,78 @@ func (i *Installer) localHelperBinary(name string) (string, bool, error) {
 	return "", false, nil
 }
 
-func (i *Installer) downloadReleaseHelperBinary(tag string, name string) (string, func(), error) {
+func (i *Installer) downloadReleaseHelperBinary(plan Plan, tag string, name string) (string, func(), error) {
 	baseURL := strings.TrimRight(envDefault(i.Env, "SHIP_RELEASE_BASE_URL", defaultReleaseBaseURL), "/")
 	downloadURL := baseURL + "/" + tag + "/" + name
 	i.info("Downloading ship Linux helper binary from %s", downloadURL)
 
 	client := http.Client{Timeout: 2 * time.Minute}
 	token := releaseDownloadToken(i.Env)
-	data, err := i.downloadReleaseAsset(&client, tag, name, token, downloadURL, baseURL)
+	remediation := helperDownloadCommand(plan.TargetHost, baseURL, token)
+	data, err := i.downloadReleaseAsset(&client, tag, name, token, downloadURL, baseURL, remediation)
 	if err != nil {
 		return "", func() {}, err
 	}
 
 	sumsURL := baseURL + "/" + tag + "/SHA256SUMS"
-	sums, err := i.downloadReleaseAsset(&client, tag, "SHA256SUMS", token, sumsURL, baseURL)
+	sums, err := i.downloadReleaseAsset(&client, tag, "SHA256SUMS", token, sumsURL, baseURL, remediation)
 	if err != nil {
 		return "", func() {}, err
 	}
-	if err := verifyReleaseAssetChecksum(name, data, sums); err != nil {
+	if err := verifyReleaseAssetChecksum(name, data, sums, remediation); err != nil {
 		return "", func() {}, err
 	}
 
 	return writeExecutableTempFile(name, bytes.NewReader(data))
 }
 
-func (i *Installer) downloadReleaseAsset(client *http.Client, tag string, name string, token string, downloadURL string, baseURL string) ([]byte, error) {
+func (i *Installer) downloadReleaseAsset(client *http.Client, tag string, name string, token string, downloadURL string, baseURL string, remediation string) ([]byte, error) {
 	req, err := http.NewRequest(http.MethodGet, downloadURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, helperDownloadError("build helper download request failed: "+oneLineError(err), remediation)
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, helperDownloadError("download "+downloadURL+" failed: "+oneLineError(err), remediation)
 	}
 	if resp.StatusCode != http.StatusOK {
 		if token != "" && resp.StatusCode == http.StatusNotFound && canUseReleaseAPI(i.Env, baseURL) {
 			_ = resp.Body.Close()
-			return i.downloadGitHubReleaseAsset(client, tag, name, token)
+			return i.downloadGitHubReleaseAsset(client, tag, name, token, remediation)
 		}
 		_ = resp.Body.Close()
-		return nil, fmt.Errorf("download %s failed: HTTP %d", downloadURL, resp.StatusCode)
+		return nil, helperDownloadError("download "+downloadURL+" failed: HTTP "+resp.Status, remediation)
 	}
 	defer resp.Body.Close()
 
-	return io.ReadAll(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, helperDownloadError("read "+downloadURL+" failed: "+oneLineError(err), remediation)
+	}
+	return data, nil
 }
 
-func (i *Installer) downloadGitHubReleaseAsset(client *http.Client, tag string, name string, token string) ([]byte, error) {
+func (i *Installer) downloadGitHubReleaseAsset(client *http.Client, tag string, name string, token string, remediation string) ([]byte, error) {
 	apiBaseURL := strings.TrimRight(envDefault(i.Env, "SHIP_RELEASE_API_BASE_URL", defaultReleaseAPIURL), "/")
 	releaseURL := apiBaseURL + "/releases/tags/" + url.PathEscape(tag)
 
 	req, err := http.NewRequest(http.MethodGet, releaseURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, helperDownloadError("build GitHub release request failed: "+oneLineError(err), remediation)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, helperDownloadError("download "+name+" via GitHub API failed: "+oneLineError(err), remediation)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download %s via GitHub API failed: HTTP %d", name, resp.StatusCode)
+		return nil, helperDownloadError("download "+name+" via GitHub API failed: HTTP "+resp.Status, remediation)
 	}
 
 	var release struct {
@@ -159,7 +173,7 @@ func (i *Installer) downloadGitHubReleaseAsset(client *http.Client, tag string, 
 		} `json:"assets"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
+		return nil, helperDownloadError("decode GitHub release response failed: "+oneLineError(err), remediation)
 	}
 
 	var assetURL string
@@ -170,42 +184,46 @@ func (i *Installer) downloadGitHubReleaseAsset(client *http.Client, tag string, 
 		}
 	}
 	if assetURL == "" {
-		return nil, fmt.Errorf("release %s does not contain asset %s", tag, name)
+		return nil, helperDownloadError("release "+tag+" does not contain asset "+name, remediation)
 	}
 
 	assetReq, err := http.NewRequest(http.MethodGet, assetURL, nil)
 	if err != nil {
-		return nil, err
+		return nil, helperDownloadError("build GitHub asset request failed: "+oneLineError(err), remediation)
 	}
 	assetReq.Header.Set("Authorization", "Bearer "+token)
 	assetReq.Header.Set("Accept", "application/octet-stream")
 
 	assetResp, err := client.Do(assetReq)
 	if err != nil {
-		return nil, err
+		return nil, helperDownloadError("download "+name+" via GitHub API failed: "+oneLineError(err), remediation)
 	}
 	defer assetResp.Body.Close()
 	if assetResp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download %s via GitHub API failed: HTTP %d", name, assetResp.StatusCode)
+		return nil, helperDownloadError("download "+name+" via GitHub API failed: HTTP "+assetResp.Status, remediation)
 	}
 
-	return io.ReadAll(assetResp.Body)
+	data, err := io.ReadAll(assetResp.Body)
+	if err != nil {
+		return nil, helperDownloadError("read "+name+" via GitHub API failed: "+oneLineError(err), remediation)
+	}
+	return data, nil
 }
 
-func verifyReleaseAssetChecksum(name string, data []byte, sums []byte) error {
-	want, err := checksumForAsset(name, sums)
+func verifyReleaseAssetChecksum(name string, data []byte, sums []byte, remediation string) error {
+	want, err := checksumForAsset(name, sums, remediation)
 	if err != nil {
 		return err
 	}
 	gotBytes := sha256.Sum256(data)
 	got := hex.EncodeToString(gotBytes[:])
 	if !strings.EqualFold(got, want) {
-		return fmt.Errorf("checksum mismatch for %s: got %s, want %s", name, got, want)
+		return helperDownloadError("checksum mismatch for "+name+": got "+got+", want "+want, remediation)
 	}
 	return nil
 }
 
-func checksumForAsset(name string, sums []byte) (string, error) {
+func checksumForAsset(name string, sums []byte, remediation string) (string, error) {
 	for _, line := range strings.Split(string(sums), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) != 2 {
@@ -213,34 +231,46 @@ func checksumForAsset(name string, sums []byte) (string, error) {
 		}
 		if fields[1] == name || strings.TrimPrefix(fields[1], "*") == name {
 			if _, err := hex.DecodeString(fields[0]); err != nil || len(fields[0]) != sha256.Size*2 {
-				return "", fmt.Errorf("invalid SHA256SUMS entry for %s", name)
+				return "", helperDownloadError("invalid SHA256SUMS entry for "+name, remediation)
 			}
 			return fields[0], nil
 		}
 	}
-	return "", fmt.Errorf("SHA256SUMS does not contain %s", name)
+	return "", helperDownloadError("SHA256SUMS does not contain "+name, remediation)
 }
 
 func writeExecutableTempFile(name string, reader io.Reader) (string, func(), error) {
 	dir, err := os.MkdirTemp("", "ship-helper-")
 	if err != nil {
-		return "", func() {}, err
+		return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+			"detail":  "create temporary helper file dir failed: " + oneLineError(err),
+			"command": "TMPDIR=/tmp ship box init <ssh-target>",
+		})
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	path := filepath.Join(dir, name)
 	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0755)
 	if err != nil {
 		cleanup()
-		return "", func() {}, err
+		return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+			"detail":  "create temporary helper file failed: " + oneLineError(err),
+			"command": "TMPDIR=/tmp ship box init <ssh-target>",
+		})
 	}
 	if _, err := io.Copy(out, reader); err != nil {
 		_ = out.Close()
 		cleanup()
-		return "", func() {}, err
+		return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+			"detail":  "write temporary helper file failed: " + oneLineError(err),
+			"command": "TMPDIR=/tmp ship box init <ssh-target>",
+		})
 	}
 	if err := out.Close(); err != nil {
 		cleanup()
-		return "", func() {}, err
+		return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+			"detail":  "close temporary helper file failed: " + oneLineError(err),
+			"command": "TMPDIR=/tmp ship box init <ssh-target>",
+		})
 	}
 	return path, cleanup, nil
 }
