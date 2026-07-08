@@ -210,24 +210,42 @@ ship save [--to path] / ship restore --from <id|path>   existing backup/restore
 ship ssh                  existing
 ship box setup <ssh-target> [--ingress ...] [--admin ...]   host install
                           (renamed from box init — two unrelated inits
-                          confused; "setup" is Kamal's word and plain
-                          English). Output narrates every decision and
-                          its alternative flag, wizard-grade without
-                          prompts:
+                          confused; "setup" is Kamal's word).
+                          IDENTITY MODEL (the login ship doesn't have):
+                          the first time ship needs it, it creates the
+                          laptop's ship identity — name derived from
+                          `git config user.name` (fallback $USER),
+                          sanitized; ed25519 key at ~/.ssh/ship with
+                          the name as its comment; one narrated line,
+                          never a prompt; idempotent thereafter.
+                          box setup uses bootstrap access as TRANSPORT
+                          ONLY (the provider-injected root key via
+                          normal ssh resolution, or — for password-
+                          provisioned boxes — the one-time bridge in
+                          the error remediation:
+                          `ssh-copy-id -i ~/.ssh/ship.pub root@<ip>`,
+                          after which hardening disables passwords
+                          forever), then ENROLLS the ship identity as
+                          the box's first member (owner once roles
+                          exist); the operator user receives the same
+                          identity key. Bootstrap keys are never
+                          bulk-imported as members — the door key
+                          does not move in. Every ship SSH connection
+                          uses `-i ~/.ssh/ship` with IdentitiesOnly
+                          when the identity exists; SHIP_SSH_KEY and
+                          --deploy-ssh-public-key-file (split-key/CI:
+                          enrolls that key instead) override. Output
+                          narrates every decision with its alternative
+                          flag, wizard-grade without prompts:
+                            identity: franco (created ~/.ssh/ship)
+                            member added: franco (SHA256:...)
                             ingress: public 80/443 (--ingress ...)
                             admin: SSH keys only (--admin tailscale)
-                            first member: <name> (<fingerprint>)
-                          Zero key decisions by default (§0 bar #5):
-                          the keys already in the bootstrap user's
-                          authorized_keys (the provider put yours
-                          there) are promoted to the deploy user as
-                          the box's first member(s), printed with
-                          fingerprints. --deploy-ssh-public-key-file
-                          remains for split-key/CI setups; the
-                          ~/.ssh/ship-deploy magic default and
-                          --shared-key are removed. box setup = create
-                          the box with you as first member; all later
-                          identity goes through ship member.
+                          One sentence: ship knows who you are; setup
+                          introduces you to the box; everyone else is
+                          ship member add. Members and approvals are
+                          BOX-scoped (the trust boundary); secrets,
+                          envs, and journals are app-scoped.
 ship member add <github-user|key|path>   authorize a teammate's SSH key
                           (bare word → fetches github.com/<user>.keys;
                           prints type + SHA256 fingerprint per key
