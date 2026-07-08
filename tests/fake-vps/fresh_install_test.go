@@ -42,10 +42,13 @@ func TestFreshHostInstall(t *testing.T) {
 	}
 	assertContainsInOrder(t, firstOutput,
 		"identity: fake-vps-smoke (created ~/.ssh/ship)",
-		"member added: fake-vps-smoke (SHA256:",
+		"connected as root (bootstrap)",
 		"ingress: public 80/443 (--ingress ...)",
 		"admin: SSH keys only (--admin tailscale)",
 		"ship installer starting",
+		"Running in remote mode against root@fake-vps",
+		"Provisioning complete",
+		"member added: fake-vps-smoke (SHA256:",
 	)
 
 	env.assertFreshHostInstalled(t)
@@ -108,6 +111,7 @@ func TestFreshHostInstallEmptyAuthorizedKeysNoFlag(t *testing.T) {
 	assertContains(t, output, "provider gave a password")
 	assertContains(t, output, "next: ssh-copy-id -i ~/.ssh/ship.pub root@fake-vps")
 	assertContains(t, output, "identity: fake-vps-smoke (created ~/.ssh/ship)")
+	assertNotContains(t, output, "member added:")
 	if _, err := os.Stat(filepath.Join(env.shipHome, ".ssh", "ship.pub")); err != nil {
 		t.Fatalf("ship identity should exist before password remediation: %v", err)
 	}
@@ -116,9 +120,8 @@ func TestFreshHostInstallEmptyAuthorizedKeysNoFlag(t *testing.T) {
 func (e *smokeEnv) installHost(t *testing.T, deployPublicKeyFile string) (int, string) {
 	t.Helper()
 	args := []string{
-		"box", "setup", "fake-vps",
+		"box", "setup", "root@fake-vps",
 		"--mode", "remote",
-		"--bootstrap-user", "root",
 		"--timezone", "Europe/Madrid",
 		"--locale", "en_US.UTF-8",
 		"--no-tailscale",

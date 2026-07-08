@@ -509,6 +509,7 @@ func (c boxSetupCmd) Run() error {
 	}
 	if c.BootstrapUser != "" {
 		opts.BootstrapUser = c.BootstrapUser
+		opts.BootstrapUserExplicit = true
 	}
 	if c.SSHKey != "" {
 		opts.SSHKey = c.SSHKey

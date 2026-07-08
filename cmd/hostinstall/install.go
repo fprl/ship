@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/provision"
 	"github.com/fprl/ship/internal/provision/local"
@@ -23,6 +24,7 @@ type Options struct {
 	Mode                     string
 	TargetHost               string
 	BootstrapUser            string
+	BootstrapUserExplicit    bool
 	SSHKey                   string
 	BootstrapIdentityKey     string
 	OperatorSSHPublicKeyFile string
@@ -122,34 +124,6 @@ func (i *Installer) RunOptions(opts Options) error {
 	if err != nil {
 		return err
 	}
-	if plan.NarrateSetup {
-		i.printSetupNarration(plan, keyPlan)
-	}
-
-	i.info("ship installer starting")
-	i.info("Mode: %s", plan.Mode)
-	i.info("Operator user: %s", plan.OperatorUser)
-	i.info("Deploy user: %s", plan.DeployUser)
-	i.info("Timezone: %s", plan.Timezone)
-	i.info("Ingress: %s", plan.Ingress)
-	i.info("Admin: %s", plan.Admin)
-	i.info("Tailscale: %s", boolText(plan.Tailscale))
-	if plan.Tailscale {
-		i.info("Tailscale auth: %s", presentOrMissing(plan.TailscaleAuthKey, "auth key provided", "manual login required"))
-	}
-	i.info("Cloudflare Tunnel: %s", boolText(plan.CloudflareTunnel))
-	if plan.CloudflareTunnel {
-		switch {
-		case plan.CloudflareAPIToken != "":
-			i.info("Cloudflare API: token provided")
-		case plan.CloudflareTunnelConfig != "":
-			i.info("Cloudflare Tunnel config: %s", plan.CloudflareTunnelConfig)
-		default:
-			i.info("Cloudflare Tunnel auth: %s", presentOrMissing(plan.CloudflareTunnelToken, "token provided", "service not enabled"))
-		}
-	}
-	i.info("Docker: %s", boolText(plan.InstallDocker))
-	i.info("Litestream: %s", boolText(plan.InstallLitestream))
 
 	switch plan.Mode {
 	case "remote":
@@ -164,6 +138,9 @@ func (i *Installer) RunOptions(opts Options) error {
 	}
 
 	i.info("Provisioning complete")
+	if plan.NarrateSetup {
+		i.printMemberAdded(keyPlan)
+	}
 	i.printNextSteps(plan)
 	return nil
 }
@@ -222,6 +199,12 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 		if opts.TargetHost == "" {
 			return Plan{}, installUsageError("TARGET_HOST is required in remote mode", boxSetupCommand("", "--mode", "remote"))
 		}
+		targetHost, bootstrapUser, err := parseBoxSetupTarget(opts.TargetHost, opts.BootstrapUser, opts.BootstrapUserExplicit)
+		if err != nil {
+			return Plan{}, err
+		}
+		opts.TargetHost = targetHost
+		opts.BootstrapUser = bootstrapUser
 		if opts.BootstrapUser == "" {
 			return Plan{}, installUsageError("BOOTSTRAP_USER is required in remote mode", boxSetupCommand(opts.TargetHost, "--bootstrap-user", "root"))
 		}
@@ -306,6 +289,64 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 	}, nil
 }
 
+func parseBoxSetupTarget(rawTarget string, bootstrapUser string, bootstrapUserExplicit bool) (string, string, error) {
+	target := strings.TrimSpace(rawTarget)
+	if target == "" {
+		return "", "", installUsageError("TARGET_HOST is required in remote mode", boxSetupCommand("", "--mode", "remote"))
+	}
+	if strings.HasPrefix(target, "-") {
+		return "", "", invalidBoxSetupTarget(target)
+	}
+	if strings.Count(target, "@") > 1 {
+		return "", "", invalidBoxSetupTarget(target)
+	}
+
+	targetUser := ""
+	host := target
+	if user, rest, ok := strings.Cut(target, "@"); ok {
+		targetUser = strings.TrimSpace(user)
+		host = strings.TrimSpace(rest)
+		if targetUser == "" || host == "" {
+			return "", "", invalidBoxSetupTarget(target)
+		}
+		if !config.SystemUserRe.MatchString(targetUser) {
+			return "", "", installUsageError(
+				fmt.Sprintf("invalid bootstrap user %q in ssh target %q", targetUser, target),
+				boxSetupCommand("<ssh-target>"),
+			)
+		}
+	}
+
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		return "", "", installUsageError(
+			"IPv6 bracket SSH targets are not supported; use a DNS name or IPv4 host",
+			boxSetupCommand("<host-or-user@host>"),
+		)
+	}
+	if !config.ValidateHost(host) {
+		return "", "", invalidBoxSetupTarget(target)
+	}
+
+	user := strings.TrimSpace(bootstrapUser)
+	if targetUser != "" {
+		if bootstrapUserExplicit && user != "" && user != targetUser {
+			return "", "", installUsageError(
+				fmt.Sprintf("ssh target specifies bootstrap user %q but --bootstrap-user is %q", targetUser, user),
+				boxSetupCommand(target),
+			)
+		}
+		user = targetUser
+	}
+	return host, user, nil
+}
+
+func invalidBoxSetupTarget(target string) error {
+	return installUsageError(
+		fmt.Sprintf("invalid ssh target %q: expected host or user@host with a DNS name or IPv4 host", target),
+		boxSetupCommand("<host-or-user@host>"),
+	)
+}
+
 func applyInstallPresets(opts Options) (Options, error) {
 	switch opts.Ingress {
 	case "":
@@ -344,10 +385,14 @@ func applyInstallPresets(opts Options) (Options, error) {
 }
 
 func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) error {
-	i.info("Running in remote mode against %s", plan.TargetHost)
 	if err := i.preflightSSH(plan); err != nil {
 		return err
 	}
+	if plan.NarrateSetup {
+		i.printSetupNarration(plan)
+	}
+	i.printInstallSummary(plan)
+	i.info("Running in remote mode against %s", bootstrapSSHTarget(plan))
 	if err := i.ensureRemoteBootstrapAuthorizedKeys(plan); err != nil {
 		return err
 	}
@@ -402,6 +447,10 @@ func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) error {
 		return internalInstallError("resolve current executable failed: "+oneLineError(err), boxSetupCommand("localhost", "--mode", "local"))
 	}
 
+	if plan.NarrateSetup {
+		i.printSetupNarration(plan)
+	}
+	i.printInstallSummary(plan)
 	i.info("Running in local mode on localhost")
 	summary, err := provision.RunInstall(context.Background(), local.Runner{}, provision.InstallOptions{
 		OperatorUser:           plan.OperatorUser,
@@ -430,6 +479,33 @@ func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) error {
 	}
 	i.info("Apply %s changed %d operations", summary.ApplyID, summary.OperationsChanged)
 	return nil
+}
+
+func (i *Installer) printInstallSummary(plan Plan) {
+	i.info("ship installer starting")
+	i.info("Mode: %s", plan.Mode)
+	i.info("Operator user: %s", plan.OperatorUser)
+	i.info("Deploy user: %s", plan.DeployUser)
+	i.info("Timezone: %s", plan.Timezone)
+	i.info("Ingress: %s", plan.Ingress)
+	i.info("Admin: %s", plan.Admin)
+	i.info("Tailscale: %s", boolText(plan.Tailscale))
+	if plan.Tailscale {
+		i.info("Tailscale auth: %s", presentOrMissing(plan.TailscaleAuthKey, "auth key provided", "manual login required"))
+	}
+	i.info("Cloudflare Tunnel: %s", boolText(plan.CloudflareTunnel))
+	if plan.CloudflareTunnel {
+		switch {
+		case plan.CloudflareAPIToken != "":
+			i.info("Cloudflare API: token provided")
+		case plan.CloudflareTunnelConfig != "":
+			i.info("Cloudflare Tunnel config: %s", plan.CloudflareTunnelConfig)
+		default:
+			i.info("Cloudflare Tunnel auth: %s", presentOrMissing(plan.CloudflareTunnelToken, "token provided", "service not enabled"))
+		}
+	}
+	i.info("Docker: %s", boolText(plan.InstallDocker))
+	i.info("Litestream: %s", boolText(plan.InstallLitestream))
 }
 
 func (i *Installer) dumpInstallPlan(plan Plan) error {
@@ -530,7 +606,7 @@ func (i *Installer) preflightSSH(plan Plan) error {
 			"command": sshCommand(plan, "echo connected"),
 		})
 	}
-	fmt.Fprintln(i.Stdout, "connected")
+	fmt.Fprintf(i.Stdout, "connected as %s (bootstrap)\n", plan.BootstrapUser)
 	return nil
 }
 
@@ -612,7 +688,7 @@ func (i *Installer) copyRemote(plan Plan, src string, dst string) error {
 	if plan.BootstrapIdentityKey != "" {
 		args = append(args, "-i", plan.BootstrapIdentityKey)
 	}
-	args = append(args, src, plan.BootstrapUser+"@"+plan.TargetHost+":"+dst)
+	args = append(args, src, bootstrapSSHTarget(plan)+":"+dst)
 	return i.run("scp", args, "")
 }
 
@@ -659,7 +735,7 @@ func sshArgs(plan Plan, command string) []string {
 	if plan.BootstrapIdentityKey != "" {
 		args = append(args, "-i", plan.BootstrapIdentityKey)
 	}
-	args = append(args, plan.BootstrapUser+"@"+plan.TargetHost, command)
+	args = append(args, bootstrapSSHTarget(plan), command)
 	return args
 }
 
@@ -940,12 +1016,15 @@ func keyLines(keys []plannedKey) []string {
 	return out
 }
 
-func (i *Installer) printSetupNarration(plan Plan, keys keyPlan) {
+func (i *Installer) printSetupNarration(plan Plan) {
+	fmt.Fprintln(i.Stdout, ingressNarration(plan))
+	fmt.Fprintln(i.Stdout, adminNarration(plan))
+}
+
+func (i *Installer) printMemberAdded(keys keyPlan) {
 	for _, key := range keys.Deploy {
 		fmt.Fprintf(i.Stdout, "member added: %s (%s)\n", key.Comment, key.Fingerprint)
 	}
-	fmt.Fprintln(i.Stdout, ingressNarration(plan))
-	fmt.Fprintln(i.Stdout, adminNarration(plan))
 }
 
 func ingressNarration(plan Plan) string {
@@ -986,19 +1065,7 @@ func publicKeyAuthFailure(detail string) bool {
 }
 
 func sshCopyIDTarget(plan Plan) string {
-	host := hostOnly(plan.TargetHost)
-	if host == "" || host == "localhost" {
-		host = "localhost"
-	}
-	return "root@" + host
-}
-
-func hostOnly(target string) string {
-	target = strings.TrimSpace(target)
-	if at := strings.LastIndex(target, "@"); at >= 0 && at < len(target)-1 {
-		return target[at+1:]
-	}
-	return target
+	return bootstrapSSHTarget(plan)
 }
 
 func presentOrMissingKeys(value []plannedKey, present string, missing string) string {

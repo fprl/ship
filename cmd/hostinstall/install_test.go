@@ -112,23 +112,175 @@ func TestResolveSSHKeyPlanMissingDeployKeyUsesErrcat(t *testing.T) {
 	}
 }
 
-func TestSetupNarrationPrintsEnrollmentBeforeProvisioningChoices(t *testing.T) {
-	deployKeyFile := writeKeyFile(t, bobPublicKey+"\n")
-	keys, err := resolveSSHKeyPlan(Plan{DeploySSHPublicKeyFile: deployKeyFile}, false, "", "root@203.0.113.10")
+func TestBuildPlanParsesSetupTarget(t *testing.T) {
+	tests := []struct {
+		name                  string
+		target                string
+		bootstrapUser         string
+		bootstrapUserExplicit bool
+		wantHost              string
+		wantUser              string
+		wantErr               string
+	}{
+		{
+			name:          "host only uses default bootstrap user",
+			target:        "203.0.113.10",
+			bootstrapUser: "root",
+			wantHost:      "203.0.113.10",
+			wantUser:      "root",
+		},
+		{
+			name:          "user at host sets bootstrap user",
+			target:        "deployer@203.0.113.10",
+			bootstrapUser: "root",
+			wantHost:      "203.0.113.10",
+			wantUser:      "deployer",
+		},
+		{
+			name:                  "matching bootstrap user flag is accepted",
+			target:                "deployer@203.0.113.10",
+			bootstrapUser:         "deployer",
+			bootstrapUserExplicit: true,
+			wantHost:              "203.0.113.10",
+			wantUser:              "deployer",
+		},
+		{
+			name:                  "conflicting bootstrap user flag is rejected",
+			target:                "deployer@203.0.113.10",
+			bootstrapUser:         "root",
+			bootstrapUserExplicit: true,
+			wantErr:               `ssh target specifies bootstrap user "deployer" but --bootstrap-user is "root"`,
+		},
+		{
+			name:          "double user target is rejected",
+			target:        "root@root@203.0.113.10",
+			bootstrapUser: "root",
+			wantErr:       `invalid ssh target "root@root@203.0.113.10"`,
+		},
+		{
+			name:          "bracketed IPv6 is rejected clearly",
+			target:        "root@[2001:db8::1]",
+			bootstrapUser: "root",
+			wantErr:       "IPv6 bracket SSH targets are not supported",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := DefaultOptions(nil)
+			opts.Mode = "remote"
+			opts.TargetHost = tt.target
+			opts.BootstrapUser = tt.bootstrapUser
+			opts.BootstrapUserExplicit = tt.bootstrapUserExplicit
+
+			plan, err := BuildPlan(opts, false, false)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				if !errcat.Is(err, errcat.CodeUsageError) {
+					t.Fatalf("code = %v, want %s", err, errcat.CodeUsageError)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error to contain %q, got:\n%v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.TargetHost != tt.wantHost || plan.BootstrapUser != tt.wantUser {
+				t.Fatalf("target parsed to host=%q user=%q, want host=%q user=%q", plan.TargetHost, plan.BootstrapUser, tt.wantHost, tt.wantUser)
+			}
+			if got := bootstrapSSHTarget(plan); got != tt.wantUser+"@"+tt.wantHost {
+				t.Fatalf("bootstrap target = %q, want %q", got, tt.wantUser+"@"+tt.wantHost)
+			}
+		})
+	}
+}
+
+func TestSSHArgsUseParsedTargetOnce(t *testing.T) {
+	opts := DefaultOptions(nil)
+	opts.Mode = "remote"
+	opts.TargetHost = "root@203.0.113.10"
+
+	plan, err := BuildPlan(opts, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	args := sshArgs(plan, "true")
+	if !contains(args, "root@203.0.113.10") {
+		t.Fatalf("expected parsed bootstrap target in ssh args, got %v", args)
+	}
+	if contains(args, "root@root@203.0.113.10") {
+		t.Fatalf("ssh args doubled bootstrap user: %v", args)
+	}
+}
+
+func TestSetupNarrationPrintsChoicesOnly(t *testing.T) {
 	var out bytes.Buffer
 	installer := NewInstaller()
 	installer.Stdout = &out
 
-	installer.printSetupNarration(Plan{Ingress: "public", Admin: "public-ssh"}, keys)
+	installer.printSetupNarration(Plan{Ingress: "public", Admin: "public-ssh"})
 
-	want := "member added: bob (SHA256:pcC/cEQYpaTALptLsyfIG8CzllhYJfcxp1vVNQ9PFDc)\n" +
-		"ingress: public 80/443 (--ingress ...)\n" +
+	want := "ingress: public 80/443 (--ingress ...)\n" +
 		"admin: SSH keys only (--admin tailscale)\n"
 	if out.String() != want {
 		t.Fatalf("setup narration mismatch\nwant:\n%s\ngot:\n%s", want, out.String())
+	}
+}
+
+func TestRemotePreConnectionFailureDoesNotPrintMemberAdded(t *testing.T) {
+	operatorKeyFile := writeKeyFile(t, alicePublicKey+"\n")
+	deployKeyFile := writeKeyFile(t, bobPublicKey+"\n")
+	var out bytes.Buffer
+	installer := NewInstaller()
+	installer.Stdout = &out
+	installer.remoteOut = func(plan Plan, command string) (string, error) {
+		return "", errors.New("root@203.0.113.10: Permission denied (publickey).")
+	}
+
+	opts := DefaultOptions(nil)
+	opts.Mode = "remote"
+	opts.TargetHost = "203.0.113.10"
+	opts.OperatorSSHPublicKeyFile = operatorKeyFile
+	opts.DeploySSHPublicKeyFile = deployKeyFile
+
+	err := installer.RunOptions(opts)
+	if err == nil {
+		t.Fatal("expected preflight failure")
+	}
+	if strings.Contains(out.String(), "member added:") {
+		t.Fatalf("pre-connection failure must not claim enrollment, got:\n%s", out.String())
+	}
+}
+
+func TestMalformedTargetFailsBeforeSSHPreflight(t *testing.T) {
+	operatorKeyFile := writeKeyFile(t, alicePublicKey+"\n")
+	deployKeyFile := writeKeyFile(t, bobPublicKey+"\n")
+	installer := NewInstaller()
+	installer.remoteOut = func(plan Plan, command string) (string, error) {
+		t.Fatalf("remote preflight should not run for malformed target")
+		return "", nil
+	}
+
+	opts := DefaultOptions(nil)
+	opts.Mode = "remote"
+	opts.TargetHost = "root@root@203.0.113.10"
+	opts.OperatorSSHPublicKeyFile = operatorKeyFile
+	opts.DeploySSHPublicKeyFile = deployKeyFile
+
+	err := installer.RunOptions(opts)
+	if err == nil {
+		t.Fatal("expected malformed target error")
+	}
+	if !errcat.Is(err, errcat.CodeUsageError) {
+		t.Fatalf("code = %v, want %s", err, errcat.CodeUsageError)
+	}
+	if strings.Contains(err.Error(), "ssh-copy-id") {
+		t.Fatalf("malformed target should not get password-bridge remediation:\n%v", err)
 	}
 }
 
@@ -402,6 +554,39 @@ func TestPreflightSSHPublicKeyFailureSuggestsSSHCopyID(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error to contain %q, got %v", want, err)
 		}
+	}
+}
+
+func TestPreflightSSHPublicKeyFailureUsesParsedBootstrapUser(t *testing.T) {
+	opts := DefaultOptions(nil)
+	opts.Mode = "remote"
+	opts.TargetHost = "deployer@203.0.113.10"
+	plan, err := BuildPlan(opts, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	installer := NewInstaller()
+	installer.remoteOut = func(plan Plan, command string) (string, error) {
+		return "", errors.New("deployer@203.0.113.10: Permission denied (publickey,password).")
+	}
+
+	err = installer.preflightSSH(plan)
+	if err == nil {
+		t.Fatal("expected SSH preflight error")
+	}
+	if !errcat.Is(err, errcat.CodeDeployKeyMissing) {
+		t.Fatalf("code = %v, want %s", err, errcat.CodeDeployKeyMissing)
+	}
+	for _, want := range []string{
+		"next: ssh-copy-id -i ~/.ssh/ship.pub deployer@203.0.113.10",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected error to contain %q, got %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "root@deployer@203.0.113.10") {
+		t.Fatalf("error doubled bootstrap user: %v", err)
 	}
 }
 

@@ -302,6 +302,13 @@ func assertContains(t *testing.T, got string, want string) {
 	}
 }
 
+func assertNotContains(t *testing.T, got string, want string) {
+	t.Helper()
+	if strings.Contains(got, want) {
+		t.Fatalf("expected output not to contain %q\noutput:\n%s", want, got)
+	}
+}
+
 func assertContainsInOrder(t *testing.T, got string, wants ...string) {
 	t.Helper()
 	offset := 0
