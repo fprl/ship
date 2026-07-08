@@ -38,7 +38,7 @@ func CmdBoxLs(server string, jsonFlag bool) {
 	fmt.Print(out)
 }
 
-func CmdMemberAdd(server, source string) {
+func CmdMemberAdd(server, source string, role string) {
 	if !config.ValidateSshTarget(server) {
 		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "fix ship.toml box"}), 2)
 	}
@@ -53,7 +53,7 @@ func CmdMemberAdd(server, source string) {
 	defer runner.Close()
 
 	stdin := []byte(strings.Join(input.Keys, "\n") + "\n")
-	stdout, stderr, code, err := runner.RunSSHWithStdin(server, serverKeyAddCommand(input.Comment), stdin)
+	stdout, stderr, code, err := runner.RunSSHWithStdin(server, serverKeyAddCommand(input.Comment, role), stdin)
 	if err != nil || code != 0 {
 		remote := extractRemoteError(stdout, stderr, "")
 		if remote.Coded != nil {
@@ -186,7 +186,7 @@ func resolveMemberAddSource(source string) (memberAddInput, error) {
 		return memberAddInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "key source is empty"})
 	}
 	if strings.ContainsAny(source, "\r\n") {
-		return memberAddInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "key source must be a single key, GitHub user, or .pub path"})
+		return memberAddInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "key source must be a single key, GitHub user, or .pub/.pem path"})
 	}
 	if looksLikeSSHPublicKey(source) {
 		keys, err := normalizeSSHPublicKeys(source, "")
@@ -197,12 +197,12 @@ func resolveMemberAddSource(source string) (memberAddInput, error) {
 		if err != nil {
 			return memberAddInput{}, operationError(fmt.Sprintf("read public key file %s: %v", source, err), "ship member add "+source)
 		}
-		comment := filepath.Base(path)
+		comment := memberNameFromPath(path)
 		keys, err := normalizeSSHPublicKeys(string(data), comment)
 		return memberAddInput{Comment: comment, Keys: keys}, err
 	}
 	if !githubUserRe.MatchString(source) {
-		return memberAddInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": fmt.Sprintf("%q is not a valid GitHub user, SSH public key, or .pub path", source)})
+		return memberAddInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": fmt.Sprintf("%q is not a valid GitHub user, SSH public key, or .pub/.pem path", source)})
 	}
 	keys, err := fetchGitHubPublicKeys(source)
 	if err != nil {
@@ -210,6 +210,17 @@ func resolveMemberAddSource(source string) (memberAddInput, error) {
 	}
 	normalized, err := normalizeSSHPublicKeys(keys, source)
 	return memberAddInput{Comment: source, Keys: normalized}, err
+}
+
+func memberNameFromPath(path string) string {
+	name := filepath.Base(path)
+	ext := filepath.Ext(name)
+	switch strings.ToLower(ext) {
+	case ".pub", ".pem":
+		return strings.TrimSuffix(name, ext)
+	default:
+		return name
+	}
 }
 
 func resolvePublicKeyPath(source string) (string, bool) {
@@ -222,7 +233,8 @@ func resolvePublicKeyPath(source string) (string, bool) {
 	if info, err := os.Stat(path); err == nil && !info.IsDir() {
 		return path, true
 	}
-	if strings.ContainsAny(source, `/\`) || strings.HasSuffix(source, ".pub") || strings.HasPrefix(source, ".") {
+	lower := strings.ToLower(source)
+	if strings.ContainsAny(source, `/\`) || strings.HasSuffix(lower, ".pub") || strings.HasSuffix(lower, ".pem") || strings.HasPrefix(source, ".") {
 		return path, true
 	}
 	return "", false

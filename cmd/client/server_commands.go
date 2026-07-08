@@ -80,8 +80,8 @@ func serverAppDestroyCommand(appName string) string {
 	return serverCommand("app", "destroy", appName)
 }
 
-func serverKeyAddCommand(comment string) string {
-	return serverCommand("key", "add", "--comment", comment)
+func serverKeyAddCommand(comment string, role string) string {
+	return serverCommand("key", "add", "--comment", comment, "--role", role)
 }
 
 func serverKeyListCommand(jsonFlag bool) string {

@@ -48,7 +48,7 @@ func TestFreshHostInstall(t *testing.T) {
 		"ship installer starting",
 		"Running in remote mode against root@fake-vps",
 		"Provisioning complete",
-		"member added: fake-vps-smoke (SHA256:",
+		"member added: fake-vps-smoke (owner, SHA256:",
 	)
 
 	env.assertFreshHostInstalled(t)
@@ -72,20 +72,19 @@ func TestFreshHostInstall(t *testing.T) {
 
 	memberApp := env.memberListApp(t, "setup-preserve-members")
 	teammateKeyPath := filepath.Join(env.tmp, "setup-preserved-member")
-	teammateComment := filepath.Base(teammateKeyPath + ".pub")
+	teammateComment := filepath.Base(teammateKeyPath)
 	env.mustRun(t, env.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", teammateComment, "-f", teammateKeyPath)
 	addedTeammate := env.ship(t, memberApp, nil, "member", "add", teammateKeyPath+".pub")
-	addFields := strings.Fields(strings.TrimSpace(addedTeammate))
-	if len(addFields) != 4 || addFields[0] != "added" || addFields[1] != teammateComment || addFields[2] != "ssh-ed25519" {
+	if !strings.HasPrefix(strings.TrimSpace(addedTeammate), "member added: "+teammateComment+" (shipper, SHA256:") {
 		t.Fatalf("unexpected member add output: %q", addedTeammate)
 	}
-	teammateFingerprint := addFields[3]
+	teammateFingerprint := fingerprintFromMemberMutation(t, addedTeammate)
 	teammateKey := strings.TrimSpace(readFile(t, teammateKeyPath+".pub"))
 	_, preserveOutput := env.installHost(t, "")
 	assertContains(t, preserveOutput, "member fake-vps-smoke already authorized")
 	preservedMembers := env.ship(t, memberApp, nil, "member", "ls")
-	assertContains(t, preservedMembers, "fake-vps-smoke ssh-ed25519 SHA256:")
-	assertContains(t, preservedMembers, teammateComment+" ssh-ed25519 "+teammateFingerprint)
+	assertContains(t, preservedMembers, "fake-vps-smoke owner ssh-ed25519 SHA256:")
+	assertContains(t, preservedMembers, teammateComment+" shipper ssh-ed25519 "+teammateFingerprint)
 	env.assertDeployAuthorizedKeysLineCount(t, identityKey, 1)
 	env.assertDeployAuthorizedKeysLineCount(t, teammateKey, 1)
 
@@ -313,7 +312,7 @@ func (e *smokeEnv) assertSetupMemberVisible(t *testing.T) {
 	t.Helper()
 	app := e.memberListApp(t, "member-list")
 	list := e.ship(t, app, nil, "member", "ls")
-	assertContains(t, list, "fake-vps-smoke ssh-ed25519 SHA256:")
+	assertContains(t, list, "fake-vps-smoke owner ssh-ed25519 SHA256:")
 }
 
 func (e *smokeEnv) memberListApp(t *testing.T, name string) string {

@@ -321,6 +321,20 @@ func assertContainsInOrder(t *testing.T, got string, wants ...string) {
 	}
 }
 
+func fingerprintFromMemberMutation(t *testing.T, output string) string {
+	t.Helper()
+	output = strings.TrimSpace(output)
+	_, tail, ok := strings.Cut(output, ", ")
+	if !ok {
+		t.Fatalf("member mutation output missing role/fingerprint tuple: %q", output)
+	}
+	fingerprint := strings.TrimSuffix(tail, ")")
+	if !strings.HasPrefix(fingerprint, "SHA256:") {
+		t.Fatalf("member mutation output missing SHA256 fingerprint: %q", output)
+	}
+	return fingerprint
+}
+
 func assertEqual(t *testing.T, got string, want string) {
 	t.Helper()
 	if got != want {

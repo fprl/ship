@@ -107,3 +107,21 @@ type DoctorFile struct {
 	Checks     []DoctorCheck `json:"checks"`
 	Delta      []DoctorCheck `json:"delta"`
 }
+
+type MemberRole string
+
+const (
+	MemberRoleOwner   MemberRole = "owner"
+	MemberRoleShipper MemberRole = "shipper"
+	MemberRoleAgent   MemberRole = "agent"
+)
+
+type MemberRecord struct {
+	Name string     `json:"name"`
+	Role MemberRole `json:"role"`
+}
+
+type MembersFile struct {
+	Version int                     `json:"version"`
+	Members map[string]MemberRecord `json:"members"`
+}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"time"
@@ -163,6 +164,7 @@ func installOperations(opts InstallOptions, stateStore store.Store, summary *Ins
 	addAuthorizedKeys(&ops, opts.DeployUser, opts.DeploySSHPublicKeys, func(results []memberkeys.AddResult) {
 		summary.DeployKeyResults = results
 	})
+	addDeployMembersStore(&ops, stateStore, opts.DeployUser, summary)
 
 	add("timezone", func(apply host.Apply) (bool, error) {
 		return host.EnsureTimezone(apply, opts.Timezone)
@@ -226,6 +228,68 @@ func addAuthorizedKeys(ops *[]operation, user string, keyLines []string, capture
 			Mode:    0600,
 		})
 	}})
+}
+
+func addDeployMembersStore(ops *[]operation, stateStore store.Store, deployUser string, summary *InstallSummary) {
+	path := filepath.Join("/home", deployUser, ".ssh", "authorized_keys")
+	*ops = append(*ops, operation{name: "members store", run: func(apply host.Apply) (bool, error) {
+		current, err := apply.Runner.ReadFile(apply.ContextOrBackground(), path)
+		if err != nil && !errors.Is(err, host.ErrNotExist) {
+			return false, err
+		}
+		keys := memberkeys.Parse(current.Content)
+		members, err := stateStore.ReadMembers()
+		if err != nil {
+			return false, err
+		}
+		overrides := setupMemberRoleOverrides(keys, summary.DeployKeyResults)
+		next := memberkeys.ReconciledMembersFile(keys, *members, overrides)
+		for i := range summary.DeployKeyResults {
+			fingerprint := summary.DeployKeyResults[i].Key.Fingerprint
+			if record, ok := next.Members[fingerprint]; ok {
+				summary.DeployKeyResults[i].Key.Comment = record.Name
+				summary.DeployKeyResults[i].Role = string(record.Role)
+			}
+		}
+		if reflect.DeepEqual(*members, next) {
+			return false, nil
+		}
+		if apply.CheckMode {
+			return true, nil
+		}
+		return true, stateStore.WriteMembers(next)
+	}})
+}
+
+func setupMemberRoleOverrides(keys []memberkeys.AuthorizedKey, results []memberkeys.AddResult) map[string]store.MemberRecord {
+	parseableCount := 0
+	for _, key := range keys {
+		if key.Material != "" {
+			parseableCount++
+		}
+	}
+	addedCount := 0
+	for _, result := range results {
+		if result.Added {
+			addedCount++
+		}
+	}
+	role := store.MemberRoleShipper
+	if addedCount > 0 && parseableCount == addedCount {
+		role = store.MemberRoleOwner
+	}
+
+	overrides := map[string]store.MemberRecord{}
+	for _, result := range results {
+		if !result.Added {
+			continue
+		}
+		overrides[result.Key.Fingerprint] = store.MemberRecord{
+			Name: result.Key.Comment,
+			Role: role,
+		}
+	}
+	return overrides
 }
 
 func addSSHHardening(ops *[]operation) {

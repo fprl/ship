@@ -824,28 +824,27 @@ web = { port = 3000 }
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 
 	keyPath := filepath.Join(e.tmp, "teammate")
-	keyComment := filepath.Base(keyPath + ".pub")
+	keyComment := filepath.Base(keyPath)
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", keyComment, "-f", keyPath)
 
 	out := e.ship(t, app, nil, "member", "add", keyPath+".pub")
-	assertContains(t, out, "added "+keyComment+" ssh-ed25519 SHA256:")
-	addFields := strings.Fields(strings.TrimSpace(out))
-	if len(addFields) != 4 || addFields[0] != "added" || addFields[1] != keyComment || addFields[2] != "ssh-ed25519" {
+	if !strings.HasPrefix(strings.TrimSpace(out), "member added: "+keyComment+" (shipper, SHA256:") {
 		t.Fatalf("unexpected member add output: %q", out)
 	}
-	fingerprint := addFields[3]
+	fingerprint := fingerprintFromMemberMutation(t, out)
 	again := e.ship(t, app, nil, "member", "add", keyPath+".pub")
-	assertContains(t, again, "skipped "+keyComment+" ssh-ed25519 "+fingerprint+" (already authorized)")
+	assertContains(t, again, "member "+keyComment+" already authorized (shipper, "+fingerprint+")")
 	authorized := e.dockerExec(t, "cat /home/deploy/.ssh/authorized_keys")
 	assertContains(t, authorized, keyComment)
 
 	list := e.ship(t, app, nil, "member", "ls")
-	assertContains(t, list, keyComment+" ssh-ed25519 "+fingerprint)
-	assertContains(t, list, "fake-vps-smoke ssh-ed25519 SHA256:")
+	assertContains(t, list, keyComment+" shipper ssh-ed25519 "+fingerprint)
+	assertContains(t, list, "fake-vps-smoke owner ssh-ed25519 SHA256:")
 
 	var members struct {
 		Members []struct {
 			Name        string `json:"name"`
+			Role        string `json:"role"`
 			KeyType     string `json:"key_type"`
 			Fingerprint string `json:"fingerprint"`
 		} `json:"members"`
@@ -855,7 +854,7 @@ web = { port = 3000 }
 	}
 	foundMember := false
 	for _, member := range members.Members {
-		if member.Name == keyComment && member.KeyType == "ssh-ed25519" && member.Fingerprint == fingerprint {
+		if member.Name == keyComment && member.Role == "shipper" && member.KeyType == "ssh-ed25519" && member.Fingerprint == fingerprint {
 			foundMember = true
 		}
 	}

@@ -785,14 +785,15 @@ var verbs = []Verb{
 	{
 		Verb:    "member add",
 		Purpose: "Authorize SSH public key access for a deploy member.",
-		Usage:   "ship member add <github-user|key|path> [--config <path>]",
+		Usage:   "ship member add <github-user|key|path> [--role owner|shipper|agent] [--config <path>]",
 		Flags: []Flag{
-			{Name: "github-user|key|path", Purpose: "A GitHub username, literal SSH public key, or path to a .pub file."},
+			{Name: "github-user|key|path", Purpose: "A GitHub username, literal SSH public key, or path to a .pub/.pem file."},
+			{Name: "--role", Value: "owner|shipper|agent", Default: "shipper", Purpose: "Role recorded for newly added keys."},
 			{Name: "--config", Value: "<path>", Default: "ship.toml", Purpose: "Path to the app manifest containing box."},
 		},
 		ExitCodes: normalExit,
 		Errors:    []string{"manifest_invalid", "invalid_box_target", "github_keys_unavailable", "ssh_public_key_invalid", "operation_failed"},
-		Notes:     []string{"Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or skipped, with key type and SHA256 fingerprint. Existing keys are deduplicated by key material."},
+		Notes:     []string{"Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or already authorized, with role and SHA256 fingerprint. Existing keys are deduplicated by key material."},
 	},
 	{
 		Verb:    "member ls",
@@ -803,7 +804,7 @@ var verbs = []Verb{
 			{Name: "--json", Purpose: "Emit structured JSON."},
 		},
 		JSONSchema: schema(
-			`{"members":[{"name":"alice","key_type":"ssh-ed25519","fingerprint":"SHA256:..."}]}`,
+			`{"members":[{"name":"alice","role":"shipper","key_type":"ssh-ed25519","fingerprint":"SHA256:..."}]}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"manifest_invalid", "invalid_box_target", "operation_failed"},
@@ -947,8 +948,10 @@ Truth stores:
 - Manifest truth is the repo ` + "`ship.toml`" + ` plus the manifest snapshot stored with each
   release under the env release directory on the box.
 - Box truth is host state: env identity files, preview mapping metadata,
-  release metadata, deploy journals, secrets, Podman labels, Caddy fragments,
-  and doctor state.
+  release metadata, deploy journals, members, roles, secrets, Podman labels,
+  Caddy fragments, and doctor state.
+- Members and approvals belong to the box; secrets, envs, and journals belong
+  to the app.
 - Use manifest snapshots to answer "what did this release intend?"
 - Use box state to answer "what is live now?"
 

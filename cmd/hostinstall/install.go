@@ -18,6 +18,7 @@ import (
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/provision"
 	"github.com/fprl/ship/internal/provision/local"
+	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -1025,11 +1026,15 @@ func (i *Installer) printSetupNarration(plan Plan) {
 
 func (i *Installer) printMemberEnrollment(results []memberkeys.AddResult) {
 	for _, result := range results {
+		role := result.Role
+		if role == "" {
+			role = string(store.MemberRoleShipper)
+		}
 		if result.Added {
-			fmt.Fprintf(i.Stdout, "member added: %s (%s)\n", result.Key.Comment, result.Key.Fingerprint)
+			fmt.Fprintf(i.Stdout, "member added: %s (%s, %s)\n", result.Key.Comment, role, result.Key.Fingerprint)
 			continue
 		}
-		fmt.Fprintf(i.Stdout, "member %s already authorized\n", result.Key.Comment)
+		fmt.Fprintf(i.Stdout, "member %s already authorized (%s, %s)\n", result.Key.Comment, role, result.Key.Fingerprint)
 	}
 }
 

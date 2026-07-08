@@ -25,6 +25,7 @@ type keyCmd struct {
 
 type keyAddCmd struct {
 	Comment string `name:"comment" required:"" help:"Comment to stamp on appended keys."`
+	Role    string `name:"role" enum:"owner,shipper,agent" default:"shipper" help:"Role recorded for newly added keys."`
 }
 
 type keyListCmd struct {
@@ -55,6 +56,13 @@ func (c keyAddCmd) run() error {
 	if comment == "" {
 		return fmt.Errorf("key comment is required")
 	}
+	role := store.MemberRole(c.Role)
+	if !store.ValidMemberRole(role) {
+		return errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  "role must be owner, shipper, or agent",
+			"command": "ship member add <src> --role owner|shipper|agent",
+		})
+	}
 	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
 	if err != nil {
 		return fmt.Errorf("read public keys from stdin: %v", err)
@@ -67,7 +75,7 @@ func (c keyAddCmd) run() error {
 	if err != nil {
 		return err
 	}
-	results, err := appendDeployAuthorizedKeys(user, keys)
+	results, err := appendDeployAuthorizedKeys(user, keys, role)
 	if err != nil {
 		return err
 	}
@@ -93,7 +101,11 @@ func (c keyListCmd) run() error {
 	if err != nil {
 		return err
 	}
-	rows := memberRows(keys)
+	members, err := store.Default().ReadMembers()
+	if err != nil {
+		return err
+	}
+	rows := memberRows(keys, *members)
 	if c.JSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetEscapeHTML(false)
@@ -151,7 +163,7 @@ func deployAuthorizedKeysUser() (string, error) {
 	return "", fmt.Errorf("deploy user is unknown; run through sudo as the deploy user or run ship box setup")
 }
 
-func appendDeployAuthorizedKeys(user string, keys []authorizedKey) ([]keyAddResult, error) {
+func appendDeployAuthorizedKeys(user string, keys []authorizedKey, role store.MemberRole) ([]keyAddResult, error) {
 	sshDir, path, err := deployAuthorizedKeysPaths(user)
 	if err != nil {
 		return nil, err
@@ -163,8 +175,29 @@ func appendDeployAuthorizedKeys(user string, keys []authorizedKey) ([]keyAddResu
 	if err != nil {
 		return nil, err
 	}
+	members, err := store.Default().ReadMembers()
+	if err != nil {
+		return nil, err
+	}
+	existingRecords := memberkeys.EffectiveMemberRecords(existing, *members, nil)
 	lines, results := memberkeys.Merge(existing, keys)
+	overrides := map[string]store.MemberRecord{}
+	for i := range results {
+		result := &results[i]
+		if result.Added {
+			result.Role = string(role)
+			overrides[result.Key.Fingerprint] = store.MemberRecord{Name: result.Key.Comment, Role: role}
+			continue
+		}
+		if record, ok := existingRecords[result.Key.Fingerprint]; ok {
+			result.Key.Comment = record.Name
+			result.Role = string(record.Role)
+		}
+	}
 	if err := writeDeployAuthorizedKeys(user, sshDir, path, lines); err != nil {
+		return nil, err
+	}
+	if err := writeReconciledMembers(memberkeys.Parse(memberkeys.Content(lines)), *members, overrides); err != nil {
 		return nil, err
 	}
 	return results, nil
@@ -182,6 +215,11 @@ func removeDeployAuthorizedKeys(user, name string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	members, err := store.Default().ReadMembers()
+	if err != nil {
+		return 0, err
+	}
+	records := memberkeys.EffectiveMemberRecords(existing, *members, nil)
 	parseable := 0
 	removed := 0
 	memberNames := map[string]bool{}
@@ -192,8 +230,12 @@ func removeDeployAuthorizedKeys(user, name string) (int, error) {
 			continue
 		}
 		parseable++
-		memberNames[key.Comment] = true
-		if key.Comment == name {
+		memberName := key.Comment
+		if record, ok := records[key.Fingerprint]; ok {
+			memberName = record.Name
+		}
+		memberNames[memberName] = true
+		if memberName == name {
 			removed++
 			continue
 		}
@@ -209,6 +251,9 @@ func removeDeployAuthorizedKeys(user, name string) (int, error) {
 		return 0, errcat.New(errcat.CodeMemberLastKey, errcat.Fields{"name": name})
 	}
 	if err := writeDeployAuthorizedKeys(user, sshDir, path, lines); err != nil {
+		return 0, err
+	}
+	if err := writeReconciledMembers(memberkeys.Parse(memberkeys.Content(lines)), *members, nil); err != nil {
 		return 0, err
 	}
 	return removed, nil
@@ -273,8 +318,8 @@ func normalizeAuthorizedKeys(raw, comment string) ([]authorizedKey, error) {
 	return memberkeys.Normalize(raw, comment)
 }
 
-func memberRows(keys []authorizedKey) []memberKeyRow {
-	return memberkeys.Rows(keys)
+func memberRows(keys []authorizedKey, members store.MembersFile) []memberKeyRow {
+	return memberkeys.RowsWithMembers(keys, members)
 }
 
 func publicKeyFingerprint(body string) (string, error) {
@@ -282,19 +327,23 @@ func publicKeyFingerprint(body string) (string, error) {
 }
 
 func formatKeyAddResult(result keyAddResult) string {
-	line := formatMemberRow(memberKeyRow{
-		Name:        result.Key.Comment,
-		KeyType:     result.Key.Type,
-		Fingerprint: result.Key.Fingerprint,
-	})
-	if result.Added {
-		return "added " + line
+	role := result.Role
+	if role == "" {
+		role = string(store.MemberRoleShipper)
 	}
-	return "skipped " + line + " (already authorized)"
+	if result.Added {
+		return fmt.Sprintf("member added: %s (%s, %s)", result.Key.Comment, role, result.Key.Fingerprint)
+	}
+	return fmt.Sprintf("member %s already authorized (%s, %s)", result.Key.Comment, role, result.Key.Fingerprint)
 }
 
 func formatMemberRow(row memberKeyRow) string {
-	return row.Name + " " + row.KeyType + " " + row.Fingerprint
+	return row.Name + " " + row.Role + " " + row.KeyType + " " + row.Fingerprint
+}
+
+func writeReconciledMembers(keys []authorizedKey, current store.MembersFile, overrides map[string]store.MemberRecord) error {
+	file := memberkeys.ReconciledMembersFile(keys, current, overrides)
+	return store.Default().WriteMembers(file)
 }
 
 func memberNamesList(names map[string]bool) string {

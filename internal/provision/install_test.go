@@ -53,6 +53,9 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	if summary.OperationsChanged == 0 {
 		t.Fatal("expected install to report changed operations")
 	}
+	if len(summary.DeployKeyResults) != 1 || !summary.DeployKeyResults[0].Added || summary.DeployKeyResults[0].Role != "owner" {
+		t.Fatalf("deploy enrollment results = %+v, want one added owner key", summary.DeployKeyResults)
+	}
 
 	loaded, err := (store.Store{Root: root}).ReadHost()
 	if err != nil {
@@ -72,6 +75,14 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	}
 	if !runner.ranCommand("install", "-d -o root -g root -m 700 /etc/ship/secrets") {
 		t.Fatal("expected /etc/ship/secrets to be created mode 0700")
+	}
+	members, err := (store.Store{Root: root}).ReadMembers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := members.Members[summary.DeployKeyResults[0].Key.Fingerprint]
+	if member.Name != "deploy" || member.Role != store.MemberRoleOwner {
+		t.Fatalf("setup member record = %+v, want deploy owner", member)
 	}
 }
 
@@ -157,8 +168,8 @@ func TestRunInstallEnrollsAuthorizedKeysWithoutReplacingExistingMembers(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(summary.DeployKeyResults) != 1 || !summary.DeployKeyResults[0].Added {
-		t.Fatalf("deploy enrollment results = %+v, want one added key", summary.DeployKeyResults)
+	if len(summary.DeployKeyResults) != 1 || !summary.DeployKeyResults[0].Added || summary.DeployKeyResults[0].Role != "shipper" {
+		t.Fatalf("deploy enrollment results = %+v, want one added shipper key", summary.DeployKeyResults)
 	}
 	deployKeys := string(runner.files["/home/deploy/.ssh/authorized_keys"].Content)
 	assertAuthorizedKeysLines(t, deployKeys, []string{existingDeploy, deployTestPublicKey})
@@ -169,8 +180,8 @@ func TestRunInstallEnrollsAuthorizedKeysWithoutReplacingExistingMembers(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(summary.DeployKeyResults) != 1 || summary.DeployKeyResults[0].Added {
-		t.Fatalf("second deploy enrollment results = %+v, want already authorized", summary.DeployKeyResults)
+	if len(summary.DeployKeyResults) != 1 || summary.DeployKeyResults[0].Added || summary.DeployKeyResults[0].Role != "shipper" {
+		t.Fatalf("second deploy enrollment results = %+v, want already authorized shipper", summary.DeployKeyResults)
 	}
 	assertAuthorizedKeysLines(t, string(runner.files["/home/deploy/.ssh/authorized_keys"].Content), []string{existingDeploy, deployTestPublicKey})
 	assertAuthorizedKeysLines(t, string(runner.files["/home/operator/.ssh/authorized_keys"].Content), []string{existingOperator, operatorTestPublicKey})

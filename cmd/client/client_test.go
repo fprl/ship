@@ -15,10 +15,35 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 )
 
+const clientAlicePublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/ ignored"
+
 func writeClientManifest(t *testing.T, root string, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(root, "ship.toml"), []byte(body), 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestResolveMemberAddSourceStripsPublicKeyPathExtensions(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"alice.pub", "cami.pem"} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(dir, name)
+			if err := os.WriteFile(path, []byte(clientAlicePublicKey+"\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			input, err := resolveMemberAddSource(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := strings.TrimSuffix(name, filepath.Ext(name))
+			if input.Comment != want {
+				t.Fatalf("comment = %q, want %q", input.Comment, want)
+			}
+			if len(input.Keys) != 1 || !strings.HasSuffix(input.Keys[0], " "+want) {
+				t.Fatalf("normalized key did not use stripped comment: %+v", input.Keys)
+			}
+		})
 	}
 }
 
@@ -896,7 +921,7 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "secret list json", command: serverAppSecretListCommand("api", "production", true)},
 		{name: "secret rm", command: serverAppSecretRmCommand("api", "production", "DATABASE_URL")},
 		{name: "why", command: serverAppWhyCommand("api", "production")},
-		{name: "key add", command: serverKeyAddCommand("alice")},
+		{name: "key add", command: serverKeyAddCommand("alice", "shipper")},
 		{name: "key list text", command: serverKeyListCommand(false)},
 		{name: "key list json", command: serverKeyListCommand(true)},
 		{name: "key rm", command: serverKeyRmCommand("alice")},

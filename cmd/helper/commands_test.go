@@ -63,6 +63,7 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "backup", "restore", "--from", "backup-id", "--dry-run", "api", "production"},
 		{"env", "reap"},
 		{"key", "add", "--comment", "alice"},
+		{"key", "add", "--comment", "alice", "--role", "owner"},
 		{"key", "ls"},
 		{"key", "ls", "--json"},
 		{"key", "rm", "alice"},

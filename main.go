@@ -379,7 +379,8 @@ type memberCmd struct {
 
 type memberAddCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
-	Source string `arg:"" help:"GitHub username, SSH public key string, or path to a .pub file."`
+	Source string `arg:"" help:"GitHub username, SSH public key string, or path to a .pub/.pem file."`
+	Role   string `name:"role" enum:"owner,shipper,agent" default:"shipper" help:"Role recorded for newly added keys."`
 }
 
 func (c memberAddCmd) Run() error {
@@ -387,7 +388,7 @@ func (c memberAddCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdMemberAdd(target, c.Source)
+	client.CmdMemberAdd(target, c.Source, c.Role)
 	return nil
 }
 

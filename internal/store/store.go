@@ -48,6 +48,10 @@ func (s Store) DoctorPath() string {
 	return filepath.Join(s.root(), "doctor.json")
 }
 
+func (s Store) MembersPath() string {
+	return filepath.Join(s.root(), "members.json")
+}
+
 func (s Store) SecretsDir() string {
 	return filepath.Join(s.root(), "secrets")
 }
@@ -164,6 +168,39 @@ func (s Store) WriteDoctor(file DoctorFile) error {
 	normalizeDoctorFile(&file)
 	return writeJSON(s.DoctorPath(), file, 0644)
 }
+
+func (s Store) ReadMembers() (*MembersFile, error) {
+	var file MembersFile
+	if err := readJSON(s.MembersPath(), &file); err != nil {
+		if os.IsNotExist(err) {
+			file = MembersFile{Version: CurrentVersion}
+			normalizeMembersFile(&file)
+			return &file, nil
+		}
+		return nil, err
+	}
+	if err := validateVersion("members.json", file.Version); err != nil {
+		return nil, err
+	}
+	normalizeMembersFile(&file)
+	if err := validateMembersFile(file); err != nil {
+		return nil, fmt.Errorf("invalid members.json: %w", err)
+	}
+	return &file, nil
+}
+
+func (s Store) WriteMembers(file MembersFile) error {
+	if err := validateVersion("members.json", file.Version); err != nil {
+		return err
+	}
+	file.Version = CurrentVersion
+	normalizeMembersFile(&file)
+	if err := validateMembersFile(file); err != nil {
+		return fmt.Errorf("invalid members.json: %w", err)
+	}
+	return writeJSON(s.MembersPath(), file, 0644)
+}
+
 func (s Store) readHostForDesiredWrite() (HostFile, error) {
 	var file HostFile
 	if err := readJSON(s.HostPath(), &file); err != nil {

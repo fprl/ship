@@ -41,8 +41,10 @@ Truth stores:
 - Manifest truth is the repo `ship.toml` plus the manifest snapshot stored with each
   release under the env release directory on the box.
 - Box truth is host state: env identity files, preview mapping metadata,
-  release metadata, deploy journals, secrets, Podman labels, Caddy fragments,
-  and doctor state.
+  release metadata, deploy journals, members, roles, secrets, Podman labels,
+  Caddy fragments, and doctor state.
+- Members and approvals belong to the box; secrets, envs, and journals belong
+  to the app.
 - Use manifest snapshots to answer "what did this release intend?"
 - Use box state to answer "what is live now?"
 
@@ -201,9 +203,9 @@ Secret scoping:
 
 ### `member add`
 - Purpose: Authorize SSH public key access for a deploy member.
-- Usage: `ship member add <github-user|key|path> [--config <path>]`
-- Arguments and flags: `github-user|key|path`: A GitHub username, literal SSH public key, or path to a .pub file; `--config <path>` default `ship.toml`: Path to the app manifest containing box.
-- Notes: Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or skipped, with key type and SHA256 fingerprint. Existing keys are deduplicated by key material.
+- Usage: `ship member add <github-user|key|path> [--role owner|shipper|agent] [--config <path>]`
+- Arguments and flags: `github-user|key|path`: A GitHub username, literal SSH public key, or path to a .pub/.pem file; `--role owner|shipper|agent` default `shipper`: Role recorded for newly added keys; `--config <path>` default `ship.toml`: Path to the app manifest containing box.
+- Notes: Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or already authorized, with role and SHA256 fingerprint. Existing keys are deduplicated by key material.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `manifest_invalid`, `invalid_box_target`, `github_keys_unavailable`, `ssh_public_key_invalid`, `operation_failed`
 
@@ -211,7 +213,7 @@ Secret scoping:
 - Purpose: List deploy members from authorized_keys.
 - Usage: `ship member ls [--json] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest containing box; `--json`: Emit structured JSON.
-- `--json` stdout schema: `{"members":[{"name":"alice","key_type":"ssh-ed25519","fingerprint":"SHA256:..."}]}`
+- `--json` stdout schema: `{"members":[{"name":"alice","role":"shipper","key_type":"ssh-ed25519","fingerprint":"SHA256:..."}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `manifest_invalid`, `invalid_box_target`, `operation_failed`
 

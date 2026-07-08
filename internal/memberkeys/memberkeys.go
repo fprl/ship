@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/store"
 )
 
 type AuthorizedKey struct {
@@ -22,10 +23,12 @@ type AuthorizedKey struct {
 type AddResult struct {
 	Key   AuthorizedKey
 	Added bool
+	Role  string
 }
 
 type Row struct {
 	Name        string `json:"name"`
+	Role        string `json:"role"`
 	KeyType     string `json:"key_type"`
 	Fingerprint string `json:"fingerprint"`
 }
@@ -176,6 +179,79 @@ func Rows(keys []AuthorizedKey) []Row {
 		return rows[i].Fingerprint < rows[j].Fingerprint
 	})
 	return rows
+}
+
+func RowsWithMembers(keys []AuthorizedKey, members store.MembersFile) []Row {
+	records := EffectiveMemberRecords(keys, members, nil)
+	var rows []Row
+	for _, key := range keys {
+		if key.Material == "" {
+			continue
+		}
+		record := records[key.Fingerprint]
+		rows = append(rows, Row{
+			Name:        record.Name,
+			Role:        string(record.Role),
+			KeyType:     key.Type,
+			Fingerprint: key.Fingerprint,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Name != rows[j].Name {
+			return rows[i].Name < rows[j].Name
+		}
+		if rows[i].Role != rows[j].Role {
+			return rows[i].Role < rows[j].Role
+		}
+		if rows[i].KeyType != rows[j].KeyType {
+			return rows[i].KeyType < rows[j].KeyType
+		}
+		return rows[i].Fingerprint < rows[j].Fingerprint
+	})
+	return rows
+}
+
+func ReconciledMembersFile(keys []AuthorizedKey, current store.MembersFile, overrides map[string]store.MemberRecord) store.MembersFile {
+	return store.MembersFile{
+		Version: store.CurrentVersion,
+		Members: EffectiveMemberRecords(keys, current, overrides),
+	}
+}
+
+func EffectiveMemberRecords(keys []AuthorizedKey, members store.MembersFile, overrides map[string]store.MemberRecord) map[string]store.MemberRecord {
+	parseableCount := 0
+	for _, key := range keys {
+		if key.Material != "" {
+			parseableCount++
+		}
+	}
+	fallbackRole := store.MemberRoleShipper
+	if parseableCount == 1 {
+		fallbackRole = store.MemberRoleOwner
+	}
+
+	records := map[string]store.MemberRecord{}
+	for _, key := range keys {
+		if key.Material == "" {
+			continue
+		}
+		record, ok := members.Members[key.Fingerprint]
+		if !ok {
+			record = store.MemberRecord{Name: key.Comment, Role: fallbackRole}
+		}
+		if override, ok := overrides[key.Fingerprint]; ok {
+			record = override
+		}
+		record.Name = strings.Join(strings.Fields(record.Name), " ")
+		if record.Name == "" {
+			record.Name = key.Comment
+		}
+		if !store.ValidMemberRole(record.Role) {
+			record.Role = fallbackRole
+		}
+		records[key.Fingerprint] = record
+	}
+	return records
 }
 
 func SupportedType(value string) bool {

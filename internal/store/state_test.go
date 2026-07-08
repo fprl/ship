@@ -125,6 +125,48 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 	if doctorState.Version != CurrentVersion || len(doctorState.Checks) != 1 || len(doctorState.Delta) != 0 {
 		t.Fatalf("unexpected doctor state: %+v", doctorState)
 	}
+
+	if err := store.WriteMembers(MembersFile{
+		Version: CurrentVersion,
+		Members: map[string]MemberRecord{
+			"SHA256:abc": {Name: "alice", Role: MemberRoleOwner},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.MembersPath(); got != filepath.Join(root, "members.json") {
+		t.Fatalf("unexpected members path: %s", got)
+	}
+	membersData, err := os.ReadFile(store.MembersPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"version": 1`,
+		`"members": {`,
+		`"SHA256:abc": {`,
+		`"name": "alice"`,
+		`"role": "owner"`,
+	} {
+		if !strings.Contains(string(membersData), want) {
+			t.Fatalf("expected members.json to contain %q:\n%s", want, membersData)
+		}
+	}
+	assertMode(t, store.MembersPath(), 0644)
+	tempFiles, err := filepath.Glob(filepath.Join(root, ".members.json.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tempFiles) != 0 {
+		t.Fatalf("atomic members write left temp files: %v", tempFiles)
+	}
+	membersState, err := store.ReadMembers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if membersState.Version != CurrentVersion || membersState.Members["SHA256:abc"].Role != MemberRoleOwner {
+		t.Fatalf("unexpected members state: %+v", membersState)
+	}
 }
 
 func TestWriteHostStatePreservesDesired(t *testing.T) {
@@ -247,6 +289,38 @@ func TestStoreRejectsInvalidHostVersions(t *testing.T) {
 			_, err := store.ReadHost()
 			if err == nil {
 				t.Fatal("expected invalid host schema version to fail")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestStoreRejectsInvalidMembersFiles(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "missing version",
+			raw:  `{"members":{}}`,
+			want: "members.json version is required",
+		},
+		{
+			name: "invalid role",
+			raw:  `{"version":1,"members":{"SHA256:abc":{"name":"alice","role":"admin"}}}`,
+			want: "role must be owner, shipper, or agent",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := Store{Root: t.TempDir()}
+			writeRawFile(t, store.MembersPath(), tc.raw)
+
+			_, err := store.ReadMembers()
+			if err == nil {
+				t.Fatal("expected invalid members file to fail")
 			}
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("expected error containing %q, got %v", tc.want, err)

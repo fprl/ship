@@ -82,6 +82,7 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"box", "rm", "api", "--confirm", "api"},
 		{"box", "rm", "api", "deploy@example.com", "--confirm", "api"},
 		{"member", "add", "alice"},
+		{"member", "add", "alice", "--role", "owner"},
 		{"member", "ls"},
 		{"member", "ls", "--json"},
 		{"member", "rm", "alice"},

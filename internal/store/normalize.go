@@ -52,6 +52,22 @@ func normalizeDoctorFile(file *DoctorFile) {
 	}
 }
 
+func normalizeMembersFile(file *MembersFile) {
+	file.Version = CurrentVersion
+	if file.Members == nil {
+		file.Members = map[string]MemberRecord{}
+	}
+}
+
+func ValidMemberRole(role MemberRole) bool {
+	switch role {
+	case MemberRoleOwner, MemberRoleShipper, MemberRoleAgent:
+		return true
+	default:
+		return false
+	}
+}
+
 // NormalizeApp keeps a tiny "is this a valid app name?" surface for
 // the Cloudflare per-route call site. Treats nil and empty string as
 // "no app set"; non-empty values must match AppRe.
@@ -107,6 +123,21 @@ func validateVersion(scope string, version int) error {
 	}
 	if version > CurrentVersion {
 		return fmt.Errorf("unsupported %s version %d", scope, version)
+	}
+	return nil
+}
+
+func validateMembersFile(file MembersFile) error {
+	for fingerprint, member := range file.Members {
+		if strings.TrimSpace(fingerprint) == "" {
+			return errors.New("members cannot contain empty fingerprints")
+		}
+		if strings.TrimSpace(member.Name) == "" {
+			return fmt.Errorf("members.%s.name is required", fingerprint)
+		}
+		if !ValidMemberRole(member.Role) {
+			return fmt.Errorf("members.%s.role must be owner, shipper, or agent", fingerprint)
+		}
 	}
 	return nil
 }
