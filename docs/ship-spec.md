@@ -170,7 +170,7 @@ the env identity file (extend the existing identity storage).
 - Created automatically on first `ship` from a branch. No setup verb.
 - **TTL 72 h** from last ship; `ship pin <branch>` clears expiry,
   `ship unpin` restores it.
-- A reaper runs on the box (systemd timer installed by `box init`,
+- A reaper runs on the box (systemd timer installed by `box setup`,
   invoking a new helper verb `server env reap`) and destroys expired
   preview envs — equivalent to the existing destroy path, secrets purged.
   Reap events fire `notify`. `prod` is never reaped and `ship rm` on prod
@@ -208,7 +208,15 @@ ship secret set <KEY> [--preview|--branch <name>]   stdin-only (§6)
 ship secret ls [--json] / ship secret rm <KEY> [--preview|--branch <name>]
 ship save [--to path] / ship restore --from <id|path>   existing backup/restore
 ship ssh                  existing
-ship box init <ssh-target> [--ingress ...] [--admin ...]   host install.
+ship box setup <ssh-target> [--ingress ...] [--admin ...]   host install
+                          (renamed from box init — two unrelated inits
+                          confused; "setup" is Kamal's word and plain
+                          English). Output narrates every decision and
+                          its alternative flag, wizard-grade without
+                          prompts:
+                            ingress: public 80/443 (--ingress ...)
+                            admin: SSH keys only (--admin tailscale)
+                            first member: <name> (<fingerprint>)
                           Zero key decisions by default (§0 bar #5):
                           the keys already in the bootstrap user's
                           authorized_keys (the provider put yours
@@ -217,7 +225,7 @@ ship box init <ssh-target> [--ingress ...] [--admin ...]   host install.
                           fingerprints. --deploy-ssh-public-key-file
                           remains for split-key/CI setups; the
                           ~/.ssh/ship-deploy magic default and
-                          --shared-key are removed. box init = create
+                          --shared-key are removed. box setup = create
                           the box with you as first member; all later
                           identity goes through ship member.
 ship member add <github-user|key|path>   authorize a teammate's SSH key
@@ -318,7 +326,7 @@ URL), `SHIP_BRANCH`, `SHIP_ENV` (`production` | `preview`),
   carry the full journal entry, so an agent receiving the webhook can
   act without first querying the box. Fire-and-forget, 2 s timeout,
   never fails the operation.
-- `box init` installs a doctor timer (daily, systemd — same pattern as
+- `box setup` installs a doctor timer (daily, systemd — same pattern as
   the reaper): newly degraded or failed checks fire `notify` with their
   remediation. Set-and-forget means the box reports in; nobody has to
   remember to run doctor.
