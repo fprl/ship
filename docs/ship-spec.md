@@ -474,3 +474,60 @@ notify fan-out stays the receiver's job (single URL by design).
   questions, whatever Vercel does (adapted to a CLI); for engine
   behavior, the existing engine's behavior; otherwise the simplest option
   that keeps the §0 bar. Note the decision in the PR description.
+
+## 13. Members and roles (v0.2 arc — promotes RFD-0003)
+
+Settled with Franco July 8. Members exist (§4); this section adds
+authorization. **Exactly three fixed roles, no custom roles, no policy
+DSL, ever.**
+
+Surface:
+
+```
+ship member add <src> [--role owner|shipper|agent]   default: shipper
+ship member ls [--json]     now shows the role per member
+ship approve                bare form: list pending approvals (box-wide)
+ship approve <id>           grant one-shot; requests expire in 15 min
+                            (expiry is the only "deny"; no deny verb)
+```
+
+- `box setup` enrolls the first member as **owner**.
+- Role bundles (verb × scope, enforced helper-side):
+  - **owner** — everything, including member management, box setup/rm,
+    restore, rm prod.
+  - **shipper** — ship prod + previews, status/logs/why/exec, rollback,
+    secrets set, pin/unpin, rm previews. Not: member verbs, restore,
+    rm prod, box-level mutations.
+  - **agent** — ship/rollback/pin/exec on **preview envs only**;
+    status/logs/why/docs everywhere. Not: prod mutations, secret read
+    or set, rm, save/restore, shell.
+- Out-of-role → errcat `approval_required` carrying the request id and
+  the literal `ship approve <id>`; the helper mints the request into a
+  box-global queue; a `notify` event `approval_requested` fires with
+  the same payload. Approvals are one-shot and journaled.
+- Scope rule (AGENT.md verbatim): members and approvals belong to the
+  box; secrets, envs, and journals belong to the app. Per-app
+  membership is explicitly parked (a future role-scope extension, not
+  a redesign).
+- Storage: box-global members file under the state root mapping key
+  fingerprint → {name, role}; authorized_keys remains the key source.
+- Identity trust tiers (per RFD-0003 sequencing): **agent keys are
+  pinned server-side** — their authorized_keys entries carry a
+  restricted environment/forced-command so sshd itself fixes the
+  member identity and no shell is possible. Owner/shipper humans keep
+  plain keys; for them the helper trusts the client-passed member
+  identity (trust model: teammate, not process) — documented as such
+  in AGENT.md until the serve protocol earns its way in.
+- Journal records member + role on every mutation. The `.pub`-suffix
+  member-name nit from v0.1.1 is fixed in this arc.
+
+Acceptance (fake-vps unless noted): role matrix — agent ship to prod →
+`approval_required` with id; `ship approve <id>` → the same command
+succeeds exactly once; a second attempt re-requests; expired request
+refuses with a fresh-request remediation; bare `ship approve` lists
+pending with ids; shipper denied member add; owner unrestricted;
+`member add` default role is shipper; box setup first member is owner;
+agent-role key cannot open a shell (ssh attempt refused by
+forced-command); member ls shows roles; one new agent-eval scenario:
+recover from `approval_required` via the oracle approving. Tag v0.2.0
+when green on a real-box role round-trip.
