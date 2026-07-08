@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.2.0
+
+Members with roles — the trust layer the resident depends on.
+
+### Added
+
+- Three fixed roles (`owner`, `shipper`, `agent`) on `ship member add
+  --role`, default `shipper`; `box setup` enrolls the first member as
+  `owner`. `member ls` shows roles.
+- Helper-enforced role matrix: owner unrestricted; shipper runs the
+  daily loop but not member management, restore, or rm prod; agent
+  gets preview-only mutations and reads everywhere.
+- Approval loop: an out-of-role request mints a 15-minute request and
+  returns `approval_required` with the literal `ship approve <id>`;
+  bare `ship approve` lists pending, `ship approve <id>` grants
+  one-shot (owner/shipper only); a `notify` event `approval_requested`
+  carries the command. Expiry is the only deny.
+- Agent keys are pinned by sshd: their authorized_keys entries carry a
+  forced `agent-shell` command that fixes the member identity, allows
+  only the ship protocol and jailed deploy staging, and refuses
+  interactive sessions, arbitrary commands, and injection attempts.
+- Eval scenario 7: an agent recovering from `approval_required` via a
+  human approve.
+- Host-only box addressing with a hand-editable `~/.config/ship/boxes`
+  memo; targetless box verbs refuse and list known boxes.
+
+### Changed
+
+- `box setup` narration prints decisions and non-defaults only — no
+  internal unix users, no duplicate header, no default-off lines.
+- `ship.toml` `box` is a host (`box = "1.2.3.4"`); `user@host` is a
+  manifest error. `deploy@` is gone from every suggestion and doc.
+
 ## v0.1.1
 
 The first-contact release, driven by real first-time usage.
