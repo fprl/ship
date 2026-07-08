@@ -177,6 +177,7 @@ func codedExitCode(code errcat.Code) int {
 		errcat.CodeMultiProcessNoWebRoute,
 		errcat.CodeInvalidSecretKey,
 		errcat.CodeLogsFollowJSONConflict,
+		errcat.CodeDotenvMalformed,
 		errcat.CodeBoxTargetRequired,
 		errcat.CodeInvalidBoxTarget:
 		return 2

@@ -170,12 +170,12 @@ Secret scoping:
 - Common error codes: `manifest_invalid`, `ssh_unreachable`, `operation_failed`
 
 ### `secret set`
-- Purpose: Read a secret value from stdin and store it on the host.
-- Usage: `ship secret set <KEY> [--preview|--branch <name>] [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `KEY`: Environment variable name, matching ^[A-Za-z_][A-Za-z0-9_]*$; `--preview`: Store the shared Preview value; `--branch <name>`: Store the value for one branch Preview environment.
-- Notes: Values are stdin-only and are never echoed, placed in argv, or written into the repo.
+- Purpose: Read one secret value from stdin or bulk-import dotenv KEY=VALUE pairs.
+- Usage: `ship secret set (<KEY>|--from <path> [--replace]) [--preview|--branch <name>] [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `KEY`: Environment variable name, matching ^[A-Za-z_][A-Za-z0-9_]*$; `--preview`: Store the shared Preview value; `--branch <name>`: Store the value for one branch Preview environment; `--from <path>`: Bulk import dotenv KEY=VALUE pairs from a file. Cannot be combined with KEY; `--replace`: With --from, make the file authoritative for the selected scope and remove omitted keys.
+- Notes: Single-value mode reads the value from stdin. Bulk mode reads values from the file path; values are never echoed, placed in argv, or written into the repo. Bulk dotenv rules: blank lines and full-line # comments are ignored; an `export ` prefix is accepted; unquoted values are trimmed; matching single or double quotes around the whole value are stripped; inline # is treated as value text. Bulk merge is the default. `--replace` removes scope keys absent from the file and reports removed key names on stderr. Bulk stdout is empty.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `invalid_secret_key`, `secret_scope_conflict`, `unknown_preview_branch`, `operation_failed`
+- Common error codes: `usage_error`, `invalid_secret_key`, `dotenv_malformed`, `secret_scope_conflict`, `unknown_preview_branch`, `operation_failed`
 
 ### `secret ls`
 - Purpose: List secret keys for a scope. Values are never printed.
@@ -244,6 +244,14 @@ Secret scoping:
 - Exit codes: 0 success; 2 unknown verb or usage error.
 - Common error codes: `usage_error`
 
+### `completion`
+- Purpose: Emit a static shell completion script.
+- Usage: `ship completion <bash|zsh|fish>`
+- Arguments and flags: `bash|zsh|fish`: Shell to generate completions for.
+- Notes: Install bash: `ship completion bash > /etc/bash_completion.d/ship`. Install zsh: `mkdir -p ~/.zsh/completions && ship completion zsh > ~/.zsh/completions/_ship`. Install fish: `mkdir -p ~/.config/fish/completions && ship completion fish > ~/.config/fish/completions/ship.fish`.
+- Exit codes: 0 success; 2 unsupported shell or usage error.
+- Common error codes: `usage_error`
+
 ### `version`
 - Purpose: Print the ship version.
 - Usage: `ship version`
@@ -295,6 +303,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `detached_head_requires_branch`: branch resolution failed; cause: HEAD is detached; pass --branch <name> so ship can resolve the environment; remediation: `{command}`.
 - `dirty_worktree`: Production ship failed; cause: production branch {branch} has uncommitted changes; remediation: `git add . && git commit -m "<message>"`.
 - `dockerfile_missing`: Dockerfile is missing; cause: manifest declares processes but is missing a Dockerfile; remediation: `ship init`.
+- `dotenv_malformed`: dotenv import failed; cause: {detail}; remediation: `{command}`; defaults: `command="ship secret set --from path/to/.env"`.
 - `dotenv_rejected`: deploy artifact contains dotenv files; cause: refusing to deploy dotenv file: {files}; remediation: `ship --include-dotenv`.
 - `env_invalid`: app environment preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `env_missing`: app environment preflight failed; cause: {detail}; remediation: `ship`.

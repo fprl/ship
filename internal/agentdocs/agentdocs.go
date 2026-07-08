@@ -44,6 +44,19 @@ func VerbNames() []string {
 	return out
 }
 
+func CompletionScript(shell string) (string, bool) {
+	switch shell {
+	case "bash":
+		return renderBashCompletion(), true
+	case "zsh":
+		return renderZshCompletion(), true
+	case "fish":
+		return renderFishCompletion(), true
+	default:
+		return "", false
+	}
+}
+
 func Lookup(verb string) (Verb, bool) {
 	verb = normalizeVerb(verb)
 	for _, item := range verbs {
@@ -285,6 +298,236 @@ func marshalIndentedNoEscape(value any) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+func completionVerbsJSON() string {
+	data, err := json.Marshal(VerbNames())
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+func renderBashCompletion() string {
+	var b strings.Builder
+	writeCompletionHeader(&b, "bash")
+	fmt.Fprintf(&b, "_ship_completion() {\n")
+	fmt.Fprintf(&b, "  local cur=\"${COMP_WORDS[COMP_CWORD]}\"\n")
+	fmt.Fprintf(&b, "  local top_commands=%q\n", strings.Join(topLevelCompletionCommands(), " "))
+	fmt.Fprintf(&b, "  local shell_commands=\"bash zsh fish\"\n")
+	writeBashFlagLocals(&b)
+	fmt.Fprintf(&b, "  if [[ $COMP_CWORD -eq 1 ]]; then\n")
+	fmt.Fprintf(&b, "    if [[ \"$cur\" == --* ]]; then COMPREPLY=( $(compgen -W \"$ship_flags\" -- \"$cur\") ); else COMPREPLY=( $(compgen -W \"$top_commands\" -- \"$cur\") ); fi\n")
+	fmt.Fprintf(&b, "    return\n")
+	fmt.Fprintf(&b, "  fi\n")
+	fmt.Fprintf(&b, "  case \"${COMP_WORDS[1]}\" in\n")
+	for _, parent := range topLevelCompletionCommands() {
+		children := completionChildren(parent)
+		if len(children) == 0 {
+			flags := bashFlagLocalName(parent)
+			fmt.Fprintf(&b, "    %s)\n", bashCaseWord(parent))
+			if parent == "completion" {
+				fmt.Fprintf(&b, "      COMPREPLY=( $(compgen -W \"$shell_commands\" -- \"$cur\") )\n")
+			} else {
+				fmt.Fprintf(&b, "      COMPREPLY=( $(compgen -W \"$%s\" -- \"$cur\") )\n", flags)
+			}
+			fmt.Fprintf(&b, "      return ;;\n")
+			continue
+		}
+		fmt.Fprintf(&b, "    %s)\n", bashCaseWord(parent))
+		fmt.Fprintf(&b, "      if [[ $COMP_CWORD -eq 2 ]]; then COMPREPLY=( $(compgen -W %q -- \"$cur\") ); return; fi\n", strings.Join(children, " "))
+		fmt.Fprintf(&b, "      case \"${COMP_WORDS[2]}\" in\n")
+		for _, child := range children {
+			verb := parent + " " + child
+			fmt.Fprintf(&b, "        %s) COMPREPLY=( $(compgen -W \"$%s\" -- \"$cur\") ); return ;;\n", bashCaseWord(child), bashFlagLocalName(verb))
+		}
+		if parent == "completion" {
+			fmt.Fprintf(&b, "        *) COMPREPLY=( $(compgen -W \"$shell_commands\" -- \"$cur\") ); return ;;\n")
+		}
+		fmt.Fprintf(&b, "      esac\n")
+		fmt.Fprintf(&b, "      ;;\n")
+	}
+	fmt.Fprintf(&b, "  esac\n")
+	fmt.Fprintf(&b, "}\n")
+	fmt.Fprintf(&b, "complete -F _ship_completion ship\n")
+	return b.String()
+}
+
+func renderZshCompletion() string {
+	var b strings.Builder
+	writeCompletionHeader(&b, "zsh")
+	b.WriteString("#compdef ship\n\n")
+	b.WriteString("_ship() {\n")
+	fmt.Fprintf(&b, "  local -a top_commands\n  top_commands=(%s)\n", strings.Join(shellWords(topLevelCompletionCommands()), " "))
+	b.WriteString("  if (( CURRENT == 2 )); then\n")
+	b.WriteString("    compadd -- $top_commands\n")
+	b.WriteString("    return\n")
+	b.WriteString("  fi\n")
+	b.WriteString("  case \"$words[2]\" in\n")
+	for _, parent := range topLevelCompletionCommands() {
+		children := completionChildren(parent)
+		if len(children) == 0 {
+			fmt.Fprintf(&b, "    %s)\n", bashCaseWord(parent))
+			if parent == "completion" {
+				fmt.Fprintf(&b, "      compadd -- 'bash' 'zsh' 'fish'\n")
+			} else {
+				fmt.Fprintf(&b, "      compadd -- %s\n", strings.Join(shellWords(completionFlagNames(parent)), " "))
+			}
+			b.WriteString("      return ;;\n")
+			continue
+		}
+		fmt.Fprintf(&b, "    %s)\n", bashCaseWord(parent))
+		b.WriteString("      if (( CURRENT == 3 )); then\n")
+		fmt.Fprintf(&b, "        compadd -- %s\n", strings.Join(shellWords(children), " "))
+		b.WriteString("        return\n")
+		b.WriteString("      fi\n")
+		b.WriteString("      case \"$words[3]\" in\n")
+		for _, child := range children {
+			verb := parent + " " + child
+			fmt.Fprintf(&b, "        %s) compadd -- %s; return ;;\n", bashCaseWord(child), strings.Join(shellWords(completionFlagNames(verb)), " "))
+		}
+		b.WriteString("      esac\n")
+		b.WriteString("      ;;\n")
+	}
+	b.WriteString("  esac\n")
+	b.WriteString("}\n\n")
+	b.WriteString("_ship \"$@\"\n")
+	return b.String()
+}
+
+func renderFishCompletion() string {
+	var b strings.Builder
+	writeCompletionHeader(&b, "fish")
+	b.WriteString("complete -c ship -f\n")
+	for _, flag := range completionFlagNames("ship") {
+		writeFishFlag(&b, "__fish_use_subcommand", flag)
+	}
+	for _, command := range topLevelCompletionCommands() {
+		verb, _ := Lookup(command)
+		fmt.Fprintf(&b, "complete -c ship -n __fish_use_subcommand -a %s -d %s\n", fishQuote(command), fishQuote(verb.Purpose))
+		for _, flag := range completionFlagNames(command) {
+			writeFishFlag(&b, "__fish_seen_subcommand_from "+command, flag)
+		}
+		if command == "completion" {
+			b.WriteString("complete -c ship -n '__fish_seen_subcommand_from completion' -a 'bash zsh fish'\n")
+		}
+		children := completionChildren(command)
+		if len(children) == 0 {
+			continue
+		}
+		condition := "__fish_seen_subcommand_from " + command + "; and not __fish_seen_subcommand_from " + strings.Join(children, " ")
+		for _, child := range children {
+			verb, _ := Lookup(command + " " + child)
+			fmt.Fprintf(&b, "complete -c ship -n %s -a %s -d %s\n", fishQuote(condition), fishQuote(child), fishQuote(verb.Purpose))
+			childCondition := "__fish_seen_subcommand_from " + command + "; and __fish_seen_subcommand_from " + child
+			for _, flag := range completionFlagNames(command + " " + child) {
+				writeFishFlag(&b, childCondition, flag)
+			}
+		}
+	}
+	return b.String()
+}
+
+func writeCompletionHeader(b *strings.Builder, shell string) {
+	fmt.Fprintf(b, "# ship %s completion\n", shell)
+	fmt.Fprintf(b, "# ship completion verbs-json: %s\n", completionVerbsJSON())
+	switch shell {
+	case "bash":
+		b.WriteString("# Install: ship completion bash > /etc/bash_completion.d/ship\n\n")
+	case "zsh":
+		b.WriteString("# Install: mkdir -p ~/.zsh/completions && ship completion zsh > ~/.zsh/completions/_ship\n\n")
+	case "fish":
+		b.WriteString("# Install: mkdir -p ~/.config/fish/completions && ship completion fish > ~/.config/fish/completions/ship.fish\n\n")
+	}
+}
+
+func writeBashFlagLocals(b *strings.Builder) {
+	fmt.Fprintf(b, "  local ship_flags=%q\n", strings.Join(completionFlagNames("ship"), " "))
+	for _, verb := range VerbNames() {
+		if verb == "ship" {
+			continue
+		}
+		fmt.Fprintf(b, "  local %s=%q\n", bashFlagLocalName(verb), strings.Join(completionFlagNames(verb), " "))
+	}
+}
+
+func topLevelCompletionCommands() []string {
+	seen := map[string]bool{}
+	for _, verb := range VerbNames() {
+		if verb == "ship" {
+			continue
+		}
+		first := strings.Fields(verb)[0]
+		seen[first] = true
+	}
+	return sortedMapKeys(seen)
+}
+
+func completionChildren(parent string) []string {
+	seen := map[string]bool{}
+	for _, verb := range VerbNames() {
+		parts := strings.Fields(verb)
+		if len(parts) != 2 || parts[0] != parent {
+			continue
+		}
+		seen[parts[1]] = true
+	}
+	return sortedMapKeys(seen)
+}
+
+func completionFlagNames(verb string) []string {
+	item, ok := Lookup(verb)
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, flag := range item.Flags {
+		for _, name := range strings.Split(flag.Name, " / ") {
+			name = strings.TrimSpace(name)
+			if strings.HasPrefix(name, "--") {
+				seen[name] = true
+			}
+		}
+	}
+	return sortedMapKeys(seen)
+}
+
+func sortedMapKeys(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func bashFlagLocalName(verb string) string {
+	return strings.NewReplacer(" ", "_", "-", "_").Replace(verb) + "_flags"
+}
+
+func bashCaseWord(value string) string {
+	return strings.ReplaceAll(value, "'", "'\\''")
+}
+
+func shellWords(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, shellQuote(value))
+	}
+	return out
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func fishQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "\\'") + "'"
+}
+
+func writeFishFlag(b *strings.Builder, condition, flag string) {
+	flag = strings.TrimPrefix(flag, "--")
+	fmt.Fprintf(b, "complete -c ship -n %s -l %s\n", fishQuote(condition), fishQuote(flag))
+}
+
 var configFlag = Flag{Name: "--config", Value: "<path>", Default: "ship.toml", Purpose: "Path to the app manifest."}
 
 var normalExit = "0 success; 1 operation failed with an error object when available; 2 usage or manifest error."
@@ -451,17 +694,23 @@ var verbs = []Verb{
 	},
 	{
 		Verb:    "secret set",
-		Purpose: "Read a secret value from stdin and store it on the host.",
-		Usage:   "ship secret set <KEY> [--preview|--branch <name>] [--config <path>]",
+		Purpose: "Read one secret value from stdin or bulk-import dotenv KEY=VALUE pairs.",
+		Usage:   "ship secret set (<KEY>|--from <path> [--replace]) [--preview|--branch <name>] [--config <path>]",
 		Flags: []Flag{
 			configFlag,
 			{Name: "KEY", Purpose: "Environment variable name, matching ^[A-Za-z_][A-Za-z0-9_]*$."},
 			{Name: "--preview", Purpose: "Store the shared Preview value."},
 			{Name: "--branch", Value: "<name>", Purpose: "Store the value for one branch Preview environment."},
+			{Name: "--from", Value: "<path>", Purpose: "Bulk import dotenv KEY=VALUE pairs from a file. Cannot be combined with KEY."},
+			{Name: "--replace", Purpose: "With --from, make the file authoritative for the selected scope and remove omitted keys."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"invalid_secret_key", "secret_scope_conflict", "unknown_preview_branch", "operation_failed"},
-		Notes:     []string{"Values are stdin-only and are never echoed, placed in argv, or written into the repo."},
+		Errors:    []string{"usage_error", "invalid_secret_key", "dotenv_malformed", "secret_scope_conflict", "unknown_preview_branch", "operation_failed"},
+		Notes: []string{
+			"Single-value mode reads the value from stdin. Bulk mode reads values from the file path; values are never echoed, placed in argv, or written into the repo.",
+			"Bulk dotenv rules: blank lines and full-line # comments are ignored; an `export ` prefix is accepted; unquoted values are trimmed; matching single or double quotes around the whole value are stripped; inline # is treated as value text.",
+			"Bulk merge is the default. `--replace` removes scope keys absent from the file and reports removed key names on stderr. Bulk stdout is empty.",
+		},
 	},
 	{
 		Verb:    "secret ls",
@@ -598,6 +847,21 @@ var verbs = []Verb{
 		),
 		ExitCodes: "0 success; 2 unknown verb or usage error.",
 		Errors:    []string{"usage_error"},
+	},
+	{
+		Verb:    "completion",
+		Purpose: "Emit a static shell completion script.",
+		Usage:   "ship completion <bash|zsh|fish>",
+		Flags: []Flag{
+			{Name: "bash|zsh|fish", Purpose: "Shell to generate completions for."},
+		},
+		ExitCodes: "0 success; 2 unsupported shell or usage error.",
+		Errors:    []string{"usage_error"},
+		Notes: []string{
+			"Install bash: `ship completion bash > /etc/bash_completion.d/ship`.",
+			"Install zsh: `mkdir -p ~/.zsh/completions && ship completion zsh > ~/.zsh/completions/_ship`.",
+			"Install fish: `mkdir -p ~/.config/fish/completions && ship completion fish > ~/.config/fish/completions/ship.fish`.",
+		},
 	},
 	{
 		Verb:      "version",

@@ -63,6 +63,9 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"secret", "set", "DATABASE_URL"},
 		{"secret", "set", "DATABASE_URL", "--preview"},
 		{"secret", "set", "DATABASE_URL", "--branch", "feat/x"},
+		{"secret", "set", "--from", ".env"},
+		{"secret", "set", "--from", ".env", "--replace", "--preview"},
+		{"secret", "set", "--from", ".env", "--branch", "feat/x"},
 		{"secret", "ls"},
 		{"secret", "ls", "--json"},
 		{"secret", "ls", "--preview"},
@@ -85,6 +88,10 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"help", "status"},
 		{"help", "status", "--json"},
 		{"help", "secret", "ls", "--json"},
+		{"help", "completion", "--json"},
+		{"completion", "bash"},
+		{"completion", "zsh"},
+		{"completion", "fish"},
 		{"version"},
 	}
 	for _, tt := range tests {
@@ -192,7 +199,7 @@ func TestAgentDocsErrcatDrift(t *testing.T) {
 func TestAgentDocsVerbDrift(t *testing.T) {
 	section := markdownSection(t, embeddedAgentDocs, "<!-- BEGIN VERBS -->", "<!-- END VERBS -->")
 	got := regexCaptures(t, section, regexp.MustCompile("(?m)^### `([^`]+)`$"))
-	want := parserPublicVerbs(t)
+	want := documentedParserVerbs(t)
 	assertSameStrings(t, got, want)
 	assertSameStrings(t, agentdocs.VerbNames(), want)
 }
@@ -208,7 +215,7 @@ func TestShipDocsSmoke(t *testing.T) {
 }
 
 func TestShipHelpJSONForEveryPublicVerb(t *testing.T) {
-	for _, verb := range parserPublicVerbs(t) {
+	for _, verb := range documentedParserVerbs(t) {
 		t.Run(strings.ReplaceAll(verb, " ", "_"), func(t *testing.T) {
 			args := append([]string{"help"}, strings.Fields(verb)...)
 			args = append(args, "--json")
@@ -236,6 +243,51 @@ func TestShipHelpJSONForEveryPublicVerb(t *testing.T) {
 	}
 }
 
+func TestCompletionScriptsUseAgentDocsVerbs(t *testing.T) {
+	want := agentdocs.VerbNames()
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		t.Run(shell, func(t *testing.T) {
+			script, ok := agentdocs.CompletionScript(shell)
+			if !ok {
+				t.Fatalf("missing completion script for %s", shell)
+			}
+			got := completionScriptVerbMetadata(t, script)
+			assertSameStrings(t, got, want)
+			for _, command := range []string{"secret", "box", "completion"} {
+				if !strings.Contains(script, command) {
+					t.Fatalf("%s completion should mention %q:\n%s", shell, command, script)
+				}
+			}
+		})
+	}
+}
+
+func TestCompletionHelpMentionsInstallLines(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	parser, err := kong.New(
+		&cli{},
+		kong.Name("ship"),
+		kong.ExplicitGroups(cliCommandGroups()),
+		kong.ConfigureHelp(kong.HelpOptions{NoExpandSubcommands: true}),
+		kong.Exit(func(int) {}),
+		kong.Writers(&stdout, &stderr),
+	)
+	if err != nil {
+		t.Fatalf("parser setup failed: %v", err)
+	}
+	_, _ = parser.Parse([]string{"completion", "--help"})
+	text := strings.Join(strings.Fields(stdout.String()+stderr.String()), " ")
+	for _, want := range []string{
+		"ship completion bash > /etc/bash_completion.d/ship",
+		"ship completion zsh > ~/.zsh/completions/_ship",
+		"ship completion fish > ~/.config/fish/completions/ship.fish",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("completion help should mention %q, got:\n%s", want, text)
+		}
+	}
+}
+
 func TestCLIArgsShowsHelpForNoArgsOutsideApp(t *testing.T) {
 	got := cliArgs(nil)
 	if len(got) != 1 || got[0] != "--help" {
@@ -257,6 +309,27 @@ func parserPublicVerbs(t *testing.T) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func documentedParserVerbs(t *testing.T) []string {
+	t.Helper()
+	out := parserPublicVerbs(t)
+	out = append(out, "completion")
+	sort.Strings(out)
+	return out
+}
+
+func completionScriptVerbMetadata(t *testing.T, script string) []string {
+	t.Helper()
+	matches := regexp.MustCompile(`(?m)^# ship completion verbs-json: (.+)$`).FindStringSubmatch(script)
+	if len(matches) != 2 {
+		t.Fatalf("completion script missing verbs metadata:\n%s", script)
+	}
+	var verbs []string
+	if err := json.Unmarshal([]byte(matches[1]), &verbs); err != nil {
+		t.Fatalf("completion verbs metadata is invalid JSON: %v\n%s", err, matches[1])
+	}
+	return verbs
 }
 
 func collectPublicCommandLeaves(node *kong.Node, path []string, out map[string]bool) {

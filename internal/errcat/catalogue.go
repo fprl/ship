@@ -45,6 +45,7 @@ const (
 	CodeGitHubKeysUnavailable             Code = "github_keys_unavailable"
 	CodeSSHPublicKeyInvalid               Code = "ssh_public_key_invalid"
 	CodeDotenvRejected                    Code = "dotenv_rejected"
+	CodeDotenvMalformed                   Code = "dotenv_malformed"
 	CodeHostNotInstalled                  Code = "host_not_installed"
 	CodeHostInvalid                       Code = "host_invalid"
 	CodeMissingTool                       Code = "missing_tool"
@@ -274,6 +275,13 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "deploy artifact contains dotenv files",
 		CauseTemplate:       "refusing to deploy dotenv file: {files}",
 		RemediationTemplate: "ship --include-dotenv",
+	},
+	CodeDotenvMalformed: {
+		Code:                CodeDotenvMalformed,
+		MessageTemplate:     "dotenv import failed",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "{command}",
+		Defaults:            Fields{"command": "ship secret set --from path/to/.env"},
 	},
 	CodeHostNotInstalled: {
 		Code:                CodeHostNotInstalled,

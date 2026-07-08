@@ -72,6 +72,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("mixed container and static routes deploy as one release", env.testMixedContainerStaticLifecycle)
 	t.Run("@secret refs resolve through set/list/rm into the runtime env", env.testSecretLifecycle)
 	t.Run("preview secret scoping isolation", env.testPreviewSecretScoping)
+	t.Run("secret bulk import merge replace and preview scope", env.testSecretBulkImport)
 	t.Run("preview env overlay applies before secret resolution", env.testPreviewEnvOverlay)
 	t.Run("exec runs one-off commands in the release environment", env.testExec)
 	t.Run("status + logs surface deployed processes without SSHing in", env.testStatusAndLogs)
@@ -1381,6 +1382,134 @@ web = { port = 3000 }
 	assertContains(t, envFile, "API_TOKEN=shared-preview-token\n")
 	if strings.Contains(envFile, "branch-token") || strings.Contains(envFile, "prod-token") {
 		t.Fatalf("branch rm should fall back to shared preview only:\n%s", envFile)
+	}
+}
+
+func (e *smokeEnv) testSecretBulkImport(t *testing.T) {
+	e.ensureSmokeHostSeed(t)
+
+	app := filepath.Join(e.tmp, "secret-bulk-import")
+	mustMkdir(t, app)
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "bulksec"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+
+[env]
+DATABASE_URL = "@secret"
+API_KEY = "@secret"
+
+[env.preview]
+DATABASE_URL = "sqlite://preview"
+PREVIEW_TOKEN = "@secret"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"bulksec.example.com" = "web"
+`)
+	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+
+	e.ship(t, app, []byte("legacy-secret"), "secret", "set", "LEGACY")
+	bulkEnv := filepath.Join(e.tmp, "bulk-import.env")
+	mustWrite(t, bulkEnv, `
+# full-line comment ignored
+export DATABASE_URL="postgres://bulk"
+API_KEY='bulk-api'
+`)
+	merge := e.runShip(t, app, nil, "secret", "set", "--from", bulkEnv)
+	if merge.err != nil {
+		t.Fatalf("bulk merge failed: %v\nstdout:\n%s\nstderr:\n%s", merge.err, merge.stdout, merge.stderr)
+	}
+	if merge.stdout != "" {
+		t.Fatalf("bulk merge stdout should be empty, got:\n%s", merge.stdout)
+	}
+	assertContains(t, merge.stderr, "set: API_KEY, DATABASE_URL")
+	assertContains(t, merge.stderr, "set 2, removed 0")
+	for _, leaked := range []string{"postgres://bulk", "bulk-api", "legacy-secret"} {
+		if strings.Contains(merge.stderr, leaked) {
+			t.Fatalf("bulk merge leaked secret value %q:\n%s", leaked, merge.stderr)
+		}
+	}
+	listing := e.ship(t, app, nil, "secret", "ls")
+	for _, want := range []string{"API_KEY", "DATABASE_URL", "LEGACY"} {
+		assertContains(t, listing, want)
+	}
+
+	e.ship(t, app, nil)
+	prodEnv := e.dockerExec(t, "cat "+identity.EnvFile("bulksec", productionEnv))
+	assertContains(t, prodEnv, "DATABASE_URL=postgres://bulk\n")
+	assertContains(t, prodEnv, "API_KEY=bulk-api\n")
+
+	replaceEnv := filepath.Join(e.tmp, "bulk-replace.env")
+	mustWrite(t, replaceEnv, `
+DATABASE_URL=postgres://replacement
+NEW_KEY=new-secret
+`)
+	replace := e.runShip(t, app, nil, "secret", "set", "--from", replaceEnv, "--replace")
+	if replace.err != nil {
+		t.Fatalf("bulk replace failed: %v\nstdout:\n%s\nstderr:\n%s", replace.err, replace.stdout, replace.stderr)
+	}
+	if replace.stdout != "" {
+		t.Fatalf("bulk replace stdout should be empty, got:\n%s", replace.stdout)
+	}
+	assertContains(t, replace.stderr, "set: DATABASE_URL, NEW_KEY")
+	assertContains(t, replace.stderr, "removed: API_KEY, LEGACY")
+	assertContains(t, replace.stderr, "set 2, removed 2")
+	if strings.Contains(replace.stderr, "postgres://replacement") || strings.Contains(replace.stderr, "new-secret") {
+		t.Fatalf("bulk replace leaked a secret value:\n%s", replace.stderr)
+	}
+	listing = e.ship(t, app, nil, "secret", "ls")
+	for _, want := range []string{"DATABASE_URL", "NEW_KEY"} {
+		assertContains(t, listing, want)
+	}
+	for _, removed := range []string{"API_KEY", "LEGACY"} {
+		if strings.Contains(listing, removed) {
+			t.Fatalf("bulk replace did not remove %s:\n%s", removed, listing)
+		}
+	}
+
+	badEnv := filepath.Join(e.tmp, "bad-bulk.env")
+	mustWrite(t, badEnv, "GOOD=should-not-write\nbroken line\n")
+	bad := e.runShip(t, app, nil, "secret", "set", "--from", badEnv)
+	if bad.err == nil {
+		t.Fatal("malformed dotenv import should fail")
+	}
+	assertContains(t, bad.stderr+bad.stdout, "bad-bulk.env:2: expected KEY=VALUE")
+	if strings.Contains(bad.stderr+bad.stdout, "should-not-write") {
+		t.Fatalf("malformed dotenv error leaked a value:\nstdout:\n%s\nstderr:\n%s", bad.stdout, bad.stderr)
+	}
+	listing = e.ship(t, app, nil, "secret", "ls")
+	if strings.Contains(listing, "GOOD") {
+		t.Fatalf("malformed dotenv import partially wrote GOOD:\n%s", listing)
+	}
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/bulk")
+	previewEnvPath := filepath.Join(e.tmp, "preview-bulk.env")
+	mustWrite(t, previewEnvPath, `
+API_KEY=preview-api
+PREVIEW_TOKEN='preview-token'
+`)
+	previewImport := e.runShip(t, app, nil, "secret", "set", "--from", previewEnvPath, "--preview")
+	if previewImport.err != nil {
+		t.Fatalf("preview bulk import failed: %v\nstdout:\n%s\nstderr:\n%s", previewImport.err, previewImport.stdout, previewImport.stderr)
+	}
+	if previewImport.stdout != "" {
+		t.Fatalf("preview bulk import stdout should be empty, got:\n%s", previewImport.stdout)
+	}
+	e.ship(t, app, nil, "--tls", "internal")
+	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "bulksec", "feature/bulk")
+	previewEnvFile := e.dockerExec(t, "cat "+identity.EnvFile("bulksec", previewEnv))
+	assertContains(t, previewEnvFile, "DATABASE_URL=sqlite://preview\n")
+	assertContains(t, previewEnvFile, "API_KEY=preview-api\n")
+	assertContains(t, previewEnvFile, "PREVIEW_TOKEN=preview-token\n")
+	if strings.Contains(previewEnvFile, "postgres://replacement") || strings.Contains(previewEnvFile, "new-secret") {
+		t.Fatalf("preview deploy resolved Production secrets:\n%s", previewEnvFile)
 	}
 }
 

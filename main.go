@@ -19,25 +19,26 @@ import (
 // purpose; host mutation goes through the privileged helper and runtime
 // truth comes from manifest snapshots, identity files, and Podman labels.
 type cli struct {
-	Ship     shipCmd          `cmd:"" default:"withargs" hidden:"" group:"project" help:"Deploy the current branch."`
-	Init     initCmd          `cmd:"" group:"project" help:"Create local project files and a ship.toml manifest."`
-	Status   statusCmd        `cmd:"" group:"project" help:"Show all live environments for this app."`
-	Logs     logsCmd          `cmd:"" group:"project" help:"Tail logs for the current branch environment."`
-	Exec     execCmd          `cmd:"" group:"project" help:"Run a one-off command in the current branch environment."`
-	Why      whyCmd           `cmd:"" group:"project" help:"Explain the latest deploy outcome for the current branch environment."`
-	Rollback rollbackCmd      `cmd:"" group:"project" help:"Roll back the current branch environment."`
-	Rm       rmCmd            `cmd:"rm" group:"project" help:"Remove an environment by branch name."`
-	Pin      pinCmd           `cmd:"" group:"project" help:"Pin a preview environment so the reaper leaves it running."`
-	Unpin    unpinCmd         `cmd:"" group:"project" help:"Unpin a preview environment so normal expiry applies."`
-	Save     saveCmd          `cmd:"" group:"project" help:"Create a backup for the current branch environment."`
-	Restore  restoreCmd       `cmd:"" group:"project" help:"Restore the current branch environment from a backup."`
-	SSH      sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the box."`
-	Secret   secretCmd        `cmd:"" group:"project" help:"Manage secrets for the current branch environment."`
-	Box      boxCmd           `cmd:"" group:"host" help:"Install or inspect a ship box."`
-	Docs     docsCmd          `cmd:"" group:"global" help:"Print the agent contract."`
-	Help     helpCmd          `cmd:"" group:"global" help:"Show usage for one verb."`
-	Version  versionCmd       `cmd:"" group:"global" help:"Print the ship version."`
-	Server   helper.ServerCmd `cmd:"" hidden:"" group:"global" help:"Privileged host API."`
+	Ship       shipCmd          `cmd:"" default:"withargs" hidden:"" group:"project" help:"Deploy the current branch."`
+	Init       initCmd          `cmd:"" group:"project" help:"Create local project files and a ship.toml manifest."`
+	Status     statusCmd        `cmd:"" group:"project" help:"Show all live environments for this app."`
+	Logs       logsCmd          `cmd:"" group:"project" help:"Tail logs for the current branch environment."`
+	Exec       execCmd          `cmd:"" group:"project" help:"Run a one-off command in the current branch environment."`
+	Why        whyCmd           `cmd:"" group:"project" help:"Explain the latest deploy outcome for the current branch environment."`
+	Rollback   rollbackCmd      `cmd:"" group:"project" help:"Roll back the current branch environment."`
+	Rm         rmCmd            `cmd:"rm" group:"project" help:"Remove an environment by branch name."`
+	Pin        pinCmd           `cmd:"" group:"project" help:"Pin a preview environment so the reaper leaves it running."`
+	Unpin      unpinCmd         `cmd:"" group:"project" help:"Unpin a preview environment so normal expiry applies."`
+	Save       saveCmd          `cmd:"" group:"project" help:"Create a backup for the current branch environment."`
+	Restore    restoreCmd       `cmd:"" group:"project" help:"Restore the current branch environment from a backup."`
+	SSH        sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the box."`
+	Secret     secretCmd        `cmd:"" group:"project" help:"Manage secrets for the current branch environment."`
+	Box        boxCmd           `cmd:"" group:"host" help:"Install or inspect a ship box."`
+	Docs       docsCmd          `cmd:"" group:"global" help:"Print the agent contract."`
+	Help       helpCmd          `cmd:"" group:"global" help:"Show usage for one verb."`
+	Completion completionCmd    `cmd:"" hidden:"" group:"global" help:"Emit shell completions. Install: bash: ship completion bash > /etc/bash_completion.d/ship; zsh: ship completion zsh > ~/.zsh/completions/_ship; fish: ship completion fish > ~/.config/fish/completions/ship.fish."`
+	Version    versionCmd       `cmd:"" group:"global" help:"Print the ship version."`
+	Server     helper.ServerCmd `cmd:"" hidden:"" group:"global" help:"Privileged host API."`
 }
 
 func cliCommandGroups() []kong.Group {
@@ -309,7 +310,9 @@ type secretSetCmd struct {
 	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Preview bool   `name:"preview" help:"Store the shared Preview value."`
 	Branch  string `name:"branch" help:"Store the value for one branch Preview env."`
-	Key     string `arg:"" help:"Env-var name (e.g., DATABASE_URL)."`
+	From    string `name:"from" type:"path" help:"Bulk import KEY=VALUE pairs from a dotenv file."`
+	Replace bool   `name:"replace" help:"Make the file authoritative for the selected scope; remove keys not present in --from."`
+	Key     string `arg:"" optional:"" help:"Env-var name (e.g., DATABASE_URL)."`
 }
 
 func (c secretSetCmd) Run() error {
@@ -317,7 +320,13 @@ func (c secretSetCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdSecretSet(root, c.Key, c.Preview, c.Branch)
+	client.CmdSecretSet(root, client.SecretSetOptions{
+		Key:     c.Key,
+		From:    c.From,
+		Preview: c.Preview,
+		Branch:  c.Branch,
+		Replace: c.Replace,
+	})
 	return nil
 }
 
