@@ -44,6 +44,8 @@ const (
 	CodeBoxRmConfirmationRequired         Code = "box_rm_confirmation_required"
 	CodeGitHubKeysUnavailable             Code = "github_keys_unavailable"
 	CodeSSHPublicKeyInvalid               Code = "ssh_public_key_invalid"
+	CodeMemberNotFound                    Code = "member_not_found"
+	CodeMemberLastKey                     Code = "member_last_key"
 	CodeDotenvRejected                    Code = "dotenv_rejected"
 	CodeDotenvMalformed                   Code = "dotenv_malformed"
 	CodeHostNotInstalled                  Code = "host_not_installed"
@@ -262,13 +264,25 @@ var catalogue = map[Code]Entry{
 		Code:                CodeGitHubKeysUnavailable,
 		MessageTemplate:     "GitHub SSH key lookup failed",
 		CauseTemplate:       "no public SSH keys found for GitHub user {user}",
-		RemediationTemplate: "ship box add-key <path-to-public-key>",
+		RemediationTemplate: "ship member add <path-to-public-key>",
 	},
 	CodeSSHPublicKeyInvalid: {
 		Code:                CodeSSHPublicKeyInvalid,
 		MessageTemplate:     "SSH public key is invalid",
 		CauseTemplate:       "{detail}",
-		RemediationTemplate: "ship box add-key <github-user|key|path>",
+		RemediationTemplate: "ship member add <github-user|key|path>",
+	},
+	CodeMemberNotFound: {
+		Code:                CodeMemberNotFound,
+		MessageTemplate:     "member rm failed",
+		CauseTemplate:       "no authorized keys found for member {name}; current members: {members}",
+		RemediationTemplate: "ship member ls",
+	},
+	CodeMemberLastKey: {
+		Code:                CodeMemberLastKey,
+		MessageTemplate:     "member rm refused",
+		CauseTemplate:       "removing {name} would remove the last remaining authorized key",
+		RemediationTemplate: "ship member add <github-user|key|path>",
 	},
 	CodeDotenvRejected: {
 		Code:                CodeDotenvRejected,

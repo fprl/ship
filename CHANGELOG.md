@@ -29,7 +29,7 @@ This is the v0.1.0 release draft for the ship product pivot.
   Preview never falls back to Production. `ship secret set --from <file>` adds
   dotenv bulk import with optional `--replace`.
 - Box fleet and access commands: `ship box ls`, `ship box rm`, and
-  `ship box add-key`.
+  `ship member add|ls|rm`.
 - `[env.preview]` manifest overlay for Preview-only environment variables.
 - `install.sh` for local CLI installation from GitHub release assets, with
   checksum verification and `latest` resolution through `fprl/ship`.

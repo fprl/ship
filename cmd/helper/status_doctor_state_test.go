@@ -287,7 +287,7 @@ func TestRecordDoctorRunPersistsChecksAndDelta(t *testing.T) {
 }
 
 func TestHelperSudoRegexRequiresServerSubtree(t *testing.T) {
-	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key add *"
+	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *"
 	if !HelperSudoRe.MatchString(good) {
 		t.Fatal("expected server subtree sudoers grant to match")
 	}
@@ -308,7 +308,7 @@ func setupDoctorSudoers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "operator"), []byte("operator ALL=(ALL) NOPASSWD:ALL\n"), 0440); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ship"), []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key add *\n"), 0440); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ship"), []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *\n"), 0440); err != nil {
 		t.Fatal(err)
 	}
 }

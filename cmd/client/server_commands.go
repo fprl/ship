@@ -84,6 +84,17 @@ func serverKeyAddCommand(comment string) string {
 	return serverCommand("key", "add", "--comment", comment)
 }
 
+func serverKeyListCommand(jsonFlag bool) string {
+	if jsonFlag {
+		return serverCommand("key", "ls", "--json")
+	}
+	return serverCommand("key", "ls")
+}
+
+func serverKeyRmCommand(name string) string {
+	return serverCommand("key", "rm", name)
+}
+
 func serverAppLogsCommand(appName, envName, process string, follow bool, tail int) string {
 	args := []string{"app", "logs"}
 	if follow {

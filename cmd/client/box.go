@@ -38,11 +38,11 @@ func CmdBoxLs(server string, jsonFlag bool) {
 	fmt.Print(out)
 }
 
-func CmdBoxAddKey(server, source string) {
+func CmdMemberAdd(server, source string) {
 	if !config.ValidateSshTarget(server) {
-		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "ship box add-key <github-user|key|path> deploy@example.com"}), 2)
+		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "fix ship.toml box"}), 2)
 	}
-	input, err := resolveBoxAddKeySource(source)
+	input, err := resolveMemberAddSource(source)
 	if err != nil {
 		utils.DieError(err, 1)
 	}
@@ -62,9 +62,61 @@ func CmdBoxAddKey(server, source string) {
 		}
 		detail := remote.Detail
 		if detail == "" {
-			detail = "add-key failed"
+			detail = "member add failed"
 		}
-		utils.DieError(operationError(detail, "ship box add-key "+source), 1)
+		utils.DieError(operationError(detail, "ship member add "+source), 1)
+	}
+	fmt.Print(stdout)
+}
+
+func CmdMemberLs(server string, jsonFlag bool) {
+	if !config.ValidateSshTarget(server) {
+		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "fix ship.toml box"}), 2)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer runner.Close()
+
+	stdout, stderr, code, err := runner.RunSSH(server, serverKeyListCommand(jsonFlag))
+	if err != nil || code != 0 {
+		remote := extractRemoteError(stdout, stderr, "")
+		if remote.Coded != nil {
+			writeRemoteStderr(stderr)
+			utils.DieError(remote.Coded, 1)
+		}
+		detail := remote.Detail
+		if detail == "" {
+			detail = "member ls failed"
+		}
+		utils.DieError(operationError(detail, "ship member ls"), 1)
+	}
+	fmt.Print(stdout)
+}
+
+func CmdMemberRm(server, name string) {
+	if !config.ValidateSshTarget(server) {
+		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "fix ship.toml box"}), 2)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer runner.Close()
+
+	stdout, stderr, code, err := runner.RunSSH(server, serverKeyRmCommand(name))
+	if err != nil || code != 0 {
+		remote := extractRemoteError(stdout, stderr, "")
+		if remote.Coded != nil {
+			writeRemoteStderr(stderr)
+			utils.DieError(remote.Coded, 1)
+		}
+		detail := remote.Detail
+		if detail == "" {
+			detail = "member rm failed"
+		}
+		utils.DieError(operationError(detail, "ship member rm "+name), 1)
 	}
 	fmt.Print(stdout)
 }
@@ -121,43 +173,43 @@ func CmdBoxDoctor(server string, jsonFlag bool) {
 	fmt.Print(stdout)
 }
 
-type boxAddKeyInput struct {
+type memberAddInput struct {
 	Comment string
 	Keys    []string
 }
 
 var githubUserRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
 
-func resolveBoxAddKeySource(source string) (boxAddKeyInput, error) {
+func resolveMemberAddSource(source string) (memberAddInput, error) {
 	source = strings.TrimSpace(source)
 	if source == "" {
-		return boxAddKeyInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "key source is empty"})
+		return memberAddInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "key source is empty"})
 	}
 	if strings.ContainsAny(source, "\r\n") {
-		return boxAddKeyInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "key source must be a single key, GitHub user, or .pub path"})
+		return memberAddInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "key source must be a single key, GitHub user, or .pub path"})
 	}
 	if looksLikeSSHPublicKey(source) {
 		keys, err := normalizeSSHPublicKeys(source, "")
-		return boxAddKeyInput{Comment: keyComment(keys), Keys: keys}, err
+		return memberAddInput{Comment: keyComment(keys), Keys: keys}, err
 	}
 	if path, isPath := resolvePublicKeyPath(source); isPath {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return boxAddKeyInput{}, operationError(fmt.Sprintf("read public key file %s: %v", source, err), "ship box add-key "+source)
+			return memberAddInput{}, operationError(fmt.Sprintf("read public key file %s: %v", source, err), "ship member add "+source)
 		}
 		comment := filepath.Base(path)
 		keys, err := normalizeSSHPublicKeys(string(data), comment)
-		return boxAddKeyInput{Comment: comment, Keys: keys}, err
+		return memberAddInput{Comment: comment, Keys: keys}, err
 	}
 	if !githubUserRe.MatchString(source) {
-		return boxAddKeyInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": fmt.Sprintf("%q is not a valid GitHub user, SSH public key, or .pub path", source)})
+		return memberAddInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": fmt.Sprintf("%q is not a valid GitHub user, SSH public key, or .pub path", source)})
 	}
 	keys, err := fetchGitHubPublicKeys(source)
 	if err != nil {
-		return boxAddKeyInput{}, err
+		return memberAddInput{}, err
 	}
 	normalized, err := normalizeSSHPublicKeys(keys, source)
-	return boxAddKeyInput{Comment: source, Keys: normalized}, err
+	return memberAddInput{Comment: source, Keys: normalized}, err
 }
 
 func resolvePublicKeyPath(source string) (string, bool) {
@@ -181,18 +233,18 @@ func fetchGitHubPublicKeys(user string) (string, error) {
 	client := http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		return "", operationError(fmt.Sprintf("fetch %s: %v", url, err), "ship box add-key "+user)
+		return "", operationError(fmt.Sprintf("fetch %s: %v", url, err), "ship member add "+user)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return "", errcat.New(errcat.CodeGitHubKeysUnavailable, errcat.Fields{"user": user})
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return "", operationError(fmt.Sprintf("fetch %s: HTTP %d", url, resp.StatusCode), "ship box add-key "+user)
+		return "", operationError(fmt.Sprintf("fetch %s: HTTP %d", url, resp.StatusCode), "ship member add "+user)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", operationError(fmt.Sprintf("read %s: %v", url, err), "ship box add-key "+user)
+		return "", operationError(fmt.Sprintf("read %s: %v", url, err), "ship member add "+user)
 	}
 	if strings.TrimSpace(string(data)) == "" {
 		return "", errcat.New(errcat.CodeGitHubKeysUnavailable, errcat.Fields{"user": user})
@@ -240,7 +292,7 @@ func normalizeSSHPublicKeyLine(line, forcedComment string) (string, error) {
 		comment = strings.Join(fields[2:], " ")
 	}
 	if comment == "" {
-		comment = "ship-box-add-key"
+		comment = "ship-member"
 	}
 	comment = strings.Join(strings.Fields(comment), " ")
 	return fields[0] + " " + fields[1] + " " + comment, nil
@@ -259,11 +311,11 @@ func supportedPublicKeyType(value string) bool {
 
 func keyComment(keys []string) string {
 	if len(keys) == 0 {
-		return "ship-box-add-key"
+		return "ship-member"
 	}
 	fields := strings.Fields(keys[0])
 	if len(fields) < 3 {
-		return "ship-box-add-key"
+		return "ship-member"
 	}
 	return strings.Join(fields[2:], " ")
 }

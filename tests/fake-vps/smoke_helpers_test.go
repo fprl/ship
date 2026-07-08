@@ -248,6 +248,7 @@ func (e *smokeEnv) runCommand(t *testing.T, dir string, extraEnv []string, stdin
 
 func (e *smokeEnv) commandEnv(extra []string) []string {
 	env := os.Environ()
+	env = h.SetEnv(env, "SHIP_HELPER_DIR", e.binDir)
 	if e.pathPrefix != "" {
 		env = h.SetEnv(env, "PATH", e.pathPrefix+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}

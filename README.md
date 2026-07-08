@@ -130,6 +130,21 @@ missing secret api_token for Preview branch "feature/secrets"
 next: ship secret set api_token [--preview|--branch <name>]
 ```
 
+## Teammates
+
+Authorize a teammate by GitHub username:
+
+```bash
+ship member add alice
+```
+
+You can also pass a literal public key or a `.pub` file:
+
+```bash
+ship member add ~/.ssh/alice.pub
+ship member ls
+```
+
 ## Failure
 
 When a deploy fails, the old release keeps serving until the new one passes its

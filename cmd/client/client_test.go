@@ -914,6 +914,9 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "secret rm", command: serverAppSecretRmCommand("api", "production", "DATABASE_URL")},
 		{name: "why", command: serverAppWhyCommand("api", "production")},
 		{name: "key add", command: serverKeyAddCommand("alice")},
+		{name: "key list text", command: serverKeyListCommand(false)},
+		{name: "key list json", command: serverKeyListCommand(true)},
+		{name: "key rm", command: serverKeyRmCommand("alice")},
 	}
 
 	for _, tt := range commands {
@@ -939,7 +942,7 @@ func serverSubcommandCoveredBySudoers(subcommand string) bool {
 	return strings.HasPrefix(subcommand, "app ") ||
 		subcommand == "doctor" ||
 		strings.HasPrefix(subcommand, "doctor ") ||
-		strings.HasPrefix(subcommand, "key add ")
+		strings.HasPrefix(subcommand, "key ")
 }
 
 func TestServerAppSetupEnvCommand(t *testing.T) {

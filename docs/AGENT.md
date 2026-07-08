@@ -199,13 +199,29 @@ Secret scoping:
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `invalid_box_target`, `operation_failed`
 
-### `box add-key`
-- Purpose: Authorize SSH public key access for the box deploy user.
-- Usage: `ship box add-key <github-user|key|path> [ssh-target]`
-- Arguments and flags: `github-user|key|path`: A GitHub username, literal SSH public key, or path to a .pub file; `ssh-target`: SSH target. Defaults to ship.toml box when run in an app directory.
-- Notes: Bare GitHub usernames fetch https://github.com/<user>.keys. Existing keys are deduplicated by key material.
+### `member add`
+- Purpose: Authorize SSH public key access for a deploy member.
+- Usage: `ship member add <github-user|key|path> [--config <path>]`
+- Arguments and flags: `github-user|key|path`: A GitHub username, literal SSH public key, or path to a .pub file; `--config <path>` default `ship.toml`: Path to the app manifest containing box.
+- Notes: Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or skipped, with key type and SHA256 fingerprint. Existing keys are deduplicated by key material.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `box_target_required`, `invalid_box_target`, `github_keys_unavailable`, `ssh_public_key_invalid`, `operation_failed`
+- Common error codes: `manifest_invalid`, `invalid_box_target`, `github_keys_unavailable`, `ssh_public_key_invalid`, `operation_failed`
+
+### `member ls`
+- Purpose: List deploy members from authorized_keys.
+- Usage: `ship member ls [--json] [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest containing box; `--json`: Emit structured JSON.
+- `--json` stdout schema: `{"members":[{"name":"alice","key_type":"ssh-ed25519","fingerprint":"SHA256:..."}]}`
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `manifest_invalid`, `invalid_box_target`, `operation_failed`
+
+### `member rm`
+- Purpose: Remove all SSH keys for a deploy member.
+- Usage: `ship member rm <name> [--config <path>]`
+- Arguments and flags: `name`: Member name, matching the authorized key comment; `--config <path>` default `ship.toml`: Path to the app manifest containing box.
+- Notes: Removes every key whose comment equals the member name. Refuses to remove the last remaining authorized key.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `manifest_invalid`, `invalid_box_target`, `member_not_found`, `member_last_key`, `operation_failed`
 
 ### `box doctor`
 - Purpose: Run box diagnostics.
@@ -307,7 +323,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `dotenv_rejected`: deploy artifact contains dotenv files; cause: refusing to deploy dotenv file: {files}; remediation: `ship --include-dotenv`.
 - `env_invalid`: app environment preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `env_missing`: app environment preflight failed; cause: {detail}; remediation: `ship`.
-- `github_keys_unavailable`: GitHub SSH key lookup failed; cause: no public SSH keys found for GitHub user {user}; remediation: `ship box add-key <path-to-public-key>`.
+- `github_keys_unavailable`: GitHub SSH key lookup failed; cause: no public SSH keys found for GitHub user {user}; remediation: `ship member add <path-to-public-key>`.
 - `host_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `host_not_installed`: host preflight failed; cause: host is not installed; remediation: `ship box init <ssh-target>`.
 - `ingress_invalid`: ingress preflight failed; cause: {detail}; remediation: `ship box doctor`.
@@ -315,6 +331,8 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `invalid_secret_key`: secret key is invalid; cause: secret key {key} must match ^[A-Za-z_][A-Za-z0-9_]*$; remediation: `ship secret set KEY`.
 - `logs_follow_json_conflict`: logs command is invalid; cause: logs --json cannot be combined with --follow; remediation: `ship logs`.
 - `manifest_invalid`: ship.toml validation failed; cause: {details}; remediation: `{command}`; defaults: `command="fix ship.toml"`.
+- `member_last_key`: member rm refused; cause: removing {name} would remove the last remaining authorized key; remediation: `ship member add <github-user|key|path>`.
+- `member_not_found`: member rm failed; cause: no authorized keys found for member {name}; current members: {members}; remediation: `ship member ls`.
 - `missing_tool`: host preflight failed; cause: missing host tool: {tool}; remediation: `ship box init <ssh-target>`.
 - `multi_process_no_web_route`: route synthesis failed; cause: manifest declares multiple processes but no [routes] host and no process named "web"; remediation: `fix ship.toml`.
 - `no_deploys`: deploy journal lookup failed; cause: no deploys recorded for {app} ({env}); remediation: `ship`.
@@ -330,7 +348,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `secret_missing`: deploy is missing a required secret; cause: missing secret {secret} for {scope}; remediation: `{command}`.
 - `secret_read_error`: secret preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `secret_scope_conflict`: secret scope is invalid; cause: --preview and --branch cannot be combined; remediation: `{command}`; defaults: `command="ship secret set KEY --preview"`.
-- `ssh_public_key_invalid`: SSH public key is invalid; cause: {detail}; remediation: `ship box add-key <github-user|key|path>`.
+- `ssh_public_key_invalid`: SSH public key is invalid; cause: {detail}; remediation: `ship member add <github-user|key|path>`.
 - `ssh_unreachable`: box preflight failed; cause: SSH failed for {target}: {detail}; remediation: `ssh {target}`.
 - `unknown_preview_branch`: preview environment lookup failed; cause: no preview environment is mapped for branch {branch}; remediation: `{command}`; defaults: `command="git checkout <branch> && ship"`.
 - `unmappable_branch_name`: branch resolution failed; cause: branch {branch} does not produce a valid environment name; remediation: `git branch -m <new-name>`.

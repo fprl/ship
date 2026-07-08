@@ -75,14 +75,16 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"secret", "rm", "DATABASE_URL", "--branch", "feat/x"},
 		{"ssh"},
 		{"box", "init", "deploy@example.com"},
-		{"box", "add-key", "alice"},
-		{"box", "add-key", "alice", "deploy@example.com"},
 		{"box", "doctor", "deploy@example.com"},
 		{"box", "doctor", "deploy@example.com", "--json"},
 		{"box", "ls", "deploy@example.com"},
 		{"box", "ls", "deploy@example.com", "--json"},
 		{"box", "rm", "api", "--confirm", "api"},
 		{"box", "rm", "api", "deploy@example.com", "--confirm", "api"},
+		{"member", "add", "alice"},
+		{"member", "ls"},
+		{"member", "ls", "--json"},
+		{"member", "rm", "alice"},
 		{"docs"},
 		{"help"},
 		{"help", "status"},
@@ -130,6 +132,7 @@ func TestPublicCLIRejectsRemovedCompatibilityForms(t *testing.T) {
 		{"destroy", "--env", "production"},
 		{"app", "list"},
 		{"host", "status"},
+		{"box", "add-key", "alice"},
 		{"box", "doctor", "--server", "deploy@example.com"},
 	}
 	for _, tt := range tests {
@@ -150,10 +153,13 @@ func TestBoxWithoutSubcommandShowsSubcommandHelp(t *testing.T) {
 	if strings.Contains(text, "--server") {
 		t.Fatalf("box without subcommand should not mention removed --server: %v", err)
 	}
-	for _, want := range []string{"init", "add-key", "doctor", "ls", "rm"} {
+	for _, want := range []string{"init", "doctor", "ls", "rm"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("box parse error should mention %q subcommand, got: %v", want, err)
 		}
+	}
+	if strings.Contains(text, "add-key") {
+		t.Fatalf("box parse error should not mention removed add-key subcommand, got: %v", err)
 	}
 }
 
@@ -174,7 +180,7 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	}
 	_, _ = parser.Parse([]string{"--help"})
 	text := stdout.String() + stderr.String()
-	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "pin", "unpin", "save", "restore", "ssh", "secret <command>", "box <command>", "docs", "help", "version"} {
+	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "pin", "unpin", "save", "restore", "ssh", "secret <command>", "box <command>", "member <command>", "docs", "help", "version"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("top-level help should mention %q, got:\n%s", want, text)
 		}
@@ -253,7 +259,7 @@ func TestCompletionScriptsUseAgentDocsVerbs(t *testing.T) {
 			}
 			got := completionScriptVerbMetadata(t, script)
 			assertSameStrings(t, got, want)
-			for _, command := range []string{"secret", "box", "completion"} {
+			for _, command := range []string{"secret", "box", "member", "completion"} {
 				if !strings.Contains(script, command) {
 					t.Fatalf("%s completion should mention %q:\n%s", shell, command, script)
 				}

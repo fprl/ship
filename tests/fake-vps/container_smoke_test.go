@@ -58,7 +58,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("notify webhook events", env.testNotifyWebhooks)
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
 	t.Run("phase 1 acceptance init ship branch and sslip", env.testPhase1AcceptanceAndZeroDNS)
-	t.Run("box add-key authorizes teammate ship", env.testBoxAddKey)
+	t.Run("member add ls rm manages deploy access", env.testMemberAccess)
 	t.Run("release command failure leaves old traffic unchanged", env.testReleaseCommandFailure)
 	t.Run("probe failure explains old traffic kept serving", env.testProbeFailureWhy)
 	t.Run("caddy switch failure restores runtime state", env.testCaddySwitchFailureRollback)
@@ -784,7 +784,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	e.dockerExec(t, "test -e "+identity.EnvRoot("previewapi", "prod"))
 }
 
-func (e *smokeEnv) testBoxAddKey(t *testing.T) {
+func (e *smokeEnv) testMemberAccess(t *testing.T) {
 	e.ensureSmokeHostSeed(t)
 	app := filepath.Join(e.tmp, "key-api")
 	mustMkdir(t, app)
@@ -808,17 +808,53 @@ web = { port = 3000 }
 	keyComment := filepath.Base(keyPath + ".pub")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", keyComment, "-f", keyPath)
 
-	out := e.ship(t, app, nil, "box", "add-key", keyPath+".pub")
-	assertContains(t, out, "Authorized 1 SSH key")
-	again := e.ship(t, app, nil, "box", "add-key", keyPath+".pub")
-	assertContains(t, again, "already authorized")
+	out := e.ship(t, app, nil, "member", "add", keyPath+".pub")
+	assertContains(t, out, "added "+keyComment+" ssh-ed25519 SHA256:")
+	addFields := strings.Fields(strings.TrimSpace(out))
+	if len(addFields) != 4 || addFields[0] != "added" || addFields[1] != keyComment || addFields[2] != "ssh-ed25519" {
+		t.Fatalf("unexpected member add output: %q", out)
+	}
+	fingerprint := addFields[3]
+	again := e.ship(t, app, nil, "member", "add", keyPath+".pub")
+	assertContains(t, again, "skipped "+keyComment+" ssh-ed25519 "+fingerprint+" (already authorized)")
 	authorized := e.dockerExec(t, "cat /home/deploy/.ssh/authorized_keys")
 	assertContains(t, authorized, keyComment)
 
+	list := e.ship(t, app, nil, "member", "ls")
+	assertContains(t, list, keyComment+" ssh-ed25519 "+fingerprint)
+	assertContains(t, list, "fake-vps-smoke ssh-ed25519 SHA256:")
+
+	var members struct {
+		Members []struct {
+			Name        string `json:"name"`
+			KeyType     string `json:"key_type"`
+			Fingerprint string `json:"fingerprint"`
+		} `json:"members"`
+	}
+	if err := json.Unmarshal([]byte(e.ship(t, app, nil, "member", "ls", "--json")), &members); err != nil {
+		t.Fatal(err)
+	}
+	foundMember := false
+	for _, member := range members.Members {
+		if member.Name == keyComment && member.KeyType == "ssh-ed25519" && member.Fingerprint == fingerprint {
+			foundMember = true
+		}
+	}
+	if !foundMember {
+		t.Fatalf("member ls --json missing added member: %+v", members.Members)
+	}
+
+	unknown := e.runShip(t, app, nil, "member", "rm", "ghost")
+	if unknown.err == nil {
+		t.Fatal("member rm unknown should fail")
+	}
+	assertContains(t, unknown.stderr, "member rm failed")
+	assertContains(t, unknown.stderr, "current members: fake-vps-smoke, "+keyComment)
+
 	teammatePrefix := e.configureSSHWithKey(t, keyPath)
 	oldPrefix := e.pathPrefix
-	e.pathPrefix = teammatePrefix
 	t.Cleanup(func() { e.pathPrefix = oldPrefix })
+	e.pathPrefix = teammatePrefix
 
 	url := strings.TrimSpace(e.ship(t, app, nil))
 	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, url)
@@ -826,6 +862,21 @@ web = { port = 3000 }
 	if status.ShippedBy == nil || status.ShippedBy.SSHKeyComment != keyComment {
 		t.Fatalf("ship with added key should attribute the teammate key, got %+v", status.ShippedBy)
 	}
+
+	rmOut := e.ship(t, app, nil, "member", "rm", keyComment)
+	assertContains(t, rmOut, "removed 1 SSH key for "+keyComment)
+	revoked := e.runShip(t, app, nil)
+	if revoked.err == nil {
+		t.Fatal("ship with removed member key should fail")
+	}
+	e.pathPrefix = oldPrefix
+
+	guard := e.runShip(t, app, nil, "member", "rm", "fake-vps-smoke")
+	if guard.err == nil {
+		t.Fatal("member rm should refuse to remove the last key")
+	}
+	assertContains(t, guard.stderr, "member rm refused")
+	assertContains(t, guard.stderr, "last remaining authorized key")
 }
 
 func (e *smokeEnv) testBoxRm(t *testing.T) {

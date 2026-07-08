@@ -99,13 +99,13 @@ ship
 Authorize a GitHub user's public SSH keys:
 
 ```bash
-ship box add-key alice deploy@203.0.113.7
+ship member add alice
 ```
 
 You can also pass a literal public key or a path to a `.pub` file:
 
 ```bash
-ship box add-key ~/.ssh/alice.pub deploy@203.0.113.7
+ship member add ~/.ssh/alice.pub
 ```
 
 ## 7. Back up and restore

@@ -34,6 +34,7 @@ type cli struct {
 	SSH        sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the box."`
 	Secret     secretCmd        `cmd:"" group:"project" help:"Manage secrets for the current branch environment."`
 	Box        boxCmd           `cmd:"" group:"host" help:"Install or inspect a ship box."`
+	Member     memberCmd        `cmd:"" group:"host" help:"Manage deploy SSH members."`
 	Docs       docsCmd          `cmd:"" group:"global" help:"Print the agent contract."`
 	Help       helpCmd          `cmd:"" group:"global" help:"Show usage for one verb."`
 	Completion completionCmd    `cmd:"" hidden:"" group:"global" help:"Emit shell completions. Install: bash: ship completion bash > /etc/bash_completion.d/ship; zsh: ship completion zsh > ~/.zsh/completions/_ship; fish: ship completion fish > ~/.config/fish/completions/ship.fish."`
@@ -364,25 +365,65 @@ func (c secretRmCmd) Run() error {
 
 type boxCmd struct {
 	Init   boxInitCmd   `cmd:"" help:"Install or converge a box."`
-	AddKey boxAddKeyCmd `cmd:"add-key" help:"Authorize an SSH public key for deploy access."`
 	Doctor boxDoctorCmd `cmd:"" help:"Run box diagnostics."`
 	Ls     boxLsCmd     `cmd:"ls" help:"List app environments visible on a box."`
 	Rm     boxRmCmd     `cmd:"rm" help:"Destroy an app and all its environments on a box."`
 }
 
-type boxAddKeyCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
-	Source string `arg:"" help:"GitHub username, SSH public key string, or path to a .pub file."`
-	Target string `arg:"" optional:"" help:"SSH target. Defaults to ship.toml box when run in an app dir."`
+type memberCmd struct {
+	Add memberAddCmd `cmd:"" help:"Authorize a member's SSH public key for deploy access."`
+	Ls  memberLsCmd  `cmd:"ls" help:"List authorized deploy members."`
+	Rm  memberRmCmd  `cmd:"rm" help:"Revoke a deploy member's SSH keys."`
 }
 
-func (c boxAddKeyCmd) Run() error {
-	target, err := boxTargetFor(c.Config, c.Target, "ship box add-key <github-user|key|path> <ssh-target>")
+type memberAddCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Source string `arg:"" help:"GitHub username, SSH public key string, or path to a .pub file."`
+}
+
+func (c memberAddCmd) Run() error {
+	target, err := memberTarget(c.Config)
 	if err != nil {
 		return err
 	}
-	client.CmdBoxAddKey(target, c.Source)
+	client.CmdMemberAdd(target, c.Source)
 	return nil
+}
+
+type memberLsCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	JSON   bool   `name:"json" help:"Emit structured JSON instead of plain text."`
+}
+
+func (c memberLsCmd) Run() error {
+	target, err := memberTarget(c.Config)
+	if err != nil {
+		return err
+	}
+	client.CmdMemberLs(target, c.JSON)
+	return nil
+}
+
+type memberRmCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Name   string `arg:"" help:"Member name to revoke."`
+}
+
+func (c memberRmCmd) Run() error {
+	target, err := memberTarget(c.Config)
+	if err != nil {
+		return err
+	}
+	client.CmdMemberRm(target, c.Name)
+	return nil
+}
+
+func memberTarget(configPath string) (string, error) {
+	root, err := projectAppRoot(configPath)
+	if err != nil {
+		return "", err
+	}
+	return client.BoxTarget(root)
 }
 
 type boxLsCmd struct {

@@ -777,16 +777,42 @@ var verbs = []Verb{
 		Errors:    []string{"invalid_box_target", "operation_failed"},
 	},
 	{
-		Verb:    "box add-key",
-		Purpose: "Authorize SSH public key access for the box deploy user.",
-		Usage:   "ship box add-key <github-user|key|path> [ssh-target]",
+		Verb:    "member add",
+		Purpose: "Authorize SSH public key access for a deploy member.",
+		Usage:   "ship member add <github-user|key|path> [--config <path>]",
 		Flags: []Flag{
 			{Name: "github-user|key|path", Purpose: "A GitHub username, literal SSH public key, or path to a .pub file."},
-			{Name: "ssh-target", Purpose: "SSH target. Defaults to ship.toml box when run in an app directory."},
+			{Name: "--config", Value: "<path>", Default: "ship.toml", Purpose: "Path to the app manifest containing box."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"box_target_required", "invalid_box_target", "github_keys_unavailable", "ssh_public_key_invalid", "operation_failed"},
-		Notes:     []string{"Bare GitHub usernames fetch https://github.com/<user>.keys. Existing keys are deduplicated by key material."},
+		Errors:    []string{"manifest_invalid", "invalid_box_target", "github_keys_unavailable", "ssh_public_key_invalid", "operation_failed"},
+		Notes:     []string{"Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or skipped, with key type and SHA256 fingerprint. Existing keys are deduplicated by key material."},
+	},
+	{
+		Verb:    "member ls",
+		Purpose: "List deploy members from authorized_keys.",
+		Usage:   "ship member ls [--json] [--config <path>]",
+		Flags: []Flag{
+			{Name: "--config", Value: "<path>", Default: "ship.toml", Purpose: "Path to the app manifest containing box."},
+			{Name: "--json", Purpose: "Emit structured JSON."},
+		},
+		JSONSchema: schema(
+			`{"members":[{"name":"alice","key_type":"ssh-ed25519","fingerprint":"SHA256:..."}]}`,
+		),
+		ExitCodes: normalExit,
+		Errors:    []string{"manifest_invalid", "invalid_box_target", "operation_failed"},
+	},
+	{
+		Verb:    "member rm",
+		Purpose: "Remove all SSH keys for a deploy member.",
+		Usage:   "ship member rm <name> [--config <path>]",
+		Flags: []Flag{
+			{Name: "name", Purpose: "Member name, matching the authorized key comment."},
+			{Name: "--config", Value: "<path>", Default: "ship.toml", Purpose: "Path to the app manifest containing box."},
+		},
+		ExitCodes: normalExit,
+		Errors:    []string{"manifest_invalid", "invalid_box_target", "member_not_found", "member_last_key", "operation_failed"},
+		Notes:     []string{"Removes every key whose comment equals the member name. Refuses to remove the last remaining authorized key."},
 	},
 	{
 		Verb:    "box doctor",
