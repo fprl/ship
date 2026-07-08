@@ -81,6 +81,10 @@ This RFD re-opens only that slice; CoW filesystems stay dropped.
 - Sanitization: an optional `fork_sanitize` command run inside the
   preview env against the forked data before its first release.
 - Refresh semantics: fork once at env creation, or re-fork on every ship?
+  Related (Franco, July 8): alongside the manifest opt-in there is an
+  on-demand verb — run from a branch, it forks prod's current `/data`
+  into this preview now; re-running refreshes. Surface name open
+  (`ship fork` vs a `data` noun).
 - Large `/data` (user uploads): copy budget, exclusion globs, or
   media-stays-shared conventions.
 - Disk pressure: fork sizes in `ship status`, a doctor check on
