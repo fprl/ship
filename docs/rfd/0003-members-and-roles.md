@@ -1,6 +1,6 @@
 # RFD-0003: Members — humans and agents as identities with roles
 
-**Status: draft, post-v1.** Extends `ship box add-key` (ship-spec Phase 3)
+**Status: draft, post-v1.** Extends the shipped `ship member add|ls|rm` identity surface
 and §7 attribution. Prerequisite for RFD-0002 (resident). Does not modify
 ship v1.
 
@@ -22,7 +22,9 @@ ship member ls [--json]
 ship member rm <name>
 ```
 
-`box add-key` is replaced by `member add` (no-compat rule, ship-spec §12).
+The identity surface (`member add|ls|rm`, July 8) shipped ahead of this
+RFD with every member implicitly full-access; this RFD adds `--role` and
+enforcement on top of it (no-compat rule, ship-spec §12).
 Consistent with the §12 tie-breaker: Vercel's surface is members with
 roles, not policy files.
 

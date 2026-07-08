@@ -209,8 +209,18 @@ ship secret ls [--json] / ship secret rm <KEY> [--preview|--branch <name>]
 ship save [--to path] / ship restore --from <id|path>   existing backup/restore
 ship ssh                  existing
 ship box init <ssh-target> [--ingress ...] [--admin ...]   existing host install
-ship box add-key <github-user|key|path>   authorize a teammate's SSH key
-                          (bare word → fetches github.com/<user>.keys)
+ship member add <github-user|key|path>   authorize a teammate's SSH key
+                          (bare word → fetches github.com/<user>.keys;
+                          prints type + SHA256 fingerprint per key
+                          added; dedupes; comment = member name, which
+                          feeds §7 attribution)
+ship member ls [--json]   authorized members: name, key type, SHA256
+                          fingerprint
+ship member rm <name>     revoke all of a member's keys; refuses to
+                          remove the last remaining key (lockout
+                          guard). Roles arrive post-v1 (RFD-0003);
+                          until then every member has full deploy
+                          access.
 ship box doctor [--json]  existing doctor, output upgraded per §9
 ship box ls [--json]      existing app list (explicit scope, works
                           anywhere); --json is the fleet view: per-app
@@ -354,7 +364,7 @@ not fail, since DNS may still be propagating.
   (prod value must not leak) and branch-value-over-shared-preview
   precedence; stdout-is-URL contract; `why` after induced release/probe
   failures; notify webhook fired (assert against a local HTTP sink);
-  sslip route synthesis; `box add-key` end-to-end (newly added key can
+  sslip route synthesis; `member add` end-to-end (newly added key can
   ship); `behind_production` stale-checkout guard; notify payload carries
   `why` + `remediation`; doctor timer fires notify on an induced degraded
   check; attribution (who shipped) present in status and journal.
@@ -384,7 +394,7 @@ bypasses the catalogue; `ship docs | wc -l` > 0 and drift test green.
 bulk import: `ship secret set --from .env [--preview|--branch <name>]`
 (merge by default; `--replace` makes the file authoritative for the
 scope and lists removed key names on stderr — never values);
-`box add-key`, `box rm <app>` + the `box ls --json` fleet view,
+`member add|ls|rm`, `box rm <app>` + the `box ls --json` fleet view,
 install one-liner (curl script — the only install story; a Homebrew
 tap is deliberately cut, deferred until users ask) + shell
 completions, README rewritten around the four moments (§0),
