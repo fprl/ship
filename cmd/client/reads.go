@@ -3,6 +3,7 @@ package client
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -70,7 +71,7 @@ type statusPayload struct {
 }
 
 type statusEnvJSON struct {
-	Kind       string              `json:"kind"`
+	Class      string              `json:"class"`
 	Branch     string              `json:"branch"`
 	URL        string              `json:"url"`
 	Env        string              `json:"env"`
@@ -264,8 +265,8 @@ func statusFromAppList(ctx *config.AppContext, raw string) (statusPayload, error
 		}
 	}
 	sort.Slice(payload.Envs, func(i, j int) bool {
-		if payload.Envs[i].Kind != payload.Envs[j].Kind {
-			return payload.Envs[i].Kind == "Production"
+		if payload.Envs[i].Class != payload.Envs[j].Class {
+			return payload.Envs[i].Class == "production"
 		}
 		return payload.Envs[i].Branch < payload.Envs[j].Branch
 	})
@@ -273,12 +274,12 @@ func statusFromAppList(ctx *config.AppContext, raw string) (statusPayload, error
 }
 
 func statusEnvFromFleetItem(ctx *config.AppContext, item fleetEnvJSON) statusEnvJSON {
-	kind := "Preview"
-	if item.Class == "production" {
-		kind = "Production"
+	class := item.Class
+	if class == "" {
+		class = "preview"
 	}
 	branch := item.Branch
-	if branch == "" && kind == "Production" {
+	if branch == "" && class == "production" {
 		branch = ctx.ProductionBranch
 	}
 	url := item.URL
@@ -286,7 +287,7 @@ func statusEnvFromFleetItem(ctx *config.AppContext, item fleetEnvJSON) statusEnv
 		url = deploymentURL(ctx, item.Env)
 	}
 	return statusEnvJSON{
-		Kind:       kind,
+		Class:      class,
 		Branch:     branch,
 		URL:        url,
 		Env:        item.Env,
@@ -327,18 +328,25 @@ func renderStatusSummary(payload statusPayload) string {
 		}
 		lifecycle := ""
 		switch {
-		case env.Kind == "Preview" && env.Pinned:
+		case env.Class == "preview" && env.Pinned:
 			lifecycle = " pinned"
-		case env.Kind == "Preview" && env.ExpiresAt != "":
+		case env.Class == "preview" && env.ExpiresAt != "":
 			lifecycle = " expires=" + env.ExpiresAt
 		}
 		shippedBy := ""
 		if env.ShippedBy != nil {
 			shippedBy = fmt.Sprintf("  shipped_by=%q ssh_key=%q", env.ShippedBy.GitAuthor, env.ShippedBy.SSHKeyComment)
 		}
-		fmt.Fprintf(&b, "%s %s  %s  release=%s  health=%s%s%s\n", env.Kind, env.Branch, env.URL, release, env.Health, lifecycle, shippedBy)
+		fmt.Fprintf(&b, "%s %s  %s  release=%s  health=%s%s%s\n", statusClassLabel(env.Class), env.Branch, env.URL, release, env.Health, lifecycle, shippedBy)
 	}
 	return b.String()
+}
+
+func statusClassLabel(class string) string {
+	if class == "production" {
+		return "Production"
+	}
+	return "Preview"
 }
 
 func CmdLogs(root string, process string, follow bool, tail int, jsonFlag bool) {
@@ -361,7 +369,22 @@ func CmdLogs(root string, process string, follow bool, tail int, jsonFlag bool) 
 		}
 		return
 	}
-	out := runSSHChecked(read.Runner, read.AppContext.Server, cmdStr, "logs failed")
+	out, stderr, code, err := read.Runner.RunSSH(read.AppContext.Server, cmdStr)
+	if err != nil || code != 0 {
+		remote := extractRemoteError(out, stderr, "logs failed")
+		if remote.Coded != nil {
+			writeRemoteStderr(stderr)
+			utils.DieError(remote.Coded, 1)
+		}
+		if remote.Detail != "" {
+			utils.DieError(operationError(fmt.Sprintf("logs failed: %s", remote.Detail), "ship logs"), 1)
+		}
+		utils.DieError(operationError("logs failed", "ship logs"), 1)
+	}
+	writeRemoteStderr(stderr)
+	if strings.TrimSpace(out) == "" && strings.TrimSpace(stderr) == "" {
+		fmt.Fprintln(os.Stderr, "no log lines yet")
+	}
 	if !jsonFlag {
 		fmt.Print(out)
 		return
@@ -388,7 +411,7 @@ func CmdLogs(root string, process string, follow bool, tail int, jsonFlag bool) 
 func splitLogLines(out string) []string {
 	out = strings.TrimSuffix(out, "\n")
 	if out == "" {
-		return nil
+		return []string{}
 	}
 	return strings.Split(out, "\n")
 }

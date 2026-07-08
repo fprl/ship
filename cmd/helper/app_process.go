@@ -59,6 +59,9 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 		return startReleaseProcessesResult{}, err
 	}
 	scrubValues := collectEnvValues(resolved)
+	for key, value := range shipInjectedEnv(params.App, params.Env, params.Release, params.Context) {
+		resolved[key] = value
+	}
 	result := startReleaseProcessesResult{
 		ProcessName: map[string]string{},
 		ScrubValues: scrubValues,

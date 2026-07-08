@@ -7,13 +7,14 @@ GET/HEAD/POST so the helper's deploy-time health check and any
 Caddy-proxied request both succeed.
 """
 
+import os
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
-        return
+        print(f"{self.command} {self.path}", flush=True)
 
     def _ok(self):
         self.send_response(200)
@@ -22,7 +23,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"ok")
 
+    def _ship_env(self):
+        keys = ["SHIP_URL", "SHIP_BRANCH", "SHIP_ENV", "SHIP_RELEASE"]
+        body = "".join(f"{key}={os.environ.get(key, '')}\n" for key in keys).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
+        if self.path == "/ship-env":
+            self._ship_env()
+            return
         self._ok()
 
     def do_HEAD(self):
@@ -43,6 +56,8 @@ def main():
     port = server.server_address[1]
     with open(port_file, "w") as f:
         f.write(str(port) + "\n")
+    if os.environ.get("LEAK_ON_PROBE_LOG"):
+        print(f"probe log marker {os.environ['LEAK_ON_PROBE_LOG']}", flush=True)
     server.serve_forever()
 
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -154,6 +155,16 @@ func (e *smokeEnv) assertRemoteBody(t *testing.T, command string, expected strin
 	if got != expected {
 		t.Fatalf("%s returned %q, want %q", command, got, expected)
 	}
+}
+
+func (e *smokeEnv) urlBody(t *testing.T, rawURL, path string) string {
+	t.Helper()
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parse URL %q: %v", rawURL, err)
+	}
+	command := "curl -fsS -H " + h.ShellQuote("Host: "+parsed.Hostname()) + " " + h.ShellQuote("http://127.0.0.1"+path)
+	return e.ssh(t, command)
 }
 
 func (e *smokeEnv) sshBin() string {

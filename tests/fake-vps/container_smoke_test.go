@@ -305,6 +305,15 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	// never make honestly — it proves the actual routing path the user
 	// sees in production works.
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: api.example.com' http://127.0.0.1/health", "ok")
+	processEnv := e.urlBody(t, "https://api.example.com", "/ship-env")
+	for _, want := range []string{
+		"SHIP_URL=https://api.example.com\n",
+		"SHIP_BRANCH=main\n",
+		"SHIP_ENV=production\n",
+		"SHIP_RELEASE=" + release + "\n",
+	} {
+		assertContains(t, processEnv, want)
+	}
 
 	// 8. A second deploy on the same source must start a replacement
 	// container before Caddy moves traffic, instead of removing the routed
@@ -365,6 +374,16 @@ func (e *smokeEnv) testPhase1AcceptanceAndZeroDNS(t *testing.T) {
 		t.Fatalf("feature branch URL should be distinct from Production URL: %s", previewURL)
 	}
 	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, previewURL)
+	previewRelease := gitRelease(t, e, app)
+	previewEnv := e.urlBody(t, previewURL, "/ship-env")
+	for _, want := range []string{
+		"SHIP_URL=" + previewURL + "\n",
+		"SHIP_BRANCH=feature/phase1\n",
+		"SHIP_ENV=preview\n",
+		"SHIP_RELEASE=" + previewRelease + "\n",
+	} {
+		assertContains(t, previewEnv, want)
+	}
 
 	zero := filepath.Join(e.tmp, "zero-dns")
 	mustMkdir(t, zero)
@@ -858,7 +877,7 @@ web = { port = 3000 }
 
 	url := strings.TrimSpace(e.ship(t, app, nil))
 	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, url)
-	status := statusEnvByKind(t, e, app, "Production")
+	status := statusEnvByClass(t, e, app, "production")
 	if status.ShippedBy == nil || status.ShippedBy.SSHKeyComment != keyComment {
 		t.Fatalf("ship with added key should attribute the teammate key, got %+v", status.ShippedBy)
 	}
@@ -929,7 +948,7 @@ func (e *smokeEnv) testBackupRestore(t *testing.T) {
 	app := filepath.Join(e.tmp, "container-api")
 	e.dockerExec(t, "printf 'durable-state' > "+identity.DataDir("api", productionEnv)+"/data.txt")
 
-	prodStatus := statusEnvByKind(t, e, app, "Production")
+	prodStatus := statusEnvByClass(t, e, app, "production")
 	backupRelease := prodStatus.Release
 	backupID := backupIDFromSaveOutput(t, e.ship(t, app, nil, "save"))
 
@@ -996,12 +1015,12 @@ func (e *smokeEnv) testRollback(t *testing.T) {
 	newFragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("api", productionEnv))
 	assertContains(t, newFragment, ":"+"3333")
 
-	prodStatus := statusEnvByKind(t, e, app, "Production")
+	prodStatus := statusEnvByClass(t, e, app, "production")
 	rollbackText := e.ship(t, app, nil, "rollback")
 	assertContains(t, rollbackText, "Rolled back Production "+prodStatus.Branch+" from "+newRelease+" to "+oldRelease)
 	assertContains(t, rollbackText, "web")
 
-	status := statusEnvByKind(t, e, app, "Production")
+	status := statusEnvByClass(t, e, app, "production")
 	if len(status.Processes) != 1 || status.Processes[0].Process != "web" || status.Processes[0].Release != oldRelease {
 		t.Fatalf("status did not report rolled-back release %s: %+v", oldRelease, status.Processes)
 	}
@@ -1155,7 +1174,7 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: static.example.com' http://127.0.0.1/", "static-v2")
 
 	rawRollback := e.ship(t, app, nil, "rollback")
-	prodStatus := statusEnvByKind(t, e, app, "Production")
+	prodStatus := statusEnvByClass(t, e, app, "production")
 	assertContains(t, rawRollback, "Rolled back Production "+prodStatus.Branch+" from "+newRelease+" to "+oldRelease)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: static.example.com' http://127.0.0.1/", "static-ok")
 
@@ -1199,7 +1218,7 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v2")
 
 	e.ship(t, app, nil, "rollback")
-	prodStatus := statusEnvByKind(t, e, app, "Production")
+	prodStatus := statusEnvByClass(t, e, app, "production")
 	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", productionEnv))
 	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
 	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", productionEnv, oldRelease, "mixed.example.com/docs")+`"`)
@@ -1704,7 +1723,7 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 	// Parse it back to prove the contract — text-mode regressions
 	// might still slip through a substring check.
 	payload := statusPayloadForApp(t, e, app)
-	env := statusEnvByKindFromPayload(t, payload, "Production")
+	env := statusEnvByClassFromPayload(t, payload, "production")
 	if payload.App != "api" || env.Env != productionEnv {
 		t.Fatalf("status --json mis-identifies the app: %+v", payload)
 	}
@@ -1780,28 +1799,55 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 		t.Fatalf("app list --json missing api/production/web process:\n%+v", listPayload.Apps)
 	}
 
-	// Logs reaches `podman logs` on the right container and prints
-	// the deterministic stub line.
-	logs := e.ship(t, app, nil, "logs", "web")
-	assertContains(t, logs, "fake podman logs for "+env.Processes[0].Container)
+	// A container with no stdout/stderr is not a silent success.
+	emptyLogs := e.runShip(t, app, nil, "logs", "web", "--tail", "20")
+	if emptyLogs.err != nil {
+		t.Fatalf("empty logs should exit 0: %v\nstdout:\n%s\nstderr:\n%s", emptyLogs.err, emptyLogs.stdout, emptyLogs.stderr)
+	}
+	if emptyLogs.stdout != "" || !strings.Contains(emptyLogs.stderr, "no log lines yet") {
+		t.Fatalf("empty logs should be explicit on stderr\nstdout:\n%s\nstderr:\n%s", emptyLogs.stdout, emptyLogs.stderr)
+	}
 
-	logsJSON := e.ship(t, app, nil, "logs", "web", "--json")
+	emptyLogsJSON := e.runShip(t, app, nil, "logs", "web", "--tail", "20", "--json")
+	if emptyLogsJSON.err != nil {
+		t.Fatalf("empty logs --json should exit 0: %v\nstdout:\n%s\nstderr:\n%s", emptyLogsJSON.err, emptyLogsJSON.stdout, emptyLogsJSON.stderr)
+	}
 	var logsPayload struct {
 		App     string   `json:"app"`
 		Env     string   `json:"env"`
 		Process string   `json:"process"`
 		Lines   []string `json:"lines"`
 	}
+	if err := json.Unmarshal([]byte(emptyLogsJSON.stdout), &logsPayload); err != nil {
+		t.Fatalf("empty logs --json output not parseable as JSON: %v\nraw:\n%s", err, emptyLogsJSON.stdout)
+	}
+	if logsPayload.App != "api" || logsPayload.Env != productionEnv || logsPayload.Process != "web" || logsPayload.Lines == nil || len(logsPayload.Lines) != 0 {
+		t.Fatalf("unexpected empty logs --json payload: %+v", logsPayload)
+	}
+	if !strings.Contains(emptyLogsJSON.stderr, "no log lines yet") {
+		t.Fatalf("empty logs --json should keep stdout JSON and stderr hint\nstdout:\n%s\nstderr:\n%s", emptyLogsJSON.stdout, emptyLogsJSON.stderr)
+	}
+
+	// Logs reaches `podman logs` on the right container and prints
+	// actual captured process output rather than a synthetic fake line.
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: api.example.com' http://127.0.0.1/health", "ok")
+	logs := e.ship(t, app, nil, "logs", "web", "--tail", "1")
+	assertContains(t, logs, "GET /health")
+	if strings.Contains(logs, "fake podman logs") {
+		t.Fatalf("logs should not be synthetic:\n%s", logs)
+	}
+
+	logsJSON := e.ship(t, app, nil, "logs", "web", "--tail", "1", "--json")
 	if err := json.Unmarshal([]byte(logsJSON), &logsPayload); err != nil {
 		t.Fatalf("logs --json output not parseable as JSON: %v\nraw:\n%s", err, logsJSON)
 	}
-	if logsPayload.App != "api" || logsPayload.Env != productionEnv || logsPayload.Process != "web" || len(logsPayload.Lines) == 0 {
+	if logsPayload.App != "api" || logsPayload.Env != productionEnv || logsPayload.Process != "web" || len(logsPayload.Lines) != 1 || !strings.Contains(logsPayload.Lines[0], "GET /health") {
 		t.Fatalf("unexpected logs --json payload: %+v", logsPayload)
 	}
 
 	// Process argument is optional when exactly one process exists.
-	logsNoSvc := e.ship(t, app, nil, "logs")
-	assertContains(t, logsNoSvc, "fake podman logs for "+env.Processes[0].Container)
+	logsNoSvc := e.ship(t, app, nil, "logs", "--tail", "1")
+	assertContains(t, logsNoSvc, "GET /health")
 
 	// Unknown process errors clearly.
 	missing := e.runShip(t, app, nil, "logs", "nope")
@@ -1819,7 +1865,7 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 // fake VPS.
 func (e *smokeEnv) testDestroy(t *testing.T) {
 	app := filepath.Join(e.tmp, "container-api")
-	prodStatus := statusEnvByKind(t, e, app, "Production")
+	prodStatus := statusEnvByClass(t, e, app, "production")
 
 	// Client safety gate: no accidental teardown without either
 	// --confirm <app>.
@@ -2132,7 +2178,7 @@ func currentWebContainer(t *testing.T, e *smokeEnv, app string) string {
 
 func currentProcessContainer(t *testing.T, e *smokeEnv, app string, process string) string {
 	t.Helper()
-	env := statusEnvByKind(t, e, app, "Production")
+	env := statusEnvByClass(t, e, app, "production")
 	for _, proc := range env.Processes {
 		if proc.Process == process {
 			return proc.Container
@@ -2148,7 +2194,7 @@ type smokeStatusPayload struct {
 }
 
 type smokeStatusEnv struct {
-	Kind      string `json:"kind"`
+	Class     string `json:"class"`
 	Branch    string `json:"branch"`
 	URL       string `json:"url"`
 	Env       string `json:"env"`
@@ -2226,19 +2272,19 @@ func statusPayloadForApp(t *testing.T, e *smokeEnv, app string) smokeStatusPaylo
 	return payload
 }
 
-func statusEnvByKind(t *testing.T, e *smokeEnv, app string, kind string) smokeStatusEnv {
+func statusEnvByClass(t *testing.T, e *smokeEnv, app string, class string) smokeStatusEnv {
 	t.Helper()
-	return statusEnvByKindFromPayload(t, statusPayloadForApp(t, e, app), kind)
+	return statusEnvByClassFromPayload(t, statusPayloadForApp(t, e, app), class)
 }
 
-func statusEnvByKindFromPayload(t *testing.T, payload smokeStatusPayload, kind string) smokeStatusEnv {
+func statusEnvByClassFromPayload(t *testing.T, payload smokeStatusPayload, class string) smokeStatusEnv {
 	t.Helper()
 	for _, env := range payload.Envs {
-		if env.Kind == kind {
+		if env.Class == class {
 			return env
 		}
 	}
-	t.Fatalf("status missing %s env: %+v", kind, payload.Envs)
+	t.Fatalf("status missing %s env: %+v", class, payload.Envs)
 	return smokeStatusEnv{}
 }
 

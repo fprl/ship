@@ -223,7 +223,9 @@ PY
           rm -f "$state_dir/containers/$name.labels" \
                 "$state_dir/containers/$name.port" \
                 "$state_dir/containers/$name.image" \
-                "$state_dir/containers/$name.actual-port"
+                "$state_dir/containers/$name.actual-port" \
+                "$state_dir/containers/$name.env-file" \
+                "$state_dir/containers/$name.log"
           shift
           ;;
       esac
@@ -366,6 +368,15 @@ PY
       echo "fake podman: run requires --name" >&2
       exit 1
     fi
+    declare -a run_env=()
+    if [[ -n "$env_file" && -f "$env_file" ]]; then
+      while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -n "$line" ]] && run_env+=("$line")
+      done < "$env_file"
+    fi
+    for assignment in "${env_assignments[@]:-}"; do
+      [[ -n "$assignment" ]] && run_env+=("$assignment")
+    done
     is_release=0
     for label in "${labels[@]:-}"; do
       if [[ "$label" == "ship.process=release" ]]; then
@@ -385,15 +396,6 @@ PY
     fi
 
     if [[ "$detached" != "1" ]]; then
-      declare -a run_env=()
-      if [[ -n "$env_file" && -f "$env_file" ]]; then
-        while IFS= read -r line || [[ -n "$line" ]]; do
-          [[ -n "$line" ]] && run_env+=("$line")
-        done < "$env_file"
-      fi
-      for assignment in "${env_assignments[@]:-}"; do
-        [[ -n "$assignment" ]] && run_env+=("$assignment")
-      done
       declare -a mapped_command=()
       for arg in "${command_args[@]:-}"; do
         if [[ -n "$data_mount" ]]; then
@@ -422,6 +424,8 @@ PY
     if [[ -n "$env_file" ]]; then
       printf '%s\n' "$env_file" > "$state_dir/containers/$name.env-file"
     fi
+    log_file="$state_dir/containers/$name.log"
+    : > "$log_file"
     joined_command="$(printf '%s ' "${command_args[@]:-}")"
     actual_port="$declared_port"
     if [[ "$joined_command" =~ ship-listen-port=([0-9]+) ]]; then
@@ -438,14 +442,14 @@ PY
     if [[ "$image" == *caddy* ]]; then
       bind_port="${publish_host_port:-80}"
       python3 -u "$(dirname "$0")/fake-podman.caddy.py" "$bind_port" "$state_dir" \
-        >/dev/null 2>"$state_dir/listeners/$name.log" &
+        >>"$log_file" 2>&1 &
       pid=$!
       echo "$pid" > "$state_dir/listeners/$name.pid"
       printf '%s\n' "$bind_port" > "$state_dir/containers/$name.port"
     else
       port_file="$state_dir/containers/$name.port"
-      python3 -u "$(dirname "$0")/fake-podman.app.py" "$port_file" \
-        >/dev/null 2>"$state_dir/listeners/$name.log" &
+      env "${run_env[@]}" python3 -u "$(dirname "$0")/fake-podman.app.py" "$port_file" \
+        >>"$log_file" 2>&1 &
       pid=$!
       echo "$pid" > "$state_dir/listeners/$name.pid"
     fi
@@ -464,42 +468,59 @@ PY
     ;;
 
   logs)
-    # `podman logs [-f] [--tail=N] <name>`. Strip flags, then return a
-    # deterministic single line per container so smoke tests can
-    # assert against it. Real container output isn't captured in the
-    # fake; the goal is just "log retrieval reached the right
-    # container".
+    # `podman logs [options] <name>`. Return captured container
+    # stdout/stderr only; do not synthesize output for containers that
+    # have not written any log lines.
+    tail_count="-1"
+    declare -a names=()
     while [[ $# -gt 0 ]]; do
       case "$1" in
         -f|--follow)
           shift ;;
-        --tail|--since)
+        --tail)
+          tail_count="${2:-}"
           shift 2 ;;
-        --tail=*|--since=*)
+        --tail=*)
+          tail_count="${1#--tail=}"
           shift ;;
+        --since)
+          shift 2 ;;
+        --since=*)
+          shift ;;
+        --*)
+          echo "fake podman: unsupported logs flag: $1" >&2
+          exit 1
+          ;;
         *)
-          break ;;
+          names+=("$1")
+          shift ;;
       esac
     done
-    name="${1:-}"
-    if [[ -z "$name" || ! -f "$state_dir/containers/$name.labels" ]]; then
-      echo "fake podman: no such container: $name" >&2
+    if [[ "${#names[@]}" -eq 0 ]]; then
+      echo "fake podman: logs requires container name" >&2
       exit 1
     fi
-    printf 'fake podman logs for %s\n' "$name"
-    env_file_path="$state_dir/containers/$name.env-file"
-    if [[ -f "$env_file_path" ]]; then
-      source_env_file="$(cat "$env_file_path" 2>/dev/null || true)"
-      if [[ -n "$source_env_file" && -f "$source_env_file" ]]; then
-        while IFS= read -r line || [[ -n "$line" ]]; do
-          case "$line" in
-            LEAK_ON_PROBE_LOG=*)
-              printf 'probe log marker %s\n' "${line#LEAK_ON_PROBE_LOG=}"
-              ;;
-          esac
-        done < "$source_env_file"
-      fi
+    if [[ ! "$tail_count" =~ ^-?[0-9]+$ ]]; then
+      echo "fake podman: invalid --tail value: $tail_count" >&2
+      exit 1
     fi
+    for name in "${names[@]}"; do
+      if [[ -z "$name" || ! -f "$state_dir/containers/$name.labels" ]]; then
+        echo "fake podman: no such container: $name" >&2
+        exit 1
+      fi
+      log_file="$state_dir/containers/$name.log"
+      if [[ ! -f "$log_file" ]]; then
+        continue
+      fi
+      if (( tail_count == 0 )); then
+        continue
+      elif (( tail_count > 0 )); then
+        tail -n "$tail_count" "$log_file"
+      else
+        cat "$log_file"
+      fi
+    done
     exit 0
     ;;
 
@@ -526,18 +547,30 @@ PY
     if [[ -f "$listener" ]]; then
       exit 0
     fi
-    image=""
-    image_file="$state_dir/containers/$name.image"
-    [[ -f "$image_file" ]] && image="$(cat "$image_file")"
-    port_file="$state_dir/containers/$name.port"
-    if [[ "$image" == *caddy* ]]; then
-      bind_port="$(cat "$port_file" 2>/dev/null || echo 80)"
-      python3 -u "$(dirname "$0")/fake-podman.caddy.py" "$bind_port" "$state_dir" \
-        >/dev/null 2>"$state_dir/listeners/$name.log" &
-    else
-      python3 -u "$(dirname "$0")/fake-podman.app.py" "$port_file" \
-        >/dev/null 2>"$state_dir/listeners/$name.log" &
-    fi
+        image=""
+        image_file="$state_dir/containers/$name.image"
+        [[ -f "$image_file" ]] && image="$(cat "$image_file")"
+        port_file="$state_dir/containers/$name.port"
+        log_file="$state_dir/containers/$name.log"
+        touch "$log_file"
+        if [[ "$image" == *caddy* ]]; then
+          bind_port="$(cat "$port_file" 2>/dev/null || echo 80)"
+          python3 -u "$(dirname "$0")/fake-podman.caddy.py" "$bind_port" "$state_dir" \
+            >>"$log_file" 2>&1 &
+        else
+          declare -a run_env=()
+          env_file_path="$state_dir/containers/$name.env-file"
+          if [[ -f "$env_file_path" ]]; then
+            source_env_file="$(cat "$env_file_path" 2>/dev/null || true)"
+            if [[ -n "$source_env_file" && -f "$source_env_file" ]]; then
+              while IFS= read -r line || [[ -n "$line" ]]; do
+                [[ -n "$line" ]] && run_env+=("$line")
+              done < "$source_env_file"
+            fi
+          fi
+          env "${run_env[@]}" python3 -u "$(dirname "$0")/fake-podman.app.py" "$port_file" \
+            >>"$log_file" 2>&1 &
+        fi
     echo "$!" > "$listener"
     exit 0
     ;;

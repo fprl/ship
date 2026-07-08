@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -112,17 +113,38 @@ func (c appLogsCmd) Run() error {
 	if c.Follow {
 		args = append(args, "-f")
 	} else {
-		args = append(args, fmt.Sprintf("--tail=%d", c.Tail))
+		args = append(args, "--tail", fmt.Sprintf("%d", c.Tail))
 	}
 	args = append(args, containerName)
 	cmd := exec.Command("podman", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		// `podman logs -f` on a stopped container exits cleanly when
-		// the container goes away; only surface real errors.
-		utils.Die(fmt.Sprintf("podman logs %s: %v", containerName, err), 1)
+	if c.Follow {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			// `podman logs -f` on a stopped container exits cleanly when
+			// the container goes away; only surface real errors.
+			utils.Die(fmt.Sprintf("podman logs %s: %v", containerName, err), 1)
+		}
+		return nil
 	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		utils.Die(fmt.Sprintf("podman logs %s: %s", containerName, detail), 1)
+	}
+	if stderr.Len() > 0 {
+		_, _ = os.Stderr.Write(stderr.Bytes())
+	}
+	if stdout.Len() == 0 {
+		fmt.Fprintln(os.Stderr, "no log lines yet")
+		return nil
+	}
+	_, _ = os.Stdout.Write(stdout.Bytes())
 	return nil
 }
 

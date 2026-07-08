@@ -119,6 +119,10 @@ func execImageAvailable(app, env, release string) bool {
 }
 
 func execInjectedEnv(app, env, release string, ctx *config.AppContext) map[string]string {
+	return shipInjectedEnv(app, env, release, ctx)
+}
+
+func shipInjectedEnv(app, env, release string, ctx *config.AppContext) map[string]string {
 	kind := "production"
 	branch := ctx.ProductionBranch
 	if file, err := readEnvIdentity(app, env); err == nil && file.Preview != nil {

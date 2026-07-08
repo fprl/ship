@@ -995,7 +995,7 @@ func checkCurrentHeadProductionLive(e *evalCase, p *evalProject) error {
 	if err != nil {
 		return err
 	}
-	env, ok := status.envByKind("Production")
+	env, ok := status.envByClass("production")
 	if !ok {
 		return fmt.Errorf("status has no Production env: %+v", status.Envs)
 	}
@@ -1020,8 +1020,8 @@ func checkExpiredPreviewRecreated(e *evalCase, p *evalProject) error {
 	if !ok {
 		return fmt.Errorf("status has no Preview branch %s: %+v", p.Branch, status.Envs)
 	}
-	if env.Kind != "Preview" {
-		return fmt.Errorf("branch %s kind = %q, want Preview", p.Branch, env.Kind)
+	if env.Class != "preview" {
+		return fmt.Errorf("branch %s class = %q, want preview", p.Branch, env.Class)
 	}
 	if env.Health != "healthy" {
 		return fmt.Errorf("Preview health = %q, want healthy", env.Health)
@@ -1038,7 +1038,7 @@ type evalStatusPayload struct {
 }
 
 type evalStatusEnv struct {
-	Kind    string `json:"kind"`
+	Class   string `json:"class"`
 	Branch  string `json:"branch"`
 	URL     string `json:"url"`
 	Env     string `json:"env"`
@@ -1046,9 +1046,9 @@ type evalStatusEnv struct {
 	Health  string `json:"health"`
 }
 
-func (p evalStatusPayload) envByKind(kind string) (evalStatusEnv, bool) {
+func (p evalStatusPayload) envByClass(class string) (evalStatusEnv, bool) {
 	for _, env := range p.Envs {
-		if env.Kind == kind {
+		if env.Class == class {
 			return env, true
 		}
 	}

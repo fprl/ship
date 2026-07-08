@@ -1109,12 +1109,32 @@ func TestStatusFromAppListIncludesShippedBy(t *testing.T) {
 	if len(payload.Envs) != 1 || payload.Envs[0].ShippedBy == nil {
 		t.Fatalf("status missing shipped_by: %+v", payload)
 	}
+	if payload.Envs[0].Class != "production" {
+		t.Fatalf("status class = %q, want production", payload.Envs[0].Class)
+	}
 	if payload.Envs[0].ShippedBy.GitAuthor != "Smoke <smoke@example.com>" || payload.Envs[0].ShippedBy.SSHKeyComment != "fake-vps-smoke" {
 		t.Fatalf("wrong shipped_by: %+v", payload.Envs[0].ShippedBy)
 	}
 	text := renderStatusSummary(payload)
 	if !strings.Contains(text, `shipped_by="Smoke <smoke@example.com>"`) || !strings.Contains(text, `ssh_key="fake-vps-smoke"`) {
 		t.Fatalf("human status missing attribution:\n%s", text)
+	}
+}
+
+func TestSplitLogLinesEmptyIsEmptyArray(t *testing.T) {
+	lines := splitLogLines("")
+	if lines == nil || len(lines) != 0 {
+		t.Fatalf("empty logs should be a non-nil empty slice, got %#v", lines)
+	}
+	payload := struct {
+		Lines []string `json:"lines"`
+	}{Lines: lines}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `{"lines":[]}` {
+		t.Fatalf("empty logs JSON = %s, want lines: []", data)
 	}
 }
 

@@ -92,7 +92,7 @@ Secret scoping:
 - Purpose: Show all live environments for this app.
 - Usage: `ship status [--json] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--json`: Emit structured JSON instead of the text table.
-- `--json` stdout schema: `{"app":"api","envs":[{"kind":"Production","branch":"main","url":"https://...","env":"prod","release":"abc123","health":"healthy","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}]}]}`
+- `--json` stdout schema: `{"app":"api","envs":[{"class":"production","branch":"main","url":"https://...","env":"prod","release":"abc123","health":"healthy","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}]}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `manifest_invalid`, `ssh_unreachable`, `box_not_initialized`, `operation_failed`
 

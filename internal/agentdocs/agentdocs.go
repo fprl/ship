@@ -583,7 +583,7 @@ var verbs = []Verb{
 		Usage:   "ship status [--json] [--config <path>]",
 		Flags:   []Flag{configFlag, {Name: "--json", Purpose: "Emit structured JSON instead of the text table."}},
 		JSONSchema: schema(
-			`{"app":"api","envs":[{"kind":"Production","branch":"main","url":"https://...","env":"prod","release":"abc123","health":"healthy","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}]}]}`,
+			`{"app":"api","envs":[{"class":"production","branch":"main","url":"https://...","env":"prod","release":"abc123","health":"healthy","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}]}]}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"manifest_invalid", "ssh_unreachable", "box_not_initialized", "operation_failed"},
