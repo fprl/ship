@@ -19,13 +19,18 @@ import (
 
 type keyCmd struct {
 	MemberFingerprint string     `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
+	Member            string     `name:"member" hidden:"" help:"Server-pinned member name from agent-shell."`
 	Add               keyAddCmd  `cmd:"add" help:"Append SSH public keys to the deploy user's authorized_keys."`
 	Ls                keyListCmd `cmd:"ls" help:"List deploy SSH keys."`
 	Rm                keyRmCmd   `cmd:"rm" help:"Remove deploy SSH keys by member name."`
 }
 
+func (c keyCmd) BeforeApply() error {
+	return requireRoot()
+}
+
 func (c keyCmd) AfterApply() error {
-	setServerMemberFingerprint(c.MemberFingerprint)
+	setServerMemberClaims(c.MemberFingerprint, c.Member)
 	return nil
 }
 
@@ -191,25 +196,23 @@ func appendDeployAuthorizedKeys(user string, keys []authorizedKey, role store.Me
 	if err != nil {
 		return nil, err
 	}
-	existingRecords := memberkeys.EffectiveMemberRecords(existing, *members, nil)
 	lines, results := memberkeys.Merge(existing, keys)
+	mergedKeys := memberkeys.Parse(memberkeys.Content(lines))
 	overrides := map[string]store.MemberRecord{}
 	for i := range results {
 		result := &results[i]
+		overrides[result.Key.Fingerprint] = store.MemberRecord{Name: result.Key.Comment, Role: role}
+		result.Role = string(role)
 		if result.Added {
-			result.Role = string(role)
-			overrides[result.Key.Fingerprint] = store.MemberRecord{Name: result.Key.Comment, Role: role}
 			continue
 		}
-		if record, ok := existingRecords[result.Key.Fingerprint]; ok {
-			result.Key.Comment = record.Name
-			result.Role = string(record.Role)
-		}
 	}
-	if err := writeDeployAuthorizedKeys(user, sshDir, path, lines); err != nil {
+	records := memberkeys.EffectiveMemberRecords(mergedKeys, *members, overrides)
+	rendered := memberkeys.RenderAuthorizedKeyLines(mergedKeys, records)
+	if err := writeDeployAuthorizedKeys(user, sshDir, path, rendered); err != nil {
 		return nil, err
 	}
-	if err := writeReconciledMembers(memberkeys.Parse(memberkeys.Content(lines)), *members, overrides); err != nil {
+	if err := writeReconciledMembers(mergedKeys, *members, overrides); err != nil {
 		return nil, err
 	}
 	return results, nil
@@ -262,10 +265,12 @@ func removeDeployAuthorizedKeys(user, name string) (int, error) {
 	if parseable-removed == 0 {
 		return 0, errcat.New(errcat.CodeMemberLastKey, errcat.Fields{"name": name})
 	}
-	if err := writeDeployAuthorizedKeys(user, sshDir, path, lines); err != nil {
+	remaining := memberkeys.Parse(memberkeys.Content(lines))
+	rendered := memberkeys.RenderAuthorizedKeyLines(remaining, memberkeys.EffectiveMemberRecords(remaining, *members, nil))
+	if err := writeDeployAuthorizedKeys(user, sshDir, path, rendered); err != nil {
 		return 0, err
 	}
-	if err := writeReconciledMembers(memberkeys.Parse(memberkeys.Content(lines)), *members, nil); err != nil {
+	if err := writeReconciledMembers(remaining, *members, nil); err != nil {
 		return 0, err
 	}
 	return removed, nil

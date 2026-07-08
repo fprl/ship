@@ -684,7 +684,7 @@ func wantsServerAppExecError(args []string) bool {
 		return false
 	}
 	i := 2
-	if i < len(args) && args[i] == "--member-fingerprint" {
+	for i < len(args) && (args[i] == "--member-fingerprint" || args[i] == "--member") {
 		i += 2
 	}
 	return i < len(args) && args[i] == "exec"

@@ -39,6 +39,9 @@ func ensureRemoteEnvReadyForDeploy(runner sshRunner, ctx *config.AppContext) err
 
 func deployHostPreflight(runner sshRunner, ctx *config.AppContext) error {
 	if stdout, stderr, code, err := runner.RunSSH(ctx.Server, "true"); err != nil || code != 0 {
+		if agentShellRefusedRemote(stdout, stderr) {
+			return nil
+		}
 		return errcat.New(errcat.CodeSSHUnreachable, errcat.Fields{
 			"target": ctx.Server,
 			"detail": commandDetail(stdout, stderr, "remote SSH command failed"),
@@ -54,6 +57,11 @@ func deployHostPreflight(runner sshRunner, ctx *config.AppContext) error {
 		})
 	}
 	return nil
+}
+
+func agentShellRefusedRemote(stdout, stderr string) bool {
+	coded, ok := remoteCodedError(stdout, stderr)
+	return ok && coded.Code() == errcat.CodeOperationFailed && strings.Contains(coded.Cause(), "agent_shell_refused")
 }
 
 func fetchRemotePreflightReport(runner sshRunner, ctx *config.AppContext) (remotePreflightReport, error) {

@@ -48,13 +48,18 @@ var (
 
 type doctorCmd struct {
 	MemberFingerprint string `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
+	Member            string `name:"member" hidden:"" help:"Server-pinned member name from agent-shell."`
 	JSON              bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
 	BoxTarget         string `name:"box-target" hidden:"" help:"SSH target used to render runnable remediation commands."`
 	Action            string `arg:"" optional:"" help:"Optional action. record persists doctor state for the daily timer."`
 }
 
+func (c doctorCmd) BeforeApply() error {
+	return requireRoot()
+}
+
 func (c doctorCmd) Run() error {
-	setServerMemberFingerprint(c.MemberFingerprint)
+	setServerMemberClaims(c.MemberFingerprint, c.Member)
 	if c.Action == "record" {
 		CmdDoctorRecord()
 		return nil

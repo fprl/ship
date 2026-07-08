@@ -371,12 +371,14 @@ type evalScenario struct {
 }
 
 type evalProject struct {
-	Dir         string
-	App         string
-	Host        string
-	Branch      string
-	SecretKey   string
-	SecretValue string
+	Dir                    string
+	App                    string
+	Host                   string
+	Branch                 string
+	SecretKey              string
+	SecretValue            string
+	AgentShip              string
+	ApprovalOneShotChecked bool
 }
 
 func evalScenarios() []evalScenario {
@@ -444,6 +446,16 @@ func evalScenarios() []evalScenario {
 			Setup:          setupDirtyBranchState,
 			Induce:         induceShip,
 			Check:          checkCurrentHeadProductionLive,
+		},
+		{
+			Name:           "approval-recovery",
+			SetupSummary:   "agent-role member attempts a Production ship and receives approval_required",
+			Goal:           "approve the request as the human owner, then retry the agent ship",
+			CheckerSummary: "Production main serves the agent release, and a second agent retry requires a fresh approval",
+			RetryCommand:   "./agent-ship",
+			Setup:          setupApprovalRecovery,
+			Induce:         induceAgentShip,
+			Check:          checkApprovalRecovery,
 		},
 	}
 }
@@ -524,9 +536,55 @@ func setupDirtyBranchState(t *testing.T, e *evalCase) *evalProject {
 	return &evalProject{Dir: app, App: "evaldirty", Host: "eval-dirty.example.com", Branch: "main"}
 }
 
+func setupApprovalRecovery(t *testing.T, e *evalCase) *evalProject {
+	app := newProjectDir(t, e, "approval-recovery")
+	writeBasicContainerFixture(t, app, "evalapproval", "eval-approval.example.com")
+	initGit(t, e, app)
+	checkoutBranch(t, e, app, "main")
+	e.mustRun(t, app, nil, nil, e.suite.shipBin)
+
+	agentKeyPath := filepath.Join(e.tmp, "approval-agent")
+	e.mustRun(t, e.suite.repoRoot, nil, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "approval-agent", "-f", agentKeyPath)
+	e.mustRun(t, app, nil, nil, e.suite.shipBin, "member", "add", agentKeyPath+".pub", "--role", "agent")
+	agentKeyCopy := filepath.Join(app, ".agent_ssh_key")
+	keyData, err := os.ReadFile(agentKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agentKeyCopy, keyData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	agentShip := filepath.Join(app, "agent-ship")
+	mustWrite(t, agentShip, "#!/usr/bin/env bash\nset -euo pipefail\nexport SHIP_SSH_KEY=\"$(cat \"$PWD/.agent_ssh_key\")\"\nexec ship \"$@\"\n")
+	if err := os.Chmod(agentShip, 0755); err != nil {
+		t.Fatal(err)
+	}
+	excludePath := filepath.Join(app, ".git", "info", "exclude")
+	exclude, err := os.OpenFile(excludePath, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exclude.WriteString("\n.agent_ssh_key\nagent-ship\n"); err != nil {
+		_ = exclude.Close()
+		t.Fatal(err)
+	}
+	if err := exclude.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	mustWrite(t, filepath.Join(app, "README.md"), "approval recovery release\n")
+	commitAll(t, e, app, "approval recovery release")
+	return &evalProject{Dir: app, App: "evalapproval", Host: "eval-approval.example.com", Branch: "main", AgentShip: "./agent-ship"}
+}
+
 func induceShip(t *testing.T, e *evalCase, p *evalProject) commandResult {
 	t.Helper()
 	return e.run(t, p.Dir, nil, nil, e.suite.shipBin)
+}
+
+func induceAgentShip(t *testing.T, e *evalCase, p *evalProject) commandResult {
+	t.Helper()
+	return e.runShell(p.Dir, nil, nil, p.AgentShip)
 }
 
 func inducePinExpiredPreview(t *testing.T, e *evalCase, p *evalProject) commandResult {
@@ -1097,6 +1155,25 @@ func checkCurrentHeadProductionLive(e *evalCase, p *evalProject) error {
 	if err := h.URLServes200(e.fakeCaddy, env.URL); err != nil {
 		return err
 	}
+	return nil
+}
+
+func checkApprovalRecovery(e *evalCase, p *evalProject) error {
+	if err := checkCurrentHeadProductionLive(e, p); err != nil {
+		return err
+	}
+	if p.ApprovalOneShotChecked {
+		return nil
+	}
+	second := e.runShell(p.Dir, nil, nil, p.AgentShip)
+	if second.err == nil {
+		return fmt.Errorf("second agent Production ship succeeded; approval was not consumed exactly once")
+	}
+	if !strings.Contains(second.stdout+second.stderr, "approval_required") &&
+		!strings.Contains(second.stdout+second.stderr, "approval required") {
+		return fmt.Errorf("second agent Production ship failed without approval_required:\nstdout:%s\nstderr:%s", second.stdout, second.stderr)
+	}
+	p.ApprovalOneShotChecked = true
 	return nil
 }
 

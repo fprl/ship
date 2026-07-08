@@ -163,6 +163,21 @@ func TestUnknownFingerprintRefusesWithMemberAddRemediation(t *testing.T) {
 	}
 }
 
+func TestPinnedMemberOverridesClientFingerprintClaim(t *testing.T) {
+	setupAuthTest(t, map[string]store.MemberRecord{
+		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
+		bobFingerprint:   {Name: "bob", Role: store.MemberRoleOwner},
+	})
+	setServerMemberClaims(bobFingerprint, "alice")
+	member, err := authorizeHelper(helperVerbShip, authTargetForPreviewBranch("api", "feat/pin", "release=abc123"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if member.Fingerprint != aliceFingerprint || member.Name != "alice" || member.Role != store.MemberRoleAgent {
+		t.Fatalf("pinned member should override fingerprint claim, got %+v", member)
+	}
+}
+
 func TestAuthorizedKeyMissingFromMembersUsesEffectiveShipperRole(t *testing.T) {
 	setupAuthTest(t, map[string]store.MemberRecord{
 		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},

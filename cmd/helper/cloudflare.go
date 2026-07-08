@@ -14,11 +14,16 @@ import (
 
 type cloudflareCmd struct {
 	MemberFingerprint string                   `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
+	Member            string                   `name:"member" hidden:"" help:"Server-pinned member name from agent-shell."`
 	SetupTunnel       cloudflareSetupTunnelCmd `cmd:"setup-tunnel" help:"Create or update the Cloudflare tunnel token."`
 }
 
+func (c cloudflareCmd) BeforeApply() error {
+	return requireRoot()
+}
+
 func (c cloudflareCmd) AfterApply() error {
-	setServerMemberFingerprint(c.MemberFingerprint)
+	setServerMemberClaims(c.MemberFingerprint, c.Member)
 	return nil
 }
 

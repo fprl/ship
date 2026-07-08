@@ -106,6 +106,32 @@ func TestMemberOutputExamples(t *testing.T) {
 	}
 }
 
+func TestAuthorizedKeyLineRenderingUsesAgentForcedCommand(t *testing.T) {
+	keys, err := normalizeAuthorizedKeys(alicePublicKey, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentLine := memberkeys.RenderAuthorizedKeyLine(keys[0], store.MemberRecord{Name: "alice", Role: store.MemberRoleAgent})
+	wantAgent := `command="/usr/local/bin/ship server agent-shell --member alice",restrict ` + alicePublicKey
+	if agentLine != wantAgent {
+		t.Fatalf("agent authorized_keys line:\nwant: %s\n got: %s", wantAgent, agentLine)
+	}
+	parsed, err := memberkeys.ParseLine(agentLine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Options != `command="/usr/local/bin/ship server agent-shell --member alice",restrict` ||
+		parsed.Fingerprint != aliceFingerprint ||
+		parsed.Comment != "alice" {
+		t.Fatalf("parsed forced entry = %+v", parsed)
+	}
+
+	ownerLine := memberkeys.RenderAuthorizedKeyLine(keys[0], store.MemberRecord{Name: "alice", Role: store.MemberRoleOwner})
+	if ownerLine != alicePublicKey {
+		t.Fatalf("owner authorized_keys line = %q, want plain key", ownerLine)
+	}
+}
+
 func TestReconciledMembersRecordsExplicitRoles(t *testing.T) {
 	keys, err := normalizeAuthorizedKeys(alicePublicKey, "alice")
 	if err != nil {

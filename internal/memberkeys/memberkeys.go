@@ -13,6 +13,7 @@ import (
 
 type AuthorizedKey struct {
 	Line        string
+	Options     string
 	Material    string
 	Type        string
 	Body        string
@@ -87,7 +88,11 @@ func NormalizeLine(line, comment string) (AuthorizedKey, error) {
 }
 
 func ParseLine(line string) (AuthorizedKey, error) {
-	fields := strings.Fields(line)
+	options, rest, err := splitAuthorizedKeyLine(line)
+	if err != nil {
+		return AuthorizedKey{}, err
+	}
+	fields := strings.Fields(rest)
 	if len(fields) < 2 || !SupportedType(fields[0]) {
 		return AuthorizedKey{}, fmt.Errorf("not a plain SSH public key")
 	}
@@ -104,6 +109,7 @@ func ParseLine(line string) (AuthorizedKey, error) {
 	}
 	return AuthorizedKey{
 		Line:        line,
+		Options:     options,
 		Material:    KeyMaterial(fields[0], fields[1]),
 		Type:        fields[0],
 		Body:        fields[1],
@@ -155,6 +161,41 @@ func Content(lines []string) []byte {
 		return nil
 	}
 	return []byte(strings.Join(lines, "\n") + "\n")
+}
+
+func RenderAuthorizedKeyLines(keys []AuthorizedKey, records map[string]store.MemberRecord) []string {
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if key.Material == "" {
+			lines = append(lines, key.Line)
+			continue
+		}
+		record, ok := records[key.Fingerprint]
+		if !ok {
+			record = store.MemberRecord{Name: key.Comment, Role: store.MemberRoleShipper}
+		}
+		lines = append(lines, RenderAuthorizedKeyLine(key, record))
+	}
+	return lines
+}
+
+func RenderAuthorizedKeyLine(key AuthorizedKey, record store.MemberRecord) string {
+	name := strings.Join(strings.Fields(record.Name), " ")
+	if name == "" {
+		name = key.Comment
+	}
+	role := record.Role
+	if !store.ValidMemberRole(role) {
+		role = store.MemberRoleShipper
+	}
+	public := key.Type + " " + key.Body
+	if name != "" {
+		public += " " + name
+	}
+	if role != store.MemberRoleAgent {
+		return public
+	}
+	return fmt.Sprintf("command=\"/usr/local/bin/ship server agent-shell --member %s\",restrict %s", shellEscapeForForcedCommand(name), public)
 }
 
 func Rows(keys []AuthorizedKey) []Row {
@@ -263,6 +304,84 @@ func SupportedType(value string) bool {
 	default:
 		return false
 	}
+}
+
+func splitAuthorizedKeyLine(line string) (string, string, error) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", "", fmt.Errorf("empty authorized key line")
+	}
+	fields := strings.Fields(line)
+	if len(fields) >= 2 && SupportedType(fields[0]) {
+		return "", line, nil
+	}
+	inQuote := false
+	escaped := false
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if inQuote && c == '\\' {
+			escaped = true
+			continue
+		}
+		if c == '"' {
+			inQuote = !inQuote
+			continue
+		}
+		if inQuote || (i > 0 && !isSpace(line[i-1])) {
+			continue
+		}
+		for _, kind := range supportedTypes() {
+			if strings.HasPrefix(line[i:], kind) {
+				end := i + len(kind)
+				if end < len(line) && isSpace(line[end]) {
+					return strings.TrimSpace(line[:i]), strings.TrimSpace(line[i:]), nil
+				}
+			}
+		}
+	}
+	return "", "", fmt.Errorf("not a plain SSH public key")
+}
+
+func supportedTypes() []string {
+	return []string{
+		"ssh-ed25519", "ssh-rsa",
+		"ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
+		"sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com",
+	}
+}
+
+func isSpace(c byte) bool {
+	switch c {
+	case ' ', '\t', '\n', '\r':
+		return true
+	default:
+		return false
+	}
+}
+
+func shellEscapeForForcedCommand(value string) string {
+	if value != "" && shellSafe(value) {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func shellSafe(value string) bool {
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case strings.ContainsRune("_@%+=:,./-", r):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func KeyMaterial(kind, body string) string {

@@ -14,6 +14,10 @@ type envCmd struct {
 	Reap envReapCmd `cmd:"reap" help:"Destroy expired unpinned preview environments."`
 }
 
+func (c envCmd) BeforeApply() error {
+	return requireRoot()
+}
+
 type envReapCmd struct{}
 
 type destroyEnvFunc func(app, env string, purge bool) (destroySummary, error)

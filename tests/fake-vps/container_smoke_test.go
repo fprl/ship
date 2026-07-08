@@ -926,6 +926,11 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	added := e.ship(t, app, nil, "member", "add", agentKeyPath+".pub", "--role", "agent")
 	agentFingerprint := fingerprintFromMemberMutation(t, added)
 	assertContains(t, added, "member added: agent-role (agent, "+agentFingerprint+")")
+	authorized := e.dockerExec(t, "cat /home/deploy/.ssh/authorized_keys")
+	assertContains(t, authorized, `command="/usr/local/bin/ship server agent-shell --member agent-role",restrict ssh-ed25519`)
+	assertContains(t, authorized, "fake-vps-smoke")
+	ownerLine := e.dockerExec(t, "grep 'fake-vps-smoke' /home/deploy/.ssh/authorized_keys")
+	assertNotContains(t, ownerLine, "agent-shell")
 
 	agentKey, err := os.ReadFile(agentKeyPath)
 	if err != nil {
@@ -938,15 +943,47 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	setOwner := func() { e.pathPrefix = ownerPrefix }
 	t.Cleanup(setOwner)
 
+	setAgent()
+	interactive := e.run(t, e.repoRoot, nil, e.sshBin(), "fake-vps")
+	if interactive.err == nil {
+		t.Fatal("agent key should not open an interactive ssh session")
+	}
+	assertContains(t, interactive.stdout+interactive.stderr, "agent_shell_refused")
+
+	arbitrary := e.run(t, e.repoRoot, nil, e.sshBin(), "fake-vps", "ls")
+	if arbitrary.err == nil {
+		t.Fatal("agent key should not run arbitrary ssh commands")
+	}
+	assertContains(t, arbitrary.stdout+arbitrary.stderr, "agent_shell_refused")
+
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/agent")
 	mustWrite(t, filepath.Join(app, "README.md"), "agent preview ship\n")
 	e.mustRun(t, app, nil, "git", "add", ".")
 	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "agent preview")
+	firstPreviewRelease := gitRelease(t, e, app)
 	setAgent()
 	preview := e.runCommand(t, app, agentEnv, nil, e.goBin)
 	if preview.err != nil {
 		t.Fatalf("agent preview ship should be allowed: %v\nstdout:\n%s\nstderr:\n%s", preview.err, preview.stdout, preview.stderr)
 	}
+	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "roleapi", "feature/agent")
+
+	mustWrite(t, filepath.Join(app, "README.md"), "agent second preview ship\n")
+	e.mustRun(t, app, nil, "git", "add", ".")
+	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "agent preview second")
+	secondPreview := e.runCommand(t, app, agentEnv, nil, e.goBin)
+	if secondPreview.err != nil {
+		t.Fatalf("agent second preview ship should be allowed: %v\nstdout:\n%s\nstderr:\n%s", secondPreview.err, secondPreview.stdout, secondPreview.stderr)
+	}
+	lyingRollback := e.run(t, e.repoRoot, nil, e.sshBin(), "fake-vps",
+		"sudo -n /usr/local/bin/ship server app --member-fingerprint "+e.ownerFingerprint+
+			" rollback --ssh-key-comment liar --git-author liar roleapi "+previewEnv+" "+firstPreviewRelease)
+	if lyingRollback.err != nil {
+		t.Fatalf("agent helper call with lying fingerprint should be pinned and allowed: %v\nstdout:\n%s\nstderr:\n%s", lyingRollback.err, lyingRollback.stdout, lyingRollback.stderr)
+	}
+	setOwner()
+	previewJournal := e.ssh(t, "cat "+identity.DeployJournalFile("roleapi", previewEnv))
+	assertJournalLineContains(t, previewJournal, `"outcome":"rolled_back"`, `"name":"agent-role"`, `"role":"agent"`)
 
 	e.mustRun(t, app, nil, "git", "checkout", "main")
 	mustWrite(t, filepath.Join(app, "README.md"), "agent prod ship needs approval\n")
@@ -2295,6 +2332,22 @@ func approvalIDFromOutput(t *testing.T, output string) string {
 	}
 	t.Fatalf("approval output missing remediation:\n%s", output)
 	return ""
+}
+
+func assertJournalLineContains(t *testing.T, journal string, marker string, wants ...string) {
+	t.Helper()
+	for _, line := range strings.Split(journal, "\n") {
+		if !strings.Contains(line, marker) {
+			continue
+		}
+		for _, want := range wants {
+			if !strings.Contains(line, want) {
+				t.Fatalf("journal line containing %q missing %q:\n%s", marker, want, line)
+			}
+		}
+		return
+	}
+	t.Fatalf("journal missing line containing %q:\n%s", marker, journal)
 }
 
 func stripURLs(text string) string {

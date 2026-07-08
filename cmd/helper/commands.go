@@ -13,14 +13,11 @@ var requireRoot = func() error {
 }
 
 type ServerCmd struct {
+	AgentShell agentShellCmd `cmd:"agent-shell" hidden:"" help:"Forced-command SSH gate for agent members."`
 	Doctor     doctorCmd     `cmd:"" help:"Run host diagnostics."`
 	Cloudflare cloudflareCmd `cmd:"" help:"Manage Cloudflare Tunnel ingress."`
 	App        appCmd        `cmd:"" help:"Manage app users, files, and processes."`
 	Env        envCmd        `cmd:"" help:"Manage host environments."`
 	Key        keyCmd        `cmd:"" help:"Manage deploy SSH keys."`
 	Approval   approvalCmd   `cmd:"" help:"Manage one-shot role approvals."`
-}
-
-func (ServerCmd) BeforeApply() error {
-	return requireRoot()
 }

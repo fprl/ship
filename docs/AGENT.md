@@ -52,10 +52,14 @@ Member identity and approvals:
 
 - Every client helper call carries the caller SSH public key fingerprint,
   computed locally from `~/.ssh/ship.pub` or the public half of `SHIP_SSH_KEY`.
-- In this human tier, the helper resolves that fingerprint through the
-  box-global members store and authorized_keys, then trusts the client's
-  claim. This is the teammate trust model until the serve protocol pins
-  agent identity server-side.
+- Owner and shipper keys are the teammate trust tier: their authorized_keys
+  entries are plain SSH keys, and the helper resolves the client-passed
+  fingerprint through the box-global members store and authorized_keys.
+- Agent keys are the pinned tier: their authorized_keys entries force
+  `ship server agent-shell --member <name>`. The forced command rejects
+  interactive SSH and arbitrary commands, allows only the ship helper protocol
+  and deploy upload staging, and overwrites any client member/fingerprint claim
+  with the pinned member name before the privileged helper runs.
 - Members and approvals are box-scoped, not app-scoped.
 
 Manifest env:
@@ -215,7 +219,7 @@ Secret scoping:
 - Purpose: Authorize SSH public key access for a deploy member.
 - Usage: `ship member add <github-user|key|path> [--role owner|shipper|agent] [--config <path>]`
 - Arguments and flags: `github-user|key|path`: A GitHub username, literal SSH public key, or path to a .pub/.pem file; `--role owner|shipper|agent` default `shipper`: Role recorded for newly added keys; `--config <path>` default `ship.toml`: Path to the app manifest containing box.
-- Notes: Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or already authorized, with role and SHA256 fingerprint. Existing keys are deduplicated by key material.
+- Notes: Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or already authorized, with role and SHA256 fingerprint. Existing keys are deduplicated by key material. Agent-role keys are installed with a forced `agent-shell` command; owner and shipper keys remain plain authorized_keys entries.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `manifest_invalid`, `invalid_box_target`, `github_keys_unavailable`, `ssh_public_key_invalid`, `operation_failed`
 
