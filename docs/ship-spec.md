@@ -392,9 +392,16 @@ completions, README rewritten around the four moments (§0),
 transcripts, CHANGELOG, release.
 
 Work honestly serially: Phase 1 acceptance before Phase 2 work. Deferred
-backlog (do not start, tracked for later): mounted-cargo fast path,
-git-push transport, pre-release data snapshot/rewind-lite, private preview
-auth.
+backlog (do not start, tracked for later): mounted-cargo fast path;
+git-push transport; pre-release data snapshot/rewind-lite; private
+preview auth (sketch: `preview_auth = true` → Caddy basic-auth on
+preview hosts with a generated per-app credential surfaced by
+`ship status`, probe/agent bypass token); `preview_domain` wildcard
+base (previews on `*.preview.yourdomain.com` instead of sslip —
+Vercel's preview-suffix equivalent); watch mode (dev-class env: source
+synced from the laptop into a container running the framework's own
+dev server — development on the box, prod images stay immutable);
+notify fan-out stays the receiver's job (single URL by design).
 
 ## 12. Engineering ground rules
 
