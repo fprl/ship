@@ -59,6 +59,18 @@ func normalizeMembersFile(file *MembersFile) {
 	}
 }
 
+func normalizeApprovalsFile(file *ApprovalsFile) {
+	file.Version = CurrentVersion
+	if file.Requests == nil {
+		file.Requests = []ApprovalRequest{}
+	}
+	for i := range file.Requests {
+		if file.Requests[i].Status == "" {
+			file.Requests[i].Status = ApprovalStatusPending
+		}
+	}
+}
+
 func ValidMemberRole(role MemberRole) bool {
 	switch role {
 	case MemberRoleOwner, MemberRoleShipper, MemberRoleAgent:
@@ -137,6 +149,60 @@ func validateMembersFile(file MembersFile) error {
 		}
 		if !ValidMemberRole(member.Role) {
 			return fmt.Errorf("members.%s.role must be owner, shipper, or agent", fingerprint)
+		}
+	}
+	return nil
+}
+
+func validateApprovalsFile(file ApprovalsFile) error {
+	seen := map[string]bool{}
+	for _, request := range file.Requests {
+		if strings.TrimSpace(request.ID) == "" {
+			return errors.New("approvals.requests.id is required")
+		}
+		if seen[request.ID] {
+			return fmt.Errorf("approvals.requests contains duplicate id %s", request.ID)
+		}
+		seen[request.ID] = true
+		if strings.TrimSpace(request.Member.Fingerprint) == "" {
+			return fmt.Errorf("approvals.requests.%s.member.fingerprint is required", request.ID)
+		}
+		if strings.TrimSpace(request.Member.Name) == "" {
+			return fmt.Errorf("approvals.requests.%s.member.name is required", request.ID)
+		}
+		if !ValidMemberRole(request.Member.Role) {
+			return fmt.Errorf("approvals.requests.%s.member.role must be owner, shipper, or agent", request.ID)
+		}
+		if strings.TrimSpace(request.Verb) == "" {
+			return fmt.Errorf("approvals.requests.%s.verb is required", request.ID)
+		}
+		if strings.TrimSpace(request.Target.Summary) == "" {
+			return fmt.Errorf("approvals.requests.%s.target.summary is required", request.ID)
+		}
+		if strings.TrimSpace(request.MatchKey) == "" {
+			return fmt.Errorf("approvals.requests.%s.match_key is required", request.ID)
+		}
+		switch request.Status {
+		case ApprovalStatusPending, ApprovalStatusApproved:
+		default:
+			return fmt.Errorf("approvals.requests.%s.status must be pending or approved", request.ID)
+		}
+		if strings.TrimSpace(request.CreatedAt) == "" {
+			return fmt.Errorf("approvals.requests.%s.created is required", request.ID)
+		}
+		if strings.TrimSpace(request.ExpiresAt) == "" {
+			return fmt.Errorf("approvals.requests.%s.expires is required", request.ID)
+		}
+		if request.Status == ApprovalStatusApproved {
+			if strings.TrimSpace(request.ApprovedAt) == "" {
+				return fmt.Errorf("approvals.requests.%s.approved_at is required", request.ID)
+			}
+			if request.ApprovedBy == nil {
+				return fmt.Errorf("approvals.requests.%s.approved_by is required", request.ID)
+			}
+			if !ValidMemberRole(request.ApprovedBy.Role) {
+				return fmt.Errorf("approvals.requests.%s.approved_by.role must be owner, shipper, or agent", request.ID)
+			}
 		}
 	}
 	return nil

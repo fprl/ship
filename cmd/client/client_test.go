@@ -564,7 +564,7 @@ func TestCommandRunnerEnvKeyWinsOverShipIdentity(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USER", "runner-user")
-	t.Setenv("SHIP_SSH_KEY", "test-private-key")
+	t.Setenv("SHIP_SSH_KEY", generatePrivateKeyForClientTest(t))
 
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -579,6 +579,69 @@ func TestCommandRunnerEnvKeyWinsOverShipIdentity(t *testing.T) {
 	if strings.Contains(strings.Join(runner.SshOptions, " "), "UserKnownHostsFile") {
 		t.Fatalf("env key should use normal known_hosts, got %v", runner.SshOptions)
 	}
+	if runner.MemberFingerprint == "" {
+		t.Fatal("env key should derive a member fingerprint")
+	}
+	if got := publicKeyComment(filepath.Join(runner.TempDir, "id.pub")); got != "runner-user" {
+		t.Fatalf("env key public half comment = %q, want runner-user", got)
+	}
+}
+
+func TestCommandRunnerInjectsMemberFingerprintAfterServerNamespace(t *testing.T) {
+	runner := &CommandRunner{MemberFingerprint: "SHA256:abc+/123"}
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "app",
+			in:   "sudo -n /usr/local/bin/ship server app apply api prod",
+			want: "sudo -n /usr/local/bin/ship server app --member-fingerprint SHA256:abc+/123 apply api prod",
+		},
+		{
+			name: "doctor",
+			in:   "sudo -n /usr/local/bin/ship server doctor --json",
+			want: "sudo -n /usr/local/bin/ship server doctor --member-fingerprint SHA256:abc+/123 --json",
+		},
+		{
+			name: "approval",
+			in:   "sudo -n /usr/local/bin/ship server approval list --json",
+			want: "sudo -n /usr/local/bin/ship server approval --member-fingerprint SHA256:abc+/123 list --json",
+		},
+		{
+			name: "env prefix",
+			in:   "SHIP_ERROR_JSON=1 sudo -n /usr/local/bin/ship server app secret set api prod KEY",
+			want: "SHIP_ERROR_JSON=1 sudo -n /usr/local/bin/ship server app --member-fingerprint SHA256:abc+/123 secret set api prod KEY",
+		},
+		{
+			name: "non server",
+			in:   "true",
+			want: "true",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := runner.withMemberFingerprint(tt.in); got != tt.want {
+				t.Fatalf("withMemberFingerprint:\nwant: %s\n got: %s", tt.want, got)
+			}
+		})
+	}
+}
+
+func generatePrivateKeyForClientTest(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "id")
+	cmd := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "runner-user", "-f", path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("ssh-keygen failed: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func TestGitWorktreeDirtyIsScopedToAppRoot(t *testing.T) {
@@ -925,6 +988,9 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "key list text", command: serverKeyListCommand(false)},
 		{name: "key list json", command: serverKeyListCommand(true)},
 		{name: "key rm", command: serverKeyRmCommand("alice")},
+		{name: "approval list text", command: serverApprovalListCommand(false)},
+		{name: "approval list json", command: serverApprovalListCommand(true)},
+		{name: "approval approve", command: serverApprovalApproveCommand("abc123xy")},
 	}
 
 	for _, tt := range commands {
@@ -950,7 +1016,8 @@ func serverSubcommandCoveredBySudoers(subcommand string) bool {
 	return strings.HasPrefix(subcommand, "app ") ||
 		subcommand == "doctor" ||
 		strings.HasPrefix(subcommand, "doctor ") ||
-		strings.HasPrefix(subcommand, "key ")
+		strings.HasPrefix(subcommand, "key ") ||
+		strings.HasPrefix(subcommand, "approval ")
 }
 
 func TestServerAppSetupEnvCommand(t *testing.T) {
@@ -1239,6 +1306,37 @@ func TestServerDoctorCommandSupportsJSON(t *testing.T) {
 		},
 	}
 
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Fatalf("unexpected command:\nwant: %s\n got: %s", tt.want, tt.got)
+			}
+		})
+	}
+}
+
+func TestServerApprovalCommands(t *testing.T) {
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{
+			name: "list text",
+			got:  serverApprovalListCommand(false),
+			want: "sudo -n /usr/local/bin/ship server approval list",
+		},
+		{
+			name: "list json",
+			got:  serverApprovalListCommand(true),
+			want: "sudo -n /usr/local/bin/ship server approval list --json",
+		},
+		{
+			name: "approve",
+			got:  serverApprovalApproveCommand("abc123xy"),
+			want: "sudo -n /usr/local/bin/ship server approval approve abc123xy",
+		},
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.got != tt.want {

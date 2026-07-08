@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/shipidentity"
 	"github.com/fprl/ship/internal/utils"
 	"os"
@@ -14,9 +15,10 @@ import (
 )
 
 type CommandRunner struct {
-	SshOptions       []string
-	RsyncRemoteShell string
-	TempDir          string
+	SshOptions        []string
+	RsyncRemoteShell  string
+	TempDir           string
+	MemberFingerprint string
 }
 
 func NewCommandRunner() (*CommandRunner, error) {
@@ -27,13 +29,18 @@ func NewCommandRunner() (*CommandRunner, error) {
 	}
 	key := os.Getenv("SHIP_SSH_KEY")
 	if key == "" {
+		fingerprint, err := fingerprintForPublicKeyLine(identity.PublicKeyLine)
+		if err != nil {
+			return nil, err
+		}
 		sshOpts = append(sshOpts,
 			"-i", identity.PrivateKeyPath,
 			"-o", "IdentitiesOnly=yes",
 		)
 		return &CommandRunner{
-			SshOptions:       sshOpts,
-			RsyncRemoteShell: sshRemoteShell(sshOpts),
+			SshOptions:        sshOpts,
+			RsyncRemoteShell:  sshRemoteShell(sshOpts),
+			MemberFingerprint: fingerprint,
 		}, nil
 	}
 	dir, err := os.MkdirTemp("", "ship-ssh-")
@@ -53,6 +60,23 @@ func NewCommandRunner() (*CommandRunner, error) {
 		os.RemoveAll(dir)
 		return nil, err
 	}
+	publicLine, err := publicKeyLineForPrivateKey(keyPath)
+	if err != nil {
+		os.RemoveAll(dir)
+		return nil, err
+	}
+	if comment := privateKeyComment(keyPath); comment != "" && len(strings.Fields(publicLine)) < 3 {
+		publicLine = strings.TrimSpace(publicLine) + " " + comment
+	}
+	if err := os.WriteFile(keyPath+".pub", []byte(strings.TrimSpace(publicLine)+"\n"), 0644); err != nil {
+		os.RemoveAll(dir)
+		return nil, err
+	}
+	fingerprint, err := fingerprintForPublicKeyLine(publicLine)
+	if err != nil {
+		os.RemoveAll(dir)
+		return nil, err
+	}
 
 	sshOpts = append(sshOpts,
 		"-i", keyPath,
@@ -60,10 +84,61 @@ func NewCommandRunner() (*CommandRunner, error) {
 	)
 
 	return &CommandRunner{
-		SshOptions:       sshOpts,
-		RsyncRemoteShell: sshRemoteShell(sshOpts),
-		TempDir:          dir,
+		SshOptions:        sshOpts,
+		RsyncRemoteShell:  sshRemoteShell(sshOpts),
+		TempDir:           dir,
+		MemberFingerprint: fingerprint,
 	}, nil
+}
+
+func fingerprintForPrivateKeyPublicHalf(path string) (string, error) {
+	publicLine, err := publicKeyLineForPrivateKey(path)
+	if err != nil {
+		return "", err
+	}
+	return fingerprintForPublicKeyLine(publicLine)
+}
+
+func publicKeyLineForPrivateKey(path string) (string, error) {
+	stdout, stderr, code, err := runCommand("ssh-keygen", []string{"-y", "-f", path}, "")
+	if err != nil || code != 0 {
+		detail := strings.TrimSpace(stderr)
+		if detail == "" {
+			detail = "ssh-keygen -y failed"
+		}
+		return "", errcat.New(errcat.CodeOperationFailed, errcat.Fields{
+			"detail":  "ship identity setup failed: " + detail,
+			"command": "fix SHIP_SSH_KEY",
+		})
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
+func privateKeyComment(path string) string {
+	stdout, _, code, _ := runCommand("ssh-keygen", []string{"-l", "-f", path}, "")
+	if code != 0 {
+		return ""
+	}
+	fields := strings.Fields(strings.TrimSpace(stdout))
+	if len(fields) < 3 {
+		return ""
+	}
+	end := len(fields)
+	if strings.HasPrefix(fields[end-1], "(") {
+		end--
+	}
+	if end <= 2 {
+		return ""
+	}
+	return strings.Join(fields[2:end], " ")
+}
+
+func fingerprintForPublicKeyLine(line string) (string, error) {
+	key, err := memberkeys.NormalizeLine(line, "")
+	if err != nil {
+		return "", err
+	}
+	return key.Fingerprint, nil
 }
 
 func sshRemoteShell(sshOpts []string) string {
@@ -165,6 +240,7 @@ func (r *CommandRunner) RunSSH(server string, command string) (string, string, i
 	if len(r.SshOptions) > 0 {
 		args = append(args, r.SshOptions...)
 	}
+	command = r.withMemberFingerprint(command)
 	args = append(args, server, command)
 	return runCommand("ssh", args, "")
 }
@@ -179,6 +255,7 @@ func (r *CommandRunner) RunSSHWithStdin(server string, command string, stdin []b
 	if len(r.SshOptions) > 0 {
 		args = append(args, r.SshOptions...)
 	}
+	command = r.withMemberFingerprint(command)
 	args = append(args, server, command)
 	cmd := exec.Command("ssh", args...)
 	cmd.Stdin = bytes.NewReader(stdin)
@@ -204,6 +281,7 @@ func (r *CommandRunner) RunSSHPassthrough(server string, command string) error {
 		args = append(args, r.SshOptions...)
 	}
 	if command != "" {
+		command = r.withMemberFingerprint(command)
 		args = append(args, server, command)
 	} else {
 		args = append(args, server)
@@ -219,6 +297,7 @@ func (r *CommandRunner) RunSSHPassthroughExitCode(server string, command string,
 	if tty {
 		args = append(args, "-tt")
 	}
+	command = r.withMemberFingerprint(command)
 	args = append(args, server, command)
 	cmd := exec.Command("ssh", args...)
 	cmd.Stdin = os.Stdin
@@ -233,6 +312,30 @@ func (r *CommandRunner) RunSSHPassthroughExitCode(server string, command string,
 		return exitErr.ExitCode(), nil
 	}
 	return 1, err
+}
+
+const remoteServerCommandPrefix = "sudo -n /usr/local/bin/ship server "
+
+func (r *CommandRunner) withMemberFingerprint(command string) string {
+	fingerprint := strings.TrimSpace(r.MemberFingerprint)
+	if fingerprint == "" {
+		return command
+	}
+	index := strings.Index(command, remoteServerCommandPrefix)
+	if index < 0 {
+		return command
+	}
+	prefix := command[:index]
+	serverCommand := command[index:]
+	rest := strings.TrimPrefix(serverCommand, remoteServerCommandPrefix)
+	if strings.Contains(rest, "--member-fingerprint") {
+		return command
+	}
+	namespace, tail, ok := strings.Cut(rest, " ")
+	if !ok {
+		return prefix + remoteServerCommandPrefix + namespace + " --member-fingerprint " + utils.ShellEscape(fingerprint)
+	}
+	return prefix + remoteServerCommandPrefix + namespace + " --member-fingerprint " + utils.ShellEscape(fingerprint) + " " + tail
 }
 
 func (r *CommandRunner) Upload(local string, remote string, server string) error {

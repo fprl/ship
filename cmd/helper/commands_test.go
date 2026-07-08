@@ -27,11 +27,13 @@ func parseServerCommand(t *testing.T, args ...string) *ServerCmd {
 func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 	tests := [][]string{
 		{"doctor"},
+		{"doctor", "--member-fingerprint", aliceFingerprint},
 		{"doctor", "--json"},
 		{"doctor", "--box-target", "deploy@example.com", "--json"},
 		{"doctor", "record"},
 		{"cloudflare", "setup-tunnel", "--name", "ship", "--account-id", "account-test", "--token-file", "/tmp/token"},
 		{"app", "setup-env", "api", "production"},
+		{"app", "--member-fingerprint", aliceFingerprint, "status", "--json", "api", "production"},
 		{"app", "preflight", "--secret", "DATABASE_URL", "--json", "api", "production"},
 		{"app", "destroy", "api"},
 		{"app", "destroy-env", "api", "production"},
@@ -63,10 +65,14 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "backup", "restore", "--from", "backup-id", "--dry-run", "api", "production"},
 		{"env", "reap"},
 		{"key", "add", "--comment", "alice"},
+		{"key", "--member-fingerprint", aliceFingerprint, "ls"},
 		{"key", "add", "--comment", "alice", "--role", "owner"},
 		{"key", "ls"},
 		{"key", "ls", "--json"},
 		{"key", "rm", "alice"},
+		{"approval", "--member-fingerprint", aliceFingerprint, "list"},
+		{"approval", "list", "--json"},
+		{"approval", "approve", "abc123xy"},
 	}
 
 	for _, tt := range tests {
@@ -77,6 +83,15 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			parseServerCommand(t, tt...)
 		})
+	}
+}
+
+func TestServerCLIAppliesMemberFingerprintFlag(t *testing.T) {
+	setServerMemberFingerprint("")
+	t.Cleanup(func() { setServerMemberFingerprint("") })
+	parseServerCommand(t, "app", "--member-fingerprint", aliceFingerprint, "status", "--json", "api", "production")
+	if serverMemberFingerprint != aliceFingerprint {
+		t.Fatalf("server member fingerprint = %q, want %q", serverMemberFingerprint, aliceFingerprint)
 	}
 }
 

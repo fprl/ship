@@ -46,6 +46,10 @@ const (
 	CodeSSHPublicKeyInvalid               Code = "ssh_public_key_invalid"
 	CodeMemberNotFound                    Code = "member_not_found"
 	CodeMemberLastKey                     Code = "member_last_key"
+	CodeMemberUnknown                     Code = "member_unknown"
+	CodeRoleDenied                        Code = "role_denied"
+	CodeApprovalRequired                  Code = "approval_required"
+	CodeApprovalExpired                   Code = "approval_expired"
 	CodeDotenvRejected                    Code = "dotenv_rejected"
 	CodeDotenvMalformed                   Code = "dotenv_malformed"
 	CodeHostNotInstalled                  Code = "host_not_installed"
@@ -297,6 +301,31 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "member rm refused",
 		CauseTemplate:       "removing {name} would remove the last remaining authorized key",
 		RemediationTemplate: "ship member add <github-user|key|path>",
+	},
+	CodeMemberUnknown: {
+		Code:                CodeMemberUnknown,
+		MessageTemplate:     "member identity is not authorized",
+		CauseTemplate:       "fingerprint {fingerprint} is not in authorized_keys",
+		RemediationTemplate: "ship member add",
+	},
+	CodeRoleDenied: {
+		Code:                CodeRoleDenied,
+		MessageTemplate:     "operation denied",
+		CauseTemplate:       "{member} ({role}) cannot {summary}",
+		RemediationTemplate: "{command}",
+		Defaults:            Fields{"command": "ship status"},
+	},
+	CodeApprovalRequired: {
+		Code:                CodeApprovalRequired,
+		MessageTemplate:     "approval required for {summary}",
+		CauseTemplate:       "{member} ({role}) requested {summary}; approval id {id}",
+		RemediationTemplate: "ship approve {id}",
+	},
+	CodeApprovalExpired: {
+		Code:                CodeApprovalExpired,
+		MessageTemplate:     "approval expired",
+		CauseTemplate:       "approval {id} expired for {summary}",
+		RemediationTemplate: "retry the command to mint a fresh request",
 	},
 	CodeDotenvRejected: {
 		Code:                CodeDotenvRejected,

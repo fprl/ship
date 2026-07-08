@@ -48,6 +48,16 @@ Truth stores:
 - Use manifest snapshots to answer "what did this release intend?"
 - Use box state to answer "what is live now?"
 
+Member identity and approvals:
+
+- Every client helper call carries the caller SSH public key fingerprint,
+  computed locally from `~/.ssh/ship.pub` or the public half of `SHIP_SSH_KEY`.
+- In this human tier, the helper resolves that fingerprint through the
+  box-global members store and authorized_keys, then trusts the client's
+  claim. This is the teammate trust model until the serve protocol pins
+  agent identity server-side.
+- Members and approvals are box-scoped, not app-scoped.
+
 Manifest env:
 
 - `[env]` defines committed container environment variables for every deploy.
@@ -225,6 +235,15 @@ Secret scoping:
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `manifest_invalid`, `invalid_box_target`, `member_not_found`, `member_last_key`, `operation_failed`
 
+### `approve`
+- Purpose: List or grant one-shot approvals for out-of-role requests.
+- Usage: `ship approve [id] [--json] [--config <path>]`
+- Arguments and flags: `id`: Approval id to grant. Omit to list pending approvals; `--json`: Emit structured pending approvals. Only valid for the list form; `--config <path>` default `ship.toml`: Path to the app manifest containing box.
+- `--json` stdout schema: `{"approvals":[{"id":"abc123xy","member":"alice","role":"agent","request":"app=api env=prod class=production release=abc123","expires":"2026-07-08T10:15:00Z"}]}`
+- Notes: Bare `ship approve` lists pending requests and prunes expired entries. `ship approve <id>` can be run only by owner or shipper and grants one retry by the original member.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `approval_expired`, `member_unknown`, `role_denied`, `operation_failed`
+
 ### `box doctor`
 - Purpose: Run box diagnostics.
 - Usage: `ship box doctor [ssh-target] [--json]`
@@ -305,10 +324,13 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `deploy_recovered`: `why` is `{"previous_failure":"<entry>","current":"<entry>"}`; `remediation` is `{"command":"ship status","journal":"<current>","previous_failure":"<previous>"}`.
 - `preview_reaped`: `why` is `{"branch":"feature/x","env":"Preview feature/x","expired_at":"..."}`; `remediation` is `{"command":"git checkout feature/x && ship","branch":"feature/x","env":"Preview feature/x"}`.
 - `doctor_degraded`: `why` is a doctor check `{"id","status","evidence","remediation"}`; `remediation` is `{"command":"<check.remediation>","check":"<doctor check>"}`.
+- `approval_requested`: `why` is `{"id","member","verb","target","expires"}`; `remediation` is `{"command":"ship approve <id>","request":"<approval request>"}`.
 
 ## Error-code catalogue
 
 <!-- BEGIN GENERATED ERRCAT -->
+- `approval_expired`: approval expired; cause: approval {id} expired for {summary}; remediation: `retry the command to mint a fresh request`.
+- `approval_required`: approval required for {summary}; cause: {member} ({role}) requested {summary}; approval id {id}; remediation: `ship approve {id}`.
 - `behind_production`: Production ship failed; cause: deployed commit {deployed} {detail}; remediation: `git pull`.
 - `box_missing_tool`: box preflight failed; cause: required server tool is missing on {target}: {tool}; remediation: `ship box setup {target}`.
 - `box_not_initialized`: box preflight failed; cause: ship server API is missing at /usr/local/bin/ship on {target}; remediation: `ship box setup {target}`.
@@ -344,6 +366,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `manifest_invalid`: ship.toml validation failed; cause: {details}; remediation: `{command}`; defaults: `command="fix ship.toml"`.
 - `member_last_key`: member rm refused; cause: removing {name} would remove the last remaining authorized key; remediation: `ship member add <github-user|key|path>`.
 - `member_not_found`: member rm failed; cause: no authorized keys found for member {name}; current members: {members}; remediation: `ship member ls`.
+- `member_unknown`: member identity is not authorized; cause: fingerprint {fingerprint} is not in authorized_keys; remediation: `ship member add`.
 - `missing_tool`: host preflight failed; cause: missing host tool: {tool}; remediation: `ship box setup <ssh-target>`.
 - `multi_process_no_web_route`: route synthesis failed; cause: manifest declares multiple processes but no [routes] host and no process named "web"; remediation: `fix ship.toml`.
 - `no_deploys`: deploy journal lookup failed; cause: no deploys recorded for {app} ({env}); remediation: `ship`.
@@ -356,6 +379,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `remote_preflight_after_prepare_failed`: deploy preflight failed after preparing the app environment; cause: {detail}; remediation: `ship box doctor`.
 - `remote_preflight_failed`: deploy preflight failed before upload/build/mutation; cause: {detail}; remediation: `ship box doctor`.
 - `rm_confirmation_required`: Production rm confirmation failed; cause: Production rm requires --confirm {app}; remediation: `ship rm {branch} --confirm {app}`.
+- `role_denied`: operation denied; cause: {member} ({role}) cannot {summary}; remediation: `{command}`; defaults: `command="ship status"`.
 - `secret_invalid`: secret preflight failed; cause: {detail}; remediation: `ship secret set KEY`.
 - `secret_missing`: deploy is missing a required secret; cause: missing secret {secret} for {scope}; remediation: `{command}`.
 - `secret_read_error`: secret preflight failed; cause: {detail}; remediation: `ship box doctor`.

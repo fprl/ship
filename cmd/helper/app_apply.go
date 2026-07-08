@@ -61,6 +61,7 @@ func (c appApplyCmd) Run() error {
 	if _, err := c.releaseMetadata(); err != nil {
 		utils.DieError(err, 1)
 	}
+	authorizeOrDie(helperVerbShip, authTargetForAppEnv(c.App, c.Env, "release="+c.SHA))
 	withAppEnvLock(c.App, c.Env, func() {
 		c.runLocked()
 	})
@@ -187,6 +188,7 @@ func (c appApplyCmd) runLockedE() (err error) {
 		PreviousRelease:  previousRelease,
 		AttemptedRelease: c.SHA,
 		Identity:         c.actor(),
+		Member:           currentServerMemberForJournal(),
 	}, nil)
 	if err := appendSanitizedDeployJournalEntry(c.App, c.Env, entry); err != nil {
 		return err

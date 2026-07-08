@@ -167,6 +167,71 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 	if membersState.Version != CurrentVersion || membersState.Members["SHA256:abc"].Role != MemberRoleOwner {
 		t.Fatalf("unexpected members state: %+v", membersState)
 	}
+
+	if err := store.WriteApprovals(ApprovalsFile{
+		Version: CurrentVersion,
+		Requests: []ApprovalRequest{
+			{
+				ID: "abc123xy",
+				Member: ApprovalMember{
+					Fingerprint: "SHA256:agent",
+					Name:        "agent",
+					Role:        MemberRoleAgent,
+				},
+				Verb: "ship",
+				Target: ApprovalTarget{
+					App:     "api",
+					Env:     "prod",
+					Class:   "production",
+					Args:    []string{"release=abc123"},
+					Summary: "app=api env=prod class=production release=abc123",
+				},
+				MatchKey:  `{"member":"SHA256:agent","verb":"ship"}`,
+				Status:    ApprovalStatusPending,
+				CreatedAt: "2026-07-08T10:00:00Z",
+				ExpiresAt: "2026-07-08T10:15:00Z",
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.ApprovalsPath(); got != filepath.Join(root, "approvals.json") {
+		t.Fatalf("unexpected approvals path: %s", got)
+	}
+	if got := store.ApprovalsJournalPath(); got != filepath.Join(root, "approvals-journal.jsonl") {
+		t.Fatalf("unexpected approvals journal path: %s", got)
+	}
+	approvalsData, err := os.ReadFile(store.ApprovalsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`"version": 1`,
+		`"requests": [`,
+		`"id": "abc123xy"`,
+		`"role": "agent"`,
+		`"status": "pending"`,
+		`"expires": "2026-07-08T10:15:00Z"`,
+	} {
+		if !strings.Contains(string(approvalsData), want) {
+			t.Fatalf("expected approvals.json to contain %q:\n%s", want, approvalsData)
+		}
+	}
+	assertMode(t, store.ApprovalsPath(), 0644)
+	tempFiles, err = filepath.Glob(filepath.Join(root, ".approvals.json.*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tempFiles) != 0 {
+		t.Fatalf("atomic approvals write left temp files: %v", tempFiles)
+	}
+	approvalsState, err := store.ReadApprovals()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approvalsState.Version != CurrentVersion || len(approvalsState.Requests) != 1 || approvalsState.Requests[0].Member.Role != MemberRoleAgent {
+		t.Fatalf("unexpected approvals state: %+v", approvalsState)
+	}
 }
 
 func TestWriteHostStatePreservesDesired(t *testing.T) {

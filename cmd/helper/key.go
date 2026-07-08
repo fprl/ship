@@ -18,9 +18,15 @@ import (
 )
 
 type keyCmd struct {
-	Add keyAddCmd  `cmd:"add" help:"Append SSH public keys to the deploy user's authorized_keys."`
-	Ls  keyListCmd `cmd:"ls" help:"List deploy SSH keys."`
-	Rm  keyRmCmd   `cmd:"rm" help:"Remove deploy SSH keys by member name."`
+	MemberFingerprint string     `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
+	Add               keyAddCmd  `cmd:"add" help:"Append SSH public keys to the deploy user's authorized_keys."`
+	Ls                keyListCmd `cmd:"ls" help:"List deploy SSH keys."`
+	Rm                keyRmCmd   `cmd:"rm" help:"Remove deploy SSH keys by member name."`
+}
+
+func (c keyCmd) AfterApply() error {
+	setServerMemberFingerprint(c.MemberFingerprint)
+	return nil
 }
 
 type keyAddCmd struct {
@@ -71,6 +77,7 @@ func (c keyAddCmd) run() error {
 	if err != nil {
 		return err
 	}
+	authorizeOrDie(helperVerbMember, authTargetForBox("member add comment="+comment+" role="+string(role), memberAddTargetArgs(comment, role, keys)...))
 	user, err := deployAuthorizedKeysUser()
 	if err != nil {
 		return err
@@ -93,6 +100,7 @@ func (c keyListCmd) Run() error {
 }
 
 func (c keyListCmd) run() error {
+	authorizeOrDie(helperVerbMember, authTargetForBox("member ls"))
 	user, err := deployAuthorizedKeysUser()
 	if err != nil {
 		return err
@@ -132,6 +140,7 @@ func (c keyRmCmd) run() error {
 			"command": "ship member rm <name>",
 		})
 	}
+	authorizeOrDie(helperVerbMember, authTargetForBox("member rm name="+name, "name="+name))
 	user, err := deployAuthorizedKeysUser()
 	if err != nil {
 		return err
@@ -149,6 +158,9 @@ func (c keyRmCmd) run() error {
 }
 
 func deployAuthorizedKeysUser() (string, error) {
+	if os.Getenv("SHIP_AUTHORIZED_KEYS_FILE") != "" {
+		return "deploy", nil
+	}
 	user, err := host.DeployUserFromSudo()
 	if err != nil {
 		return "", err
@@ -260,6 +272,9 @@ func removeDeployAuthorizedKeys(user, name string) (int, error) {
 }
 
 func deployAuthorizedKeysPaths(user string) (string, string, error) {
+	if path := os.Getenv("SHIP_AUTHORIZED_KEYS_FILE"); path != "" {
+		return filepath.Dir(path), path, nil
+	}
 	home, err := homeDirForUser(user)
 	if err != nil {
 		return "", "", err
@@ -339,6 +354,14 @@ func formatKeyAddResult(result keyAddResult) string {
 
 func formatMemberRow(row memberKeyRow) string {
 	return row.Name + " " + row.Role + " " + row.KeyType + " " + row.Fingerprint
+}
+
+func memberAddTargetArgs(comment string, role store.MemberRole, keys []authorizedKey) []string {
+	args := []string{"comment=" + comment, "role=" + string(role)}
+	for _, key := range keys {
+		args = append(args, "fingerprint="+key.Fingerprint)
+	}
+	return args
 }
 
 func writeReconciledMembers(keys []authorizedKey, current store.MembersFile, overrides map[string]store.MemberRecord) error {

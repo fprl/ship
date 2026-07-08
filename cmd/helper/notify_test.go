@@ -141,6 +141,48 @@ func TestNotifyDoctorDegradedPayloadCarriesEvidenceAndRunnableRemediation(t *tes
 	t.Logf("doctor_degraded payload:\n%s", prettyNotifyJSON(t, payload))
 }
 
+func TestNotifyApprovalRequestedPayloadCarriesLiteralApproveCommand(t *testing.T) {
+	setupPreviewHostTest(t)
+	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName, InfraID: identity.InfraID("api", productionEnvName)})
+	sink := newNotifyTestSink(t)
+	writeAppliedNotifyManifest(t, "api", productionEnvName, sink.URL)
+	if err := appendDeployJournalEntry("api", productionEnvName, deployJournalEntry{
+		Outcome:          "deployed",
+		StartedAt:        "2026-07-08T09:00:00Z",
+		EndedAt:          "2026-07-08T09:00:01Z",
+		AttemptedRelease: "aaa111bbb222",
+		Identity:         deployIdentity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	request := store.ApprovalRequest{
+		ID: "abc123xy",
+		Member: store.ApprovalMember{
+			Fingerprint: aliceFingerprint,
+			Name:        "alice",
+			Role:        store.MemberRoleAgent,
+		},
+		Verb: "ship",
+		Target: store.ApprovalTarget{
+			App:     "api",
+			Env:     productionEnvName,
+			Class:   "production",
+			Summary: "app=api env=prod class=production release=aaa111",
+		},
+		CreatedAt: "2026-07-08T10:00:00Z",
+		ExpiresAt: "2026-07-08T10:15:00Z",
+	}
+
+	notifyApprovalRequested(request, time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC))
+
+	payload := sink.singlePayload(t)
+	assertNotifyField(t, payload, "event", notifyEventApprovalRequested)
+	assertNotifyField(t, payload, "release", "aaa111bbb222")
+	assertNotifyNestedField(t, payload, "why", "id", "abc123xy")
+	assertNotifyNestedField(t, payload, "remediation", "command", "ship approve abc123xy")
+	t.Logf("approval_requested payload:\n%s", prettyNotifyJSON(t, payload))
+}
+
 func TestNotifyFailureIsBoundedAndDoesNotLeakURL(t *testing.T) {
 	oldTimeout := notifyTimeout
 	oldStderr := notifyStderr

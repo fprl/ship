@@ -822,6 +822,22 @@ var verbs = []Verb{
 		Notes:     []string{"Removes every key whose comment equals the member name. Refuses to remove the last remaining authorized key."},
 	},
 	{
+		Verb:    "approve",
+		Purpose: "List or grant one-shot approvals for out-of-role requests.",
+		Usage:   "ship approve [id] [--json] [--config <path>]",
+		Flags: []Flag{
+			{Name: "id", Purpose: "Approval id to grant. Omit to list pending approvals."},
+			{Name: "--json", Purpose: "Emit structured pending approvals. Only valid for the list form."},
+			{Name: "--config", Value: "<path>", Default: "ship.toml", Purpose: "Path to the app manifest containing box."},
+		},
+		JSONSchema: schema(
+			`{"approvals":[{"id":"abc123xy","member":"alice","role":"agent","request":"app=api env=prod class=production release=abc123","expires":"2026-07-08T10:15:00Z"}]}`,
+		),
+		ExitCodes: normalExit,
+		Errors:    []string{"approval_expired", "member_unknown", "role_denied", "operation_failed"},
+		Notes:     []string{"Bare `ship approve` lists pending requests and prunes expired entries. `ship approve <id>` can be run only by owner or shipper and grants one retry by the original member."},
+	},
+	{
 		Verb:    "box doctor",
 		Purpose: "Run box diagnostics.",
 		Usage:   "ship box doctor [ssh-target] [--json]",
@@ -955,6 +971,16 @@ Truth stores:
 - Use manifest snapshots to answer "what did this release intend?"
 - Use box state to answer "what is live now?"
 
+Member identity and approvals:
+
+- Every client helper call carries the caller SSH public key fingerprint,
+  computed locally from ` + "`~/.ssh/ship.pub`" + ` or the public half of ` + "`SHIP_SSH_KEY`" + `.
+- In this human tier, the helper resolves that fingerprint through the
+  box-global members store and authorized_keys, then trusts the client's
+  claim. This is the teammate trust model until the serve protocol pins
+  agent identity server-side.
+- Members and approvals are box-scoped, not app-scoped.
+
 Manifest env:
 
 - ` + "`[env]`" + ` defines committed container environment variables for every deploy.
@@ -1006,4 +1032,5 @@ All events POST ` + "`{\"app\",\"env\",\"event\",\"release\",\"summary\",\"why\"
 - ` + "`deploy_recovered`" + `: ` + "`why`" + ` is ` + "`{\"previous_failure\":\"<entry>\",\"current\":\"<entry>\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship status\",\"journal\":\"<current>\",\"previous_failure\":\"<previous>\"}`" + `.
 - ` + "`preview_reaped`" + `: ` + "`why`" + ` is ` + "`{\"branch\":\"feature/x\",\"env\":\"Preview feature/x\",\"expired_at\":\"...\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"git checkout feature/x && ship\",\"branch\":\"feature/x\",\"env\":\"Preview feature/x\"}`" + `.
 - ` + "`doctor_degraded`" + `: ` + "`why`" + ` is a doctor check ` + "`{\"id\",\"status\",\"evidence\",\"remediation\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"<check.remediation>\",\"check\":\"<doctor check>\"}`" + `.
+- ` + "`approval_requested`" + `: ` + "`why`" + ` is ` + "`{\"id\",\"member\",\"verb\",\"target\",\"expires\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship approve <id>\",\"request\":\"<approval request>\"}`" + `.
 `

@@ -29,6 +29,7 @@ func (c appStatusCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
+	authorizeOrDie(helperVerbRead, authTargetForAppEnv(c.App, c.Env, "status"))
 	out, err := podmanPSContainers(c.App, c.Env)
 	if err != nil {
 		utils.DieError(err, 1)
@@ -64,6 +65,7 @@ type appListCmd struct {
 }
 
 func (c appListCmd) Run() error {
+	authorizeOrDie(helperVerbRead, authTargetForBox("status"))
 	out, err := podmanPSAllContainers()
 	if err != nil {
 		utils.DieError(err, 1)
@@ -105,18 +107,23 @@ func (c appLogsCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
+	args := []string{"logs"}
+	if c.Process != "" {
+		args = append(args, "process="+c.Process)
+	}
+	authorizeOrDie(helperVerbRead, authTargetForAppEnv(c.App, c.Env, args...))
 	containerName, err := resolveLogContainer(c.App, c.Env, c.Process)
 	if err != nil {
 		utils.DieError(err, 1)
 	}
-	args := []string{"logs"}
+	logArgs := []string{"logs"}
 	if c.Follow {
-		args = append(args, "-f")
+		logArgs = append(logArgs, "-f")
 	} else {
-		args = append(args, "--tail", fmt.Sprintf("%d", c.Tail))
+		logArgs = append(logArgs, "--tail", fmt.Sprintf("%d", c.Tail))
 	}
-	args = append(args, containerName)
-	cmd := exec.Command("podman", args...)
+	logArgs = append(logArgs, containerName)
+	cmd := exec.Command("podman", logArgs...)
 	if c.Follow {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr

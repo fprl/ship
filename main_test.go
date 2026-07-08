@@ -86,6 +86,9 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"member", "ls"},
 		{"member", "ls", "--json"},
 		{"member", "rm", "alice"},
+		{"approve"},
+		{"approve", "--json"},
+		{"approve", "abc123xy"},
 		{"docs"},
 		{"help"},
 		{"help", "status"},
@@ -182,7 +185,7 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	}
 	_, _ = parser.Parse([]string{"--help"})
 	text := stdout.String() + stderr.String()
-	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "pin", "unpin", "save", "restore", "ssh", "secret <command>", "box <command>", "member <command>", "docs", "help", "version"} {
+	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "pin", "unpin", "save", "restore", "ssh", "secret <command>", "box <command>", "member <command>", "approve", "docs", "help", "version"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("top-level help should mention %q, got:\n%s", want, text)
 		}

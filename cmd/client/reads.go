@@ -109,7 +109,11 @@ func CmdStatus(root string, jsonFlag bool) {
 		fmt.Println(string(buf))
 		return
 	}
-	fmt.Print(renderStatusSummary(payload))
+	pending, err := fetchPendingApprovalCount(runner, ctx.Server)
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	fmt.Print(renderStatusSummaryWithApprovals(payload, pending))
 }
 
 type whyJournalEntry struct {
@@ -340,6 +344,36 @@ func renderStatusSummary(payload statusPayload) string {
 		fmt.Fprintf(&b, "%s %s  %s  release=%s  health=%s%s%s\n", statusClassLabel(env.Class), env.Branch, env.URL, release, env.Health, lifecycle, shippedBy)
 	}
 	return b.String()
+}
+
+func renderStatusSummaryWithApprovals(payload statusPayload, pendingApprovals int) string {
+	out := renderStatusSummary(payload)
+	if pendingApprovals > 0 {
+		out += fmt.Sprintf("%d approvals pending — ship approve\n", pendingApprovals)
+	}
+	return out
+}
+
+type remoteApprovalListPayload struct {
+	Approvals []struct {
+		ID      string `json:"id"`
+		Member  string `json:"member"`
+		Role    string `json:"role"`
+		Request string `json:"request"`
+		Expires string `json:"expires"`
+	} `json:"approvals"`
+}
+
+func fetchPendingApprovalCount(runner sshRunner, server string) (int, error) {
+	out, err := runSSHDetail(runner, server, serverApprovalListCommand(true))
+	if err != nil {
+		return 0, err
+	}
+	var payload remoteApprovalListPayload
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &payload); err != nil {
+		return 0, operationError(fmt.Sprintf("status failed: invalid approval list JSON: %v", err), "ship approve")
+	}
+	return len(payload.Approvals), nil
 }
 
 func statusClassLabel(class string) string {

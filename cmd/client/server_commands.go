@@ -95,6 +95,17 @@ func serverKeyRmCommand(name string) string {
 	return serverCommand("key", "rm", name)
 }
 
+func serverApprovalListCommand(jsonFlag bool) string {
+	if jsonFlag {
+		return serverCommand("approval", "list", "--json")
+	}
+	return serverCommand("approval", "list")
+}
+
+func serverApprovalApproveCommand(id string) string {
+	return serverCommand("approval", "approve", id)
+}
+
 func serverAppLogsCommand(appName, envName, process string, follow bool, tail int) string {
 	args := []string{"app", "logs"}
 	if follow {

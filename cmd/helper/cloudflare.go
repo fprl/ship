@@ -13,7 +13,13 @@ import (
 )
 
 type cloudflareCmd struct {
-	SetupTunnel cloudflareSetupTunnelCmd `cmd:"setup-tunnel" help:"Create or update the Cloudflare tunnel token."`
+	MemberFingerprint string                   `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
+	SetupTunnel       cloudflareSetupTunnelCmd `cmd:"setup-tunnel" help:"Create or update the Cloudflare tunnel token."`
+}
+
+func (c cloudflareCmd) AfterApply() error {
+	setServerMemberFingerprint(c.MemberFingerprint)
+	return nil
 }
 
 type cloudflareSetupTunnelCmd struct {
@@ -23,6 +29,9 @@ type cloudflareSetupTunnelCmd struct {
 }
 
 func (c cloudflareSetupTunnelCmd) Run() error {
+	if _, err := authorizeHelper(helperVerbBoxMutation, authTargetForBox("cloudflare setup-tunnel", "name="+c.Name)); err != nil {
+		utils.DieError(err, 1)
+	}
 	tokenFile := c.TokenFile
 	if tokenFile == "" {
 		tokenFile = cloudflare.CloudflareApiTokenPath()

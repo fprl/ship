@@ -36,6 +36,11 @@ func (c appRollbackCmd) Run() error {
 			utils.DieError(err, 1)
 		}
 	}
+	args := []string{}
+	if c.Release != "" {
+		args = append(args, "release="+c.Release)
+	}
+	authorizeOrDie(helperVerbRollback, authTargetForAppEnv(c.App, c.Env, args...))
 	withAppEnvLock(c.App, c.Env, func() {
 		c.runLocked()
 	})
@@ -63,6 +68,7 @@ func (c appRollbackCmd) runLocked() {
 		PreviousRelease:  result.Previous,
 		AttemptedRelease: result.Release,
 		Identity:         c.actor(),
+		Member:           currentServerMemberForJournal(),
 	}, nil); err != nil {
 		utils.DieError(err, 1)
 	}

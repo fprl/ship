@@ -17,6 +17,7 @@ func (c appWhyCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
+	authorizeOrDie(helperVerbRead, authTargetForAppEnv(c.App, c.Env, "why"))
 	entry, err := readLatestDeployJournalEntry(c.App, c.Env)
 	if err != nil {
 		utils.DieError(err, 1)

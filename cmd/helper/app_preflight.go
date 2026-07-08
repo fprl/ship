@@ -40,6 +40,7 @@ func (c appPreflightCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
+	authorizeOrDie(helperVerbRead, authTargetForAppEnv(c.App, c.Env, "preflight"))
 	report := appPreflightReportFor(c.App, c.Env, c.Secrets)
 	if c.JSON {
 		buf, err := json.MarshalIndent(report, "", "  ")

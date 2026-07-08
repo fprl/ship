@@ -32,6 +32,11 @@ type appBackupCreateCmd struct {
 
 func (c appBackupCreateCmd) Run() error {
 	app, env := validateBackupAppEnv(c.App, c.Env)
+	args := []string{"save"}
+	if c.To != "" {
+		args = append(args, "to="+c.To)
+	}
+	authorizeOrDie(helperVerbBackupCreate, authTargetForAppEnv(app, env, args...))
 	withAppEnvLock(app, env, func() {
 		path, err := createBackup(app, env, c.To, time.Now().UTC())
 		if err != nil {
@@ -68,6 +73,14 @@ type appBackupRestoreCmd struct {
 
 func (c appBackupRestoreCmd) Run() error {
 	app, env := validateBackupAppEnv(c.App, c.Env)
+	args := []string{"from=" + c.From}
+	if c.Dir != "" {
+		args = append(args, "dir="+c.Dir)
+	}
+	if c.DryRun {
+		args = append(args, "dry-run=true")
+	}
+	authorizeOrDie(helperVerbBackupRestore, authTargetForAppEnv(app, env, args...))
 	withAppEnvLock(app, env, func() {
 		result, err := restoreBackup(app, env, c.From, c.Dir, c.DryRun)
 		if err != nil {

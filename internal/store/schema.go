@@ -125,3 +125,42 @@ type MembersFile struct {
 	Version int                     `json:"version"`
 	Members map[string]MemberRecord `json:"members"`
 }
+
+type ApprovalMember struct {
+	Fingerprint string     `json:"fingerprint"`
+	Name        string     `json:"name"`
+	Role        MemberRole `json:"role"`
+}
+
+type ApprovalTarget struct {
+	App     string   `json:"app,omitempty"`
+	Env     string   `json:"env,omitempty"`
+	Class   string   `json:"class,omitempty"`
+	Args    []string `json:"args,omitempty"`
+	Summary string   `json:"summary"`
+}
+
+type ApprovalStatus string
+
+const (
+	ApprovalStatusPending  ApprovalStatus = "pending"
+	ApprovalStatusApproved ApprovalStatus = "approved"
+)
+
+type ApprovalRequest struct {
+	ID         string          `json:"id"`
+	Member     ApprovalMember  `json:"member"`
+	Verb       string          `json:"verb"`
+	Target     ApprovalTarget  `json:"target"`
+	MatchKey   string          `json:"match_key"`
+	Status     ApprovalStatus  `json:"status"`
+	CreatedAt  string          `json:"created"`
+	ExpiresAt  string          `json:"expires"`
+	ApprovedAt string          `json:"approved_at,omitempty"`
+	ApprovedBy *ApprovalMember `json:"approved_by,omitempty"`
+}
+
+type ApprovalsFile struct {
+	Version  int               `json:"version"`
+	Requests []ApprovalRequest `json:"requests"`
+}

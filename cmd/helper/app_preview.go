@@ -66,6 +66,7 @@ func (c appPreviewResolveCmd) Run() error {
 	if err := validatePreviewAppBranch(c.App, c.Branch); err != nil {
 		utils.DieError(err, 1)
 	}
+	authorizeOrDie(helperVerbRead, authTargetForPreviewBranch(c.App, c.Branch, "preview-resolve"))
 	file, ok, err := findPreviewByBranch(c.App, c.Branch)
 	if err != nil {
 		utils.DieError(err, 1)
@@ -86,6 +87,7 @@ func (c appPreviewPinCmd) Run() error {
 	if err := validatePreviewAppBranch(c.App, c.Branch); err != nil {
 		utils.DieError(err, 1)
 	}
+	authorizeOrDie(helperVerbPreviewPin, authTargetForPreviewBranch(c.App, c.Branch, "pin"))
 	file, ok, err := findPreviewByBranch(c.App, c.Branch)
 	if err != nil {
 		utils.DieError(err, 1)
@@ -111,6 +113,7 @@ func (c appPreviewUnpinCmd) Run() error {
 	if err := validatePreviewAppBranch(c.App, c.Branch); err != nil {
 		utils.DieError(err, 1)
 	}
+	authorizeOrDie(helperVerbPreviewPin, authTargetForPreviewBranch(c.App, c.Branch, "unpin"))
 	file, ok, err := findPreviewByBranch(c.App, c.Branch)
 	if err != nil {
 		utils.DieError(err, 1)

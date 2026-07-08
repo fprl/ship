@@ -36,6 +36,7 @@ type cli struct {
 	Secret     secretCmd        `cmd:"" group:"project" help:"Manage secrets for the current branch environment."`
 	Box        boxCmd           `cmd:"" group:"host" help:"Install or inspect a ship box."`
 	Member     memberCmd        `cmd:"" group:"host" help:"Manage deploy SSH members."`
+	Approve    approveCmd       `cmd:"" group:"host" help:"List or approve one-shot role approvals."`
 	Docs       docsCmd          `cmd:"" group:"global" help:"Print the agent contract."`
 	Help       helpCmd          `cmd:"" group:"global" help:"Show usage for one verb."`
 	Completion completionCmd    `cmd:"" hidden:"" group:"global" help:"Emit shell completions. Install: bash: ship completion bash > /etc/bash_completion.d/ship; zsh: ship completion zsh > ~/.zsh/completions/_ship; fish: ship completion fish > ~/.config/fish/completions/ship.fish."`
@@ -420,6 +421,21 @@ func (c memberRmCmd) Run() error {
 	return nil
 }
 
+type approveCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	JSON   bool   `name:"json" help:"Emit structured JSON for the pending approval list."`
+	ID     string `arg:"" optional:"" help:"Approval id to grant. Omit to list pending requests."`
+}
+
+func (c approveCmd) Run() error {
+	target, err := memberTarget(c.Config)
+	if err != nil {
+		return err
+	}
+	client.CmdApprove(target, c.ID, c.JSON)
+	return nil
+}
+
 func memberTarget(configPath string) (string, error) {
 	root, err := projectAppRoot(configPath)
 	if err != nil {
@@ -664,7 +680,14 @@ func wantsServerJSONError(args []string) bool {
 }
 
 func wantsServerAppExecError(args []string) bool {
-	return len(args) >= 3 && args[0] == "server" && args[1] == "app" && args[2] == "exec"
+	if len(args) < 3 || args[0] != "server" || args[1] != "app" {
+		return false
+	}
+	i := 2
+	if i < len(args) && args[i] == "--member-fingerprint" {
+		i += 2
+	}
+	return i < len(args) && args[i] == "exec"
 }
 
 func dieServerAppExecError(err error) {

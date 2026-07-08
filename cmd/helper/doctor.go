@@ -43,22 +43,27 @@ const (
 
 var (
 	BroadSudoRe  = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\((?:ALL|ALL:ALL)\)\s+NOPASSWD:\s*ALL$`)
-	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/ship\s+server\s+app\s+\*,\s*/usr/local/bin/ship\s+server\s+doctor,\s*/usr/local/bin/ship\s+server\s+doctor\s+\*,\s*/usr/local/bin/ship\s+server\s+key\s+\*$`)
+	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/ship\s+server\s+app\s+\*,\s*/usr/local/bin/ship\s+server\s+doctor,\s*/usr/local/bin/ship\s+server\s+doctor\s+\*,\s*/usr/local/bin/ship\s+server\s+key\s+\*,\s*/usr/local/bin/ship\s+server\s+approval\s+\*$`)
 )
 
 type doctorCmd struct {
-	JSON      bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
-	BoxTarget string `name:"box-target" hidden:"" help:"SSH target used to render runnable remediation commands."`
-	Action    string `arg:"" optional:"" help:"Optional action. record persists doctor state for the daily timer."`
+	MemberFingerprint string `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
+	JSON              bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
+	BoxTarget         string `name:"box-target" hidden:"" help:"SSH target used to render runnable remediation commands."`
+	Action            string `arg:"" optional:"" help:"Optional action. record persists doctor state for the daily timer."`
 }
 
 func (c doctorCmd) Run() error {
+	setServerMemberFingerprint(c.MemberFingerprint)
 	if c.Action == "record" {
 		CmdDoctorRecord()
 		return nil
 	}
 	if c.Action != "" {
 		return fmt.Errorf("unsupported doctor action: %s", c.Action)
+	}
+	if _, err := authorizeHelper(helperVerbRead, authTargetForBox("box doctor")); err != nil {
+		utils.DieError(err, 1)
 	}
 	CmdDoctor(c.JSON, c.BoxTarget)
 	return nil

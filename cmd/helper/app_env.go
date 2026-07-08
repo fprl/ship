@@ -164,6 +164,7 @@ func (c appDestroyCmd) Run() error {
 	if !names.AppRe.MatchString(c.App) {
 		utils.DieError(fmt.Errorf("invalid app name: %q", c.App), 1)
 	}
+	authorizeOrDie(helperVerbBoxMutation, authTargetForBox("box rm app="+c.App, "app="+c.App))
 	envs, err := appEnvsForDestroy(c.App)
 	if err != nil {
 		utils.DieError(err, 1)
@@ -209,6 +210,7 @@ func (c appDestroyEnvCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
+	authorizeOrDie(helperVerbRemoveEnv, authTargetForAppEnv(c.App, c.Env, fmt.Sprintf("purge=%t", c.Purge)))
 	withAppEnvLock(c.App, c.Env, func() {
 		c.runLocked(true)
 	})

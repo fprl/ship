@@ -23,6 +23,12 @@ type deployIdentity struct {
 	GitAuthor     string `json:"git_author"`
 }
 
+type journalMember struct {
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Name        string `json:"name"`
+	Role        string `json:"role"`
+}
+
 func deployActor(sshKeyComment, gitAuthor string) deployIdentity {
 	actor := deployIdentity{SSHKeyComment: sshKeyComment, GitAuthor: gitAuthor}
 	if actor.SSHKeyComment == "" {
@@ -51,6 +57,7 @@ type deployJournalEntry struct {
 	FailingStep      string         `json:"failing_step"`
 	StderrTail       string         `json:"stderr_tail"`
 	Identity         deployIdentity `json:"identity"`
+	Member           *journalMember `json:"member,omitempty"`
 	Probe            *journalProbe  `json:"probe"`
 }
 
@@ -231,6 +238,7 @@ func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease strin
 		FailingStep:      step,
 		StderrTail:       tail,
 		Identity:         actor,
+		Member:           currentServerMemberForJournal(),
 		Probe:            probe,
 	}, scrubValues
 }

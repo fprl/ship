@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	notifyEventDeployAborted   = "deploy_aborted"
-	notifyEventDeployRecovered = "deploy_recovered"
-	notifyEventPreviewReaped   = "preview_reaped"
-	notifyEventDoctorDegraded  = "doctor_degraded"
+	notifyEventDeployAborted     = "deploy_aborted"
+	notifyEventDeployRecovered   = "deploy_recovered"
+	notifyEventPreviewReaped     = "preview_reaped"
+	notifyEventDoctorDegraded    = "doctor_degraded"
+	notifyEventApprovalRequested = "approval_requested"
 )
 
 var (
@@ -67,6 +68,19 @@ type reapNotifyRemediation struct {
 type doctorNotifyRemediation struct {
 	Command string            `json:"command"`
 	Check   store.DoctorCheck `json:"check"`
+}
+
+type approvalNotifyWhy struct {
+	ID      string               `json:"id"`
+	Member  store.ApprovalMember `json:"member"`
+	Verb    string               `json:"verb"`
+	Target  store.ApprovalTarget `json:"target"`
+	Expires string               `json:"expires"`
+}
+
+type approvalNotifyRemediation struct {
+	Command string                `json:"command"`
+	Request store.ApprovalRequest `json:"request"`
 }
 
 type appliedNotifyTarget struct {
@@ -175,6 +189,41 @@ func notifyDoctorDegraded(checks []store.DoctorCheck, now time.Time) {
 			postNotify(target.URL, payload)
 		}
 	}
+}
+
+func notifyApprovalRequested(request store.ApprovalRequest, now time.Time) {
+	if strings.TrimSpace(request.Target.App) == "" || strings.TrimSpace(request.Target.Env) == "" {
+		return
+	}
+	ctx, cleanup, err := loadAppliedAppContext(request.Target.App, request.Target.Env)
+	if err != nil {
+		return
+	}
+	defer cleanup()
+	if strings.TrimSpace(ctx.Notify) == "" {
+		return
+	}
+	command := "ship approve " + request.ID
+	payload := notifyPayload{
+		App:     request.Target.App,
+		Env:     notifyEnvLabel(request.Target.App, request.Target.Env, ctx),
+		Event:   notifyEventApprovalRequested,
+		Release: latestSuccessfulRelease(request.Target.App, request.Target.Env),
+		Summary: fmt.Sprintf("%s requested approval for %s.", request.Member.Name, request.Target.Summary),
+		Why: approvalNotifyWhy{
+			ID:      request.ID,
+			Member:  request.Member,
+			Verb:    request.Verb,
+			Target:  request.Target,
+			Expires: request.ExpiresAt,
+		},
+		Remediation: approvalNotifyRemediation{
+			Command: command,
+			Request: request,
+		},
+		TS: now.UTC().Format(time.RFC3339Nano),
+	}
+	postNotify(ctx.Notify, payload)
 }
 
 func appliedNotifyTargets() []appliedNotifyTarget {

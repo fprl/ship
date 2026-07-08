@@ -3,6 +3,7 @@ package fakevps
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fprl/ship/internal/memberkeys"
+	"github.com/fprl/ship/internal/store"
 	h "github.com/fprl/ship/tests/harness"
 )
 
@@ -22,17 +25,18 @@ import (
 const fakeVPSImage = "ship-fake-vps:local"
 
 type smokeEnv struct {
-	ctx        context.Context
-	repoRoot   string
-	image      string
-	dockerfile string
-	tmp        string
-	shipHome   string
-	binDir     string
-	goBin      string
-	linuxBin   string
-	container  string
-	pathPrefix string
+	ctx              context.Context
+	repoRoot         string
+	image            string
+	dockerfile       string
+	tmp              string
+	shipHome         string
+	binDir           string
+	goBin            string
+	linuxBin         string
+	container        string
+	pathPrefix       string
+	ownerFingerprint string
 }
 
 type commandResult struct {
@@ -97,6 +101,40 @@ func (e *smokeEnv) startContainer(t *testing.T) {
 func (e *smokeEnv) configureSSH(t *testing.T, user string) {
 	t.Helper()
 	e.pathPrefix = h.ConfigureSSH(t, e.ctx, e.repoRoot, e.tmp, e.container, user, "fake-vps-smoke")
+	keyPath := filepath.Join(e.tmp, "id_ed25519")
+	shipSSHDir := filepath.Join(e.shipHome, ".ssh")
+	if err := os.MkdirAll(shipSSHDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	privateKey, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, err := os.ReadFile(keyPath + ".pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := memberkeys.NormalizeLine(strings.TrimSpace(string(publicKey)), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.ownerFingerprint = key.Fingerprint
+	if err := os.WriteFile(filepath.Join(shipSSHDir, "ship"), privateKey, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shipSSHDir, "ship.pub"), publicKey, 0644); err != nil {
+		t.Fatal(err)
+	}
+	members, err := json.Marshal(store.MembersFile{
+		Version: store.CurrentVersion,
+		Members: map[string]store.MemberRecord{
+			key.Fingerprint: {Name: key.Comment, Role: store.MemberRoleOwner},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.dockerExec(t, "mkdir -p /etc/ship && cat > /etc/ship/members.json <<'EOF'\n"+string(members)+"\nEOF")
 }
 
 func (e *smokeEnv) waitForSSH(t *testing.T) {
@@ -106,7 +144,7 @@ func (e *smokeEnv) waitForSSH(t *testing.T) {
 
 func (e *smokeEnv) commitFixture(t *testing.T, appDir string) {
 	t.Helper()
-	e.mustRun(t, appDir, nil, "git", "init", "-q")
+	e.mustRun(t, appDir, nil, "git", "init", "-q", "-b", "main")
 	e.mustRun(t, appDir, nil, "git", "config", "user.email", "smoke@example.com")
 	e.mustRun(t, appDir, nil, "git", "config", "user.name", "Smoke")
 	e.mustRun(t, appDir, nil, "git", "add", ".")
@@ -129,11 +167,59 @@ func (e *smokeEnv) runShip(t *testing.T, dir string, stdin []byte, args ...strin
 
 func (e *smokeEnv) ssh(t *testing.T, command string) string {
 	t.Helper()
+	command = e.withOwnerMemberFingerprint(command)
 	result := e.run(t, e.repoRoot, nil, e.sshBin(), "fake-vps", command)
 	if result.err != nil {
 		t.Fatalf("ssh fake-vps %q failed: %v\nstdout:\n%s\nstderr:\n%s", command, result.err, result.stdout, result.stderr)
 	}
 	return result.stdout
+}
+
+const smokeRemoteServerCommandPrefix = "/usr/local/bin/ship server "
+
+func (e *smokeEnv) withOwnerMemberFingerprint(command string) string {
+	fingerprint := strings.TrimSpace(e.ownerFingerprint)
+	if fingerprint == "" {
+		return command
+	}
+	index := -1
+	for _, prefix := range []string{
+		smokeRemoteServerCommandPrefix,
+		"sudo -n " + smokeRemoteServerCommandPrefix,
+		"sudo -n env SHIP_ERROR_JSON=1 " + smokeRemoteServerCommandPrefix,
+	} {
+		if strings.HasPrefix(command, prefix) {
+			index = len(prefix) - len(smokeRemoteServerCommandPrefix)
+			break
+		}
+	}
+	if index < 0 {
+		return command
+	}
+	leading := command[:index]
+	serverCommand := command[index:]
+	rest := strings.TrimPrefix(serverCommand, smokeRemoteServerCommandPrefix)
+	if strings.Contains(rest, "--member-fingerprint") {
+		return command
+	}
+	namespace, tail, ok := strings.Cut(rest, " ")
+	if !ok || !smokeServerNamespaceAcceptsMemberFingerprint(namespace) {
+		return command
+	}
+	inserted := smokeRemoteServerCommandPrefix + namespace + " --member-fingerprint " + h.ShellQuote(fingerprint)
+	if tail != "" {
+		inserted += " " + tail
+	}
+	return leading + inserted
+}
+
+func smokeServerNamespaceAcceptsMemberFingerprint(namespace string) bool {
+	switch namespace {
+	case "app", "approval", "cloudflare", "doctor", "key":
+		return true
+	default:
+		return false
+	}
 }
 
 // dockerExec runs a shell command inside the fake VPS container as
@@ -248,7 +334,7 @@ func (e *smokeEnv) runCommand(t *testing.T, dir string, extraEnv []string, stdin
 	t.Helper()
 	cmd := exec.CommandContext(e.ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Env = e.commandEnv(extraEnv)
+	cmd.Env = e.commandEnv(dir, extraEnv)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -259,14 +345,16 @@ func (e *smokeEnv) runCommand(t *testing.T, dir string, extraEnv []string, stdin
 	return commandResult{stdout: stdout.String(), stderr: stderr.String(), err: err}
 }
 
-func (e *smokeEnv) commandEnv(extra []string) []string {
+func (e *smokeEnv) commandEnv(dir string, extra []string) []string {
 	env := os.Environ()
 	env = h.SetEnv(env, "SHIP_HELPER_DIR", e.binDir)
 	env = h.SetEnv(env, "HOME", e.shipHome)
 	env = h.SetEnv(env, "USER", "fake-vps-smoke")
-	env = h.SetEnv(env, "GIT_CONFIG_COUNT", "1")
-	env = h.SetEnv(env, "GIT_CONFIG_KEY_0", "user.name")
-	env = h.SetEnv(env, "GIT_CONFIG_VALUE_0", "fake-vps-smoke")
+	if !hasLocalGitConfig(dir) {
+		env = h.SetEnv(env, "GIT_CONFIG_COUNT", "1")
+		env = h.SetEnv(env, "GIT_CONFIG_KEY_0", "user.name")
+		env = h.SetEnv(env, "GIT_CONFIG_VALUE_0", "fake-vps-smoke")
+	}
 	if e.pathPrefix != "" {
 		env = h.SetEnv(env, "PATH", e.pathPrefix+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
@@ -279,6 +367,16 @@ func (e *smokeEnv) commandEnv(extra []string) []string {
 		env = h.SetEnv(env, key, value)
 	}
 	return env
+}
+
+func hasLocalGitConfig(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git", "config")); err == nil {
+		return true
+	}
+	return false
 }
 
 func mustWrite(t *testing.T, path string, content string) {

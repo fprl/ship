@@ -52,6 +52,14 @@ func (s Store) MembersPath() string {
 	return filepath.Join(s.root(), "members.json")
 }
 
+func (s Store) ApprovalsPath() string {
+	return filepath.Join(s.root(), "approvals.json")
+}
+
+func (s Store) ApprovalsJournalPath() string {
+	return filepath.Join(s.root(), "approvals-journal.jsonl")
+}
+
 func (s Store) SecretsDir() string {
 	return filepath.Join(s.root(), "secrets")
 }
@@ -199,6 +207,38 @@ func (s Store) WriteMembers(file MembersFile) error {
 		return fmt.Errorf("invalid members.json: %w", err)
 	}
 	return writeJSON(s.MembersPath(), file, 0644)
+}
+
+func (s Store) ReadApprovals() (*ApprovalsFile, error) {
+	var file ApprovalsFile
+	if err := readJSON(s.ApprovalsPath(), &file); err != nil {
+		if os.IsNotExist(err) {
+			file = ApprovalsFile{Version: CurrentVersion}
+			normalizeApprovalsFile(&file)
+			return &file, nil
+		}
+		return nil, err
+	}
+	if err := validateVersion("approvals.json", file.Version); err != nil {
+		return nil, err
+	}
+	normalizeApprovalsFile(&file)
+	if err := validateApprovalsFile(file); err != nil {
+		return nil, fmt.Errorf("invalid approvals.json: %w", err)
+	}
+	return &file, nil
+}
+
+func (s Store) WriteApprovals(file ApprovalsFile) error {
+	if err := validateVersion("approvals.json", file.Version); err != nil {
+		return err
+	}
+	file.Version = CurrentVersion
+	normalizeApprovalsFile(&file)
+	if err := validateApprovalsFile(file); err != nil {
+		return fmt.Errorf("invalid approvals.json: %w", err)
+	}
+	return writeJSON(s.ApprovalsPath(), file, 0644)
 }
 
 func (s Store) readHostForDesiredWrite() (HostFile, error) {

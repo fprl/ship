@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/memberkeys"
+	"github.com/fprl/ship/internal/store"
 	h "github.com/fprl/ship/tests/harness"
 )
 
@@ -134,18 +136,21 @@ func (s *evalSuite) buildImage(t *testing.T) {
 }
 
 type evalCase struct {
-	suite     *evalSuite
-	tmp       string
-	container string
-	sshBinDir string
-	docs      string
+	suite            *evalSuite
+	tmp              string
+	container        string
+	sshBinDir        string
+	shipHome         string
+	ownerFingerprint string
+	docs             string
 }
 
 func (s *evalSuite) newCase(t *testing.T) *evalCase {
 	t.Helper()
 	e := &evalCase{
-		suite: s,
-		tmp:   t.TempDir(),
+		suite:    s,
+		tmp:      t.TempDir(),
+		shipHome: filepath.Join(t.TempDir(), "ship-home"),
 	}
 	t.Cleanup(func() {
 		if os.Getenv("KEEP_FAKE_VPS") == "1" {
@@ -177,6 +182,40 @@ func (e *evalCase) startContainer(t *testing.T) {
 func (e *evalCase) configureSSH(t *testing.T, user string) {
 	t.Helper()
 	e.sshBinDir = h.ConfigureSSH(t, e.suite.ctx, e.suite.repoRoot, e.tmp, e.container, user, "agent-eval")
+	keyPath := filepath.Join(e.tmp, "id_ed25519")
+	publicKey, err := os.ReadFile(keyPath + ".pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := memberkeys.NormalizeLine(strings.TrimSpace(string(publicKey)), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.ownerFingerprint = key.Fingerprint
+	privateKey, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shipSSHDir := filepath.Join(e.shipHome, ".ssh")
+	if err := os.MkdirAll(shipSSHDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shipSSHDir, "ship"), privateKey, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shipSSHDir, "ship.pub"), publicKey, 0644); err != nil {
+		t.Fatal(err)
+	}
+	members, err := json.Marshal(store.MembersFile{
+		Version: store.CurrentVersion,
+		Members: map[string]store.MemberRecord{
+			key.Fingerprint: {Name: key.Comment, Role: store.MemberRoleOwner},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.dockerExec(t, "mkdir -p /etc/ship && cat > /etc/ship/members.json <<'EOF'\n"+string(members)+"\nEOF")
 }
 
 func (e *evalCase) waitForSSH(t *testing.T) {
@@ -216,7 +255,55 @@ func (e *evalCase) dockerExec(t *testing.T, command string) string {
 
 func (e *evalCase) ssh(t *testing.T, command string) string {
 	t.Helper()
+	command = e.withOwnerMemberFingerprint(command)
 	return e.mustRun(t, e.suite.repoRoot, nil, nil, e.sshBin(), "fake-vps", command)
+}
+
+const evalRemoteServerCommandPrefix = "/usr/local/bin/ship server "
+
+func (e *evalCase) withOwnerMemberFingerprint(command string) string {
+	fingerprint := strings.TrimSpace(e.ownerFingerprint)
+	if fingerprint == "" {
+		return command
+	}
+	index := -1
+	for _, prefix := range []string{
+		evalRemoteServerCommandPrefix,
+		"sudo -n " + evalRemoteServerCommandPrefix,
+		"sudo -n env SHIP_ERROR_JSON=1 " + evalRemoteServerCommandPrefix,
+	} {
+		if strings.HasPrefix(command, prefix) {
+			index = len(prefix) - len(evalRemoteServerCommandPrefix)
+			break
+		}
+	}
+	if index < 0 {
+		return command
+	}
+	leading := command[:index]
+	serverCommand := command[index:]
+	rest := strings.TrimPrefix(serverCommand, evalRemoteServerCommandPrefix)
+	if strings.Contains(rest, "--member-fingerprint") {
+		return command
+	}
+	namespace, tail, ok := strings.Cut(rest, " ")
+	if !ok || !evalServerNamespaceAcceptsMemberFingerprint(namespace) {
+		return command
+	}
+	inserted := evalRemoteServerCommandPrefix + namespace + " --member-fingerprint " + h.ShellQuote(fingerprint)
+	if tail != "" {
+		inserted += " " + tail
+	}
+	return leading + inserted
+}
+
+func evalServerNamespaceAcceptsMemberFingerprint(namespace string) bool {
+	switch namespace {
+	case "app", "approval", "cloudflare", "doctor", "key":
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *evalCase) mustRun(t *testing.T, dir string, extraEnv []string, stdin []byte, name string, args ...string) string {
@@ -259,6 +346,8 @@ func (e *evalCase) runShell(dir string, extraEnv []string, stdin []byte, command
 
 func (e *evalCase) commandEnv(extra []string) []string {
 	env := os.Environ()
+	env = h.SetEnv(env, "HOME", e.shipHome)
+	env = h.SetEnv(env, "USER", "agent-eval")
 	pathParts := []string{e.suite.hostBinDir}
 	if e.sshBinDir != "" {
 		pathParts = append([]string{e.sshBinDir}, pathParts...)
