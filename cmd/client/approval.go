@@ -27,6 +27,9 @@ func CmdApprove(server, id string, jsonFlag bool) {
 	}
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			utils.DieError(coded, 1)
+		}
 		remote := extractRemoteError(stdout, stderr, "")
 		if remote.Coded != nil {
 			writeRemoteStderr(stderr)

@@ -128,6 +128,7 @@ func ConfigureSSH(t *testing.T, ctx context.Context, repoRoot, tmp, container, u
 	config := fmt.Sprintf(`Host fake-vps
   HostName 127.0.0.1
   Port %s
+  HostKeyAlias fake-vps
   User %s
   IdentityFile %s
   IdentitiesOnly yes

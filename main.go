@@ -10,8 +10,8 @@ import (
 	"github.com/fprl/ship/cmd/client"
 	"github.com/fprl/ship/cmd/helper"
 	"github.com/fprl/ship/cmd/hostinstall"
-	"github.com/fprl/ship/internal/boxmemo"
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/knownhosts"
 	"github.com/fprl/ship/internal/shipidentity"
 	"github.com/fprl/ship/internal/utils"
 	"github.com/fprl/ship/internal/version"
@@ -371,6 +371,7 @@ type boxCmd struct {
 	Doctor boxDoctorCmd `cmd:"" help:"Run box diagnostics."`
 	Ls     boxLsCmd     `cmd:"ls" help:"List app environments visible on a box."`
 	Rm     boxRmCmd     `cmd:"rm" help:"Destroy an app and all its environments on a box."`
+	Forget boxForgetCmd `cmd:"" help:"Drop a box host-key pin."`
 }
 
 type memberCmd struct {
@@ -488,6 +489,15 @@ func (c boxRmCmd) Run() error {
 		return err
 	}
 	client.CmdBoxRm(target, c.App, c.Confirm)
+	return nil
+}
+
+type boxForgetCmd struct {
+	Target string `arg:"" name:"box" help:"Box host to forget."`
+}
+
+func (c boxForgetCmd) Run() error {
+	client.CmdBoxForget(c.Target)
 	return nil
 }
 
@@ -645,13 +655,13 @@ func boxTargetFor(configPath, target, command string) (string, error) {
 }
 
 func boxTargetRequiredError(command string) error {
-	boxes, err := boxmemo.Read()
+	boxes, err := knownhosts.ListHosts()
 	if err != nil {
 		boxes = nil
 	}
 	return errcat.New(errcat.CodeBoxTargetRequired, errcat.Fields{
 		"command":     command,
-		"known_boxes": boxmemo.KnownBoxesCause(boxes),
+		"known_boxes": knownhosts.KnownBoxesCause(boxes),
 	})
 }
 

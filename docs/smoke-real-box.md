@@ -28,10 +28,12 @@ ssh-keygen -q -t ed25519 -N '' -f /tmp/ship-smoke-keys/operator
 ssh-keygen -q -t ed25519 -N '' -f /tmp/ship-smoke-keys/deploy
 ```
 
-If the VPS was rebuilt at the same IP, clear the old SSH host key first:
+If the VPS was rebuilt at the same IP, rerun setup to re-establish ship's
+host-key pin. Do not edit `~/.ssh/known_hosts`; ship uses
+`~/.config/ship/known_hosts`.
 
 ```sh
-ssh-keygen -R <IP>
+./dist/ship box setup <IP>
 ```
 
 ## 1. Converge the box

@@ -12,10 +12,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
-	"github.com/fprl/ship/internal/boxmemo"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/knownhosts"
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/provision"
 	"github.com/fprl/ship/internal/provision/local"
@@ -58,6 +59,7 @@ type Plan struct {
 	Mode                     string
 	TargetHost               string
 	BootstrapUser            string
+	KnownHostsFile           string
 	SSHKey                   string
 	BootstrapIdentityKey     string
 	OperatorSSHPublicKeyFile string
@@ -95,6 +97,7 @@ type Installer struct {
 	run       func(name string, args []string, cwd string) error
 	look      func(file string) (string, error)
 	remoteOut func(plan Plan, command string) (string, error)
+	sleep     func(time.Duration)
 }
 
 const passwordProvisionedDetail = "provider gave a password; this installs your ship key using it once; hardening then disables password login permanently"
@@ -108,8 +111,9 @@ func NewInstaller() *Installer {
 		geteuid: func() int {
 			return os.Geteuid()
 		},
-		run:  runPassthrough,
-		look: exec.LookPath,
+		run:   runPassthrough,
+		look:  exec.LookPath,
+		sleep: time.Sleep,
 	}
 }
 
@@ -122,6 +126,20 @@ func (i *Installer) RunOptions(opts Options) error {
 	if envBool(i.Env, "SHIP_INSTALLER_DUMP_PLAN", false) {
 		return i.dumpInstallPlan(plan)
 	}
+
+	cleanupKnownHosts := func() {}
+	if plan.Mode == "remote" {
+		knownHostsFile, cleanup, err := knownhosts.TempFile()
+		if err != nil {
+			return errcat.New(errcat.CodeOperationFailed, errcat.Fields{
+				"detail":  "create setup known_hosts failed: " + oneLineError(err),
+				"command": "TMPDIR=/tmp ship box setup <ssh-target>",
+			})
+		}
+		plan.KnownHostsFile = knownHostsFile
+		cleanupKnownHosts = cleanup
+	}
+	defer cleanupKnownHosts()
 
 	keyPlan, err := resolveSSHKeyPlan(plan, true, "", sshCopyIDTarget(plan))
 	if err != nil {
@@ -144,12 +162,12 @@ func (i *Installer) RunOptions(opts Options) error {
 	if !plan.CheckMode {
 		i.printMemberEnrollment(summary.DeployKeyResults)
 	}
-	if plan.NarrateSetup {
-		if !plan.CheckMode {
-			if err := i.rememberBox(plan); err != nil {
-				return err
-			}
+	if !plan.CheckMode && plan.Mode == "remote" {
+		if err := i.pinKnownHost(plan); err != nil {
+			return err
 		}
+	}
+	if plan.NarrateSetup {
 		i.printBoxReady()
 		i.printNextSteps(plan)
 	}
@@ -437,12 +455,12 @@ func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) (provision.InstallSumm
 		if err := i.remoteCommand(plan, cmd); err != nil {
 			return provision.InstallSummary{}, hostInstallApplyError(plan, err)
 		}
-		return provision.InstallSummary{}, nil
+		return provision.InstallSummary{}, i.waitForRemoteSSH(plan)
 	}
 	if err := i.remoteCommand(plan, "sudo -n "+cmd); err != nil {
 		return provision.InstallSummary{}, hostInstallApplyError(plan, err)
 	}
-	return provision.InstallSummary{}, nil
+	return provision.InstallSummary{}, i.waitForRemoteSSH(plan)
 }
 
 func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) (provision.InstallSummary, error) {
@@ -622,6 +640,50 @@ func (i *Installer) preflightSSH(plan Plan) error {
 	return nil
 }
 
+func (i *Installer) waitForRemoteSSH(plan Plan) error {
+	var last error
+	for attempt := 0; attempt < 30; attempt++ {
+		_, err := i.remoteOutput(plan, "true")
+		if err == nil {
+			return nil
+		}
+		last = err
+		if !transientSSHReconnectError(oneLineError(err)) {
+			break
+		}
+		if attempt < 29 {
+			if i.sleep != nil {
+				i.sleep(500 * time.Millisecond)
+			} else {
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+	}
+	return errcat.New(errcat.CodeHostInstallSSHFailed, errcat.Fields{
+		"detail":  fmt.Sprintf("SSH did not become ready after provisioning for %s: %s", bootstrapSSHTarget(plan), oneLineError(last)),
+		"command": boxSetupCommand(plan.TargetHost),
+	})
+}
+
+func transientSSHReconnectError(detail string) bool {
+	detail = strings.ToLower(detail)
+	for _, pattern := range []string{
+		"connection refused",
+		"connection reset",
+		"connection timed out",
+		"operation timed out",
+		"connection closed",
+		"closed by remote host",
+		"broken pipe",
+		"i/o timeout",
+	} {
+		if strings.Contains(detail, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
 func (i *Installer) remoteBootstrapAuthorizedKeys(plan Plan) (string, error) {
 	command := "if test -f ~/.ssh/authorized_keys; then cat ~/.ssh/authorized_keys; fi"
 	out, err := i.remoteOutput(plan, command)
@@ -685,15 +747,25 @@ func (i *Installer) remoteOutput(plan Plan, command string) (string, error) {
 }
 
 func (i *Installer) remoteCommand(plan Plan, command string) error {
-	return i.run("ssh", sshArgs(plan, command), "")
+	stdout, stderr, err := runCaptured("ssh", sshArgs(plan, command), "")
+	if err != nil {
+		return err
+	}
+	if stdout != "" {
+		fmt.Fprint(i.Stdout, stdout)
+	}
+	if stderr != "" {
+		fmt.Fprint(i.Stderr, stderr)
+	}
+	return nil
 }
 
 func (i *Installer) copyRemote(plan Plan, src string, dst string) error {
 	args := []string{
 		"-q",
 		"-o", "BatchMode=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
 	}
+	args = append(args, setupKnownHostOptions(plan, "accept-new")...)
 	if plan.SSHKey != "" {
 		args = append(args, "-i", plan.SSHKey)
 	}
@@ -701,7 +773,8 @@ func (i *Installer) copyRemote(plan Plan, src string, dst string) error {
 		args = append(args, "-i", plan.BootstrapIdentityKey)
 	}
 	args = append(args, src, bootstrapSSHTarget(plan)+":"+dst)
-	return i.run("scp", args, "")
+	_, _, err := runCaptured("scp", args, "")
+	return err
 }
 
 func (i *Installer) writeRemoteKeyFiles(plan Plan, keys keyPlan) (string, string, func(), error) {
@@ -739,8 +812,8 @@ func (i *Installer) writeRemoteKeyFiles(plan Plan, keys keyPlan) (string, string
 func sshArgs(plan Plan, command string) []string {
 	args := []string{
 		"-o", "BatchMode=yes",
-		"-o", "StrictHostKeyChecking=accept-new",
 	}
+	args = append(args, setupKnownHostOptions(plan, "accept-new")...)
 	if plan.SSHKey != "" {
 		args = append(args, "-i", plan.SSHKey)
 	}
@@ -749,6 +822,14 @@ func sshArgs(plan Plan, command string) []string {
 	}
 	args = append(args, bootstrapSSHTarget(plan), command)
 	return args
+}
+
+func setupKnownHostOptions(plan Plan, strict string) []string {
+	path := strings.TrimSpace(plan.KnownHostsFile)
+	if path == "" {
+		path = knownhosts.DisplayPath
+	}
+	return knownhosts.SSHOptions(path, strict)
 }
 
 func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string, deployKeyFile string) string {
@@ -1116,6 +1197,26 @@ func runPassthrough(name string, args []string, cwd string) error {
 	return nil
 }
 
+func runCaptured(name string, args []string, cwd string) (string, string, error) {
+	cmd := exec.Command(name, args...)
+	if cwd != "" {
+		cmd.Dir = cwd
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return stdout.String(), stderr.String(), &utils.CommandError{
+			Name:   name,
+			Args:   append([]string(nil), args...),
+			Stdout: stdout.String(),
+			Stderr: stderr.String(),
+			Err:    err,
+		}
+	}
+	return stdout.String(), stderr.String(), nil
+}
+
 func environMap() map[string]string {
 	env := make(map[string]string)
 	for _, entry := range os.Environ() {
@@ -1277,7 +1378,8 @@ func boxSetupCommand(target string, extra ...string) string {
 }
 
 func sshCommand(plan Plan, command string) string {
-	args := []string{"ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"}
+	args := []string{"ssh", "-o", "BatchMode=yes"}
+	args = append(args, setupKnownHostOptions(plan, "accept-new")...)
 	if plan.SSHKey != "" {
 		args = append(args, "-i", plan.SSHKey)
 	}
@@ -1392,15 +1494,19 @@ func (i *Installer) printNextSteps(plan Plan) {
 	fmt.Fprintf(i.Stderr, "next: ship box doctor %s\n", host)
 }
 
-func (i *Installer) rememberBox(plan Plan) error {
+func (i *Installer) pinKnownHost(plan Plan) error {
 	host := rememberedHost(plan)
-	if _, err := boxmemo.Remember(host); err != nil {
+	changed, err := knownhosts.Reconcile(host, plan.KnownHostsFile)
+	if err != nil {
 		return errcat.New(errcat.CodeOperationFailed, errcat.Fields{
-			"detail":  "remember box failed: " + oneLineError(err),
-			"command": "fix " + boxmemo.DisplayPath,
+			"detail":  "pin box host key failed: " + oneLineError(err),
+			"command": "fix " + knownhosts.DisplayPath,
 		})
 	}
-	fmt.Fprintf(i.Stderr, "remembered box %s (%s)\n", host, boxmemo.DisplayPath)
+	if changed {
+		fmt.Fprintln(i.Stderr, knownhosts.SetupHostKeyChangedMessage)
+	}
+	fmt.Fprintf(i.Stderr, "pinned box %s (%s)\n", host, knownhosts.DisplayPath)
 	return nil
 }
 

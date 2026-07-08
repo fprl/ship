@@ -405,6 +405,9 @@ func CmdLogs(root string, process string, follow bool, tail int, jsonFlag bool) 
 	}
 	out, stderr, code, err := read.Runner.RunSSH(read.AppContext.Server, cmdStr)
 	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			utils.DieError(coded, 1)
+		}
 		remote := extractRemoteError(out, stderr, "logs failed")
 		if remote.Coded != nil {
 			writeRemoteStderr(stderr)

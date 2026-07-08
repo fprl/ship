@@ -81,6 +81,7 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"box", "ls", "example.com", "--json"},
 		{"box", "rm", "api", "--confirm", "api"},
 		{"box", "rm", "api", "example.com", "--confirm", "api"},
+		{"box", "forget", "example.com"},
 		{"member", "add", "alice"},
 		{"member", "add", "alice", "--role", "owner"},
 		{"member", "ls"},
@@ -158,7 +159,7 @@ func TestBoxWithoutSubcommandShowsSubcommandHelp(t *testing.T) {
 	if strings.Contains(text, "--server") {
 		t.Fatalf("box without subcommand should not mention removed --server: %v", err)
 	}
-	for _, want := range []string{"setup", "doctor", "ls", "rm"} {
+	for _, want := range []string{"setup", "doctor", "ls", "rm", "forget"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("box parse error should mention %q subcommand, got: %v", want, err)
 		}
@@ -171,22 +172,24 @@ func TestBoxWithoutSubcommandShowsSubcommandHelp(t *testing.T) {
 func TestBoxTargetRequiredRefusalListsKnownBoxes(t *testing.T) {
 	tests := []struct {
 		name  string
-		memo  string
+		known string
 		want  string
 	}{
 		{
 			name: "none known",
-			want: "target a box\nknown boxes (~/.config/ship/boxes):\n  none known yet\nnext: ship box doctor <box>",
+			want: "target a box\nknown boxes (~/.config/ship/known_hosts):\n  none known yet\nnext: ship box doctor <box>",
 		},
 		{
-			name: "one known",
-			memo: "128.140.3.159\n",
-			want: "target a box\nknown boxes (~/.config/ship/boxes):\n  128.140.3.159\nnext: ship box doctor <box>",
+			name:  "one known",
+			known: "128.140.3.159 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/\n",
+			want:  "target a box\nknown boxes (~/.config/ship/known_hosts):\n  128.140.3.159\nnext: ship box doctor <box>",
 		},
 		{
 			name: "two known",
-			memo: "128.140.3.159\n203.0.113.7\n128.140.3.159\n",
-			want: "target a box\nknown boxes (~/.config/ship/boxes):\n  128.140.3.159\n  203.0.113.7\nnext: ship box doctor <box>",
+			known: "128.140.3.159 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/\n" +
+				"203.0.113.7 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICtppnbbz76teU3iU6BguTmo//WITtYN35e4gSER6UNt\n" +
+				"128.140.3.159 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/\n",
+			want: "target a box\nknown boxes (~/.config/ship/known_hosts):\n  128.140.3.159\n  203.0.113.7\nnext: ship box doctor <box>",
 		},
 	}
 
@@ -194,12 +197,12 @@ func TestBoxTargetRequiredRefusalListsKnownBoxes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			configHome := t.TempDir()
 			t.Setenv("XDG_CONFIG_HOME", configHome)
-			if tt.memo != "" {
+			if tt.known != "" {
 				dir := filepath.Join(configHome, "ship")
 				if err := os.MkdirAll(dir, 0700); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(filepath.Join(dir, "boxes"), []byte(tt.memo), 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, "known_hosts"), []byte(tt.known), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -219,6 +222,7 @@ func TestBoxVerbHelpUsesBoxPlaceholder(t *testing.T) {
 		{"box", "doctor", "--help"},
 		{"box", "ls", "--help"},
 		{"box", "rm", "--help"},
+		{"box", "forget", "--help"},
 	} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer

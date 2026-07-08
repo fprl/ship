@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/fprl/ship/internal/boxmemo"
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/knownhosts"
 )
 
 const (
@@ -284,6 +286,30 @@ func TestRemotePreConnectionFailureDoesNotPrintMemberAdded(t *testing.T) {
 	}
 }
 
+func TestRemoteSetupFailureDoesNotPinKnownHost(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	operatorKeyFile := writeKeyFile(t, alicePublicKey+"\n")
+	deployKeyFile := writeKeyFile(t, bobPublicKey+"\n")
+	installer := NewInstaller()
+	installer.remoteOut = func(plan Plan, command string) (string, error) {
+		return "", errors.New("root@203.0.113.10: Permission denied (publickey).")
+	}
+
+	opts := DefaultOptions(nil)
+	opts.Mode = "remote"
+	opts.TargetHost = "203.0.113.10"
+	opts.OperatorSSHPublicKeyFile = operatorKeyFile
+	opts.DeploySSHPublicKeyFile = deployKeyFile
+
+	if err := installer.RunOptions(opts); err == nil {
+		t.Fatal("expected setup failure")
+	}
+	if _, err := os.Stat(filepath.Join(configHome, "ship", "known_hosts")); !os.IsNotExist(err) {
+		t.Fatalf("known_hosts should not be created before successful setup, stat err=%v", err)
+	}
+}
+
 func TestMalformedTargetFailsBeforeSSHPreflight(t *testing.T) {
 	operatorKeyFile := writeKeyFile(t, alicePublicKey+"\n")
 	deployKeyFile := writeKeyFile(t, bobPublicKey+"\n")
@@ -390,31 +416,66 @@ func TestPrintNextStepsForIdentityKeyOmitsKeyEnv(t *testing.T) {
 	}
 }
 
-func TestRememberBoxAppendsDedupedAndNarrates(t *testing.T) {
+func TestPinKnownHostReconcilesSetupTempFile(t *testing.T) {
 	configHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", configHome)
+	temp := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(temp, []byte("203.0.113.12 "+hostKeyAForInstallTest()+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	var out bytes.Buffer
 	installer := NewInstaller()
 	installer.Stderr = &out
-	plan := Plan{TargetHost: "203.0.113.12"}
+	plan := Plan{TargetHost: "203.0.113.12", KnownHostsFile: temp}
 
-	if err := installer.rememberBox(plan); err != nil {
+	if err := installer.pinKnownHost(plan); err != nil {
 		t.Fatal(err)
 	}
-	if err := installer.rememberBox(plan); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(configHome + "/ship/boxes")
+	data, err := os.ReadFile(configHome + "/ship/known_hosts")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != "203.0.113.12\n" {
-		t.Fatalf("memo file should be deduped, got:\n%s", data)
+	if string(data) != "203.0.113.12 "+hostKeyAForInstallTest()+"\n" {
+		t.Fatalf("known_hosts mismatch, got:\n%s", data)
 	}
-	want := "remembered box 203.0.113.12 (" + boxmemo.DisplayPath + ")"
-	if strings.Count(out.String(), want) != 2 {
-		t.Fatalf("remember narration mismatch:\n%s", out.String())
+	want := "pinned box 203.0.113.12 (" + knownhosts.DisplayPath + ")"
+	if strings.Count(out.String(), want) != 1 {
+		t.Fatalf("pin narration mismatch:\n%s", out.String())
+	}
+}
+
+func TestPinKnownHostNarratesChangedKeyBeforePin(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	canonical, err := knownhosts.Ensure()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(canonical, []byte("203.0.113.12 "+hostKeyAForInstallTest()+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	temp := filepath.Join(t.TempDir(), "known_hosts")
+	if err := os.WriteFile(temp, []byte("203.0.113.12 "+hostKeyBForInstallTest()+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	installer := NewInstaller()
+	installer.Stderr = &out
+	if err := installer.pinKnownHost(Plan{TargetHost: "203.0.113.12", KnownHostsFile: temp}); err != nil {
+		t.Fatal(err)
+	}
+	text := out.String()
+	if !strings.Contains(text, knownhosts.SetupHostKeyChangedMessage+"\n"+"pinned box 203.0.113.12") {
+		t.Fatalf("changed-key narration should precede pin line:\n%s", text)
+	}
+	data, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), hostKeyAForInstallTest()) || !strings.Contains(string(data), hostKeyBForInstallTest()) {
+		t.Fatalf("known_hosts was not re-pinned:\n%s", data)
 	}
 }
 
@@ -422,11 +483,12 @@ func TestHostInstallSSHAcceptsNewHostKeysOnly(t *testing.T) {
 	args := sshArgs(Plan{
 		BootstrapUser:        "root",
 		TargetHost:           "203.0.113.12",
+		KnownHostsFile:       "/tmp/setup-known-hosts",
 		SSHKey:               "/keys/root",
 		BootstrapIdentityKey: "/home/me/.ssh/ship",
 	}, "true")
 
-	for _, want := range []string{"BatchMode=yes", "StrictHostKeyChecking=accept-new", "/keys/root", "/home/me/.ssh/ship", "root@203.0.113.12"} {
+	for _, want := range []string{"BatchMode=yes", "UserKnownHostsFile=/tmp/setup-known-hosts", "StrictHostKeyChecking=accept-new", "HashKnownHosts=no", "/keys/root", "/home/me/.ssh/ship", "root@203.0.113.12"} {
 		if !contains(args, want) {
 			t.Fatalf("expected ssh args to contain %q, got %v", want, args)
 		}
@@ -434,6 +496,14 @@ func TestHostInstallSSHAcceptsNewHostKeysOnly(t *testing.T) {
 	if contains(args, "IdentitiesOnly=yes") {
 		t.Fatalf("bootstrap SSH should not force IdentitiesOnly, got %v", args)
 	}
+}
+
+func hostKeyAForInstallTest() string {
+	return strings.Join(strings.Fields(alicePublicKey)[:2], " ")
+}
+
+func hostKeyBForInstallTest() string {
+	return strings.Join(strings.Fields(bobPublicKey)[:2], " ")
 }
 
 func TestInstallPresetsMapToProviderFlags(t *testing.T) {
@@ -579,7 +649,7 @@ func TestPreflightSSHIncludesSSHError(t *testing.T) {
 	for _, want := range []string{
 		"SSH preflight failed for root@203.0.113.10: ssh command failed: Host key verification failed",
 		"Host key verification failed",
-		"next: ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new root@203.0.113.10",
+		"next: ssh -o BatchMode=yes -o 'UserKnownHostsFile=~/.config/ship/known_hosts' -o StrictHostKeyChecking=accept-new -o HashKnownHosts=no root@203.0.113.10",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error to contain %q, got %v", want, err)
@@ -641,6 +711,51 @@ func TestPreflightSSHPublicKeyFailureUsesParsedBootstrapUser(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "root@deployer@203.0.113.10") {
 		t.Fatalf("error doubled bootstrap user: %v", err)
+	}
+}
+
+func TestWaitForRemoteSSHSwallowsTransientRestartNoise(t *testing.T) {
+	var out bytes.Buffer
+	attempts := 0
+	installer := NewInstaller()
+	installer.Stderr = &out
+	installer.sleep = func(time.Duration) {}
+	installer.remoteOut = func(plan Plan, command string) (string, error) {
+		attempts++
+		if attempts < 3 {
+			return "", errors.New("ssh: connect to host 203.0.113.10 port 22: Connection refused")
+		}
+		return "", nil
+	}
+
+	err := installer.waitForRemoteSSH(Plan{BootstrapUser: "root", TargetHost: "203.0.113.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	if strings.Contains(out.String(), "Connection refused") || strings.Contains(out.String(), "ssh:") {
+		t.Fatalf("transient SSH noise leaked:\n%s", out.String())
+	}
+}
+
+func TestWaitForRemoteSSHReportsOneCodedErrorAfterRetryBudget(t *testing.T) {
+	installer := NewInstaller()
+	installer.sleep = func(time.Duration) {}
+	installer.remoteOut = func(plan Plan, command string) (string, error) {
+		return "", errors.New("ssh: connect to host 203.0.113.10 port 22: Connection refused")
+	}
+
+	err := installer.waitForRemoteSSH(Plan{BootstrapUser: "root", TargetHost: "203.0.113.10"})
+	if err == nil {
+		t.Fatal("expected reconnect failure")
+	}
+	if !errcat.Is(err, errcat.CodeHostInstallSSHFailed) {
+		t.Fatalf("code = %v, want %s", err, errcat.CodeHostInstallSSHFailed)
+	}
+	if strings.Count(err.Error(), "Connection refused") != 1 {
+		t.Fatalf("final error should include one connection-refused detail:\n%s", err)
 	}
 }
 

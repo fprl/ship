@@ -140,6 +140,27 @@ func (e *smokeEnv) configureSSH(t *testing.T, user string) {
 func (e *smokeEnv) waitForSSH(t *testing.T) {
 	t.Helper()
 	h.WaitForSSH(t, e.ctx, e.repoRoot, e.sshBin())
+	if e.image == fakeVPSImage {
+		e.pinFakeVPSHostKey(t)
+	}
+}
+
+func (e *smokeEnv) pinFakeVPSHostKey(t *testing.T) {
+	t.Helper()
+	knownHosts := filepath.Join(e.shipHome, ".config", "ship", "known_hosts")
+	if err := os.MkdirAll(filepath.Dir(knownHosts), 0700); err != nil {
+		t.Fatal(err)
+	}
+	result := e.run(t, e.repoRoot, nil, e.sshBin(),
+		"-o", "UserKnownHostsFile="+knownHosts,
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "HashKnownHosts=no",
+		"fake-vps",
+		"true",
+	)
+	if result.err != nil {
+		t.Fatalf("pin fake-vps host key failed: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
+	}
 }
 
 func (e *smokeEnv) commitFixture(t *testing.T, appDir string) {
@@ -278,6 +299,7 @@ func (e *smokeEnv) configureSSHWithKey(t *testing.T, keyPath string) string {
 	config := fmt.Sprintf(`Host fake-vps
   HostName 127.0.0.1
   Port %s
+  HostKeyAlias fake-vps
   User deploy
   IdentityFile %s
   IdentitiesOnly yes

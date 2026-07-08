@@ -33,6 +33,10 @@ ship box setup 203.0.113.7
 ship uses key auth only. During hardening it disables password login
 permanently.
 
+`box setup` pins the box host key in `~/.config/ship/known_hosts`. If you
+rebuild the VPS at the same address, rerun `ship box setup <ssh-target>` to
+re-establish the pin; no manual `ssh-keygen -R` is needed.
+
 Ingress modes are selected with `--ingress public|cloudflare|private`.
 `public` opens Caddy on 80/443, `cloudflare` runs Cloudflare Tunnel and keeps
 public 80/443 closed, and `private` keeps public HTTP closed. Admin access is

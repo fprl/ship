@@ -29,6 +29,7 @@ const (
 	CodeUnknownPreviewBranch              Code = "unknown_preview_branch"
 	CodeNoDeploys                         Code = "no_deploys"
 	CodeSSHUnreachable                    Code = "ssh_unreachable"
+	CodeHostKeyChanged                    Code = "host_key_changed"
 	CodeBoxNotInitialized                 Code = "box_not_initialized"
 	CodeBoxMissingTool                    Code = "box_missing_tool"
 	CodeRemotePreflightFailed             Code = "remote_preflight_failed"
@@ -197,6 +198,12 @@ var catalogue = map[Code]Entry{
 		CauseTemplate:       "SSH failed for {target}: {detail}",
 		RemediationTemplate: "ssh {target}",
 	},
+	CodeHostKeyChanged: {
+		Code:                CodeHostKeyChanged,
+		MessageTemplate:     "box host key changed",
+		CauseTemplate:       "SSH host key for {box} is unknown or changed; if the box was rebuilt, re-establish the pin; if not, investigate before trusting this host",
+		RemediationTemplate: "ship box setup <ssh-target>",
+	},
 	CodeBoxNotInitialized: {
 		Code:                CodeBoxNotInitialized,
 		MessageTemplate:     "box preflight failed",
@@ -257,7 +264,7 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "target a box",
 		CauseTemplate:       "{known_boxes}",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "ship box ls <box>", "known_boxes": "known boxes (~/.config/ship/boxes):\n  none known yet"},
+		Defaults:            Fields{"command": "ship box ls <box>", "known_boxes": "known boxes (~/.config/ship/known_hosts):\n  none known yet"},
 	},
 	CodeInvalidBoxTarget: {
 		Code:                CodeInvalidBoxTarget,

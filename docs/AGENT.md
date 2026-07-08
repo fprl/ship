@@ -96,7 +96,7 @@ Secret scoping:
 - `--json` stdout schema: `{"url":"https://...","env":"prod","release":"abc123","processes":["web"],"durationMs":1234}`
 - Notes: Successful non-JSON stdout is exactly one URL plus a trailing newline; all phase lines go to stderr. Production refuses dirty worktrees and stale checkouts; Preview accepts dirty worktrees and creates the preview mapping if needed.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `not_a_git_repo`, `detached_head_requires_branch`, `branch_flag_requires_detached_head`, `unmappable_branch_name`, `dirty_worktree`, `behind_production`, `manifest_invalid`, `dockerfile_missing`, `multi_process_no_web_route`, `secret_missing`, `remote_preflight_failed`, `remote_preflight_after_prepare_failed`, `deploy_blocked_local_checks`, `release_command_failed`, `probe_failed`, `dotenv_rejected`
+- Common error codes: `not_a_git_repo`, `detached_head_requires_branch`, `branch_flag_requires_detached_head`, `unmappable_branch_name`, `dirty_worktree`, `behind_production`, `manifest_invalid`, `dockerfile_missing`, `multi_process_no_web_route`, `secret_missing`, `remote_preflight_failed`, `remote_preflight_after_prepare_failed`, `deploy_blocked_local_checks`, `release_command_failed`, `probe_failed`, `dotenv_rejected`, `host_key_changed`
 
 ### `init`
 - Purpose: Create local project files and a ship.toml manifest.
@@ -112,7 +112,7 @@ Secret scoping:
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--json`: Emit structured JSON instead of the text table.
 - `--json` stdout schema: `{"app":"api","envs":[{"class":"production","branch":"main","url":"https://...","env":"prod","release":"abc123","health":"healthy","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}]}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `manifest_invalid`, `ssh_unreachable`, `box_not_initialized`, `operation_failed`
+- Common error codes: `manifest_invalid`, `ssh_unreachable`, `box_not_initialized`, `host_key_changed`, `operation_failed`
 
 ### `logs`
 - Purpose: Print logs for the current branch environment.
@@ -120,7 +120,7 @@ Secret scoping:
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `process`: Process name. Optional only when one process exists; `--follow`: Stream new log lines; `--tail <N>` default `100`: Number of trailing lines in non-follow mode; `--json`: Emit captured log lines as JSON. Cannot be combined with --follow.
 - `--json` stdout schema: `{"app":"api","env":"prod","process":"web","lines":["line 1","line 2"]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `logs_follow_json_conflict`, `unknown_preview_branch`, `operation_failed`
+- Common error codes: `logs_follow_json_conflict`, `unknown_preview_branch`, `host_key_changed`, `operation_failed`
 
 ### `exec`
 - Purpose: Run a one-off command inside the current branch environment.
@@ -128,7 +128,7 @@ Secret scoping:
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--branch <name>`: Read/exec another branch environment; `cmd <cmd...>`: Command and arguments passed through to the remote process environment.
 - Notes: After setup, stdin/stdout/stderr are passthrough. The command runs with resolved secrets and /data mounted. Use `--` before commands that start with a dash.
 - Exit codes: 0 when the remote command exits 0; the remote command exit status is passed through unchanged; 1 only for setup/transport failure; 2 usage or manifest error.
-- Common error codes: `usage_error`, `unknown_preview_branch`, `no_deploys`, `operation_failed`
+- Common error codes: `usage_error`, `unknown_preview_branch`, `no_deploys`, `host_key_changed`, `operation_failed`
 
 ### `why`
 - Purpose: Explain the latest deploy journal entry for the current branch environment.
@@ -136,14 +136,14 @@ Secret scoping:
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--branch <name>`: Inspect another branch environment; `--json`: Emit the raw deploy journal entry.
 - `--json` stdout schema: `{"schema_version":1,"app":"api","env":"prod","outcome":"aborted_probe","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","failing_step":"probe","stderr_tail":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"probe":{"status":502,"body_snippet":"..."}}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `unknown_preview_branch`, `no_deploys`, `operation_failed`
+- Common error codes: `unknown_preview_branch`, `no_deploys`, `host_key_changed`, `operation_failed`
 
 ### `rollback`
 - Purpose: Move the current branch environment back to a previous release.
 - Usage: `ship rollback [release] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `release`: Release to run. Omitted means previous local release.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `unknown_preview_branch`, `no_deploys`, `operation_failed`
+- Common error codes: `unknown_preview_branch`, `no_deploys`, `host_key_changed`, `operation_failed`
 
 ### `rm`
 - Purpose: Destroy an environment by branch name.
@@ -171,21 +171,21 @@ Secret scoping:
 - Usage: `ship save [--to <path>] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--to <path>`: Destination directory on the host. Supports plain paths and file:// URLs.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `unknown_preview_branch`, `operation_failed`
+- Common error codes: `unknown_preview_branch`, `host_key_changed`, `operation_failed`
 
 ### `restore`
 - Purpose: Restore the current branch environment from a backup.
 - Usage: `ship restore --from <id|path> [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--from <id|path>`: Backup ID or path on the host.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `unknown_preview_branch`, `operation_failed`
+- Common error codes: `unknown_preview_branch`, `host_key_changed`, `operation_failed`
 
 ### `ssh`
 - Purpose: Open an SSH session to the box for the current app.
 - Usage: `ship ssh [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest.
 - Exit codes: 0 when SSH exits 0; SSH failures return 1; usage or manifest errors return 2.
-- Common error codes: `manifest_invalid`, `ssh_unreachable`, `operation_failed`
+- Common error codes: `manifest_invalid`, `ssh_unreachable`, `host_key_changed`, `operation_failed`
 
 ### `secret set`
 - Purpose: Read one secret value from stdin or bulk-import dotenv KEY=VALUE pairs.
@@ -193,7 +193,7 @@ Secret scoping:
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `KEY`: Environment variable name, matching ^[A-Za-z_][A-Za-z0-9_]*$; `--preview`: Store the shared Preview value; `--branch <name>`: Store the value for one branch Preview environment; `--from <path>`: Bulk import dotenv KEY=VALUE pairs from a file. Cannot be combined with KEY; `--replace`: With --from, make the file authoritative for the selected scope and remove omitted keys.
 - Notes: Single-value mode reads the value from stdin. Bulk mode reads values from the file path; values are never echoed, placed in argv, or written into the repo. Bulk dotenv rules: blank lines and full-line # comments are ignored; an `export ` prefix is accepted; unquoted values are trimmed; matching single or double quotes around the whole value are stripped; inline # is treated as value text. Bulk merge is the default. `--replace` removes scope keys absent from the file and reports removed key names on stderr. Bulk stdout is empty.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `usage_error`, `invalid_secret_key`, `dotenv_malformed`, `secret_scope_conflict`, `unknown_preview_branch`, `operation_failed`
+- Common error codes: `usage_error`, `invalid_secret_key`, `dotenv_malformed`, `secret_scope_conflict`, `unknown_preview_branch`, `host_key_changed`, `operation_failed`
 
 ### `secret ls`
 - Purpose: List secret keys for a scope. Values are never printed.
@@ -201,14 +201,14 @@ Secret scoping:
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--preview`: List the shared Preview scope; `--branch <name>`: List one branch Preview scope; `--json`: Emit structured JSON.
 - `--json` stdout schema: `{"app":"api","env":"prod","keys":["DATABASE_URL"]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `secret_scope_conflict`, `unknown_preview_branch`, `operation_failed`
+- Common error codes: `secret_scope_conflict`, `unknown_preview_branch`, `host_key_changed`, `operation_failed`
 
 ### `secret rm`
 - Purpose: Remove a secret key from a scope.
 - Usage: `ship secret rm <KEY> [--preview|--branch <name>] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `KEY`: Environment variable name to remove; `--preview`: Remove from the shared Preview scope; `--branch <name>`: Remove from one branch Preview scope.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `invalid_secret_key`, `secret_scope_conflict`, `unknown_preview_branch`, `operation_failed`
+- Common error codes: `invalid_secret_key`, `secret_scope_conflict`, `unknown_preview_branch`, `host_key_changed`, `operation_failed`
 
 ### `box setup`
 - Purpose: Install or converge a box.
@@ -223,7 +223,7 @@ Secret scoping:
 - Arguments and flags: `github-user|key|path`: A GitHub username, literal SSH public key, or path to a .pub/.pem file; `--role owner|shipper|agent` default `shipper`: Role recorded for newly added keys; `--config <path>` default `ship.toml`: Path to the app manifest containing box.
 - Notes: Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or already authorized, with role and SHA256 fingerprint. Existing keys are deduplicated by key material. Agent-role keys are installed with a forced `agent-shell` command; owner and shipper keys remain plain authorized_keys entries.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `manifest_invalid`, `invalid_box_target`, `github_keys_unavailable`, `ssh_public_key_invalid`, `operation_failed`
+- Common error codes: `manifest_invalid`, `invalid_box_target`, `github_keys_unavailable`, `ssh_public_key_invalid`, `host_key_changed`, `operation_failed`
 
 ### `member ls`
 - Purpose: List deploy members from authorized_keys.
@@ -231,7 +231,7 @@ Secret scoping:
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest containing box; `--json`: Emit structured JSON.
 - `--json` stdout schema: `{"members":[{"name":"alice","role":"shipper","key_type":"ssh-ed25519","fingerprint":"SHA256:..."}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `manifest_invalid`, `invalid_box_target`, `operation_failed`
+- Common error codes: `manifest_invalid`, `invalid_box_target`, `host_key_changed`, `operation_failed`
 
 ### `member rm`
 - Purpose: Remove all SSH keys for a deploy member.
@@ -239,7 +239,7 @@ Secret scoping:
 - Arguments and flags: `name`: Member name, matching the authorized key comment; `--config <path>` default `ship.toml`: Path to the app manifest containing box.
 - Notes: Removes every key whose comment equals the member name. Refuses to remove the last remaining authorized key.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `manifest_invalid`, `invalid_box_target`, `member_not_found`, `member_last_key`, `operation_failed`
+- Common error codes: `manifest_invalid`, `invalid_box_target`, `member_not_found`, `member_last_key`, `host_key_changed`, `operation_failed`
 
 ### `approve`
 - Purpose: List or grant one-shot approvals for out-of-role requests.
@@ -248,7 +248,7 @@ Secret scoping:
 - `--json` stdout schema: `{"approvals":[{"id":"abc123xy","member":"alice","role":"agent","request":"app=api env=prod class=production release=abc123","expires":"2026-07-08T10:15:00Z"}]}`
 - Notes: Bare `ship approve` lists pending requests and prunes expired entries. `ship approve <id>` can be run only by owner or shipper and grants one retry by the original member.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `approval_expired`, `member_unknown`, `role_denied`, `operation_failed`
+- Common error codes: `approval_expired`, `member_unknown`, `role_denied`, `host_key_changed`, `operation_failed`
 
 ### `box doctor`
 - Purpose: Run box diagnostics.
@@ -256,7 +256,7 @@ Secret scoping:
 - Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit structured checks instead of text.
 - `--json` stdout schema: `[{"id":"disk_space","status":"ok","evidence":"used=10%","remediation":"ship box doctor 203.0.113.7"}]`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `box_target_required`, `invalid_box_target`, `ssh_unreachable`, `box_not_initialized`, `operation_failed`
+- Common error codes: `box_target_required`, `invalid_box_target`, `ssh_unreachable`, `box_not_initialized`, `host_key_changed`, `operation_failed`
 
 ### `box ls`
 - Purpose: List app environments visible on a box.
@@ -264,14 +264,21 @@ Secret scoping:
 - Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit the fleet view JSON.
 - `--json` stdout schema: `{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"prod","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `box_target_required`, `invalid_box_target`, `ssh_unreachable`, `box_not_initialized`, `operation_failed`
+- Common error codes: `box_target_required`, `invalid_box_target`, `ssh_unreachable`, `box_not_initialized`, `host_key_changed`, `operation_failed`
 
 ### `box rm`
 - Purpose: Destroy an app and all of its environments on a box.
 - Usage: `ship box rm <app> [<box>] --confirm <app>`
 - Arguments and flags: `app`: App name to destroy; `box`: Box host. Defaults to ship.toml box when run in an app directory; `--confirm <app>`: Required app-name confirmation.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `box_rm_confirmation_required`, `box_target_required`, `invalid_box_target`, `operation_failed`
+- Common error codes: `box_rm_confirmation_required`, `box_target_required`, `invalid_box_target`, `host_key_changed`, `operation_failed`
+
+### `box forget`
+- Purpose: Drop a box host-key pin.
+- Usage: `ship box forget <box>`
+- Arguments and flags: `box`: Box host to forget from ~/.config/ship/known_hosts.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `invalid_box_target`, `operation_failed`
 
 ### `docs`
 - Purpose: Print this complete agent contract.
@@ -341,7 +348,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `box_missing_tool`: box preflight failed; cause: required server tool is missing on {target}: {tool}; remediation: `ship box setup {target}`.
 - `box_not_initialized`: box preflight failed; cause: ship server API is missing at /usr/local/bin/ship on {target}; remediation: `ship box setup {target}`.
 - `box_rm_confirmation_required`: box rm confirmation failed; cause: box rm requires --confirm {app}; remediation: `ship box rm {app} --confirm {app}`.
-- `box_target_required`: target a box; cause: {known_boxes}; remediation: `{command}`; defaults: `command="ship box ls <box>", known_boxes="known boxes (~/.config/ship/boxes):\n  none known yet"`.
+- `box_target_required`: target a box; cause: {known_boxes}; remediation: `{command}`; defaults: `command="ship box ls <box>", known_boxes="known boxes (~/.config/ship/known_hosts):\n  none known yet"`.
 - `branch_flag_requires_detached_head`: branch resolution failed; cause: --branch is only accepted on ship when HEAD is detached; remediation: `ship`.
 - `deploy_blocked_local_checks`: deploy blocked by local checks; cause: {detail}; remediation: `{command}`; defaults: `command="fix local checks", detail="local checks reported errors; see stderr above"`.
 - `deploy_key_missing`: bootstrap SSH key is missing; cause: {detail}; remediation: `{command}`; defaults: `command="ssh-copy-id -i ~/.ssh/ship.pub root@<ip>", detail="provider gave a password; this installs your ship key using it once; hardening then disables password login permanently"`.
@@ -364,6 +371,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `host_install_ssh_failed`: host install SSH failed; cause: {detail}; remediation: `{command}`.
 - `host_install_unsupported_os`: host OS is unsupported; cause: host install requires Ubuntu/Debian apt tooling; missing {tool}; remediation: `ship box setup <ubuntu-24.04-ssh-target>`.
 - `host_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.
+- `host_key_changed`: box host key changed; cause: SSH host key for {box} is unknown or changed; if the box was rebuilt, re-establish the pin; if not, investigate before trusting this host; remediation: `ship box setup <ssh-target>`.
 - `host_not_installed`: host preflight failed; cause: host is not installed; remediation: `ship box setup <ssh-target>`.
 - `ingress_invalid`: ingress preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `invalid_box_target`: box target is invalid; cause: box target must be a host like 203.0.113.7; remove any user@ prefix; remediation: `{command}`; defaults: `command="ship box ls 203.0.113.7"`.

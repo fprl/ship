@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/knownhosts"
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/shipidentity"
 	"github.com/fprl/ship/internal/utils"
@@ -23,6 +25,11 @@ type CommandRunner struct {
 
 func NewCommandRunner() (*CommandRunner, error) {
 	sshOpts := []string{"-o", "BatchMode=yes"}
+	knownHostOpts, err := knownhosts.CanonicalSSHOptions("yes")
+	if err != nil {
+		return nil, err
+	}
+	sshOpts = append(sshOpts, knownHostOpts...)
 	identity, err := shipidentity.EnsureShipIdentity(shipidentity.Options{Output: os.Stderr})
 	if err != nil {
 		return nil, err
@@ -250,7 +257,8 @@ func (r *CommandRunner) RunSSH(server string, command string) (string, string, i
 	}
 	command = r.withMemberFingerprint(command)
 	args = append(args, deploySSHTarget(server), command)
-	return runCommand("ssh", args, "")
+	stdout, stderr, code, err := runCommand("ssh", args, "")
+	return stdout, stderr, code, mapSSHTransportError(server, stdout, stderr, code, err)
 }
 
 // RunSSHWithStdin pipes `stdin` to the remote command and captures
@@ -280,10 +288,15 @@ func (r *CommandRunner) RunSSHWithStdin(server string, command string, stdin []b
 			code = 1
 		}
 	}
-	return stdout.String(), stderr.String(), code, err
+	out := stdout.String()
+	errOut := stderr.String()
+	return out, errOut, code, mapSSHTransportError(server, out, errOut, code, err)
 }
 
 func (r *CommandRunner) RunSSHPassthrough(server string, command string) error {
+	if err := r.preflightHostKey(server); err != nil {
+		return err
+	}
 	var args []string
 	if len(r.SshOptions) > 0 {
 		args = append(args, r.SshOptions...)
@@ -298,6 +311,9 @@ func (r *CommandRunner) RunSSHPassthrough(server string, command string) error {
 }
 
 func (r *CommandRunner) RunSSHPassthroughExitCode(server string, command string, tty bool) (int, error) {
+	if err := r.preflightHostKey(server); err != nil {
+		return 1, err
+	}
 	var args []string
 	if len(r.SshOptions) > 0 {
 		args = append(args, r.SshOptions...)
@@ -320,6 +336,20 @@ func (r *CommandRunner) RunSSHPassthroughExitCode(server string, command string,
 		return exitErr.ExitCode(), nil
 	}
 	return 1, err
+}
+
+func (r *CommandRunner) preflightHostKey(server string) error {
+	var args []string
+	if len(r.SshOptions) > 0 {
+		args = append(args, r.SshOptions...)
+	}
+	args = append(args, deploySSHTarget(server), "true")
+	stdout, stderr, code, err := runCommand("ssh", args, "")
+	mapped := mapSSHTransportError(server, stdout, stderr, code, err)
+	if coded, ok := errcat.As(mapped); ok && coded.Code() == errcat.CodeHostKeyChanged {
+		return coded
+	}
+	return nil
 }
 
 const remoteServerCommandPrefix = "sudo -n /usr/local/bin/ship server "
@@ -354,6 +384,9 @@ func (r *CommandRunner) Upload(local string, remote string, server string) error
 	args = append(args, "-az", local, fmt.Sprintf("%s:%s", deploySSHTarget(server), remote))
 	_, stderr, code, err := runCommand("rsync", args, "")
 	if err != nil || code != 0 {
+		if sshHostKeyFailure("", stderr) {
+			return hostKeyChangedError(server)
+		}
 		return operationError(fmt.Sprintf("rsync failed (exit %d): %s", code, strings.TrimSpace(stderr)), "ship")
 	}
 	return nil
@@ -395,6 +428,9 @@ type sshRunner interface {
 func runSSHRequired(runner sshRunner, server string, command string, errMsg string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			return "", coded
+		}
 		remote := extractRemoteError(stdout, stderr, "")
 		if remote.Coded != nil {
 			writeRemoteStderr(stderr)
@@ -411,6 +447,9 @@ func runSSHRequired(runner sshRunner, server string, command string, errMsg stri
 func runSSHDetail(runner sshRunner, server string, command string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			return "", coded
+		}
 		remote := extractRemoteError(stdout, stderr, "remote command failed")
 		if remote.Coded != nil {
 			writeRemoteStderr(stderr)
@@ -483,6 +522,38 @@ func operationError(detail, command string) error {
 		"detail":  detail,
 		"command": command,
 	})
+}
+
+func mapSSHTransportError(server, stdout, stderr string, code int, err error) error {
+	if (err != nil || code != 0) && sshHostKeyFailure(stdout, stderr) {
+		return hostKeyChangedError(server)
+	}
+	return err
+}
+
+func hostKeyChangedError(server string) error {
+	box := strings.TrimSpace(server)
+	if host, ok := config.UserHostBoxHost(box); ok {
+		box = host
+	}
+	return errcat.New(errcat.CodeHostKeyChanged, errcat.Fields{"box": box})
+}
+
+func sshHostKeyFailure(stdout, stderr string) bool {
+	text := strings.ToLower(stdout + "\n" + stderr)
+	for _, pattern := range []string{
+		"remote host identification has changed",
+		"host key verification failed",
+		"no ed25519 host key is known",
+		"no ecdsa host key is known",
+		"no rsa host key is known",
+		"offending key",
+	} {
+		if strings.Contains(text, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 func manifestInvalidError(detail, command string) error {

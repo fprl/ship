@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/knownhosts"
 	"github.com/fprl/ship/internal/names"
 	"github.com/fprl/ship/internal/utils"
 	"io"
@@ -55,6 +56,9 @@ func CmdMemberAdd(server, source string, role string) {
 	stdin := []byte(strings.Join(input.Keys, "\n") + "\n")
 	stdout, stderr, code, err := runner.RunSSHWithStdin(server, serverKeyAddCommand(input.Comment, role), stdin)
 	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			utils.DieError(coded, 1)
+		}
 		remote := extractRemoteError(stdout, stderr, "")
 		if remote.Coded != nil {
 			writeRemoteStderr(stderr)
@@ -81,6 +85,9 @@ func CmdMemberLs(server string, jsonFlag bool) {
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverKeyListCommand(jsonFlag))
 	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			utils.DieError(coded, 1)
+		}
 		remote := extractRemoteError(stdout, stderr, "")
 		if remote.Coded != nil {
 			writeRemoteStderr(stderr)
@@ -107,6 +114,9 @@ func CmdMemberRm(server, name string) {
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverKeyRmCommand(name))
 	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			utils.DieError(coded, 1)
+		}
 		remote := extractRemoteError(stdout, stderr, "")
 		if remote.Coded != nil {
 			writeRemoteStderr(stderr)
@@ -144,6 +154,21 @@ func CmdBoxRm(server, app, confirm string) {
 	fmt.Print(out)
 }
 
+func CmdBoxForget(server string) {
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box forget"), 2)
+	}
+	removed, err := knownhosts.Remove(server)
+	if err != nil {
+		utils.DieError(operationError(fmt.Sprintf("forget box host key: %v", err), "ship box forget "+server), 1)
+	}
+	if removed {
+		fmt.Printf("forgot box %s (%s)\n", server, knownhosts.DisplayPath)
+		return
+	}
+	fmt.Printf("box %s is not pinned (%s)\n", server, knownhosts.DisplayPath)
+}
+
 func CmdBoxDoctor(server string, jsonFlag bool) {
 	if !config.ValidateBoxHost(server) {
 		utils.DieError(invalidBoxTargetError(server, "ship box doctor"), 2)
@@ -157,6 +182,9 @@ func CmdBoxDoctor(server string, jsonFlag bool) {
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverDoctorCommand(server, jsonFlag))
 	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			utils.DieError(coded, 1)
+		}
 		remote := extractRemoteError(stdout, stderr, "")
 		if remote.Coded != nil {
 			utils.DieError(remote.Coded, 1)

@@ -554,7 +554,7 @@ var verbs = []Verb{
 			"unmappable_branch_name", "dirty_worktree", "behind_production", "manifest_invalid", "dockerfile_missing",
 			"multi_process_no_web_route", "secret_missing", "remote_preflight_failed",
 			"remote_preflight_after_prepare_failed", "deploy_blocked_local_checks", "release_command_failed",
-			"probe_failed", "dotenv_rejected",
+			"probe_failed", "dotenv_rejected", "host_key_changed",
 		},
 		Notes: []string{
 			"Successful non-JSON stdout is exactly one URL plus a trailing newline; all phase lines go to stderr.",
@@ -586,7 +586,7 @@ var verbs = []Verb{
 			`{"app":"api","envs":[{"class":"production","branch":"main","url":"https://...","env":"prod","release":"abc123","health":"healthy","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}]}]}`,
 		),
 		ExitCodes: normalExit,
-		Errors:    []string{"manifest_invalid", "ssh_unreachable", "box_not_initialized", "operation_failed"},
+		Errors:    []string{"manifest_invalid", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:    "logs",
@@ -603,7 +603,7 @@ var verbs = []Verb{
 			`{"app":"api","env":"prod","process":"web","lines":["line 1","line 2"]}`,
 		),
 		ExitCodes: normalExit,
-		Errors:    []string{"logs_follow_json_conflict", "unknown_preview_branch", "operation_failed"},
+		Errors:    []string{"logs_follow_json_conflict", "unknown_preview_branch", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:    "exec",
@@ -615,7 +615,7 @@ var verbs = []Verb{
 			{Name: "cmd", Value: "<cmd...>", Purpose: "Command and arguments passed through to the remote process environment."},
 		},
 		ExitCodes: "0 when the remote command exits 0; the remote command exit status is passed through unchanged; 1 only for setup/transport failure; 2 usage or manifest error.",
-		Errors:    []string{"usage_error", "unknown_preview_branch", "no_deploys", "operation_failed"},
+		Errors:    []string{"usage_error", "unknown_preview_branch", "no_deploys", "host_key_changed", "operation_failed"},
 		Notes: []string{
 			"After setup, stdin/stdout/stderr are passthrough. The command runs with resolved secrets and /data mounted.",
 			"Use `--` before commands that start with a dash.",
@@ -634,7 +634,7 @@ var verbs = []Verb{
 			`{"schema_version":1,"app":"api","env":"prod","outcome":"aborted_probe","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","failing_step":"probe","stderr_tail":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"probe":{"status":502,"body_snippet":"..."}}`,
 		),
 		ExitCodes: normalExit,
-		Errors:    []string{"unknown_preview_branch", "no_deploys", "operation_failed"},
+		Errors:    []string{"unknown_preview_branch", "no_deploys", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:      "rollback",
@@ -642,7 +642,7 @@ var verbs = []Verb{
 		Usage:     "ship rollback [release] [--config <path>]",
 		Flags:     []Flag{configFlag, {Name: "release", Purpose: "Release to run. Omitted means previous local release."}},
 		ExitCodes: normalExit,
-		Errors:    []string{"unknown_preview_branch", "no_deploys", "operation_failed"},
+		Errors:    []string{"unknown_preview_branch", "no_deploys", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:      "rm",
@@ -674,7 +674,7 @@ var verbs = []Verb{
 		Usage:     "ship save [--to <path>] [--config <path>]",
 		Flags:     []Flag{configFlag, {Name: "--to", Value: "<path>", Purpose: "Destination directory on the host. Supports plain paths and file:// URLs."}},
 		ExitCodes: normalExit,
-		Errors:    []string{"unknown_preview_branch", "operation_failed"},
+		Errors:    []string{"unknown_preview_branch", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:      "restore",
@@ -682,7 +682,7 @@ var verbs = []Verb{
 		Usage:     "ship restore --from <id|path> [--config <path>]",
 		Flags:     []Flag{configFlag, {Name: "--from", Value: "<id|path>", Purpose: "Backup ID or path on the host."}},
 		ExitCodes: normalExit,
-		Errors:    []string{"unknown_preview_branch", "operation_failed"},
+		Errors:    []string{"unknown_preview_branch", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:      "ssh",
@@ -690,7 +690,7 @@ var verbs = []Verb{
 		Usage:     "ship ssh [--config <path>]",
 		Flags:     []Flag{configFlag},
 		ExitCodes: "0 when SSH exits 0; SSH failures return 1; usage or manifest errors return 2.",
-		Errors:    []string{"manifest_invalid", "ssh_unreachable", "operation_failed"},
+		Errors:    []string{"manifest_invalid", "ssh_unreachable", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:    "secret set",
@@ -705,7 +705,7 @@ var verbs = []Verb{
 			{Name: "--replace", Purpose: "With --from, make the file authoritative for the selected scope and remove omitted keys."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"usage_error", "invalid_secret_key", "dotenv_malformed", "secret_scope_conflict", "unknown_preview_branch", "operation_failed"},
+		Errors:    []string{"usage_error", "invalid_secret_key", "dotenv_malformed", "secret_scope_conflict", "unknown_preview_branch", "host_key_changed", "operation_failed"},
 		Notes: []string{
 			"Single-value mode reads the value from stdin. Bulk mode reads values from the file path; values are never echoed, placed in argv, or written into the repo.",
 			"Bulk dotenv rules: blank lines and full-line # comments are ignored; an `export ` prefix is accepted; unquoted values are trimmed; matching single or double quotes around the whole value are stripped; inline # is treated as value text.",
@@ -726,7 +726,7 @@ var verbs = []Verb{
 			`{"app":"api","env":"prod","keys":["DATABASE_URL"]}`,
 		),
 		ExitCodes: normalExit,
-		Errors:    []string{"secret_scope_conflict", "unknown_preview_branch", "operation_failed"},
+		Errors:    []string{"secret_scope_conflict", "unknown_preview_branch", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:    "secret rm",
@@ -739,7 +739,7 @@ var verbs = []Verb{
 			{Name: "--branch", Value: "<name>", Purpose: "Remove from one branch Preview scope."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"invalid_secret_key", "secret_scope_conflict", "unknown_preview_branch", "operation_failed"},
+		Errors:    []string{"invalid_secret_key", "secret_scope_conflict", "unknown_preview_branch", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:    "box setup",
@@ -792,7 +792,7 @@ var verbs = []Verb{
 			{Name: "--config", Value: "<path>", Default: "ship.toml", Purpose: "Path to the app manifest containing box."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"manifest_invalid", "invalid_box_target", "github_keys_unavailable", "ssh_public_key_invalid", "operation_failed"},
+		Errors:    []string{"manifest_invalid", "invalid_box_target", "github_keys_unavailable", "ssh_public_key_invalid", "host_key_changed", "operation_failed"},
 		Notes:     []string{"Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or already authorized, with role and SHA256 fingerprint. Existing keys are deduplicated by key material. Agent-role keys are installed with a forced `agent-shell` command; owner and shipper keys remain plain authorized_keys entries."},
 	},
 	{
@@ -807,7 +807,7 @@ var verbs = []Verb{
 			`{"members":[{"name":"alice","role":"shipper","key_type":"ssh-ed25519","fingerprint":"SHA256:..."}]}`,
 		),
 		ExitCodes: normalExit,
-		Errors:    []string{"manifest_invalid", "invalid_box_target", "operation_failed"},
+		Errors:    []string{"manifest_invalid", "invalid_box_target", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:    "member rm",
@@ -818,7 +818,7 @@ var verbs = []Verb{
 			{Name: "--config", Value: "<path>", Default: "ship.toml", Purpose: "Path to the app manifest containing box."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"manifest_invalid", "invalid_box_target", "member_not_found", "member_last_key", "operation_failed"},
+		Errors:    []string{"manifest_invalid", "invalid_box_target", "member_not_found", "member_last_key", "host_key_changed", "operation_failed"},
 		Notes:     []string{"Removes every key whose comment equals the member name. Refuses to remove the last remaining authorized key."},
 	},
 	{
@@ -834,7 +834,7 @@ var verbs = []Verb{
 			`{"approvals":[{"id":"abc123xy","member":"alice","role":"agent","request":"app=api env=prod class=production release=abc123","expires":"2026-07-08T10:15:00Z"}]}`,
 		),
 		ExitCodes: normalExit,
-		Errors:    []string{"approval_expired", "member_unknown", "role_denied", "operation_failed"},
+		Errors:    []string{"approval_expired", "member_unknown", "role_denied", "host_key_changed", "operation_failed"},
 		Notes:     []string{"Bare `ship approve` lists pending requests and prunes expired entries. `ship approve <id>` can be run only by owner or shipper and grants one retry by the original member."},
 	},
 	{
@@ -849,7 +849,7 @@ var verbs = []Verb{
 			`[{"id":"disk_space","status":"ok","evidence":"used=10%","remediation":"ship box doctor 203.0.113.7"}]`,
 		),
 		ExitCodes: normalExit,
-		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "operation_failed"},
+		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:    "box ls",
@@ -863,7 +863,7 @@ var verbs = []Verb{
 			`{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"prod","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`,
 		),
 		ExitCodes: normalExit,
-		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "operation_failed"},
+		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:    "box rm",
@@ -875,7 +875,15 @@ var verbs = []Verb{
 			{Name: "--confirm", Value: "<app>", Purpose: "Required app-name confirmation."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"box_rm_confirmation_required", "box_target_required", "invalid_box_target", "operation_failed"},
+		Errors:    []string{"box_rm_confirmation_required", "box_target_required", "invalid_box_target", "host_key_changed", "operation_failed"},
+	},
+	{
+		Verb:      "box forget",
+		Purpose:   "Drop a box host-key pin.",
+		Usage:     "ship box forget <box>",
+		Flags:     []Flag{{Name: "box", Purpose: "Box host to forget from ~/.config/ship/known_hosts."}},
+		ExitCodes: normalExit,
+		Errors:    []string{"invalid_box_target", "operation_failed"},
 	},
 	{
 		Verb:      "docs",

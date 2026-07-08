@@ -39,6 +39,9 @@ func ensureRemoteEnvReadyForDeploy(runner sshRunner, ctx *config.AppContext) err
 
 func deployHostPreflight(runner sshRunner, ctx *config.AppContext) error {
 	if stdout, stderr, code, err := runner.RunSSH(ctx.Server, "true"); err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			return coded
+		}
 		if agentShellRefusedRemote(stdout, stderr) {
 			return nil
 		}
@@ -48,9 +51,15 @@ func deployHostPreflight(runner sshRunner, ctx *config.AppContext) error {
 		})
 	}
 	if stdout, stderr, code, err := runner.RunSSH(ctx.Server, "test -x /usr/local/bin/ship"); err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			return coded
+		}
 		return errcat.New(errcat.CodeBoxNotInitialized, errcat.Fields{"target": ctx.Server, "detail": commandDetail(stdout, stderr, "missing ship server API")})
 	}
 	if _, _, code, err := runner.RunSSH(ctx.Server, "command -v rsync >/dev/null"); err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			return coded
+		}
 		return errcat.New(errcat.CodeBoxMissingTool, errcat.Fields{
 			"target": ctx.Server,
 			"tool":   "rsync",
@@ -74,6 +83,9 @@ func fetchRemotePreflightReport(runner sshRunner, ctx *config.AppContext) (remot
 	}
 	if err == nil && code == 0 {
 		return remotePreflightReport{}, deployPreflightError("invalid preflight response from host")
+	}
+	if coded, ok := errcat.As(err); ok {
+		return remotePreflightReport{}, coded
 	}
 	remote := extractRemoteError(stdout, stderr, "no error detail")
 	if remote.Coded != nil {

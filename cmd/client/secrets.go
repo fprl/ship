@@ -337,6 +337,9 @@ func listSecretKeys(secret secretContext, remediation string) ([]string, error) 
 func runSecretCommand(runner secretRunner, server, command, errMsg, remediation string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			return "", coded
+		}
 		return "", secretRemoteError(stdout, stderr, errMsg, remediation)
 	}
 	return stdout, nil
@@ -345,6 +348,9 @@ func runSecretCommand(runner secretRunner, server, command, errMsg, remediation 
 func runSecretCommandWithStdin(runner secretRunner, server, command string, stdin []byte, errMsg, remediation string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSHWithStdin(server, command, stdin)
 	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			return "", coded
+		}
 		return "", secretRemoteError(stdout, stderr, errMsg, remediation)
 	}
 	return stdout, nil

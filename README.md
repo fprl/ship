@@ -49,8 +49,10 @@ ship box setup 203.0.113.7
 ship never uses password auth itself; hardening disables password login after
 the install.
 
-The installer output is a host-convergence log. It remembers the host and ends
-with `next: ship box doctor <box>`.
+The installer output is a host-convergence log. It pins the box host key in
+`~/.config/ship/known_hosts` and ends with `next: ship box doctor <box>`. If you
+rebuild the VPS at the same address, rerun `ship box setup <ssh-target>` to
+re-establish the pin; no manual `ssh-keygen -R` is needed.
 
 Inside a repo:
 

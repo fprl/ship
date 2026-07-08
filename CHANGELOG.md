@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.1
+
+### Changed
+
+- Ship SSH now uses `~/.config/ship/known_hosts` with strict host-key checking
+  for daily commands. `box setup` re-pins rebuilt boxes after successful
+  provisioning, and `ship box forget <box>` removes a local pin.
+- Targetless box verbs list known boxes from the ship known-hosts file; the
+  old `~/.config/ship/boxes` memo is gone.
+
 ## v0.2.0
 
 Members with roles — the trust layer the resident depends on.

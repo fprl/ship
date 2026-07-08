@@ -30,6 +30,7 @@ func TestFreshHostInstall(t *testing.T) {
 	env.waitForSSH(t)
 
 	env.assertHostDoctorNotInstalled(t)
+	env.assertWrongHostKeyRefuses(t)
 
 	decoyKeyPath := filepath.Join(env.tmp, "decoy-bootstrap")
 	env.mustRun(t, env.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "decoy-bootstrap", "-f", decoyKeyPath)
@@ -50,7 +51,7 @@ func TestFreshHostInstall(t *testing.T) {
 		"running provisioner on target",
 		"provisioning ",
 		"member added: fake-vps-smoke (owner, SHA256:",
-		"remembered box fake-vps (~/.config/ship/boxes)",
+		"pinned box fake-vps (~/.config/ship/known_hosts)",
 		"box ready",
 		"next: ship box doctor fake-vps",
 	)
@@ -66,7 +67,11 @@ func TestFreshHostInstall(t *testing.T) {
 	} {
 		assertNotContains(t, firstOutput, notWant)
 	}
-	assertEqual(t, strings.TrimSpace(readFile(t, filepath.Join(env.shipHome, ".config", "ship", "boxes"))), "fake-vps")
+	shipKnownHosts := readFile(t, filepath.Join(env.shipHome, ".config", "ship", "known_hosts"))
+	assertContains(t, shipKnownHosts, "fake-vps ")
+	if _, err := os.Stat(filepath.Join(env.shipHome, ".ssh", "known_hosts")); !os.IsNotExist(err) {
+		t.Fatalf("box setup must not touch ~/.ssh/known_hosts, stat err=%v", err)
+	}
 
 	env.assertFreshHostInstalled(t)
 	identityKey := env.shipIdentityPublicKey(t)
@@ -367,9 +372,10 @@ func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {
 		t.Fatalf("box doctor passed before install\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
 	output := result.stdout + result.stderr
-	assertContains(t, output, "failed to run doctor")
-	assertContains(t, output, "Permission denied")
-	assertContains(t, output, "next: ship box doctor fake-vps")
+	assertContains(t, output, "box host key changed")
+	assertContains(t, output, "SSH host key for fake-vps is unknown or changed")
+	assertContains(t, output, "next: ship box setup <ssh-target>")
+	assertNotContains(t, output, "Permission denied")
 	assertNotContains(t, output, "next: ship box doctor deploy@fake-vps")
 
 	jsonResult := e.runCommand(t, e.repoRoot, doctorEnv, nil, e.goBin, "box", "doctor", "fake-vps", "--json")
@@ -386,9 +392,37 @@ func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {
 	if err := json.Unmarshal([]byte(jsonResult.stdout), &payload); err != nil {
 		t.Fatalf("box doctor --json error output not parseable as JSON: %v\nstdout:\n%s\nstderr:\n%s", err, jsonResult.stdout, jsonResult.stderr)
 	}
-	if payload.Error.Code != "operation_failed" || !strings.Contains(payload.Error.Cause, "Permission denied") || payload.Error.Remediation != "ship box doctor fake-vps" {
+	if payload.Error.Code != "host_key_changed" ||
+		!strings.Contains(payload.Error.Cause, "SSH host key for fake-vps is unknown or changed") ||
+		payload.Error.Remediation != "ship box setup <ssh-target>" {
 		t.Fatalf("unexpected pre-setup doctor json error: %+v", payload.Error)
 	}
+}
+
+func (e *smokeEnv) assertWrongHostKeyRefuses(t *testing.T) {
+	t.Helper()
+	home := filepath.Join(e.tmp, "wrong-host-key-home")
+	shipConfig := filepath.Join(home, ".config", "ship")
+	if err := os.MkdirAll(shipConfig, 0700); err != nil {
+		t.Fatal(err)
+	}
+	wrongKey := strings.Join(strings.Fields(alicePublicKeyForFreshInstallTest())[:2], " ")
+	if err := os.WriteFile(filepath.Join(shipConfig, "known_hosts"), []byte("fake-vps "+wrongKey+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result := e.runCommand(t, e.repoRoot, []string{"HOME=" + home}, nil, e.goBin, "box", "doctor", "fake-vps")
+	if result.err == nil {
+		t.Fatalf("box doctor should fail with wrong host key\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	}
+	output := result.stdout + result.stderr
+	assertContains(t, output, "box host key changed")
+	assertContains(t, output, "SSH host key for fake-vps is unknown or changed")
+	assertContains(t, output, "next: ship box setup <ssh-target>")
+	assertNotContains(t, output, "StrictHostKeyChecking=accept-new")
+}
+
+func alicePublicKeyForFreshInstallTest() string {
+	return "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/ alice"
 }
 
 func (e *smokeEnv) assertHostDoctorHealthy(t *testing.T) {

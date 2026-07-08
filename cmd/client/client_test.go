@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/knownhosts"
 )
 
 const clientAlicePublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/ ignored"
@@ -555,8 +557,14 @@ func TestCommandRunnerWithoutEnvKeyPinsShipIdentity(t *testing.T) {
 
 	assertSSHOptionSequence(t, runner.SshOptions, "-i", filepath.Join(home, ".ssh", "ship"))
 	assertSSHOptionSequence(t, runner.SshOptions, "-o", "IdentitiesOnly=yes")
+	assertSSHOptionSequence(t, runner.SshOptions, "-o", "UserKnownHostsFile="+filepath.Join(home, ".config", "ship", "known_hosts"))
+	assertSSHOptionSequence(t, runner.SshOptions, "-o", "StrictHostKeyChecking=yes")
+	assertSSHOptionSequence(t, runner.SshOptions, "-o", "HashKnownHosts=no")
 	if !strings.Contains(runner.RsyncRemoteShell, filepath.Join(home, ".ssh", "ship")) {
 		t.Fatalf("rsync remote shell should pin ship identity, got %q", runner.RsyncRemoteShell)
+	}
+	if !strings.Contains(runner.RsyncRemoteShell, "UserKnownHostsFile="+filepath.Join(home, ".config", "ship", "known_hosts")) {
+		t.Fatalf("rsync remote shell should pin ship known_hosts, got %q", runner.RsyncRemoteShell)
 	}
 }
 
@@ -576,14 +584,62 @@ func TestCommandRunnerEnvKeyWinsOverShipIdentity(t *testing.T) {
 	if strings.Contains(strings.Join(runner.SshOptions, " "), filepath.Join(home, ".ssh", "ship")) {
 		t.Fatalf("env key should win over ~/.ssh/ship, got %v", runner.SshOptions)
 	}
-	if strings.Contains(strings.Join(runner.SshOptions, " "), "UserKnownHostsFile") {
-		t.Fatalf("env key should use normal known_hosts, got %v", runner.SshOptions)
-	}
+	assertSSHOptionSequence(t, runner.SshOptions, "-o", "UserKnownHostsFile="+filepath.Join(home, ".config", "ship", "known_hosts"))
+	assertSSHOptionSequence(t, runner.SshOptions, "-o", "StrictHostKeyChecking=yes")
+	assertSSHOptionSequence(t, runner.SshOptions, "-o", "HashKnownHosts=no")
 	if runner.MemberFingerprint == "" {
 		t.Fatal("env key should derive a member fingerprint")
 	}
 	if got := publicKeyComment(filepath.Join(runner.TempDir, "id.pub")); got != "runner-user" {
 		t.Fatalf("env key public half comment = %q, want runner-user", got)
+	}
+}
+
+func TestSSHHostKeyFailureMapsToErrcat(t *testing.T) {
+	err := mapSSHTransportError(
+		"203.0.113.7",
+		"",
+		"@@@@@@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@@@@@@\nHost key verification failed.",
+		255,
+		errors.New("exit status 255"),
+	)
+	if !errcat.Is(err, errcat.CodeHostKeyChanged) {
+		t.Fatalf("error = %v, want %s", err, errcat.CodeHostKeyChanged)
+	}
+	want := "box host key changed\nSSH host key for 203.0.113.7 is unknown or changed; if the box was rebuilt, re-establish the pin; if not, investigate before trusting this host\nnext: ship box setup <ssh-target>"
+	if err.Error() != want {
+		t.Fatalf("host key error mismatch\nwant:\n%s\ngot:\n%s", want, err)
+	}
+}
+
+func TestCmdBoxForgetRemovesShipKnownHost(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	path, err := knownhosts.Ensure()
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := "203.0.113.7 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/\n" +
+		"203.0.113.8 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICtppnbbz76teU3iU6BguTmo//WITtYN35e4gSER6UNt\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureClientStdout(t, func() { CmdBoxForget("203.0.113.7") })
+	if out != "forgot box 203.0.113.7 (~/.config/ship/known_hosts)\n" {
+		t.Fatalf("forget output = %q", out)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "203.0.113.7") || !strings.Contains(string(data), "203.0.113.8") {
+		t.Fatalf("known_hosts after forget:\n%s", data)
+	}
+
+	out = captureClientStdout(t, func() { CmdBoxForget("203.0.113.7") })
+	if out != "box 203.0.113.7 is not pinned (~/.config/ship/known_hosts)\n" {
+		t.Fatalf("unknown forget output = %q", out)
 	}
 }
 
