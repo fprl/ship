@@ -31,7 +31,7 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"doctor", "--member-fingerprint", aliceFingerprint},
 		{"doctor", "--member", "alice", "--json"},
 		{"doctor", "--json"},
-		{"doctor", "--box-target", "deploy@example.com", "--json"},
+		{"doctor", "--box-target", "example.com", "--json"},
 		{"doctor", "record"},
 		{"cloudflare", "setup-tunnel", "--name", "ship", "--account-id", "account-test", "--token-file", "/tmp/token"},
 		{"app", "setup-env", "api", "production"},

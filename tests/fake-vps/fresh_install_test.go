@@ -41,15 +41,32 @@ func TestFreshHostInstall(t *testing.T) {
 		t.Fatalf("first install changed %d operations, want > 0", first)
 	}
 	assertContainsInOrder(t, firstOutput,
-		"identity: fake-vps-smoke (created ~/.ssh/ship)",
+		"identity: fake-vps-smoke (~/.ssh/ship)",
 		"connected as root (bootstrap)",
 		"ingress: public 80/443 (--ingress ...)",
 		"admin: SSH keys only (--admin tailscale)",
-		"ship installer starting",
-		"Running in remote mode against root@fake-vps",
-		"Provisioning complete",
+		"timezone: Europe/Madrid",
+		"Using ship Linux helper binary",
+		"running provisioner on target",
+		"provisioning ",
 		"member added: fake-vps-smoke (owner, SHA256:",
+		"remembered box fake-vps (~/.config/ship/boxes)",
+		"box ready",
+		"next: ship box doctor fake-vps",
 	)
+	for _, notWant := range []string{
+		"ship installer starting",
+		"Operator user:",
+		"Deploy user:",
+		"Tailscale: false",
+		"Cloudflare Tunnel: false",
+		"Docker: false",
+		"Litestream: false",
+		"deploy@fake-vps",
+	} {
+		assertNotContains(t, firstOutput, notWant)
+	}
+	assertEqual(t, strings.TrimSpace(readFile(t, filepath.Join(env.shipHome, ".config", "ship", "boxes"))), "fake-vps")
 
 	env.assertFreshHostInstalled(t)
 	identityKey := env.shipIdentityPublicKey(t)
@@ -133,7 +150,7 @@ func TestFreshHostInstallEmptyAuthorizedKeysNoFlag(t *testing.T) {
 	assertContains(t, output, "bootstrap SSH key is missing")
 	assertContains(t, output, "provider gave a password")
 	assertContains(t, output, "next: ssh-copy-id -i ~/.ssh/ship.pub root@fake-vps")
-	assertContains(t, output, "identity: fake-vps-smoke (created ~/.ssh/ship)")
+	assertContains(t, output, "identity: fake-vps-smoke (~/.ssh/ship)")
 	assertNotContains(t, output, "member added:")
 	if _, err := os.Stat(filepath.Join(env.shipHome, ".ssh", "ship.pub")); err != nil {
 		t.Fatalf("ship identity should exist before password remediation: %v", err)
@@ -163,12 +180,11 @@ func (e *smokeEnv) installHost(t *testing.T, deployPublicKeyFile string) (int, s
 	if result.err != nil {
 		t.Fatalf("ship box setup failed: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
 	}
-	assertContains(t, result.stdout, "Provisioning complete")
-	// Read operations-changed from /etc/ship/host.json on the
-	// VPS. The trailing `Apply ... changed N operations` stdout line
-	// can be dropped by SSH pipe-close races on some Linux/Docker
-	// runners; host.json is the authoritative record (ADR-0002 §2).
-	return changedOperationsFromHostState(t, e), result.stdout
+	if result.stdout != "" {
+		t.Fatalf("box setup narration should be on stderr, got stdout:\n%s", result.stdout)
+	}
+	assertContains(t, result.stderr, "box ready")
+	return changedOperationsFromHostState(t, e), result.stderr
 }
 
 func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
@@ -352,19 +368,26 @@ func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {
 	}
 	output := result.stdout + result.stderr
 	assertContains(t, output, "failed to run doctor")
-	assertContains(t, output, "host is not installed")
+	assertContains(t, output, "Permission denied")
+	assertContains(t, output, "next: ship box doctor fake-vps")
+	assertNotContains(t, output, "next: ship box doctor deploy@fake-vps")
 
 	jsonResult := e.runCommand(t, e.repoRoot, doctorEnv, nil, e.goBin, "box", "doctor", "fake-vps", "--json")
 	if jsonResult.err == nil {
 		t.Fatalf("box doctor --json passed before install\nstdout:\n%s\nstderr:\n%s", jsonResult.stdout, jsonResult.stderr)
 	}
-	var checks []doctorCheck
-	if err := json.Unmarshal([]byte(jsonResult.stdout), &checks); err != nil {
-		t.Fatalf("box doctor --json output not parseable as JSON: %v\nstdout:\n%s\nstderr:\n%s", err, jsonResult.stdout, jsonResult.stderr)
+	var payload struct {
+		Error struct {
+			Code        string `json:"code"`
+			Cause       string `json:"cause"`
+			Remediation string `json:"remediation"`
+		} `json:"error"`
 	}
-	hostState := findDoctorCheck(t, checks, "host_state")
-	if hostState.Status != "failed" || !strings.Contains(hostState.Evidence, "host is not installed") {
-		t.Fatalf("unexpected degraded doctor payload: %+v", checks)
+	if err := json.Unmarshal([]byte(jsonResult.stdout), &payload); err != nil {
+		t.Fatalf("box doctor --json error output not parseable as JSON: %v\nstdout:\n%s\nstderr:\n%s", err, jsonResult.stdout, jsonResult.stderr)
+	}
+	if payload.Error.Code != "operation_failed" || !strings.Contains(payload.Error.Cause, "Permission denied") || payload.Error.Remediation != "ship box doctor fake-vps" {
+		t.Fatalf("unexpected pre-setup doctor json error: %+v", payload.Error)
 	}
 }
 

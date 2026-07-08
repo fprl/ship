@@ -171,8 +171,11 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 	if server == "" {
 		server = DefaultBoxTarget
 	}
-	if !config.ValidateSshTarget(server) {
-		return normalizedInit{}, usageError("--box must be an SSH target like deploy@example.com", "ship init --box deploy@example.com")
+	if host, ok := config.UserHostBoxHost(server); ok {
+		return normalizedInit{}, usageError("--box must be a host; remove the user part (use --box "+host+")", "ship init --box "+host)
+	}
+	if !config.ValidateBoxHost(server) {
+		return normalizedInit{}, usageError("--box must be a host like 203.0.113.7", "ship init --box 203.0.113.7")
 	}
 
 	host := strings.ToLower(strings.TrimSpace(opts.Host))

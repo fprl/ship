@@ -345,6 +345,24 @@ func ValidateSshTarget(target string) bool {
 	return SystemUserRe.MatchString(user) && ValidateHost(host)
 }
 
+func ValidateBoxHost(host string) bool {
+	if strings.HasPrefix(host, "-") || strings.Contains(host, "@") {
+		return false
+	}
+	return ValidateHost(host)
+}
+
+func UserHostBoxHost(target string) (string, bool) {
+	user, host, ok := strings.Cut(strings.TrimSpace(target), "@")
+	if !ok || user == "" || host == "" || strings.Contains(host, "@") {
+		return "", false
+	}
+	if !SystemUserRe.MatchString(user) || !ValidateHost(host) {
+		return "", false
+	}
+	return host, true
+}
+
 func ReadManifest(root string) (*Manifest, error) {
 	path := filepath.Join(root, "ship.toml")
 	data, err := os.ReadFile(path)
@@ -633,8 +651,10 @@ func CheckLoadedManifest(root string, envName string, manifest *Manifest) ([]str
 
 	if manifest.Box == "" {
 		errors = append(errors, "box is required")
-	} else if !ValidateSshTarget(manifest.Box) {
-		errors = append(errors, "box must be an SSH target like deploy@example.com")
+	} else if host, ok := UserHostBoxHost(manifest.Box); ok {
+		errors = append(errors, fmt.Sprintf("box must be a host, not user@host; remove the user part (use box = %q)", host))
+	} else if !ValidateBoxHost(manifest.Box) {
+		errors = append(errors, "box must be a host like 203.0.113.7")
 	}
 
 	if manifest.ProductionBranch != "" && !validateProductionBranch(manifest.ProductionBranch) {

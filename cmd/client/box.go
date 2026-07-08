@@ -25,8 +25,8 @@ func BoxTarget(root string) (string, error) {
 }
 
 func CmdBoxLs(server string, jsonFlag bool) {
-	if !config.ValidateSshTarget(server) {
-		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "ship box ls deploy@example.com"}), 2)
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box ls"), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -39,7 +39,7 @@ func CmdBoxLs(server string, jsonFlag bool) {
 }
 
 func CmdMemberAdd(server, source string, role string) {
-	if !config.ValidateSshTarget(server) {
+	if !config.ValidateBoxHost(server) {
 		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "fix ship.toml box"}), 2)
 	}
 	input, err := resolveMemberAddSource(source)
@@ -70,7 +70,7 @@ func CmdMemberAdd(server, source string, role string) {
 }
 
 func CmdMemberLs(server string, jsonFlag bool) {
-	if !config.ValidateSshTarget(server) {
+	if !config.ValidateBoxHost(server) {
 		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "fix ship.toml box"}), 2)
 	}
 	runner, err := NewCommandRunner()
@@ -96,7 +96,7 @@ func CmdMemberLs(server string, jsonFlag bool) {
 }
 
 func CmdMemberRm(server, name string) {
-	if !config.ValidateSshTarget(server) {
+	if !config.ValidateBoxHost(server) {
 		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "fix ship.toml box"}), 2)
 	}
 	runner, err := NewCommandRunner()
@@ -128,8 +128,8 @@ func CmdBoxRm(server, app, confirm string) {
 			"command": "ship box rm <app> --confirm <app>",
 		}), 2)
 	}
-	if !config.ValidateSshTarget(server) {
-		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "ship box rm " + app + " deploy@example.com --confirm " + app}), 2)
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box rm "+app), 2)
 	}
 	if confirm != app {
 		utils.DieError(errcat.New(errcat.CodeBoxRmConfirmationRequired, errcat.Fields{"app": app}), 1)
@@ -145,8 +145,8 @@ func CmdBoxRm(server, app, confirm string) {
 }
 
 func CmdBoxDoctor(server string, jsonFlag bool) {
-	if !config.ValidateSshTarget(server) {
-		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "ship box doctor deploy@example.com"}), 2)
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box doctor"), 2)
 	}
 
 	runner, err := NewCommandRunner()
@@ -171,6 +171,14 @@ func CmdBoxDoctor(server string, jsonFlag bool) {
 		utils.DieError(operationError("failed to run doctor", "ship box doctor "+server), 1)
 	}
 	fmt.Print(stdout)
+}
+
+func invalidBoxTargetError(target string, prefix string) error {
+	box := "203.0.113.7"
+	if host, ok := config.UserHostBoxHost(target); ok {
+		box = host
+	}
+	return errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": prefix + " " + box})
 }
 
 type memberAddInput struct {

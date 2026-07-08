@@ -56,7 +56,7 @@ func writeClientDockerfile(t *testing.T, root string) {
 
 func clientContainerManifest() string {
 	return `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 probe = "/health"
 
 [processes]
@@ -69,7 +69,7 @@ web = { port = 3000 }
 
 func clientMixedManifest() string {
 	return `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 probe = "/health"
 
 [processes]
@@ -187,7 +187,7 @@ func TestResolveDeployAddressHonorsProductionBranchOverride(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
 	writeClientManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 production_branch = "stable"
 probe = "/health"
 
@@ -308,7 +308,7 @@ func TestRewriteRestoreSummaryUsesSurfaceEnvironmentName(t *testing.T) {
 }
 
 func TestDeploymentURLSynthesizesSSLIPWithoutRoutes(t *testing.T) {
-	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@203.0.113.7"}
+	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "203.0.113.7"}
 	got := deploymentURL(ctx, "prod")
 	want := "https://prod.203-0-113-7.sslip.io"
 	if got != want {
@@ -320,7 +320,7 @@ func TestDeploymentURLPrefersRootWebRoute(t *testing.T) {
 	ctx := &config.AppContext{
 		AppName: "api",
 		EnvName: "prod",
-		Server:  "deploy@example.com",
+		Server:  "example.com",
 		Routes: map[string]config.Route{
 			"api.example.com/docs": {Host: "api.example.com", Path: "/docs", Process: "web"},
 			"api.example.com":      {Host: "api.example.com", Process: "web"},
@@ -338,7 +338,7 @@ func TestPrepareDeployRoutesSynthesizesSSLIPRouteForRoutelessApp(t *testing.T) {
 	ctx := &config.AppContext{
 		AppName: "api",
 		EnvName: "prod",
-		Server:  "deploy@example.com",
+		Server:  "example.com",
 		Processes: map[string]config.Process{
 			"web": {Port: &port},
 		},
@@ -376,7 +376,7 @@ func TestPrepareDeployRoutesCollapsesPreviewToSSLIPHost(t *testing.T) {
 	ctx := &config.AppContext{
 		AppName: "api",
 		EnvName: "feat-x-ab12",
-		Server:  "deploy@example.com",
+		Server:  "example.com",
 		Processes: map[string]config.Process{
 			"web": {Port: &port},
 		},
@@ -478,7 +478,7 @@ func TestEnforceProductionAncestryRejectsBehindProduction(t *testing.T) {
 	deployed := gitHead(t, root)
 	runGit(t, root, "reset", "--hard", first)
 
-	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@example.com"}
+	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "example.com"}
 	runner := &fakeSSHRunner{responses: map[string]string{
 		serverAppStatusCommand("api", "prod"): `{"app":"api","env":"prod","release":{"release":"` + deployed[:12] + `","base_commit":"` + deployed + `","source":"process"},"processes":[]}`,
 	}}
@@ -502,7 +502,7 @@ func TestEnforceProductionAncestryAllowsFirstDeployAndAncestor(t *testing.T) {
 	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "new production")
 	head := gitHead(t, root)
 
-	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@example.com"}
+	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "example.com"}
 	firstDeploy := &fakeSSHRunner{responses: map[string]string{
 		serverAppStatusCommand("api", "prod"): `{"app":"api","env":"prod","processes":[]}`,
 	}}
@@ -519,7 +519,7 @@ func TestEnforceProductionAncestryAllowsFirstDeployAndAncestor(t *testing.T) {
 }
 
 func TestResolveReadPreviewEnvPropagatesUnknownBranchError(t *testing.T) {
-	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "deploy@example.com"}
+	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "example.com"}
 	command := serverAppPreviewResolveCommand("api", "feat/x")
 	runner := &fakeSSHRunner{failures: map[string]string{
 		command: errcat.New(errcat.CodeUnknownPreviewBranch, errcat.Fields{
@@ -956,8 +956,8 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		name    string
 		command string
 	}{
-		{name: "doctor text", command: serverDoctorCommand("deploy@example.com", false)},
-		{name: "doctor json", command: serverDoctorCommand("deploy@example.com", true)},
+		{name: "doctor text", command: serverDoctorCommand("example.com", false)},
+		{name: "doctor json", command: serverDoctorCommand("example.com", true)},
 		{name: "setup env", command: serverAppSetupEnvCommand("api", "production")},
 		{name: "preflight json", command: serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})},
 		{name: "apply", command: serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, "auto")},
@@ -997,6 +997,15 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assertServerCommandCoveredBySudoers(t, tt.command)
 		})
+	}
+}
+
+func TestDeploySSHTargetAddsConstantDeployUser(t *testing.T) {
+	if got := deploySSHTarget("203.0.113.7"); got != "deploy@203.0.113.7" {
+		t.Fatalf("deploy ssh target = %q", got)
+	}
+	if got := deploySSHTarget("root@203.0.113.7"); got != "root@203.0.113.7" {
+		t.Fatalf("explicit ssh target should not be rewritten, got %q", got)
 	}
 }
 
@@ -1296,13 +1305,13 @@ func TestServerDoctorCommandSupportsJSON(t *testing.T) {
 	}{
 		{
 			name: "doctor text",
-			got:  serverDoctorCommand("deploy@example.com", false),
-			want: "sudo -n /usr/local/bin/ship server doctor --box-target deploy@example.com",
+			got:  serverDoctorCommand("example.com", false),
+			want: "sudo -n /usr/local/bin/ship server doctor --box-target example.com",
 		},
 		{
 			name: "doctor json",
-			got:  serverDoctorCommand("deploy@example.com", true),
-			want: "sudo -n /usr/local/bin/ship server doctor --box-target deploy@example.com --json",
+			got:  serverDoctorCommand("example.com", true),
+			want: "sudo -n /usr/local/bin/ship server doctor --box-target example.com --json",
 		},
 	}
 
@@ -1394,7 +1403,7 @@ func TestEnsureRemoteEnvReadyPreparesMissingEnv(t *testing.T) {
 	ctx := &config.AppContext{
 		AppName: "api",
 		EnvName: "production",
-		Server:  "deploy@example.com",
+		Server:  "example.com",
 	}
 	preflightCmd := serverAppPreflightJSONCommand("api", "production", nil)
 	runner := &fakeSSHRunner{
@@ -1441,7 +1450,7 @@ func TestEnsureRemoteEnvReadyDoesNotPrepareWhenSecretsAreMissing(t *testing.T) {
 	ctx := &config.AppContext{
 		AppName:    "api",
 		EnvName:    "production",
-		Server:     "deploy@example.com",
+		Server:     "example.com",
 		SecretRefs: map[string]string{"DATABASE_URL": "DATABASE_URL"},
 	}
 	preflightCmd := serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})
@@ -1470,7 +1479,7 @@ func TestEnsureRemoteEnvReadyUsesPostPrepareBoundaryForSecondPreflightFailure(t 
 	ctx := &config.AppContext{
 		AppName: "api",
 		EnvName: "production",
-		Server:  "deploy@example.com",
+		Server:  "example.com",
 	}
 	preflightCmd := serverAppPreflightJSONCommand("api", "production", nil)
 	runner := &fakeSSHRunner{

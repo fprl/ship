@@ -152,6 +152,14 @@ func sshRemoteShell(sshOpts []string) string {
 	return "ssh " + strings.Join(escOpts, " ")
 }
 
+func deploySSHTarget(server string) string {
+	server = strings.TrimSpace(server)
+	if server == "" || strings.Contains(server, "@") {
+		return server
+	}
+	return DefaultDeployUser + "@" + server
+}
+
 func (r *CommandRunner) Close() {
 	if r.TempDir != "" {
 		_ = os.RemoveAll(r.TempDir)
@@ -196,7 +204,7 @@ func gitAuthor(root string) string {
 func sshKeyCommentForServer(runner *CommandRunner, server string) string {
 	var args []string
 	args = append(args, runner.SshOptions...)
-	args = append(args, "-G", server)
+	args = append(args, "-G", deploySSHTarget(server))
 	stdout, _, code, _ := runCommand("ssh", args, "")
 	if code != 0 {
 		return ""
@@ -241,7 +249,7 @@ func (r *CommandRunner) RunSSH(server string, command string) (string, string, i
 		args = append(args, r.SshOptions...)
 	}
 	command = r.withMemberFingerprint(command)
-	args = append(args, server, command)
+	args = append(args, deploySSHTarget(server), command)
 	return runCommand("ssh", args, "")
 }
 
@@ -256,7 +264,7 @@ func (r *CommandRunner) RunSSHWithStdin(server string, command string, stdin []b
 		args = append(args, r.SshOptions...)
 	}
 	command = r.withMemberFingerprint(command)
-	args = append(args, server, command)
+	args = append(args, deploySSHTarget(server), command)
 	cmd := exec.Command("ssh", args...)
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stdout, stderr bytes.Buffer
@@ -282,9 +290,9 @@ func (r *CommandRunner) RunSSHPassthrough(server string, command string) error {
 	}
 	if command != "" {
 		command = r.withMemberFingerprint(command)
-		args = append(args, server, command)
+		args = append(args, deploySSHTarget(server), command)
 	} else {
-		args = append(args, server)
+		args = append(args, deploySSHTarget(server))
 	}
 	return runCommandPassthrough("ssh", args)
 }
@@ -298,7 +306,7 @@ func (r *CommandRunner) RunSSHPassthroughExitCode(server string, command string,
 		args = append(args, "-tt")
 	}
 	command = r.withMemberFingerprint(command)
-	args = append(args, server, command)
+	args = append(args, deploySSHTarget(server), command)
 	cmd := exec.Command("ssh", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -343,7 +351,7 @@ func (r *CommandRunner) Upload(local string, remote string, server string) error
 	if r.RsyncRemoteShell != "" {
 		args = append(args, "-e", r.RsyncRemoteShell)
 	}
-	args = append(args, "-az", local, fmt.Sprintf("%s:%s", server, remote))
+	args = append(args, "-az", local, fmt.Sprintf("%s:%s", deploySSHTarget(server), remote))
 	_, stderr, code, err := runCommand("rsync", args, "")
 	if err != nil || code != 0 {
 		return operationError(fmt.Sprintf("rsync failed (exit %d): %s", code, strings.TrimSpace(stderr)), "ship")

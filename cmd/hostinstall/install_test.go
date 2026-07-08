@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fprl/ship/internal/boxmemo"
 	"github.com/fprl/ship/internal/errcat"
 )
 
@@ -221,7 +222,7 @@ func TestSSHArgsUseParsedTargetOnce(t *testing.T) {
 func TestSetupNarrationPrintsChoicesOnly(t *testing.T) {
 	var out bytes.Buffer
 	installer := NewInstaller()
-	installer.Stdout = &out
+	installer.Stderr = &out
 
 	installer.printSetupNarration(Plan{Ingress: "public", Admin: "public-ssh"})
 
@@ -232,12 +233,38 @@ func TestSetupNarrationPrintsChoicesOnly(t *testing.T) {
 	}
 }
 
+func TestInstallSummaryNarrationDiet(t *testing.T) {
+	var out bytes.Buffer
+	installer := NewInstaller()
+	installer.Stderr = &out
+
+	installer.printInstallSummary(Plan{Timezone: "UTC", Locale: "en_US.UTF-8"})
+
+	for _, notWant := range []string{
+		"ship installer starting",
+		"Operator user:",
+		"Deploy user:",
+		"Timezone:",
+		"Tailscale: false",
+		"Cloudflare Tunnel: false",
+		"Docker: false",
+		"Litestream: false",
+	} {
+		if strings.Contains(out.String(), notWant) {
+			t.Fatalf("default-off narration should not contain %q:\n%s", notWant, out.String())
+		}
+	}
+	if strings.TrimSpace(out.String()) != "" {
+		t.Fatalf("UTC/default summary should be silent, got:\n%s", out.String())
+	}
+}
+
 func TestRemotePreConnectionFailureDoesNotPrintMemberAdded(t *testing.T) {
 	operatorKeyFile := writeKeyFile(t, alicePublicKey+"\n")
 	deployKeyFile := writeKeyFile(t, bobPublicKey+"\n")
 	var out bytes.Buffer
 	installer := NewInstaller()
-	installer.Stdout = &out
+	installer.Stderr = &out
 	installer.remoteOut = func(plan Plan, command string) (string, error) {
 		return "", errors.New("root@203.0.113.10: Permission denied (publickey).")
 	}
@@ -317,7 +344,7 @@ func TestRemoteLocalInstallCommandEnablesLitestreamExplicitly(t *testing.T) {
 func TestPrintNextStepsForRemoteInstall(t *testing.T) {
 	var out bytes.Buffer
 	installer := NewInstaller()
-	installer.Stdout = &out
+	installer.Stderr = &out
 	installer.printNextSteps(Plan{
 		Mode:                   "remote",
 		TargetHost:             "203.0.113.12",
@@ -328,8 +355,7 @@ func TestPrintNextStepsForRemoteInstall(t *testing.T) {
 	text := out.String()
 	for _, want := range []string{
 		`export SHIP_SSH_KEY="$(cat /keys/deploy)"`,
-		"ship box doctor deploy@203.0.113.12",
-		"ship init --box deploy@203.0.113.12 --host <app-domain>",
+		"next: ship box doctor 203.0.113.12",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected next steps to contain %q:\n%s", want, text)
@@ -346,7 +372,7 @@ func TestPrintNextStepsForRemoteInstall(t *testing.T) {
 func TestPrintNextStepsForIdentityKeyOmitsKeyEnv(t *testing.T) {
 	var out bytes.Buffer
 	installer := NewInstaller()
-	installer.Stdout = &out
+	installer.Stderr = &out
 	installer.printNextSteps(Plan{
 		Mode:                    "remote",
 		TargetHost:              "203.0.113.12",
@@ -359,8 +385,36 @@ func TestPrintNextStepsForIdentityKeyOmitsKeyEnv(t *testing.T) {
 	if strings.Contains(text, "SHIP_SSH_KEY") || strings.Contains(text, "SHIP_KNOWN_HOSTS") {
 		t.Fatalf("identity key should not require env exports:\n%s", text)
 	}
-	if !strings.Contains(text, "1. ship box doctor deploy@203.0.113.12") {
+	if !strings.Contains(text, "next: ship box doctor 203.0.113.12") {
 		t.Fatalf("expected box doctor to be first step:\n%s", text)
+	}
+}
+
+func TestRememberBoxAppendsDedupedAndNarrates(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	var out bytes.Buffer
+	installer := NewInstaller()
+	installer.Stderr = &out
+	plan := Plan{TargetHost: "203.0.113.12"}
+
+	if err := installer.rememberBox(plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := installer.rememberBox(plan); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(configHome + "/ship/boxes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "203.0.113.12\n" {
+		t.Fatalf("memo file should be deduped, got:\n%s", data)
+	}
+	want := "remembered box 203.0.113.12 (" + boxmemo.DisplayPath + ")"
+	if strings.Count(out.String(), want) != 2 {
+		t.Fatalf("remember narration mismatch:\n%s", out.String())
 	}
 }
 

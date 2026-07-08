@@ -24,7 +24,7 @@ func writeDockerfile(t *testing.T, root string, content string) {
 
 func validContainerManifest() string {
 	return `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 production_branch = "stable"
 release = "bun run migrate"
 probe = "/health"
@@ -64,7 +64,7 @@ func TestCheckManifestAcceptsContainerV2(t *testing.T) {
 	if ctx.Shape != ShapeContainer {
 		t.Fatalf("shape = %q, want container", ctx.Shape)
 	}
-	if ctx.Server != "deploy@example.com" {
+	if ctx.Server != "example.com" {
 		t.Fatalf("box not loaded: %q", ctx.Server)
 	}
 	if ctx.ProductionBranch != "stable" {
@@ -98,11 +98,31 @@ func TestCheckManifestAcceptsContainerV2(t *testing.T) {
 	}
 }
 
+func TestCheckManifestRejectsUserAtBox(t *testing.T) {
+	root := t.TempDir()
+	writeDockerfile(t, root, "FROM alpine\n")
+	writeManifest(t, root, `name = "api"
+box = "deploy@203.0.113.7"
+
+[processes]
+web = { port = 3000 }
+`)
+
+	errors, _, err := CheckManifest(root, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `box must be a host, not user@host; remove the user part (use box = "203.0.113.7")`
+	if !slices.Contains(errors, want) {
+		t.Fatalf("expected %q, got %v", want, errors)
+	}
+}
+
 func TestLoadAppContextAppliesPreviewEnvOverlay(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\nEXPOSE 3000\n")
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [env]
 LOG_LEVEL = "info"
@@ -156,7 +176,7 @@ func TestReadManifestRejectsProcessRouteTableWithTLS(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [processes]
 web = { port = 3000 }
@@ -174,7 +194,7 @@ web = { port = 3000 }
 func TestReadManifestRejectsVarsAndDeploy(t *testing.T) {
 	root := t.TempDir()
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [vars]
 LOG_LEVEL = "info"
@@ -197,7 +217,7 @@ release = "bun run migrate"
 func TestReadManifestRejectsProcessHealth(t *testing.T) {
 	root := t.TempDir()
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [processes]
 web = { port = 3000, health = "/health" }
@@ -211,7 +231,7 @@ web = { port = 3000, health = "/health" }
 func TestReadManifestRejectsDuplicateRouteKeys(t *testing.T) {
 	root := t.TempDir()
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [processes]
 web = { port = 3000 }
@@ -235,7 +255,7 @@ func TestCheckManifestAcceptsStaticAndRedirectRouteTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeManifest(t, root, `name = "site"
-box = "deploy@example.com"
+box = "example.com"
 
 [routes]
 "example.com" = { static = "dist" }
@@ -269,7 +289,7 @@ func TestCheckManifestDefaultsRoutedProcessPortFromSoleExpose(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\nEXPOSE 8080/tcp\n")
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [processes]
 web = "bun run src/server.ts"
@@ -294,7 +314,7 @@ func TestCheckManifestDefaultsRoutedProcessPortTo3000WithoutSoleExpose(t *testin
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\nEXPOSE 8080 9090\n")
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [processes]
 web = "bun run src/server.ts"
@@ -315,7 +335,7 @@ func TestCheckManifestRejectsUnknownEnvSubtables(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [env.staging]
 LOG_LEVEL = "debug"
@@ -338,7 +358,7 @@ func TestCheckManifestRejectsReservedEnvPreviewKey(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [env]
 preview = "literal"
@@ -363,7 +383,7 @@ func TestCheckManifestRejectsStaticEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeManifest(t, root, `name = "site"
-box = "deploy@example.com"
+box = "example.com"
 
 [env]
 DATABASE_URL = "@secret"
@@ -385,7 +405,7 @@ func TestReadManifestRejectsOldFields(t *testing.T) {
 	root := t.TempDir()
 	writeManifest(t, root, `name = "api"
 runtime = "bun"
-box = "deploy@example.com"
+box = "example.com"
 
 [services.web]
 port = 3000
@@ -410,7 +430,7 @@ func TestCheckManifestRejectsRouteTableWithMultipleTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [processes]
 web = { port = 3000 }
@@ -431,7 +451,7 @@ func TestCheckManifestAcceptsMixedProcessAndStaticRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [processes]
 web = "bun run src/server.ts"
@@ -469,7 +489,7 @@ func TestCheckManifestRejectsServeSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeManifest(t, root, `name = "site"
-box = "deploy@example.com"
+box = "example.com"
 
 [routes]
 "site.example.com" = { static = "dist" }
@@ -488,7 +508,7 @@ func TestCheckManifestRejectsBadResourcesAndRouteTargets(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [processes]
 web = { port = 3000, resources = { memory = "512MB", cpus = 0 } }
@@ -519,7 +539,7 @@ func TestCheckManifestRejectsRootPath(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [processes]
 web = { port = 3000 }
@@ -541,7 +561,7 @@ func TestCheckManifestRejectsRouteMatcherSyntax(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 
 [processes]
 web = { port = 3000 }
@@ -563,7 +583,7 @@ func TestCheckManifestRejectsBadEnvProbeNotifyAndBranch(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
 	writeManifest(t, root, `name = "api"
-box = "deploy@example.com"
+box = "example.com"
 production_branch = "bad branch"
 probe = "health"
 notify = "ftp://example.com/hook"

@@ -1,5 +1,5 @@
 name = "php-plain"
-box = "deploy@example.com"
+box = "example.com"
 probe = "/health"
 
 [env]

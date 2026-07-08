@@ -51,18 +51,18 @@ ssh-keygen -R <IP>
 ```
 
 Expected output ends with `==> Provisioning complete` and next steps containing
-`ship box doctor deploy@<IP>`.
+`ship box doctor <IP>`.
 
-Verify from the laptop through the deploy user:
+Verify from the laptop:
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  ./dist/ship box doctor deploy@<IP> --json
+  ./dist/ship box doctor <IP> --json
 ```
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  ./dist/ship box ls deploy@<IP> --json
+  ./dist/ship box ls <IP> --json
 ```
 
 Useful host checks over root SSH:
@@ -119,7 +119,7 @@ EOF
 ```sh
 cat > ship.toml <<'EOF'
 name = "hello"
-box = "deploy@<IP>"
+box = "<IP>"
 probe = "/health"
 
 [env]
@@ -243,16 +243,16 @@ For a reused box, remove the app and all of its environments:
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/ship box rm hello deploy@<IP> --confirm hello
+  /path/to/simple-vps/dist/ship box rm hello <IP> --confirm hello
 ```
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/ship box ls deploy@<IP> --json
+  /path/to/simple-vps/dist/ship box ls <IP> --json
 ```
 
 ## 7. Example matrix
 
 After this smoke passes, run the checked-in examples against the same box by
-editing each `ship.toml` to use `box = "deploy@<IP>"` and a smoke route host,
+editing each `ship.toml` to use `box = "<IP>"` and a smoke route host,
 then following the example README.

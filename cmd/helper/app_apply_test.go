@@ -205,7 +205,7 @@ func TestApplyRejectsManifestForDifferentApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "ship.toml"), []byte(`name = "other"
-box = "deploy@example.com"
+box = "example.com"
 probe = "/health"
 
 [processes]

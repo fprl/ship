@@ -43,7 +43,7 @@ func TestRunInitTemplatesCreateValidManifests(t *testing.T) {
 			result, err := RunInit(root, InitOptions{
 				Template: tt.template,
 				Name:     "example-app",
-				Server:   "deploy@example.com",
+				Server:   "example.com",
 				Host:     tt.template + ".example.com",
 			})
 			if err != nil {
@@ -79,7 +79,7 @@ func TestRunInitUsesPackageJSONName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := RunInit(root, InitOptions{Template: "static", Server: "deploy@example.com"})
+	result, err := RunInit(root, InitOptions{Template: "static", Server: "example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestRunInitDoesNotOverwriteExistingAppFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := RunInit(root, InitOptions{Template: "container", Name: "api", Server: "deploy@example.com"})
+	result, err := RunInit(root, InitOptions{Template: "container", Name: "api", Server: "example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestRunInitPreflightsBeforeWritingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := RunInit(root, InitOptions{Template: "hono", Name: "api", Server: "deploy@example.com"})
+	_, err := RunInit(root, InitOptions{Template: "hono", Name: "api", Server: "example.com"})
 	if err == nil || !strings.Contains(err.Error(), "src/server.ts already exists and is a directory") {
 		t.Fatalf("expected preflight error, got %v", err)
 	}
@@ -146,7 +146,7 @@ func TestRunInitRejectsSymlinkScaffoldPaths(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, err := RunInit(root, InitOptions{Template: "container", Name: "api", Server: "deploy@example.com"})
+		_, err := RunInit(root, InitOptions{Template: "container", Name: "api", Server: "example.com"})
 		if err == nil || !strings.Contains(err.Error(), "server.py already exists and is a symlink") {
 			t.Fatalf("expected symlink error, got %v", err)
 		}
@@ -161,7 +161,7 @@ func TestRunInitRejectsSymlinkScaffoldPaths(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, err := RunInit(root, InitOptions{Template: "hono", Name: "api", Server: "deploy@example.com"})
+		_, err := RunInit(root, InitOptions{Template: "hono", Name: "api", Server: "example.com"})
 		if err == nil || !strings.Contains(err.Error(), "src already exists and is a symlink") {
 			t.Fatalf("expected parent symlink error, got %v", err)
 		}
@@ -172,15 +172,30 @@ func TestRunInitRejectsSymlinkScaffoldPaths(t *testing.T) {
 }
 
 func TestRunInitRejectsInvalidExplicitName(t *testing.T) {
-	_, err := RunInit(t.TempDir(), InitOptions{Template: "static", Name: "My App", Server: "deploy@example.com"})
+	_, err := RunInit(t.TempDir(), InitOptions{Template: "static", Name: "My App", Server: "example.com"})
 	if err == nil || !strings.Contains(err.Error(), "invalid app name") {
 		t.Fatalf("expected invalid explicit name error, got %v", err)
 	}
 }
 
+func TestRunInitRejectsUserAtBox(t *testing.T) {
+	_, err := RunInit(t.TempDir(), InitOptions{Template: "static", Name: "api", Server: "deploy@203.0.113.7"})
+	if err == nil {
+		t.Fatal("expected user@ box rejection")
+	}
+	for _, want := range []string{
+		"--box must be a host; remove the user part",
+		"next: ship init --box 203.0.113.7",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected %q in error:\n%v", want, err)
+		}
+	}
+}
+
 func TestRenderInitResultIncludesConfigPathOutsideCwd(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "app")
-	result, err := RunInit(root, InitOptions{Template: "static", Name: "api", Server: "deploy@example.com"})
+	result, err := RunInit(root, InitOptions{Template: "static", Name: "api", Server: "example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +217,7 @@ func TestRenderInitResultDoesNotCreateNestedGitRepoInMonorepo(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")
 	root := filepath.Join(repo, "apps", "api")
-	result, err := RunInit(root, InitOptions{Template: "static", Name: "api", Server: "deploy@example.com"})
+	result, err := RunInit(root, InitOptions{Template: "static", Name: "api", Server: "example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +244,7 @@ func TestRunInitKeepsExistingManifestAndScaffoldsMissingFiles(t *testing.T) {
 	if err := os.WriteFile(manifestPath, manifest, 0644); err != nil {
 		t.Fatal(err)
 	}
-	result, err := RunInit(root, InitOptions{Template: "container", Server: "deploy@example.com"})
+	result, err := RunInit(root, InitOptions{Template: "container", Server: "example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +275,7 @@ func TestRunInitUsesManifestV2Schema(t *testing.T) {
 	if _, err := RunInit(root, InitOptions{
 		Template: "php",
 		Name:     "api",
-		Server:   "deploy@example.com",
+		Server:   "example.com",
 		Host:     "api.example.com",
 	}); err != nil {
 		t.Fatal(err)
@@ -270,7 +285,7 @@ func TestRunInitUsesManifestV2Schema(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(manifest)
-	for _, want := range []string{`box = "deploy@example.com"`, `[env]`, `[processes]`, `[routes]`, `"api.example.com" = "web"`, `probe = "/health"`} {
+	for _, want := range []string{`box = "example.com"`, `[env]`, `[processes]`, `[routes]`, `"api.example.com" = "web"`, `probe = "/health"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("manifest missing %q:\n%s", want, body)
 		}
@@ -293,7 +308,7 @@ func TestRunInitGeneratedContainerTemplatesBuildWhenRequested(t *testing.T) {
 			if _, err := RunInit(root, InitOptions{
 				Template: template,
 				Name:     "api",
-				Server:   "deploy@example.com",
+				Server:   "example.com",
 				Host:     template + ".example.com",
 			}); err != nil {
 				t.Fatal(err)

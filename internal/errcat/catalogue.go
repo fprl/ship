@@ -254,17 +254,17 @@ var catalogue = map[Code]Entry{
 	},
 	CodeBoxTargetRequired: {
 		Code:                CodeBoxTargetRequired,
-		MessageTemplate:     "box target is required",
-		CauseTemplate:       "this command needs an SSH target outside an app directory",
+		MessageTemplate:     "target a box",
+		CauseTemplate:       "{known_boxes}",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "ship box ls <ssh-target>"},
+		Defaults:            Fields{"command": "ship box ls <box>", "known_boxes": "known boxes (~/.config/ship/boxes):\n  none known yet"},
 	},
 	CodeInvalidBoxTarget: {
 		Code:                CodeInvalidBoxTarget,
 		MessageTemplate:     "box target is invalid",
-		CauseTemplate:       "box target must be an SSH target like deploy@example.com",
+		CauseTemplate:       "box target must be a host like 203.0.113.7; remove any user@ prefix",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "ship box ls deploy@example.com"},
+		Defaults:            Fields{"command": "ship box ls 203.0.113.7"},
 	},
 	CodeRmConfirmationRequired: {
 		Code:                CodeRmConfirmationRequired,

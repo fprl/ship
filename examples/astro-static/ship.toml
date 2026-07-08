@@ -1,5 +1,5 @@
 name = "astro-site"
-box = "deploy@example.com"
+box = "example.com"
 
 [routes]
 "site.example.com" = { static = "dist" }

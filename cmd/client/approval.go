@@ -10,7 +10,7 @@ import (
 )
 
 func CmdApprove(server, id string, jsonFlag bool) {
-	if !config.ValidateSshTarget(server) {
+	if !config.ValidateBoxHost(server) {
 		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "fix ship.toml box"}), 2)
 	}
 	runner, err := NewCommandRunner()

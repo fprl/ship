@@ -32,7 +32,7 @@ Use `ship completion bash` or `ship completion fish` for other shells.
 Start with a fresh Ubuntu box, then converge it:
 
 ```bash
-ship box setup deploy@203.0.113.7
+ship box setup 203.0.113.7
 ```
 
 `box setup` creates `~/.ssh/ship` on first use, then enrolls that public key as
@@ -43,15 +43,14 @@ If the provider gave you a root password instead of installing your SSH key:
 
 ```bash
 ssh-copy-id -i ~/.ssh/ship.pub root@203.0.113.7
-ship box setup deploy@203.0.113.7
+ship box setup 203.0.113.7
 ```
 
 ship never uses password auth itself; hardening disables password login after
 the install.
 
-The installer output is a host-convergence log. It ends with the next commands
-to run, including `ship box doctor ...` and `ship init --box ... --host
-<app-domain>`.
+The installer output is a host-convergence log. It remembers the host and ends
+with `next: ship box doctor <box>`.
 
 Inside a repo:
 
@@ -61,7 +60,7 @@ ship init
 
 `ship init` writes `ship.toml`, a starter `Dockerfile`, and a tiny app when the
 chosen template needs one. It never overwrites existing files and ends with
-`next: ship`. Set `box = "deploy@203.0.113.7"` in `ship.toml`, commit the repo,
+`next: ship`. Set `box = "203.0.113.7"` in `ship.toml`, commit the repo,
 then deploy:
 
 ```bash
@@ -223,7 +222,7 @@ If `notify` is set in `ship.toml`, ship posts failure and recovery events:
 Box health is inspectable:
 
 ```bash
-ship box doctor deploy@203.0.113.7 --json
+ship box doctor 203.0.113.7 --json
 ```
 
 Doctor JSON is a list of checks:
@@ -234,7 +233,7 @@ Doctor JSON is a list of checks:
     "id": "disk_space",
     "status": "ok",
     "evidence": "used=10%",
-    "remediation": "ship box doctor deploy@203.0.113.7"
+    "remediation": "ship box doctor 203.0.113.7"
   }
 ]
 ```
@@ -268,7 +267,7 @@ preview reference, and dirty branch state. Passing transcripts live in
 
 ```toml
 name = "taskflow"
-box  = "deploy@203.0.113.7"        # existing server field, renamed
+box  = "203.0.113.7"
 production_branch = "main"          # optional; default: main, else master
 
 [processes]
@@ -297,7 +296,7 @@ notify  = "https://ntfy.sh/..."     # NEW: webhook, §7
 | Key | Meaning |
 | --- | --- |
 | `name` | App name on the box. |
-| `box` | SSH target used by app commands. |
+| `box` | Box host used by app commands; the deploy user is fixed by ship. |
 | `production_branch` | Branch that maps to Production; default `main`, else `master`. |
 | `[processes]` | Container processes. String values are commands; table values can set `cmd`, `port`, `preview`, and `resources`. |
 | `[routes]` | Host or host/path routes to a process, static directory, or redirect. |

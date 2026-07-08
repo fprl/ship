@@ -564,12 +564,12 @@ var verbs = []Verb{
 	{
 		Verb:    "init",
 		Purpose: "Create local project files and a ship.toml manifest.",
-		Usage:   "ship init [--template container|static|php|hono] [--name <app>] [--box <ssh-target>] [--host <host>] [--port <port>] [--config <path>]",
+		Usage:   "ship init [--template container|static|php|hono] [--name <app>] [--box <box>] [--host <host>] [--port <port>] [--config <path>]",
 		Flags: []Flag{
 			configFlag,
 			{Name: "--template", Value: "container|static|php|hono", Default: "container", Purpose: "Scaffold shape."},
 			{Name: "--name", Value: "<app>", Purpose: "App name. Defaults to package.json name or the directory name."},
-			{Name: "--box", Value: "<ssh-target>", Default: "deploy@example.com", Purpose: "Box SSH target written to the manifest."},
+			{Name: "--box", Value: "<box>", Default: "203.0.113.7", Purpose: "Box host written to the manifest."},
 			{Name: "--host", Value: "<host>", Purpose: "Route host. Defaults to <app>.example.com."},
 			{Name: "--port", Value: "<port>", Purpose: "Internal process port for container templates."},
 		},
@@ -746,7 +746,7 @@ var verbs = []Verb{
 		Purpose: "Install or converge a box.",
 		Usage:   "ship box setup <ssh-target> [flags]",
 		Flags: []Flag{
-			{Name: "ssh-target", Purpose: "SSH target like deploy@example.com."},
+			{Name: "ssh-target", Purpose: "Bootstrap SSH target like root@example.com or example.com."},
 			{Name: "--mode", Value: "auto|local|remote", Default: "auto", Purpose: "Execution mode."},
 			{Name: "--host", Value: "<host>", Purpose: "Target VPS host for remote bootstrap."},
 			{Name: "--bootstrap-user", Value: "<user>", Purpose: "SSH user for remote bootstrap."},
@@ -840,13 +840,13 @@ var verbs = []Verb{
 	{
 		Verb:    "box doctor",
 		Purpose: "Run box diagnostics.",
-		Usage:   "ship box doctor [ssh-target] [--json]",
+		Usage:   "ship box doctor [<box>] [--json]",
 		Flags: []Flag{
-			{Name: "ssh-target", Purpose: "SSH target. Defaults to ship.toml box when run in an app directory."},
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 			{Name: "--json", Purpose: "Emit structured checks instead of text."},
 		},
 		JSONSchema: schema(
-			`[{"id":"disk_space","status":"ok","evidence":"used=10%","remediation":"ship box doctor deploy@example.com"}]`,
+			`[{"id":"disk_space","status":"ok","evidence":"used=10%","remediation":"ship box doctor 203.0.113.7"}]`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "operation_failed"},
@@ -854,9 +854,9 @@ var verbs = []Verb{
 	{
 		Verb:    "box ls",
 		Purpose: "List app environments visible on a box.",
-		Usage:   "ship box ls [ssh-target] [--json]",
+		Usage:   "ship box ls [<box>] [--json]",
 		Flags: []Flag{
-			{Name: "ssh-target", Purpose: "SSH target. Defaults to ship.toml box when run in an app directory."},
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 			{Name: "--json", Purpose: "Emit the fleet view JSON."},
 		},
 		JSONSchema: schema(
@@ -868,10 +868,10 @@ var verbs = []Verb{
 	{
 		Verb:    "box rm",
 		Purpose: "Destroy an app and all of its environments on a box.",
-		Usage:   "ship box rm <app> [ssh-target] --confirm <app>",
+		Usage:   "ship box rm <app> [<box>] --confirm <app>",
 		Flags: []Flag{
 			{Name: "app", Purpose: "App name to destroy."},
-			{Name: "ssh-target", Purpose: "SSH target. Defaults to ship.toml box when run in an app directory."},
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 			{Name: "--confirm", Value: "<app>", Purpose: "Required app-name confirmation."},
 		},
 		ExitCodes: normalExit,
@@ -932,7 +932,9 @@ surfaces should not drift.
 The product has five ideas:
 
 - ` + "`repo`" + `: a Git checkout containing one ` + "`ship.toml`" + ` manifest.
-- ` + "`box`" + `: one hardened Linux host reached over SSH.
+- ` + "`box`" + `: one hardened Linux host reached over SSH. In ` + "`ship.toml`" + ` and
+  box verbs it is a host only, never ` + "`user@host`" + `; setup alone accepts
+  ` + "`user@host`" + ` for bootstrap.
 - ` + "`branch`" + `: the environment selector. There is no public ` + "`--env`" + ` flag.
 - ` + "`snapshot`" + `: an immutable deployed release, usually a commit-derived id.
 - ` + "`URL`" + `: the thing humans review. A successful ` + "`ship`" + ` prints exactly this.

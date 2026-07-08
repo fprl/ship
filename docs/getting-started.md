@@ -16,7 +16,7 @@ The installer writes `ship` to `~/.local/bin` by default and prints the exact
 Run this against the fresh VPS:
 
 ```bash
-ship box setup deploy@203.0.113.7
+ship box setup 203.0.113.7
 ```
 
 `box setup` creates `~/.ssh/ship` on first use, then enrolls that public key as
@@ -27,7 +27,7 @@ install your key once, then run `box setup`:
 
 ```bash
 ssh-copy-id -i ~/.ssh/ship.pub root@203.0.113.7
-ship box setup deploy@203.0.113.7
+ship box setup 203.0.113.7
 ```
 
 ship uses key auth only. During hardening it disables password login
@@ -41,7 +41,7 @@ selected with `--admin public-ssh|tailscale`.
 Check the box:
 
 ```bash
-ship box doctor deploy@203.0.113.7
+ship box doctor 203.0.113.7
 ```
 
 ## 3. Initialize the app
@@ -52,10 +52,10 @@ From your project directory:
 ship init
 ```
 
-Edit `ship.toml` so `box` points at the deploy user on the VPS:
+Edit `ship.toml` so `box` points at the VPS host:
 
 ```toml
-box = "deploy@203.0.113.7"
+box = "203.0.113.7"
 ```
 
 Commit before the first Production deploy:

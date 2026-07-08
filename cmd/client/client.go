@@ -3,5 +3,6 @@ package client
 const (
 	ManifestFile       = "ship.toml"
 	RemoteDeployTmpDir = "/tmp/ship-deploy"
-	DefaultBoxTarget   = "deploy@example.com"
+	DefaultBoxTarget   = "203.0.113.7"
+	DefaultDeployUser  = "deploy"
 )

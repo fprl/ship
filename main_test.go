@@ -38,7 +38,7 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"--branch", "feat/x"},
 		{"--tls", "internal"},
 		{"init"},
-		{"init", "--box", "deploy@example.com"},
+		{"init", "--box", "example.com"},
 		{"init", "--config", "apps/api/ship.toml"},
 		{"status"},
 		{"status", "--json"},
@@ -74,13 +74,13 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"secret", "rm", "DATABASE_URL", "--preview"},
 		{"secret", "rm", "DATABASE_URL", "--branch", "feat/x"},
 		{"ssh"},
-		{"box", "setup", "deploy@example.com"},
-		{"box", "doctor", "deploy@example.com"},
-		{"box", "doctor", "deploy@example.com", "--json"},
-		{"box", "ls", "deploy@example.com"},
-		{"box", "ls", "deploy@example.com", "--json"},
+		{"box", "setup", "root@example.com"},
+		{"box", "doctor", "example.com"},
+		{"box", "doctor", "example.com", "--json"},
+		{"box", "ls", "example.com"},
+		{"box", "ls", "example.com", "--json"},
 		{"box", "rm", "api", "--confirm", "api"},
-		{"box", "rm", "api", "deploy@example.com", "--confirm", "api"},
+		{"box", "rm", "api", "example.com", "--confirm", "api"},
 		{"member", "add", "alice"},
 		{"member", "add", "alice", "--role", "owner"},
 		{"member", "ls"},
@@ -165,6 +165,83 @@ func TestBoxWithoutSubcommandShowsSubcommandHelp(t *testing.T) {
 	}
 	if strings.Contains(text, "add-key") {
 		t.Fatalf("box parse error should not mention removed add-key subcommand, got: %v", err)
+	}
+}
+
+func TestBoxTargetRequiredRefusalListsKnownBoxes(t *testing.T) {
+	tests := []struct {
+		name  string
+		memo  string
+		want  string
+	}{
+		{
+			name: "none known",
+			want: "target a box\nknown boxes (~/.config/ship/boxes):\n  none known yet\nnext: ship box doctor <box>",
+		},
+		{
+			name: "one known",
+			memo: "128.140.3.159\n",
+			want: "target a box\nknown boxes (~/.config/ship/boxes):\n  128.140.3.159\nnext: ship box doctor <box>",
+		},
+		{
+			name: "two known",
+			memo: "128.140.3.159\n203.0.113.7\n128.140.3.159\n",
+			want: "target a box\nknown boxes (~/.config/ship/boxes):\n  128.140.3.159\n  203.0.113.7\nnext: ship box doctor <box>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configHome := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", configHome)
+			if tt.memo != "" {
+				dir := filepath.Join(configHome, "ship")
+				if err := os.MkdirAll(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "boxes"), []byte(tt.memo), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := boxTargetFor(filepath.Join(t.TempDir(), "ship.toml"), "", "ship box doctor <box>")
+			if err == nil {
+				t.Fatal("expected target refusal")
+			}
+			if got := err.Error(); got != tt.want {
+				t.Fatalf("refusal mismatch\nwant:\n%s\ngot:\n%s", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestBoxVerbHelpUsesBoxPlaceholder(t *testing.T) {
+	for _, args := range [][]string{
+		{"box", "doctor", "--help"},
+		{"box", "ls", "--help"},
+		{"box", "rm", "--help"},
+	} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			parser, err := kong.New(
+				&cli{},
+				kong.Name("ship"),
+				kong.ExplicitGroups(cliCommandGroups()),
+				kong.ConfigureHelp(kong.HelpOptions{NoExpandSubcommands: true}),
+				kong.Exit(func(int) {}),
+				kong.Writers(&stdout, &stderr),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = parser.Parse(args)
+			text := stdout.String() + stderr.String()
+			if !strings.Contains(text, "<box>") {
+				t.Fatalf("box help should show <box>, got:\n%s", text)
+			}
+			if strings.Contains(text, "<ssh-target>") || strings.Contains(text, "SSH target") {
+				t.Fatalf("box help should not expose ssh-target language, got:\n%s", text)
+			}
+		})
 	}
 }
 

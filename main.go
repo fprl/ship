@@ -10,6 +10,7 @@ import (
 	"github.com/fprl/ship/cmd/client"
 	"github.com/fprl/ship/cmd/helper"
 	"github.com/fprl/ship/cmd/hostinstall"
+	"github.com/fprl/ship/internal/boxmemo"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/shipidentity"
 	"github.com/fprl/ship/internal/utils"
@@ -106,7 +107,7 @@ type initCmd struct {
 	Config   string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Template string `name:"template" enum:"container,static,php,hono" default:"container" help:"Scaffold template."`
 	Name     string `name:"name" help:"App name. Defaults to package.json name or directory name."`
-	Box      string `name:"box" help:"SSH target for the box."`
+	Box      string `name:"box" help:"Box host."`
 	Host     string `name:"host" help:"Route host. Defaults to <app>.example.com."`
 	Port     int    `name:"port" help:"Internal process port for container templates."`
 }
@@ -446,12 +447,12 @@ func memberTarget(configPath string) (string, error) {
 
 type boxLsCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
-	Target string `arg:"" optional:"" help:"SSH target. Defaults to ship.toml box when run in an app dir."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
 }
 
 func (c boxLsCmd) Run() error {
-	target, err := boxTargetFor(c.Config, c.Target, "ship box ls <ssh-target>")
+	target, err := boxTargetFor(c.Config, c.Target, "ship box ls <box>")
 	if err != nil {
 		return err
 	}
@@ -461,12 +462,12 @@ func (c boxLsCmd) Run() error {
 
 type boxDoctorCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
-	Target string `arg:"" optional:"" help:"SSH target. Defaults to ship.toml box when run in an app dir."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
 }
 
 func (c boxDoctorCmd) Run() error {
-	target, err := boxTargetFor(c.Config, c.Target, "ship box doctor <ssh-target>")
+	target, err := boxTargetFor(c.Config, c.Target, "ship box doctor <box>")
 	if err != nil {
 		return err
 	}
@@ -477,12 +478,12 @@ func (c boxDoctorCmd) Run() error {
 type boxRmCmd struct {
 	Config  string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
 	App     string `arg:"" help:"App name to destroy."`
-	Target  string `arg:"" optional:"" help:"SSH target. Defaults to ship.toml box when run in an app dir."`
+	Target  string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	Confirm string `name:"confirm" help:"Required app-name confirmation."`
 }
 
 func (c boxRmCmd) Run() error {
-	target, err := boxTargetFor(c.Config, c.Target, "ship box rm <app> <ssh-target> --confirm <app>")
+	target, err := boxTargetFor(c.Config, c.Target, "ship box rm <box>")
 	if err != nil {
 		return err
 	}
@@ -491,7 +492,7 @@ func (c boxRmCmd) Run() error {
 }
 
 type boxSetupCmd struct {
-	Target                   string `arg:"" help:"SSH target like deploy@example.com."`
+	Target                   string `arg:"" name:"ssh-target" help:"Bootstrap SSH target like root@example.com or example.com."`
 	Mode                     string `enum:"auto,local,remote" default:"auto" help:"Execution mode."`
 	BootstrapUser            string `help:"SSH user for remote bootstrap."`
 	SSHKey                   string `name:"ssh-key" help:"SSH private key for remote mode."`
@@ -589,9 +590,12 @@ func (c boxSetupCmd) Run() error {
 	opts.AssumeYes = c.AssumeYes
 	opts.NarrateSetup = !c.SuppressSetupNarration
 	if !internalLocalBoxSetupWithProvidedKeys(c) {
-		identity, err := shipidentity.EnsureShipIdentity(shipidentity.Options{Output: os.Stdout})
+		identity, err := shipidentity.EnsureShipIdentity(shipidentity.Options{Output: os.Stderr})
 		if err != nil {
 			return err
+		}
+		if !identity.Created {
+			fmt.Fprintf(os.Stderr, "identity: %s (~/.ssh/ship)\n", identity.Name)
 		}
 		opts.BootstrapIdentityKey = identity.PrivateKeyPath
 		if opts.OperatorSSHPublicKeyFile == "" {
@@ -623,7 +627,7 @@ func cliArgs(args []string) []string {
 }
 
 func boxTarget(configPath, target string) (string, error) {
-	return boxTargetFor(configPath, target, "ship box ls <ssh-target>")
+	return boxTargetFor(configPath, target, "ship box ls <box>")
 }
 
 func boxTargetFor(configPath, target, command string) (string, error) {
@@ -632,9 +636,23 @@ func boxTargetFor(configPath, target, command string) (string, error) {
 	}
 	root, err := projectAppRoot(configPath)
 	if err != nil {
-		return "", errcat.New(errcat.CodeBoxTargetRequired, errcat.Fields{"command": command})
+		if coded, ok := errcat.As(err); ok && coded.Code() != errcat.CodeManifestInvalid {
+			return "", err
+		}
+		return "", boxTargetRequiredError(command)
 	}
 	return client.BoxTarget(root)
+}
+
+func boxTargetRequiredError(command string) error {
+	boxes, err := boxmemo.Read()
+	if err != nil {
+		boxes = nil
+	}
+	return errcat.New(errcat.CodeBoxTargetRequired, errcat.Fields{
+		"command":     command,
+		"known_boxes": boxmemo.KnownBoxesCause(boxes),
+	})
 }
 
 func main() {

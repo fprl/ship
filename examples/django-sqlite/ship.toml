@@ -1,5 +1,5 @@
 name = "django-sqlite"
-box = "deploy@example.com"
+box = "example.com"
 release = "python manage.py migrate --noinput"
 probe = "/health"
 

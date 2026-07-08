@@ -99,7 +99,7 @@ func TestApplySecretImportReplaceRemovesOmittedKeys(t *testing.T) {
 		"KEEP": []byte("before"),
 	}}
 	secret := secretContext{
-		AppContext: &config.AppContext{AppName: "api", Server: "deploy@example.com"},
+		AppContext: &config.AppContext{AppName: "api", Server: "example.com"},
 		EnvName:    "prod",
 		Runner:     runner,
 	}

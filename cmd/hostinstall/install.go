@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fprl/ship/internal/boxmemo"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/memberkeys"
@@ -140,11 +141,18 @@ func (i *Installer) RunOptions(opts Options) error {
 		return err
 	}
 
-	i.info("Provisioning complete")
 	if !plan.CheckMode {
 		i.printMemberEnrollment(summary.DeployKeyResults)
 	}
-	i.printNextSteps(plan)
+	if plan.NarrateSetup {
+		if !plan.CheckMode {
+			if err := i.rememberBox(plan); err != nil {
+				return err
+			}
+		}
+		i.printBoxReady()
+		i.printNextSteps(plan)
+	}
 	return nil
 }
 
@@ -393,9 +401,8 @@ func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) (provision.InstallSumm
 	}
 	if plan.NarrateSetup {
 		i.printSetupNarration(plan)
+		i.printInstallSummary(plan)
 	}
-	i.printInstallSummary(plan)
-	i.info("Running in remote mode against %s", bootstrapSSHTarget(plan))
 	if err := i.ensureRemoteBootstrapAuthorizedKeys(plan); err != nil {
 		return provision.InstallSummary{}, err
 	}
@@ -425,7 +432,7 @@ func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) (provision.InstallSumm
 	defer cleanupKeys()
 
 	cmd := remoteLocalInstallCommand(remoteHelper, plan, operatorKeyFile, deployKeyFile)
-	i.step("Running Go provisioner on target")
+	i.step("running provisioner on target")
 	if plan.BootstrapUser == "root" {
 		if err := i.remoteCommand(plan, cmd); err != nil {
 			return provision.InstallSummary{}, hostInstallApplyError(plan, err)
@@ -452,9 +459,8 @@ func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) (provision.InstallSumma
 
 	if plan.NarrateSetup {
 		i.printSetupNarration(plan)
+		i.printInstallSummary(plan)
 	}
-	i.printInstallSummary(plan)
-	i.info("Running in local mode on localhost")
 	summary, err := provision.RunInstall(context.Background(), local.Runner{}, provision.InstallOptions{
 		OperatorUser:           plan.OperatorUser,
 		DeployUser:             plan.DeployUser,
@@ -480,35 +486,38 @@ func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) (provision.InstallSumma
 	if err != nil {
 		return provision.InstallSummary{}, hostInstallApplyError(plan, err)
 	}
-	i.info("Apply %s changed %d operations", summary.ApplyID, summary.OperationsChanged)
+	i.info("provisioning %s %d changes", summary.ApplyID, summary.OperationsChanged)
 	return summary, nil
 }
 
 func (i *Installer) printInstallSummary(plan Plan) {
-	i.info("ship installer starting")
-	i.info("Mode: %s", plan.Mode)
-	i.info("Operator user: %s", plan.OperatorUser)
-	i.info("Deploy user: %s", plan.DeployUser)
-	i.info("Timezone: %s", plan.Timezone)
-	i.info("Ingress: %s", plan.Ingress)
-	i.info("Admin: %s", plan.Admin)
-	i.info("Tailscale: %s", boolText(plan.Tailscale))
-	if plan.Tailscale {
-		i.info("Tailscale auth: %s", presentOrMissing(plan.TailscaleAuthKey, "auth key provided", "manual login required"))
+	if plan.Timezone != "" && plan.Timezone != "UTC" {
+		i.info("timezone: %s", plan.Timezone)
 	}
-	i.info("Cloudflare Tunnel: %s", boolText(plan.CloudflareTunnel))
+	if plan.Locale != "" && plan.Locale != "en_US.UTF-8" {
+		i.info("locale: %s", plan.Locale)
+	}
+	if plan.Tailscale {
+		i.info("tailscale: enabled")
+		i.info("tailscale auth: %s", presentOrMissing(plan.TailscaleAuthKey, "auth key provided", "manual login required"))
+	}
 	if plan.CloudflareTunnel {
+		i.info("cloudflare tunnel: enabled")
 		switch {
 		case plan.CloudflareAPIToken != "":
-			i.info("Cloudflare API: token provided")
+			i.info("cloudflare api: token provided")
 		case plan.CloudflareTunnelConfig != "":
-			i.info("Cloudflare Tunnel config: %s", plan.CloudflareTunnelConfig)
+			i.info("cloudflare tunnel config: %s", plan.CloudflareTunnelConfig)
 		default:
-			i.info("Cloudflare Tunnel auth: %s", presentOrMissing(plan.CloudflareTunnelToken, "token provided", "service not enabled"))
+			i.info("cloudflare tunnel auth: %s", presentOrMissing(plan.CloudflareTunnelToken, "token provided", "service not enabled"))
 		}
 	}
-	i.info("Docker: %s", boolText(plan.InstallDocker))
-	i.info("Litestream: %s", boolText(plan.InstallLitestream))
+	if plan.InstallDocker {
+		i.info("docker: enabled")
+	}
+	if plan.InstallLitestream {
+		i.info("litestream: enabled")
+	}
 }
 
 func (i *Installer) dumpInstallPlan(plan Plan) error {
@@ -609,7 +618,7 @@ func (i *Installer) preflightSSH(plan Plan) error {
 			"command": sshCommand(plan, "echo connected"),
 		})
 	}
-	fmt.Fprintf(i.Stdout, "connected as %s (bootstrap)\n", plan.BootstrapUser)
+	fmt.Fprintf(i.Stderr, "connected as %s (bootstrap)\n", plan.BootstrapUser)
 	return nil
 }
 
@@ -1020,8 +1029,8 @@ func keyLines(keys []plannedKey) []string {
 }
 
 func (i *Installer) printSetupNarration(plan Plan) {
-	fmt.Fprintln(i.Stdout, ingressNarration(plan))
-	fmt.Fprintln(i.Stdout, adminNarration(plan))
+	fmt.Fprintln(i.Stderr, ingressNarration(plan))
+	fmt.Fprintln(i.Stderr, adminNarration(plan))
 }
 
 func (i *Installer) printMemberEnrollment(results []memberkeys.AddResult) {
@@ -1031,10 +1040,10 @@ func (i *Installer) printMemberEnrollment(results []memberkeys.AddResult) {
 			role = string(store.MemberRoleShipper)
 		}
 		if result.Added {
-			fmt.Fprintf(i.Stdout, "member added: %s (%s, %s)\n", result.Key.Comment, role, result.Key.Fingerprint)
+			fmt.Fprintf(i.Stderr, "member added: %s (%s, %s)\n", result.Key.Comment, role, result.Key.Fingerprint)
 			continue
 		}
-		fmt.Fprintf(i.Stdout, "member %s already authorized (%s, %s)\n", result.Key.Comment, role, result.Key.Fingerprint)
+		fmt.Fprintf(i.Stderr, "member %s already authorized (%s, %s)\n", result.Key.Comment, role, result.Key.Fingerprint)
 	}
 }
 
@@ -1376,19 +1385,34 @@ func oneLine(value string) string {
 }
 
 func (i *Installer) printNextSteps(plan Plan) {
-	if plan.Mode != "remote" {
-		return
-	}
-	server := plan.DeployUser + "@" + plan.TargetHost
-	fmt.Fprintln(i.Stdout, "Next:")
-	step := 1
+	host := rememberedHost(plan)
 	if privateKey := deployPrivateKeyHint(plan); privateKey != "" {
-		fmt.Fprintf(i.Stdout, "%d. export SHIP_SSH_KEY=\"$(cat %s)\"\n", step, utils.ShellEscape(privateKey))
-		step++
+		fmt.Fprintf(i.Stderr, "set: export SHIP_SSH_KEY=\"$(cat %s)\"\n", utils.ShellEscape(privateKey))
 	}
-	fmt.Fprintf(i.Stdout, "%d. ship box doctor %s\n", step, server)
-	step++
-	fmt.Fprintf(i.Stdout, "%d. ship init --box %s --host <app-domain>\n", step, server)
+	fmt.Fprintf(i.Stderr, "next: ship box doctor %s\n", host)
+}
+
+func (i *Installer) rememberBox(plan Plan) error {
+	host := rememberedHost(plan)
+	if _, err := boxmemo.Remember(host); err != nil {
+		return errcat.New(errcat.CodeOperationFailed, errcat.Fields{
+			"detail":  "remember box failed: " + oneLineError(err),
+			"command": "fix " + boxmemo.DisplayPath,
+		})
+	}
+	fmt.Fprintf(i.Stderr, "remembered box %s (%s)\n", host, boxmemo.DisplayPath)
+	return nil
+}
+
+func rememberedHost(plan Plan) string {
+	if strings.TrimSpace(plan.TargetHost) == "" {
+		return "localhost"
+	}
+	return plan.TargetHost
+}
+
+func (i *Installer) printBoxReady() {
+	fmt.Fprintln(i.Stderr, "box ready")
 }
 
 func deployPrivateKeyHint(plan Plan) string {
@@ -1413,9 +1437,9 @@ func nonEmptyFile(path string) bool {
 }
 
 func (i *Installer) info(format string, args ...any) {
-	fmt.Fprintf(i.Stdout, "==> "+format+"\n", args...)
+	fmt.Fprintf(i.Stderr, format+"\n", args...)
 }
 
 func (i *Installer) step(format string, args ...any) {
-	fmt.Fprintf(i.Stdout, "--> "+format+"\n", args...)
+	fmt.Fprintf(i.Stderr, format+"\n", args...)
 }

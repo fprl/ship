@@ -61,17 +61,17 @@ pointing at the box.
 Confirm the fleet view before teardown:
 
 ```bash
-./dist/ship box ls deploy@<IP> --json
+./dist/ship box ls <IP> --json
 ```
 
 Clean up each example app from the box:
 
 ```bash
-./dist/ship box rm hono-api deploy@<IP> --confirm hono-api
-./dist/ship box rm php-plain deploy@<IP> --confirm php-plain
-./dist/ship box rm django-sqlite deploy@<IP> --confirm django-sqlite
-./dist/ship box rm astro-site deploy@<IP> --confirm astro-site
-./dist/ship box rm mixed-app deploy@<IP> --confirm mixed-app
+./dist/ship box rm hono-api <IP> --confirm hono-api
+./dist/ship box rm php-plain <IP> --confirm php-plain
+./dist/ship box rm django-sqlite <IP> --confirm django-sqlite
+./dist/ship box rm astro-site <IP> --confirm astro-site
+./dist/ship box rm mixed-app <IP> --confirm mixed-app
 ```
 
 ## Init Template Coverage
