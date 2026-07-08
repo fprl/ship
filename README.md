@@ -32,18 +32,18 @@ Use `ship completion bash` or `ship completion fish` for other shells.
 Start with a fresh Ubuntu box, then converge it:
 
 ```bash
-ship box init deploy@203.0.113.7
+ship box setup deploy@203.0.113.7
 ```
 
-`box init` promotes the SSH keys already in root's `authorized_keys` on the VPS.
-Your bootstrap key becomes the first deploy member. For split-key or CI setups,
-pass `--deploy-ssh-public-key-file`; otherwise no key flags are needed.
+`box setup` creates `~/.ssh/ship` on first use, then enrolls that public key as
+the first deploy member. For split-key or CI setups, pass
+`--deploy-ssh-public-key-file`; otherwise no key flags are needed.
 
 If the provider gave you a root password instead of installing your SSH key:
 
 ```bash
-ssh-copy-id root@203.0.113.7
-ship box init deploy@203.0.113.7
+ssh-copy-id -i ~/.ssh/ship.pub root@203.0.113.7
+ship box setup deploy@203.0.113.7
 ```
 
 ship never uses password auth itself; hardening disables password login after

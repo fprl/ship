@@ -516,7 +516,10 @@ func TestResolveReadPreviewEnvPropagatesUnknownBranchError(t *testing.T) {
 	}
 }
 
-func TestCommandRunnerWithoutEnvKeyUsesNoImplicitIdentityFile(t *testing.T) {
+func TestCommandRunnerWithoutEnvKeyPinsShipIdentity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USER", "runner-user")
 	t.Setenv("SHIP_SSH_KEY", "")
 
 	runner, err := NewCommandRunner()
@@ -525,16 +528,17 @@ func TestCommandRunnerWithoutEnvKeyUsesNoImplicitIdentityFile(t *testing.T) {
 	}
 	defer runner.Close()
 
-	joined := strings.Join(runner.SshOptions, " ")
-	if strings.Contains(joined, "-i") {
-		t.Fatalf("identity file should only be set for explicit SHIP_SSH_KEY, got %v", runner.SshOptions)
-	}
-	if strings.Contains(joined, "IdentitiesOnly=yes") {
-		t.Fatalf("IdentitiesOnly should only be set for explicit SHIP_SSH_KEY, got %v", runner.SshOptions)
+	assertSSHOptionSequence(t, runner.SshOptions, "-i", filepath.Join(home, ".ssh", "ship"))
+	assertSSHOptionSequence(t, runner.SshOptions, "-o", "IdentitiesOnly=yes")
+	if !strings.Contains(runner.RsyncRemoteShell, filepath.Join(home, ".ssh", "ship")) {
+		t.Fatalf("rsync remote shell should pin ship identity, got %q", runner.RsyncRemoteShell)
 	}
 }
 
-func TestCommandRunnerEnvKeyUsesNormalKnownHosts(t *testing.T) {
+func TestCommandRunnerEnvKeyWinsOverShipIdentity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USER", "runner-user")
 	t.Setenv("SHIP_SSH_KEY", "test-private-key")
 
 	runner, err := NewCommandRunner()
@@ -544,6 +548,9 @@ func TestCommandRunnerEnvKeyUsesNormalKnownHosts(t *testing.T) {
 	defer runner.Close()
 
 	assertSSHOptionSequence(t, runner.SshOptions, "-o", "IdentitiesOnly=yes")
+	if strings.Contains(strings.Join(runner.SshOptions, " "), filepath.Join(home, ".ssh", "ship")) {
+		t.Fatalf("env key should win over ~/.ssh/ship, got %v", runner.SshOptions)
+	}
 	if strings.Contains(strings.Join(runner.SshOptions, " "), "UserKnownHostsFile") {
 		t.Fatalf("env key should use normal known_hosts, got %v", runner.SshOptions)
 	}

@@ -55,7 +55,7 @@ func (i *Installer) prepareRemoteHelperBinary(plan Plan, arch string) (string, f
 
 	return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
 		"detail":  "ship Linux helper binary " + name + " is required for remote install",
-		"command": "SHIP_REPO_ROOT=<path-to-ship-checkout> " + boxInitCommand(plan.TargetHost),
+		"command": "SHIP_REPO_ROOT=<path-to-ship-checkout> " + boxSetupCommand(plan.TargetHost),
 	})
 }
 
@@ -67,7 +67,7 @@ func (i *Installer) localHelperBinary(plan Plan, name string) (string, bool, err
 		}
 		return "", false, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
 			"detail":  "SHIP_LINUX_HELPER does not point at an existing helper binary: " + exact,
-			"command": "SHIP_LINUX_HELPER=<path-to-" + name + "> " + boxInitCommand(plan.TargetHost),
+			"command": "SHIP_LINUX_HELPER=<path-to-" + name + "> " + boxSetupCommand(plan.TargetHost),
 		})
 	}
 
@@ -244,7 +244,7 @@ func writeExecutableTempFile(name string, reader io.Reader) (string, func(), err
 	if err != nil {
 		return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
 			"detail":  "create temporary helper file dir failed: " + oneLineError(err),
-			"command": "TMPDIR=/tmp ship box init <ssh-target>",
+			"command": "TMPDIR=/tmp ship box setup <ssh-target>",
 		})
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
@@ -254,7 +254,7 @@ func writeExecutableTempFile(name string, reader io.Reader) (string, func(), err
 		cleanup()
 		return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
 			"detail":  "create temporary helper file failed: " + oneLineError(err),
-			"command": "TMPDIR=/tmp ship box init <ssh-target>",
+			"command": "TMPDIR=/tmp ship box setup <ssh-target>",
 		})
 	}
 	if _, err := io.Copy(out, reader); err != nil {
@@ -262,14 +262,14 @@ func writeExecutableTempFile(name string, reader io.Reader) (string, func(), err
 		cleanup()
 		return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
 			"detail":  "write temporary helper file failed: " + oneLineError(err),
-			"command": "TMPDIR=/tmp ship box init <ssh-target>",
+			"command": "TMPDIR=/tmp ship box setup <ssh-target>",
 		})
 	}
 	if err := out.Close(); err != nil {
 		cleanup()
 		return "", func() {}, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
 			"detail":  "close temporary helper file failed: " + oneLineError(err),
-			"command": "TMPDIR=/tmp ship box init <ssh-target>",
+			"command": "TMPDIR=/tmp ship box setup <ssh-target>",
 		})
 	}
 	return path, cleanup, nil

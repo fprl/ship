@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/shipidentity"
 	"github.com/fprl/ship/internal/utils"
 	"os"
 	"os/exec"
@@ -20,8 +21,16 @@ type CommandRunner struct {
 
 func NewCommandRunner() (*CommandRunner, error) {
 	sshOpts := []string{"-o", "BatchMode=yes"}
+	identity, err := shipidentity.EnsureShipIdentity(shipidentity.Options{Output: os.Stderr})
+	if err != nil {
+		return nil, err
+	}
 	key := os.Getenv("SHIP_SSH_KEY")
 	if key == "" {
+		sshOpts = append(sshOpts,
+			"-i", identity.PrivateKeyPath,
+			"-o", "IdentitiesOnly=yes",
+		)
 		return &CommandRunner{
 			SshOptions:       sshOpts,
 			RsyncRemoteShell: sshRemoteShell(sshOpts),

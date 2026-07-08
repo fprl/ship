@@ -27,6 +27,7 @@ type smokeEnv struct {
 	image      string
 	dockerfile string
 	tmp        string
+	shipHome   string
 	binDir     string
 	goBin      string
 	linuxBin   string
@@ -58,6 +59,7 @@ func newSmokeEnvWithImage(t *testing.T, ctx context.Context, image string, docke
 		image:      image,
 		dockerfile: dockerfile,
 		tmp:        tmp,
+		shipHome:   filepath.Join(tmp, "ship-home"),
 		binDir:     filepath.Join(repoRoot, ".fake-vps-bin"),
 		goBin:      filepath.Join(tmp, "ship"),
 		linuxBin:   filepath.Join(repoRoot, ".fake-vps-bin", "ship-linux-amd64"),
@@ -260,10 +262,23 @@ func (e *smokeEnv) runCommand(t *testing.T, dir string, extraEnv []string, stdin
 func (e *smokeEnv) commandEnv(extra []string) []string {
 	env := os.Environ()
 	env = h.SetEnv(env, "SHIP_HELPER_DIR", e.binDir)
+	env = h.SetEnv(env, "HOME", e.shipHome)
+	env = h.SetEnv(env, "USER", "fake-vps-smoke")
+	env = h.SetEnv(env, "GIT_CONFIG_COUNT", "1")
+	env = h.SetEnv(env, "GIT_CONFIG_KEY_0", "user.name")
+	env = h.SetEnv(env, "GIT_CONFIG_VALUE_0", "fake-vps-smoke")
 	if e.pathPrefix != "" {
 		env = h.SetEnv(env, "PATH", e.pathPrefix+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
-	return append(env, extra...)
+	for _, item := range extra {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok {
+			env = append(env, item)
+			continue
+		}
+		env = h.SetEnv(env, key, value)
+	}
+	return env
 }
 
 func mustWrite(t *testing.T, path string, content string) {

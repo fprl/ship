@@ -60,11 +60,12 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 
 	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub")
 	for _, want := range []string{
-		`/tmp/ship-host-install box init localhost --mode local`,
+		`/tmp/ship-host-install box setup localhost --mode local`,
 		`--operator-user ops`,
 		`--deploy-user deployer`,
 		`--ingress cloudflare`,
 		`--admin tailscale`,
+		`--suppress-setup-narration`,
 		`--operator-ssh-public-key-file /tmp/operator.pub`,
 		`--deploy-ssh-public-key-file /tmp/deploy.pub`,
 		`--tailscale-auth-key tskey-auth-test`,
@@ -80,21 +81,15 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 	}
 }
 
-func TestResolveSSHKeyPlanPromotesBootstrapKeys(t *testing.T) {
+func TestResolveSSHKeyPlanDoesNotPromoteBootstrapKeys(t *testing.T) {
 	plan := Plan{Mode: "remote"}
 
-	keys, err := resolveSSHKeyPlan(plan, false, alicePublicKey+"\n"+bobPublicKey+"\n", "root@203.0.113.10")
-	if err != nil {
-		t.Fatal(err)
+	_, err := resolveSSHKeyPlan(plan, false, alicePublicKey+"\n"+bobPublicKey+"\n", "root@203.0.113.10")
+	if err == nil {
+		t.Fatal("expected missing deploy key error")
 	}
-	if len(keys.Deploy) != 2 || len(keys.Operator) != 2 {
-		t.Fatalf("expected bootstrap keys for deploy and operator: %+v", keys)
-	}
-	if keys.Deploy[0].Comment != "alice" || !keys.Deploy[0].Promoted {
-		t.Fatalf("unexpected promoted key metadata: %+v", keys.Deploy[0])
-	}
-	if keys.Operator[0].Promoted {
-		t.Fatalf("operator fallback should not print as promoted member: %+v", keys.Operator[0])
+	if !errcat.Is(err, errcat.CodeDeployKeyMissing) {
+		t.Fatalf("code = %v, want %s", err, errcat.CodeDeployKeyMissing)
 	}
 }
 
@@ -108,12 +103,32 @@ func TestResolveSSHKeyPlanMissingDeployKeyUsesErrcat(t *testing.T) {
 	if !errcat.Is(err, errcat.CodeDeployKeyMissing) {
 		t.Fatalf("code = %v, want %s", err, errcat.CodeDeployKeyMissing)
 	}
-	wantNext := "next: ssh-copy-id root@203.0.113.10"
+	wantNext := "next: ssh-copy-id -i ~/.ssh/ship.pub root@203.0.113.10"
 	if !strings.Contains(err.Error(), wantNext) {
 		t.Fatalf("expected remediation %q, got:\n%v", wantNext, err)
 	}
 	if !strings.Contains(errcatCause(t, err), "provider gave a password") {
 		t.Fatalf("cause should explain password-provisioned remediation, got %q", errcatCause(t, err))
+	}
+}
+
+func TestSetupNarrationPrintsEnrollmentBeforeProvisioningChoices(t *testing.T) {
+	deployKeyFile := writeKeyFile(t, bobPublicKey+"\n")
+	keys, err := resolveSSHKeyPlan(Plan{DeploySSHPublicKeyFile: deployKeyFile}, false, "", "root@203.0.113.10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	installer := NewInstaller()
+	installer.Stdout = &out
+
+	installer.printSetupNarration(Plan{Ingress: "public", Admin: "public-ssh"}, keys)
+
+	want := "member added: bob (SHA256:pcC/cEQYpaTALptLsyfIG8CzllhYJfcxp1vVNQ9PFDc)\n" +
+		"ingress: public 80/443 (--ingress ...)\n" +
+		"admin: SSH keys only (--admin tailscale)\n"
+	if out.String() != want {
+		t.Fatalf("setup narration mismatch\nwant:\n%s\ngot:\n%s", want, out.String())
 	}
 }
 
@@ -176,19 +191,21 @@ func TestPrintNextStepsForRemoteInstall(t *testing.T) {
 	}
 }
 
-func TestPrintNextStepsForPromotedBootstrapKeyOmitsKeyEnv(t *testing.T) {
+func TestPrintNextStepsForIdentityKeyOmitsKeyEnv(t *testing.T) {
 	var out bytes.Buffer
 	installer := NewInstaller()
 	installer.Stdout = &out
 	installer.printNextSteps(Plan{
-		Mode:       "remote",
-		TargetHost: "203.0.113.12",
-		DeployUser: "deploy",
+		Mode:                    "remote",
+		TargetHost:              "203.0.113.12",
+		DeployUser:              "deploy",
+		DeploySSHPublicKeyFile:  "/home/me/.ssh/ship.pub",
+		DeployKeyIsShipIdentity: true,
 	})
 
 	text := out.String()
 	if strings.Contains(text, "SHIP_SSH_KEY") || strings.Contains(text, "SHIP_KNOWN_HOSTS") {
-		t.Fatalf("bootstrap-promoted key should not require env exports:\n%s", text)
+		t.Fatalf("identity key should not require env exports:\n%s", text)
 	}
 	if !strings.Contains(text, "1. ship box doctor deploy@203.0.113.12") {
 		t.Fatalf("expected box doctor to be first step:\n%s", text)
@@ -197,15 +214,19 @@ func TestPrintNextStepsForPromotedBootstrapKeyOmitsKeyEnv(t *testing.T) {
 
 func TestHostInstallSSHAcceptsNewHostKeysOnly(t *testing.T) {
 	args := sshArgs(Plan{
-		BootstrapUser: "root",
-		TargetHost:    "203.0.113.12",
-		SSHKey:        "/keys/root",
+		BootstrapUser:        "root",
+		TargetHost:           "203.0.113.12",
+		SSHKey:               "/keys/root",
+		BootstrapIdentityKey: "/home/me/.ssh/ship",
 	}, "true")
 
-	for _, want := range []string{"BatchMode=yes", "StrictHostKeyChecking=accept-new", "/keys/root", "root@203.0.113.12"} {
+	for _, want := range []string{"BatchMode=yes", "StrictHostKeyChecking=accept-new", "/keys/root", "/home/me/.ssh/ship", "root@203.0.113.12"} {
 		if !contains(args, want) {
 			t.Fatalf("expected ssh args to contain %q, got %v", want, args)
 		}
+	}
+	if contains(args, "IdentitiesOnly=yes") {
+		t.Fatalf("bootstrap SSH should not force IdentitiesOnly, got %v", args)
 	}
 }
 
@@ -374,9 +395,9 @@ func TestPreflightSSHPublicKeyFailureSuggestsSSHCopyID(t *testing.T) {
 		t.Fatalf("code = %v, want %s", err, errcat.CodeDeployKeyMissing)
 	}
 	for _, want := range []string{
-		"SSH public-key auth failed for root@203.0.113.10",
 		"provider gave a password",
-		"next: ssh-copy-id root@203.0.113.10",
+		"this installs your ship key using it once",
+		"next: ssh-copy-id -i ~/.ssh/ship.pub root@203.0.113.10",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected error to contain %q, got %v", want, err)

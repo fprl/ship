@@ -742,9 +742,9 @@ var verbs = []Verb{
 		Errors:    []string{"invalid_secret_key", "secret_scope_conflict", "unknown_preview_branch", "operation_failed"},
 	},
 	{
-		Verb:    "box init",
+		Verb:    "box setup",
 		Purpose: "Install or converge a box.",
-		Usage:   "ship box init <ssh-target> [flags]",
+		Usage:   "ship box setup <ssh-target> [flags]",
 		Flags: []Flag{
 			{Name: "ssh-target", Purpose: "SSH target like deploy@example.com."},
 			{Name: "--mode", Value: "auto|local|remote", Default: "auto", Purpose: "Execution mode."},
@@ -752,7 +752,7 @@ var verbs = []Verb{
 			{Name: "--bootstrap-user", Value: "<user>", Purpose: "SSH user for remote bootstrap."},
 			{Name: "--ssh-key", Value: "<path>", Purpose: "SSH private key for remote mode."},
 			{Name: "--operator-ssh-public-key-file", Value: "<path>", Purpose: "SSH public key file for operator access."},
-			{Name: "--deploy-ssh-public-key-file", Value: "<path>", Purpose: "SSH public key file for deploy access. Default: your bootstrap key becomes the first member."},
+			{Name: "--deploy-ssh-public-key-file", Value: "<path>", Purpose: "SSH public key file for deploy access. Default: your ship identity becomes the first member."},
 			{Name: "--operator-user", Value: "<user>", Purpose: "Operator user."},
 			{Name: "--deploy-user", Value: "<user>", Purpose: "Deploy user."},
 			{Name: "--timezone", Value: "<tz>", Purpose: "Host timezone."},

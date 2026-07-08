@@ -25,7 +25,7 @@ func TestDoctorHostStateCheckReportsMissingHostWithoutRawError(t *testing.T) {
 	if strings.Contains(check.Evidence, "open ") {
 		t.Fatalf("doctor leaked raw open error: %s", check.Evidence)
 	}
-	if check.Remediation != "ship box init fake-vps" {
+	if check.Remediation != "ship box setup fake-vps" {
 		t.Fatalf("unexpected remediation: %s", check.Remediation)
 	}
 }
@@ -69,7 +69,7 @@ func prepareDoctorSecretsRoot(t *testing.T, mode os.FileMode) string {
 
 func TestDoctorReportJSONShape(t *testing.T) {
 	checks := []store.DoctorCheck{
-		{ID: "host_state", Status: "failed", Evidence: "host is not installed", Remediation: "ship box init fake-vps"},
+		{ID: "host_state", Status: "failed", Evidence: "host is not installed", Remediation: "ship box setup fake-vps"},
 	}
 	raw, err := json.Marshal(checks)
 	if err != nil {

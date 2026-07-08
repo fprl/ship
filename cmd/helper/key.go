@@ -165,7 +165,7 @@ func deployAuthorizedKeysUser() (string, error) {
 	if err == nil && file.Desired.Users.Deploy != "" {
 		return file.Desired.Users.Deploy, nil
 	}
-	return "", fmt.Errorf("deploy user is unknown; run through sudo as the deploy user or run ship box init")
+	return "", fmt.Errorf("deploy user is unknown; run through sudo as the deploy user or run ship box setup")
 }
 
 func appendDeployAuthorizedKeys(user string, keys []authorizedKey) ([]keyAddResult, error) {

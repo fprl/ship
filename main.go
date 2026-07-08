@@ -11,6 +11,7 @@ import (
 	"github.com/fprl/ship/cmd/helper"
 	"github.com/fprl/ship/cmd/hostinstall"
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/shipidentity"
 	"github.com/fprl/ship/internal/utils"
 	"github.com/fprl/ship/internal/version"
 )
@@ -364,7 +365,7 @@ func (c secretRmCmd) Run() error {
 }
 
 type boxCmd struct {
-	Init   boxInitCmd   `cmd:"" help:"Install or converge a box."`
+	Setup  boxSetupCmd  `cmd:"" help:"Install or converge a box."`
 	Doctor boxDoctorCmd `cmd:"" help:"Run box diagnostics."`
 	Ls     boxLsCmd     `cmd:"ls" help:"List app environments visible on a box."`
 	Rm     boxRmCmd     `cmd:"rm" help:"Destroy an app and all its environments on a box."`
@@ -472,13 +473,13 @@ func (c boxRmCmd) Run() error {
 	return nil
 }
 
-type boxInitCmd struct {
+type boxSetupCmd struct {
 	Target                   string `arg:"" help:"SSH target like deploy@example.com."`
 	Mode                     string `enum:"auto,local,remote" default:"auto" help:"Execution mode."`
 	BootstrapUser            string `help:"SSH user for remote bootstrap."`
 	SSHKey                   string `name:"ssh-key" help:"SSH private key for remote mode."`
 	OperatorSSHPublicKeyFile string `help:"SSH public key file for operator access."`
-	DeploySSHPublicKeyFile   string `help:"SSH public key file for deploy access. Default: your bootstrap key becomes the first member."`
+	DeploySSHPublicKeyFile   string `help:"SSH public key file for deploy access. Default: your ship identity becomes the first member."`
 	OperatorUser             string `help:"Operator user."`
 	DeployUser               string `help:"Deploy user."`
 	Timezone                 string `help:"Host timezone."`
@@ -497,9 +498,10 @@ type boxInitCmd struct {
 	InstallLitestream        *bool  `name:"litestream" negatable:"" help:"Install Litestream."`
 	CheckMode                bool   `name:"check" help:"Plan changes without writing files or running mutating commands."`
 	AssumeYes                bool   `name:"yes" help:"Non-interactive mode."`
+	SuppressSetupNarration   bool   `name:"suppress-setup-narration" hidden:""`
 }
 
-func (c boxInitCmd) Run() error {
+func (c boxSetupCmd) Run() error {
 	opts := hostinstall.DefaultOptions(nil)
 	opts.TargetHost = c.Target
 	if c.Mode != "" {
@@ -567,7 +569,29 @@ func (c boxInitCmd) Run() error {
 	}
 	opts.CheckMode = c.CheckMode
 	opts.AssumeYes = c.AssumeYes
+	opts.NarrateSetup = !c.SuppressSetupNarration
+	if !internalLocalBoxSetupWithProvidedKeys(c) {
+		identity, err := shipidentity.EnsureShipIdentity(shipidentity.Options{Output: os.Stdout})
+		if err != nil {
+			return err
+		}
+		opts.BootstrapIdentityKey = identity.PrivateKeyPath
+		if opts.OperatorSSHPublicKeyFile == "" {
+			opts.OperatorSSHPublicKeyFile = identity.PublicKeyPath
+		}
+		if opts.DeploySSHPublicKeyFile == "" {
+			opts.DeploySSHPublicKeyFile = identity.PublicKeyPath
+			opts.DeployKeyIsShipIdentity = true
+		}
+	}
 	return hostinstall.NewInstaller().RunOptions(opts)
+}
+
+func internalLocalBoxSetupWithProvidedKeys(c boxSetupCmd) bool {
+	return c.Mode == "local" &&
+		c.Target == "localhost" &&
+		c.OperatorSSHPublicKeyFile != "" &&
+		c.DeploySSHPublicKeyFile != ""
 }
 
 func cliArgs(args []string) []string {

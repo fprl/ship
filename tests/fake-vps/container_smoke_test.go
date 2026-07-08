@@ -222,7 +222,7 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	e.assertShipSudoersMatchesRealHelperShape(t)
 
 	// The shared `ingress` Podman network and the host-side Caddy
-	// container would normally come from `ship box init`.
+	// container would normally come from `ship box setup`.
 	// The smoke skips the installer, so seed both here the same way
 	// the provisioner does. These need root and the deploy user only
 	// has passwordless sudo for /usr/local/bin/ship — use

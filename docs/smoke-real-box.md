@@ -37,7 +37,7 @@ ssh-keygen -R <IP>
 ## 1. Converge the box
 
 ```sh
-./dist/ship box init <IP> \
+./dist/ship box setup <IP> \
   --bootstrap-user root \
   --ssh-key ~/.ssh/<root-key> \
   --operator-ssh-public-key-file /tmp/ship-smoke-keys/operator.pub \

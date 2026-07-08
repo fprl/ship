@@ -197,13 +197,13 @@ var catalogue = map[Code]Entry{
 		Code:                CodeBoxNotInitialized,
 		MessageTemplate:     "box preflight failed",
 		CauseTemplate:       "ship server API is missing at /usr/local/bin/ship on {target}",
-		RemediationTemplate: "ship box init {target}",
+		RemediationTemplate: "ship box setup {target}",
 	},
 	CodeBoxMissingTool: {
 		Code:                CodeBoxMissingTool,
 		MessageTemplate:     "box preflight failed",
 		CauseTemplate:       "required server tool is missing on {target}: {tool}",
-		RemediationTemplate: "ship box init {target}",
+		RemediationTemplate: "ship box setup {target}",
 	},
 	CodeRemotePreflightFailed: {
 		Code:                CodeRemotePreflightFailed,
@@ -315,7 +315,7 @@ var catalogue = map[Code]Entry{
 		Code:                CodeHostNotInstalled,
 		MessageTemplate:     "host preflight failed",
 		CauseTemplate:       "host is not installed",
-		RemediationTemplate: "ship box init <ssh-target>",
+		RemediationTemplate: "ship box setup <ssh-target>",
 	},
 	CodeHostInvalid: {
 		Code:                CodeHostInvalid,
@@ -327,13 +327,13 @@ var catalogue = map[Code]Entry{
 		Code:                CodeMissingTool,
 		MessageTemplate:     "host preflight failed",
 		CauseTemplate:       "missing host tool: {tool}",
-		RemediationTemplate: "ship box init <ssh-target>",
+		RemediationTemplate: "ship box setup <ssh-target>",
 	},
 	CodeDeployTmpMissing: {
 		Code:                CodeDeployTmpMissing,
 		MessageTemplate:     "host preflight failed",
 		CauseTemplate:       "deploy tmp dir is missing: {path}",
-		RemediationTemplate: "ship box init <ssh-target>",
+		RemediationTemplate: "ship box setup <ssh-target>",
 	},
 	CodeDeployTmpInvalid: {
 		Code:                CodeDeployTmpInvalid,
@@ -377,8 +377,8 @@ var catalogue = map[Code]Entry{
 		CauseTemplate:       "{detail}",
 		RemediationTemplate: "{command}",
 		Defaults: Fields{
-			"detail":  "bootstrap authorized_keys is empty",
-			"command": "ssh-copy-id root@<ip>",
+			"detail":  "provider gave a password; this installs your ship key using it once; hardening then disables password login permanently",
+			"command": "ssh-copy-id -i ~/.ssh/ship.pub root@<ip>",
 		},
 	},
 	CodeOperatorKeyMissing: {
@@ -421,27 +421,27 @@ var catalogue = map[Code]Entry{
 		Code:                CodeUnsupportedTargetArchitecture,
 		MessageTemplate:     "host architecture is unsupported",
 		CauseTemplate:       "target architecture {arch} is not supported",
-		RemediationTemplate: "ship box init <amd64-or-arm64-ssh-target>",
+		RemediationTemplate: "ship box setup <amd64-or-arm64-ssh-target>",
 	},
 	CodeHostHelperUnavailable: {
 		Code:                CodeHostHelperUnavailable,
 		MessageTemplate:     "host install helper is unavailable",
 		CauseTemplate:       "{detail}",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "SHIP_REPO_ROOT=<path-to-ship-checkout> ship box init <ssh-target>"},
+		Defaults:            Fields{"command": "SHIP_REPO_ROOT=<path-to-ship-checkout> ship box setup <ssh-target>"},
 	},
 	CodeHostHelperDownloadFailed: {
 		Code:                CodeHostHelperDownloadFailed,
 		MessageTemplate:     "host install helper download failed",
 		CauseTemplate:       "{detail}",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "SHIP_REPO_ROOT=<path-to-ship-checkout> ship box init <ssh-target>"},
+		Defaults:            Fields{"command": "SHIP_REPO_ROOT=<path-to-ship-checkout> ship box setup <ssh-target>"},
 	},
 	CodeHostInstallUnsupportedOS: {
 		Code:                CodeHostInstallUnsupportedOS,
 		MessageTemplate:     "host OS is unsupported",
 		CauseTemplate:       "host install requires Ubuntu/Debian apt tooling; missing {tool}",
-		RemediationTemplate: "ship box init <ubuntu-24.04-ssh-target>",
+		RemediationTemplate: "ship box setup <ubuntu-24.04-ssh-target>",
 	},
 	CodeHostInstallMissingTool: {
 		Code:                CodeHostInstallMissingTool,

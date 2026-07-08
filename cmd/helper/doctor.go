@@ -328,7 +328,7 @@ func renderDoctorText(checks []store.DoctorCheck) string {
 }
 
 func doctorHostStateCheck(stateStore store.Store, boxTarget string) store.DoctorCheck {
-	remediation := doctorBoxInitCommand(boxTarget)
+	remediation := doctorBoxSetupCommand(boxTarget)
 	installed, err := stateStore.HostInstalled()
 	if err != nil {
 		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("cannot read host install state: %v", err), remediation)
@@ -355,11 +355,11 @@ func doctorHostStateCheck(stateStore store.Store, boxTarget string) store.Doctor
 func doctorServiceHealthCheck(stateStore store.Store, serviceStatus func(string) string, boxTarget string) store.DoctorCheck {
 	installed, err := stateStore.HostInstalled()
 	if err != nil || !installed {
-		return doctorCheck(doctorCheckServiceHealth, doctorStatusDegraded, "host state unavailable; required services cannot be determined", doctorBoxInitCommand(boxTarget))
+		return doctorCheck(doctorCheckServiceHealth, doctorStatusDegraded, "host state unavailable; required services cannot be determined", doctorBoxSetupCommand(boxTarget))
 	}
 	hostFile, err := stateStore.ReadHost()
 	if err != nil {
-		return doctorCheck(doctorCheckServiceHealth, doctorStatusDegraded, "host state invalid; required services cannot be determined", doctorBoxInitCommand(boxTarget))
+		return doctorCheck(doctorCheckServiceHealth, doctorStatusDegraded, "host state invalid; required services cannot be determined", doctorBoxSetupCommand(boxTarget))
 	}
 	findings := doctorServiceFindingsFor(hostFile.Desired, serviceStatus)
 	if len(findings) > 0 {
@@ -372,7 +372,7 @@ func doctorServiceHealthCheck(stateStore store.Store, serviceStatus func(string)
 func doctorSudoersIdentityCheck(boxTarget string) store.DoctorCheck {
 	findings := doctorIdentityFindings()
 	if len(findings) > 0 {
-		return doctorCheck(doctorCheckSudoersID, doctorStatusDegraded, strings.Join(findings, "; "), doctorBoxInitCommand(boxTarget))
+		return doctorCheck(doctorCheckSudoersID, doctorStatusDegraded, strings.Join(findings, "; "), doctorBoxSetupCommand(boxTarget))
 	}
 	return doctorCheck(doctorCheckSudoersID, doctorStatusOK, "operator and deploy sudoers grants are split", doctorRerunCommand(boxTarget))
 }
@@ -737,11 +737,11 @@ func doctorRerunCommand(target string) string {
 	return "ship box doctor " + utils.ShellEscape(target)
 }
 
-func doctorBoxInitCommand(target string) string {
+func doctorBoxSetupCommand(target string) string {
 	if target == "" {
-		return "ship box init <ssh-target>"
+		return "ship box setup <ssh-target>"
 	}
-	return "ship box init " + utils.ShellEscape(target)
+	return "ship box setup " + utils.ShellEscape(target)
 }
 
 func doctorSSHCommand(target, command string) string {

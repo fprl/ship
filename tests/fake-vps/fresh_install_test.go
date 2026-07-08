@@ -31,18 +31,29 @@ func TestFreshHostInstall(t *testing.T) {
 
 	env.assertHostDoctorNotInstalled(t)
 
-	bootstrapKeys := env.ssh(t, "cat /root/.ssh/authorized_keys")
+	decoyKeyPath := filepath.Join(env.tmp, "decoy-bootstrap")
+	env.mustRun(t, env.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "decoy-bootstrap", "-f", decoyKeyPath)
+	decoyKey := strings.TrimSpace(readFile(t, decoyKeyPath+".pub"))
+	env.ssh(t, "printf %s "+h.ShellQuote(decoyKey+"\n")+" >> /root/.ssh/authorized_keys")
 
 	first, firstOutput := env.installHost(t, "")
 	if first <= 0 {
 		t.Fatalf("first install changed %d operations, want > 0", first)
 	}
-	assertContains(t, firstOutput, "member added: fake-vps-smoke (ssh-ed25519 SHA256:")
-	assertContains(t, firstOutput, ", from root's authorized keys)")
+	assertContainsInOrder(t, firstOutput,
+		"identity: fake-vps-smoke (created ~/.ssh/ship)",
+		"member added: fake-vps-smoke (SHA256:",
+		"ingress: public 80/443 (--ingress ...)",
+		"admin: SSH keys only (--admin tailscale)",
+		"ship installer starting",
+	)
 
 	env.assertFreshHostInstalled(t)
-	env.assertDeployAuthorizedKeys(t, bootstrapKeys)
-	env.assertPromotedMemberVisible(t)
+	identityKey := env.shipIdentityPublicKey(t)
+	env.assertDeployAuthorizedKeys(t, identityKey)
+	env.assertOperatorAuthorizedKeys(t, identityKey)
+	env.assertDeployAuthorizedKeysDoesNotContain(t, decoyKey)
+	env.assertSetupMemberVisible(t)
 	env.assertHostDoctorHealthy(t)
 
 	env.ssh(t, "mkdir -p /var/apps/api.production/data && printf sentinel > /var/apps/api.production/data/sentinel && chmod 600 /var/apps/api.production/data/sentinel")
@@ -58,6 +69,7 @@ func TestFreshHostInstall(t *testing.T) {
 	_, _ = env.installHost(t, explicitKeyPath+".pub")
 	explicitKey := strings.TrimSpace(readFile(t, explicitKeyPath+".pub"))
 	env.assertDeployAuthorizedKeys(t, explicitKey)
+	env.assertOperatorAuthorizedKeys(t, identityKey)
 
 	env.assertDoctorRecordingDeltaForStoppedReaper(t)
 }
@@ -79,7 +91,7 @@ func TestFreshHostInstallEmptyAuthorizedKeysNoFlag(t *testing.T) {
 	env.waitForSSH(t)
 
 	result := env.runShip(t, env.repoRoot, nil,
-		"box", "init", "fake-vps",
+		"box", "setup", "fake-vps",
 		"--mode", "remote",
 		"--bootstrap-user", "root",
 		"--timezone", "Europe/Madrid",
@@ -89,19 +101,22 @@ func TestFreshHostInstallEmptyAuthorizedKeysNoFlag(t *testing.T) {
 		"--no-litestream",
 	)
 	if result.err == nil {
-		t.Fatalf("ship box init should fail with empty bootstrap authorized_keys\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+		t.Fatalf("ship box setup should fail with empty bootstrap authorized_keys\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
 	output := result.stdout + result.stderr
 	assertContains(t, output, "bootstrap SSH key is missing")
-	assertContains(t, output, "bootstrap authorized_keys is empty")
 	assertContains(t, output, "provider gave a password")
-	assertContains(t, output, "next: ssh-copy-id root@fake-vps")
+	assertContains(t, output, "next: ssh-copy-id -i ~/.ssh/ship.pub root@fake-vps")
+	assertContains(t, output, "identity: fake-vps-smoke (created ~/.ssh/ship)")
+	if _, err := os.Stat(filepath.Join(env.shipHome, ".ssh", "ship.pub")); err != nil {
+		t.Fatalf("ship identity should exist before password remediation: %v", err)
+	}
 }
 
 func (e *smokeEnv) installHost(t *testing.T, deployPublicKeyFile string) (int, string) {
 	t.Helper()
 	args := []string{
-		"box", "init", "fake-vps",
+		"box", "setup", "fake-vps",
 		"--mode", "remote",
 		"--bootstrap-user", "root",
 		"--timezone", "Europe/Madrid",
@@ -120,7 +135,7 @@ func (e *smokeEnv) installHost(t *testing.T, deployPublicKeyFile string) (int, s
 	// the test fails and is invisible on a green run.
 	t.Logf("install stdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	if result.err != nil {
-		t.Fatalf("ship box init failed: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
+		t.Fatalf("ship box setup failed: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
 	}
 	assertContains(t, result.stdout, "Provisioning complete")
 	// Read operations-changed from /etc/ship/host.json on the
@@ -226,7 +241,26 @@ func (e *smokeEnv) assertDeployAuthorizedKeys(t *testing.T, want string) {
 	assertEqual(t, got, strings.TrimSpace(want))
 }
 
-func (e *smokeEnv) assertPromotedMemberVisible(t *testing.T) {
+func (e *smokeEnv) assertOperatorAuthorizedKeys(t *testing.T, want string) {
+	t.Helper()
+	got := strings.TrimSpace(e.ssh(t, "cat /home/operator/.ssh/authorized_keys"))
+	assertEqual(t, got, strings.TrimSpace(want))
+}
+
+func (e *smokeEnv) assertDeployAuthorizedKeysDoesNotContain(t *testing.T, unwanted string) {
+	t.Helper()
+	got := strings.TrimSpace(e.ssh(t, "cat /home/deploy/.ssh/authorized_keys"))
+	if strings.Contains(got, strings.TrimSpace(unwanted)) {
+		t.Fatalf("deploy authorized_keys contains bootstrap decoy\nwanted absent:\n%s\nactual:\n%s", unwanted, got)
+	}
+}
+
+func (e *smokeEnv) shipIdentityPublicKey(t *testing.T) string {
+	t.Helper()
+	return strings.TrimSpace(readFile(t, filepath.Join(e.shipHome, ".ssh", "ship.pub")))
+}
+
+func (e *smokeEnv) assertSetupMemberVisible(t *testing.T) {
 	t.Helper()
 	app := filepath.Join(e.tmp, "member-list")
 	mustMkdir(t, app)
@@ -257,7 +291,8 @@ func readFile(t *testing.T, path string) string {
 
 func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {
 	t.Helper()
-	result := e.runShip(t, e.repoRoot, nil, "box", "doctor", "fake-vps")
+	doctorEnv := []string{"HOME=" + filepath.Join(e.tmp, "preinstall-doctor-home")}
+	result := e.runCommand(t, e.repoRoot, doctorEnv, nil, e.goBin, "box", "doctor", "fake-vps")
 	if result.err == nil {
 		t.Fatalf("box doctor passed before install\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
@@ -265,7 +300,7 @@ func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {
 	assertContains(t, output, "failed to run doctor")
 	assertContains(t, output, "host is not installed")
 
-	jsonResult := e.runShip(t, e.repoRoot, nil, "box", "doctor", "fake-vps", "--json")
+	jsonResult := e.runCommand(t, e.repoRoot, doctorEnv, nil, e.goBin, "box", "doctor", "fake-vps", "--json")
 	if jsonResult.err == nil {
 		t.Fatalf("box doctor --json passed before install\nstdout:\n%s\nstderr:\n%s", jsonResult.stdout, jsonResult.stderr)
 	}

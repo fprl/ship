@@ -16,19 +16,18 @@ The installer writes `ship` to `~/.local/bin` by default and prints the exact
 Run this against the fresh VPS:
 
 ```bash
-ship box init deploy@203.0.113.7
+ship box setup deploy@203.0.113.7
 ```
 
-`box init` promotes the SSH keys already in root's `authorized_keys` on the
-VPS. The key your provider injected for the first login becomes the first
-deploy member; no key flags are needed.
+`box setup` creates `~/.ssh/ship` on first use, then enrolls that public key as
+the first deploy member; no key flags are needed.
 
 If your provider gave you a root password instead of installing your SSH key,
-install your key once, then run `box init`:
+install your key once, then run `box setup`:
 
 ```bash
-ssh-copy-id root@203.0.113.7
-ship box init deploy@203.0.113.7
+ssh-copy-id -i ~/.ssh/ship.pub root@203.0.113.7
+ship box setup deploy@203.0.113.7
 ```
 
 ship uses key auth only. During hardening it disables password login

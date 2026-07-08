@@ -18,7 +18,7 @@ Usage:
 Installs the ship CLI on this machine. It does not provision a VPS.
 After this, run:
 
-  ship box init <ssh-target>
+  ship box setup <ssh-target>
 
 Environment:
   SHIP_VERSION

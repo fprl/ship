@@ -94,7 +94,7 @@ func appPreflightIssues(app, env string, requiredSecrets []string) []appPrefligh
 	if installed, err := stateStore.HostInstalled(); err != nil {
 		addIssue(appPreflightHostInvalid, fmt.Sprintf("cannot read host install state: %v", err))
 	} else if !installed {
-		addIssue(appPreflightHostNotInstalled, "host is not installed; run `ship box init <ssh-target>`")
+		addIssue(appPreflightHostNotInstalled, "host is not installed; run `ship box setup <ssh-target>`")
 	} else if _, err := stateStore.ReadHost(); err != nil {
 		addIssue(appPreflightHostInvalid, fmt.Sprintf("host install state is invalid: %v", err))
 	}
@@ -105,7 +105,7 @@ func appPreflightIssues(app, env string, requiredSecrets []string) []appPrefligh
 	}
 	deployTmp := host.DeployTmpDir()
 	if info, err := os.Stat(deployTmp); err != nil {
-		addIssue(appPreflightDeployTmpMissing, fmt.Sprintf("deploy tmp dir is missing: %s; run `ship box init <ssh-target>`", deployTmp))
+		addIssue(appPreflightDeployTmpMissing, fmt.Sprintf("deploy tmp dir is missing: %s; run `ship box setup <ssh-target>`", deployTmp))
 	} else if !info.IsDir() {
 		addIssue(appPreflightDeployTmpInvalid, fmt.Sprintf("expected %s to be a directory", deployTmp))
 	} else {
