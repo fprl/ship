@@ -283,10 +283,15 @@ ship box doctor [--json]  existing doctor, output upgraded per §9
                           ~/.config/ship/boxes (written on successful
                           setup, plain text, hand-editable, reminder
                           not resolver; deleting it costs nothing but
-                          the list). With exactly one known box the
-                          next: line carries the literal host
-                          (follow-blindly); otherwise
-                          next: ship box <verb> <host>.
+                          the list). The next: line always uses the
+                          placeholder form — next: ship box <verb>
+                          <box> — never a filled-in host (Franco: the
+                          placeholder teaches the shape, the list
+                          above supplies the value, and no
+                          count-dependent special case exists). <box>
+                          is the placeholder everywhere a box verb
+                          takes its host; box setup alone keeps
+                          <ssh-target> (bootstrap may be user@host).
                           ANTI-MAGIC RULE (product-wide): whenever
                           ship fills a blank, it narrates the value
                           and its source on stderr.
