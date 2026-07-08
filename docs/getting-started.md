@@ -1,89 +1,57 @@
 # Getting Started
 
-This is the shortest path from a fresh Ubuntu VPS to a deployed app.
+This is the 10-minute path from a fresh Ubuntu VPS to a deployed app.
 
-## 1. Install the local CLI
-
-Install the release binary for the machine where you run deploy commands:
+## 1. Install ship locally
 
 ```bash
-curl -fsSL https://github.com/fprl/ship/releases/download/v0.7.0/install.sh | bash
-ship version
+curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | bash
 ```
 
-The installer downloads the right release asset, verifies `SHA256SUMS`, and
-writes `ship` to `~/.local/bin`. If your shell cannot find `ship`,
-the installer prints the exact `PATH` line to add.
+The installer writes `ship` to `~/.local/bin` by default and prints the exact
+`PATH` line if your shell cannot find it.
 
-The curl command assumes public release assets. For private release assets,
-download `install.sh` with GitHub authentication first, then run it with
-`SHIP_RELEASE_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`.
-
-## 2. Prepare SSH keys
-
-You need a root/bootstrap key for the fresh VPS and a deploy key that
-ship will install on the host:
+Create the default deploy key expected by `box init`:
 
 ```bash
-test -f "$HOME/.ssh/ship-deploy" || \
-  ssh-keygen -q -t ed25519 -N '' -f "$HOME/.ssh/ship-deploy"
-test -f "$HOME/.ssh/ship-deploy.pub" || \
-  ssh-keygen -y -f "$HOME/.ssh/ship-deploy" > "$HOME/.ssh/ship-deploy.pub"
+test -f ~/.ssh/ship-deploy || ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/ship-deploy
+test -f ~/.ssh/ship-deploy.pub || ssh-keygen -y -f ~/.ssh/ship-deploy > ~/.ssh/ship-deploy.pub
 ```
 
-`~/.ssh/ship-deploy` is the key app commands use after host install.
-Use the root/bootstrap key that is already registered with your VPS provider
-for `~/.ssh/<root-key>` below.
+## 2. Converge the box
 
-## 3. Install the VPS host
-
-Run this from your laptop against a fresh Ubuntu 24.04/26.04 VPS:
+Run this against the fresh VPS:
 
 ```bash
-ship host install \
-  --host <vps-ip> \
-  --ssh-key ~/.ssh/<root-key>
+ship box init deploy@203.0.113.7
 ```
 
-The operator key is for human host recovery and rerunning host install. The
-deploy key is what app commands use after install. By default, host install
-uses `~/.ssh/ship-deploy.pub` for the deploy user and the VPS bootstrap
-user's existing authorized key for the operator user.
+Ingress modes are selected with `--ingress public|cloudflare|private`.
+`public` opens Caddy on 80/443, `cloudflare` runs Cloudflare Tunnel and keeps
+public 80/443 closed, and `private` keeps public HTTP closed. Admin access is
+selected with `--admin public-ssh|tailscale`.
 
-`host install` accepts a new SSH host key for a never-seen VPS. If you rebuilt
-a VPS at the same IP and SSH blocks because the host key changed, remove the
-old remembered key and rerun the command:
+Check the box:
 
 ```bash
-ssh-keygen -R <vps-ip>
+ship box doctor deploy@203.0.113.7
 ```
 
-Host install is idempotent. Running it again is safe; unchanged hosts report
-`changed 0 operations`.
+## 3. Initialize the app
 
-Check the host through the deploy user:
+From your project directory:
 
 ```bash
-ship host status --server deploy@<vps-ip>
+ship init
 ```
 
-## 4. Scaffold an app
+Edit `ship.toml` so `box` points at the deploy user on the VPS:
 
-For a simple PHP app:
-
-```bash
-mkdir api && cd api
-ship init --template php \
-  --name api \
-  --server deploy@<vps-ip> \
-  --host api.<vps-ip>.nip.io \
-  --tls internal
+```toml
+box = "deploy@203.0.113.7"
 ```
 
-The PHP template writes `public/index.php` because PHP's built-in server is
-started with `-t public`; only files under that directory are web-visible.
-
-Commit the generated project before deploy:
+Commit before the first Production deploy:
 
 ```bash
 git init
@@ -91,62 +59,68 @@ git add .
 git commit -m "initial ship app"
 ```
 
-## 5. Configure and deploy it
+## 4. Ship it
 
 ```bash
-ship check --env production
-ship deploy --env production
-ship status --env production
+ship
 ```
 
-`check --env` is a local check. It validates the manifest, Git release identity,
-static directories, Dockerfile shape, and lists required secrets with the exact
-`secret set` commands. `deploy --env` does the remote read-only preflight and
-hard-fails if required host secrets are missing. On first deploy, ship
-prepares the app environment on the host before upload/build/routing starts.
+Progress goes to stderr. Stdout is exactly one HTTPS URL.
 
-Then hit Caddy on the VPS:
-
-```bash
-curl -k --resolve api.<vps-ip>.nip.io:443:<vps-ip> \
-  https://api.<vps-ip>.nip.io/health
-
-curl -k --resolve api.<vps-ip>.nip.io:443:<vps-ip> \
-  https://api.<vps-ip>.nip.io/
+```text
+https://prod.203-0-113-7.sslip.io
 ```
 
-The `--tls internal` scaffold uses Caddy's internal CA, so `curl -k` is
-expected. For a real public domain that points to the VPS, omit `--tls
-internal` and Caddy will use automatic public HTTPS.
+## 5. Add a domain later
 
-## 6. Secret references
+Point DNS at the box:
 
-Secrets are stored on the VPS and injected during deploy. The manifest
-references them as whole values. For example, an app that needs
-`DATABASE_URL` would declare:
+```text
+A app.example.com → 203.0.113.7
+```
+
+Then add a route:
 
 ```toml
-[vars]
-DATABASE_URL = "@secret:DATABASE_URL"
+[routes]
+"app.example.com" = "web"
 ```
 
-Then write the value and redeploy:
+Deploy the route change:
 
 ```bash
-printf '%s' "$DATABASE_URL" | ship secret set DATABASE_URL --env production
-ship secret list --env production
-ship deploy --env production
+git add ship.toml
+git commit -m "route app domain"
+ship
 ```
 
-`secret list` shows key names only, never values.
+## 6. Add a teammate
 
-## 7. Clean up
-
-To remove this app environment and its host-side app state:
+Authorize a GitHub user's public SSH keys:
 
 ```bash
-ship destroy --env production --confirm api --purge
+ship box add-key alice deploy@203.0.113.7
 ```
 
-`--purge` removes runtime state, identity, static releases, data, and secrets
-for this app env. It does not delete backups.
+You can also pass a literal public key or a path to a `.pub` file:
+
+```bash
+ship box add-key ~/.ssh/alice.pub deploy@203.0.113.7
+```
+
+## 7. Back up and restore
+
+Create a backup for the current branch environment:
+
+```bash
+ship save
+```
+
+Restore by backup ID or path:
+
+```bash
+ship restore --from 20260707T100000Z-abc123
+```
+
+Backups include `/data`, active static assets, the applied manifest snapshot,
+release metadata, and secrets for that app environment.

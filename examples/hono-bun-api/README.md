@@ -1,19 +1,17 @@
 # Hono Bun API
 
-> **Superseded:** This document describes the pre-ship surface and is not current.
-> **Pending:** The Phase 3 rewrite will replace it; only broken commands are patched here.
+Minimal Bun/Hono container API with a `/health` probe.
 
-Minimal container app example.
-
-Before deploying, edit `ship.toml`:
-
-- set `box`
-- set the route host
+Before deploying, set `box` and the route host in `ship.toml`.
 
 ```bash
-git init
-git add .
-git commit -m "initial ship app"
+git add . && git commit -m "initial ship app"
 ship
-curl https://api.example.com/health
 ```
+
+`ship.toml`:
+
+- `box` is the deploy SSH target for the VPS.
+- `probe = "/health"` gates traffic on the API health endpoint.
+- `[processes].web` runs `bun run src/server.ts` on port `3000`.
+- `[routes]` sends `api.example.com` to `web`.

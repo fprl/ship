@@ -1,241 +1,325 @@
 # ship
 
-> **Superseded:** This document describes the pre-ship surface and is not current.
-> **Pending:** The Phase 3 rewrite will replace it; only broken commands are patched here.
+ship deploys a repo to one hardened Linux box. A Git branch is the environment:
+`main` is Production, every other branch is a Preview, and a successful `ship`
+prints the HTTPS URL to stdout so a human or agent can open it immediately.
+The box handles builds, process supervision, Caddy routing, TLS, secrets,
+rollback, backups, and diagnostics without becoming a platform you have to
+operate. It is built for people at a terminal and for agents that need stable
+commands, JSON, and plain failure text.
 
-ship is a tiny VPS runtime: point a repo at a Ubuntu box, get Dockerfile
-builds, Podman containers, Caddy TLS routing, secrets, backup/restore, and
-rollback without bringing Kubernetes or a hosted PaaS into the picture.
+Data lives in a SQLite file under `/data` or behind a managed URL. The box never
+runs a database server.
 
-## Current Shape
-
-- Ubuntu 24.04/26.04 host install/converge with one Go binary.
-- Podman container deploys from a required `Dockerfile`.
-- Static-only deploys with route-level `serve = "dist"`.
-- Mixed container/static deploys: a Dockerfile-backed process can share one
-  release with static route assets served directly by Caddy.
-- Explicit envs. Mutating commands require an env argument.
-- App/env host roots at `/var/apps/<app>.<env>/`.
-- Deterministic derived infra IDs for users, networks, containers, routes, and
-  locks.
-- Runtime env files under `runtime/.env`; durable app data under `data/`.
-- Secrets stored on the host and injected with `--env-file`.
-- Web deploys start the next versioned container, health-check it, reload Caddy,
-  then remove the old container.
-- Backups include `data/`, active static release assets, applied manifest
-  snapshots, and secrets.
-- Rollback restores an older local image/static release plus the manifest
-  snapshot that produced it.
-
-## Quick Check
-
-```bash
-make test
-make fake-vps-smoke
-make fake-vps-install-smoke
-```
-
-Example apps live under `examples/`:
-
-- `examples/hono-bun-api` - Dockerfile-backed Bun/Hono API.
-- `examples/php-plain` - Dockerfile-backed PHP HTTP app.
-- `examples/django-sqlite` - Django, SQLite under `/data`, and migrations via
-  `[deploy].release`.
-- `examples/astro-static` - real Astro app; run `npm run build`, then deploy
-  generated `dist/`.
-- `examples/mixed-api-docs` - container API plus host-served `/docs`.
-
-For the fresh-VPS-to-first-app path, use
-[docs/getting-started.md](docs/getting-started.md).
-
-## Install The CLI
-
-Install the local CLI on your laptop or CI machine:
+## Install
 
 ```bash
 curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | bash
-ship version
 ```
 
-The installer downloads the release asset for your OS/CPU, verifies it against
-`SHA256SUMS`, and writes `ship` to `~/.local/bin`. If your shell cannot
-find `ship`, the installer prints the exact `PATH` line to add.
-
-The curl command assumes public release assets. For private release assets,
-download `install.sh` with GitHub authentication first, then run it with
-`SHIP_RELEASE_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN`.
-
-## Install A VPS
-
-Create a deploy key if you do not already have one:
+The installer downloads the release asset for your OS/CPU, verifies
+`SHA256SUMS`, and writes `ship` to `~/.local/bin` unless `SHIP_INSTALL_DIR` is
+set. Shell completions are static:
 
 ```bash
-test -f ~/.ssh/ship-deploy || \
-  ssh-keygen -q -t ed25519 -N '' -f ~/.ssh/ship-deploy
-test -f ~/.ssh/ship-deploy.pub || \
-  ssh-keygen -y -f ~/.ssh/ship-deploy > ~/.ssh/ship-deploy.pub
+ship completion zsh > ~/.zsh/completions/_ship
 ```
 
-Then converge a fresh Ubuntu VPS:
+Use `ship completion bash` or `ship completion fish` for other shells.
+
+## First Run
+
+Start with a fresh Ubuntu box, then converge it:
 
 ```bash
-ship box init root@<vps-ip>
+ship box init deploy@203.0.113.7
 ```
 
-The operator key is for human host recovery and rerunning host install. The
-deploy key is what `deploy`, `status`, `secret`, and other app commands use
-after install. By default, box init uses `~/.ssh/ship-deploy.pub` for
-the deploy user and the VPS bootstrap user's existing authorized key for the
-operator user.
+The installer output is a host-convergence log. It ends with the next commands
+to run, including `ship box doctor ...` and `ship init --box ... --host
+<app-domain>`.
 
-`box init` accepts a new SSH host key for a never-seen VPS. If you rebuilt
-a VPS at the same IP and SSH blocks because the host key changed, remove the
-old remembered key with `ssh-keygen -R <vps-ip>` and rerun the command.
-
-## Deploy An App
-
-For a new project, scaffold a small deployable shape:
+Inside a repo:
 
 ```bash
-ship init --template php \
-  --name api \
-  --box deploy@example.com \
-  --host api.example.com
+ship init
 ```
 
-Templates:
+`ship init` writes `ship.toml`, a starter `Dockerfile`, and a tiny app when the
+chosen template needs one. It never overwrites existing files and ends with
+`next: ship`. Set `box = "deploy@203.0.113.7"` in `ship.toml`, commit the repo,
+then deploy:
 
-- `container` - minimal Python HTTP container.
-- `static` - `dist/` static route, no Dockerfile.
-- `php` - plain PHP HTTP container.
-- `hono` - Bun/Hono HTTP container.
+```bash
+ship
+```
 
-`init` never overwrites existing app files. If a `Dockerfile` already exists,
-it creates the manifest and leaves the Dockerfile alone. Use
-`--tls internal` for private DNS or disposable smoke hosts; omit it for normal
-public Let's Encrypt routes.
+Deployment progress goes to stderr:
 
-`ship.toml`:
+```text
+preflight 0.4s
+build 6.2s
+release 1.1s
+probe ok
+live
+next: add DNS A <your-domain> → 203.0.113.7 and add it under [routes]
+```
+
+Stdout is only the URL:
+
+```text
+https://prod.203-0-113-7.sslip.io
+```
+
+That stdout contract is deliberate. Pipe it, paste it, or hand it to an agent.
+
+## Daily Loop
+
+Make a branch, ship it, review the URL:
+
+```bash
+git switch -c feature/billing
+ship
+```
+
+The stdout URL is the Preview for that branch:
+
+```text
+https://feature-billing-x7q2.203-0-113-7.sslip.io
+```
+
+Useful commands during review:
+
+```bash
+ship pin feature/billing
+ship logs web --tail 200
+ship exec -- node scripts/check-data.js
+ship rollback
+```
+
+Merge to Production and run the same deploy command:
+
+```bash
+git switch main
+git merge feature/billing
+ship
+```
+
+The guardrails are hard errors with fixed text. Production does not ship a
+dirty worktree:
+
+```text
+Production ship failed
+production branch "main" has uncommitted changes
+next: git add . && git commit -m "<message>"
+```
+
+Production does not ship behind what is already live:
+
+```text
+Production ship failed
+deployed commit abc123 is not an ancestor of HEAD
+next: git pull
+```
+
+Preview secrets never fall back to Production secrets:
+
+```text
+deploy is missing a required secret
+missing secret api_token for Preview branch "feature/secrets"
+next: ship secret set api_token [--preview|--branch <name>]
+```
+
+## Failure
+
+When a deploy fails, the old release keeps serving until the new one passes its
+release command and probe. Ask the box why:
+
+```bash
+ship why
+```
+
+Human output is shaped for action:
+
+```text
+Deploy aborted for Production main at 2026-07-07T10:00:10Z.
+attempted release: def456
+previous release: abc123
+failing step: probe
+probable cause: probe returned HTTP 502 with body: upstream listened on 3000, probed 3999
+stderr tail:
+HTTP status 502: upstream listened on 3000, probed 3999
+traffic: old release abc123 kept serving; failed probes never receive traffic with the current engine.
+shipped by: Name <name@example.com> (ssh key: ship-deploy)
+next: fix the process port or probe path in ship.toml, then ship
+```
+
+If `notify` is set in `ship.toml`, ship posts failure and recovery events:
+
+```json
+{
+  "app": "taskflow",
+  "env": "Production main",
+  "event": "deploy_aborted",
+  "release": "def456",
+  "summary": "Deploy aborted for Production main at release def456.",
+  "why": {
+    "schema_version": 1,
+    "app": "taskflow",
+    "env": "prod",
+    "outcome": "aborted_probe",
+    "started_at": "2026-07-07T10:00:00Z",
+    "ended_at": "2026-07-07T10:00:10Z",
+    "previous_release": "abc123",
+    "attempted_release": "def456",
+    "failing_step": "probe",
+    "stderr_tail": "HTTP status 502...",
+    "identity": {
+      "ssh_key_comment": "ship-deploy",
+      "git_author": "Name <name@example.com>"
+    },
+    "probe": {
+      "status": 502,
+      "body_snippet": "upstream listened on 3000, probed 3999"
+    }
+  },
+  "remediation": {
+    "command": "ship",
+    "journal": "<same journal entry>"
+  },
+  "ts": "2026-07-07T10:00:10Z"
+}
+```
+
+Box health is inspectable:
+
+```bash
+ship box doctor deploy@203.0.113.7 --json
+```
+
+Doctor JSON is a list of checks:
+
+```json
+[
+  {
+    "id": "disk_space",
+    "status": "ok",
+    "evidence": "used=10%",
+    "remediation": "ship box doctor deploy@203.0.113.7"
+  }
+]
+```
+
+## Agents
+
+Agents should start with:
+
+```bash
+ship docs
+```
+
+For one verb:
+
+```bash
+ship help secret set --json
+```
+
+The agent contract covers the mental model, every public verb, JSON schemas,
+the output contract, deploy journals, notify payloads, and the error catalogue.
+Operational reads expose `--json`, and `ship --json` gives agents a structured
+deploy result.
+
+The eval suite in `tests/agent-evals/` proves the contract. Six recovery
+scenarios pass with a real agent given only the binary and `ship docs`: missing
+secret, failing release command, probe failure, missing Dockerfile, expired
+preview reference, and dirty branch state. Passing transcripts live in
+`tests/agent-evals/transcripts/`.
+
+## Manifest
 
 ```toml
-name = "api"
+name = "taskflow"
+box  = "deploy@203.0.113.7"        # existing server field, renamed
+production_branch = "main"          # optional; default: main, else master
 
-[env.production]
-server = "deploy@example.com"
+[processes]
+web    = "npx react-router-serve build/server/index.js"
+worker = { cmd = "node build/worker.js", preview = false }
 
-[vars]
-LOG_LEVEL = "info"
-DATABASE_PATH = "/data/app.db"
+[routes]                            # existing routes model, keyed by host[/path]
+"taskflow.app"        = "web"
+"taskflow.app/docs"   = { static = "docs/dist" }
+"www.taskflow.app"    = { redirect = "taskflow.app" }
 
-[deploy]
-release = "bun run migrate"
+[env]                               # renamed from [vars], no alias kept
+LOG_LEVEL    = "info"
+DATABASE_URL = "@secret"            # NEW shorthand: secret name = var name
+SMTP_URL     = "@secret:MAIL_URL"   # existing explicit form kept
 
-[processes.web]
-command = "bun run src/server.ts"
-port = 3000
-health = "/health"
-resources = { memory = "512m", cpus = 0.5 }
+[env.preview]                       # optional; overlays [env] in previews only
+LOG_LEVEL    = "debug"
+POSTHOG_KEY  = "phc_test456"
 
-[processes.worker]
-command = "bun run worker"
-resources = { memory = "1g", cpus = 1 }
-
-[routes.app]
-host = "api.example.com"
-process = "web"
-
-[routes.docs]
-host = "api.example.com"
-path = "/docs"
-serve = "docs-dist"
-
-[routes.old]
-host = "old.example.com"
-redirect = "https://api.example.com"
-
-[env.staging]
-server = "deploy@staging.example.com"
-
-[env.staging.vars]
-LOG_LEVEL = "debug"
-
-[env.staging.routes.app]
-host = "staging-api.example.com"
+release = "npx drizzle-kit migrate" # top-level only; the [deploy] section is gone
+probe   = "/healthz"                # health check for the routed process
+notify  = "https://ntfy.sh/..."     # NEW: webhook, §7
 ```
 
-Then:
+| Key | Meaning |
+| --- | --- |
+| `name` | App name on the box. |
+| `box` | SSH target used by app commands. |
+| `production_branch` | Branch that maps to Production; default `main`, else `master`. |
+| `[processes]` | Container processes. String values are commands; table values can set `cmd`, `port`, `preview`, and `resources`. |
+| `[routes]` | Host or host/path routes to a process, static directory, or redirect. |
+| `[env]` | Committed non-secret env plus `@secret` references. |
+| `[env.preview]` | Preview-only overlay; Production ignores it. |
+| `release` | Command run after build and before traffic moves. |
+| `probe` | Health path for the routed process. |
+| `notify` | Webhook URL for deploy, reaper, and doctor events. |
 
-```bash
-git init
-git add .
-git commit -m "initial ship app"
-ship
-ship status
-```
+## Secrets
 
-`check --env` uses the same local deploy diagnostics as `deploy`: the app
-directory must be a committed Git worktree, and dirty deploys must be explicit
-with `deploy --dirty`. First deploy prepares the remote app environment before
-uploading, building, or routing the release.
-
-Deploy excludes dotenv files by default. Use `[vars]` and `@secret:` for real
-secrets; pass `deploy --include-dotenv` only when you intentionally want dotenv
-files in the uploaded release artifact.
-
-The `serve` directory is uploaded into the same release as the container image,
-so rollback and restore move the web process and static files together.
-
-That works for static-only apps and for container apps that also proxy a
-process route.
-
-In monorepos, point commands at a manifest explicitly:
-
-```bash
-ship --config apps/api/ship.toml
-```
-
-Secrets are stored on the host and referenced from the manifest:
+Secret values are never passed in argv. Single-value writes read stdin:
 
 ```bash
 printf '%s' "$DATABASE_URL" | ship secret set DATABASE_URL
-ship secret ls --json
+printf '%s' "$DATABASE_URL" | ship secret set DATABASE_URL --preview
+printf '%s' "$DATABASE_URL" | ship secret set DATABASE_URL --branch feature/billing
 ```
 
-## Release Builds
-
-Build all release binaries:
+Bulk import reads dotenv files:
 
 ```bash
-make clean
-make build-release VERSION=v0.7.0
+ship secret set --from .env --preview
+ship secret set --from .env --branch staging --replace
 ```
 
-Build artifacts land in `dist/`:
+List and remove keys, never values:
 
-```text
-ship-linux-amd64
-ship-linux-arm64
-ship-darwin-amd64
-ship-darwin-arm64
-SHA256SUMS
+```bash
+ship secret ls --json
+ship secret rm DATABASE_URL --preview
 ```
 
-The release workflow uploads those files plus the root `install.sh` script.
+Production resolves Production secrets only. Preview resolves the branch secret
+first, then the shared Preview secret. Preview never receives Production
+secret values.
+
+## Exit
+
+Exit is a feature. Delete the `ship` binary and you still have a boring,
+well-configured Linux server: Caddy routes, supervised containers, app data
+under `/data`, release files, backups, SSH users, and normal systemd units.
+There is no hosted control plane to keep paying and no proprietary runtime to
+unwind.
 
 ## References
 
-- [CHANGELOG.md](CHANGELOG.md)
 - [docs/positioning.md](docs/positioning.md)
+- [docs/ship-spec.md](docs/ship-spec.md)
+- [docs/AGENT.md](docs/AGENT.md)
 - [docs/getting-started.md](docs/getting-started.md)
 - [docs/security-model.md](docs/security-model.md)
 - [docs/release-checklist.md](docs/release-checklist.md)
 - [docs/smoke-real-box.md](docs/smoke-real-box.md)
-- [docs/adr/0001-replace-ansible-with-bounded-go-provisioner.md](docs/adr/0001-replace-ansible-with-bounded-go-provisioner.md)
-- [docs/adr/0002-state-file-layout.md](docs/adr/0002-state-file-layout.md)
-- [docs/adr/0003-apt-repo-key-trust-policy.md](docs/adr/0003-apt-repo-key-trust-policy.md)
-- [docs/adr/0004-non-apt-release-artifact-verification.md](docs/adr/0004-non-apt-release-artifact-verification.md)
-- [docs/adr/0005-container-runtime-via-required-dockerfile.md](docs/adr/0005-container-runtime-via-required-dockerfile.md)
-- [docs/adr/0006-cuts-and-composability-commitments.md](docs/adr/0006-cuts-and-composability-commitments.md)
-- [docs/adr/0007-backup-restore-primitive.md](docs/adr/0007-backup-restore-primitive.md)
-- [docs/adr/0008-manifest-v2-env-root-and-runtime-identity.md](docs/adr/0008-manifest-v2-env-root-and-runtime-identity.md)
-- [docs/adr/0009-v1-cli-and-primitive-contract.md](docs/adr/0009-v1-cli-and-primitive-contract.md)

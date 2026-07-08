@@ -138,17 +138,18 @@ Concretely:
   partial-deploy states, recent journal lines). Not "deploy succeeded."
 - `logs` does sensible structured tailing. Not "here, run
   `journalctl -u ...` yourself."
-- Error messages are actionable: `secret "db_url" not set for prod;
-  run \`ship secret set db_url --env prod\``. Not `missing reference`.
+- Error messages are actionable: `missing secret db_url for Production;
+  next: ship secret set db_url`. Not `missing reference`.
 - "We will fix that in the dashboard" is not an allowed answer during
   implementation review.
 
 ### 2. Composable primitive
 
-State is in files (ADR-0002). CLI is the API. Machine-facing read
-surfaces expose `--json` where the output is stable: `status`, `app
-list`, `backup list`, `backup create`, `secret list`, `host status`,
-and `host doctor`. Someone — the user later, the community, a paid
+State is in files (ADR-0002). CLI is the API. Machine-facing surfaces
+expose stable JSON where agents need it: `ship --json`, `ship status
+--json`, `ship logs --json`, `ship why --json`, `ship secret ls --json`,
+`ship box ls --json`, and `ship box doctor --json`. Someone — the user later,
+the community, a paid
 SaaS — can build a dashboard, scheduler, or multi-host coordinator on
 top of ship without changing ship.
 

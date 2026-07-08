@@ -58,7 +58,7 @@ expected to work. Today the role sets `PermitRootLogin prohibit-password`, which
 blocks root password login but still allows root key login. That is safer than
 root passwords, but it is still not the desired steady state.
 
-`ship host doctor` should make this visible. A host with password SSH
+`ship box doctor` should make this visible. A host with password SSH
 enabled or root key login still enabled should be reported as degraded. Public
 SSH is degraded only when `--admin tailscale` is the desired steady state and
 Tailscale is ready.
@@ -119,7 +119,7 @@ deploy user      identity used by the app CLI and CI
 ```
 
 The operator user keeps the root path host convergence needs. The deploy user
-gets only the app lifecycle plus host status/doctor helper grant.
+gets only the app lifecycle plus the narrow diagnostic helper grant.
 
 The server-side helper owns privileged app operations such as per-env user and
 network setup, resolved env-file writes, Podman container lifecycle, Caddy
@@ -128,10 +128,10 @@ instead of adding ad hoc sudo commands to the public CLI.
 
 ## State and Drift
 
-The host should be checkable from the host itself. `ship host status`
-reports install state, supervised service state, and required host tools.
-`ship host doctor` currently checks host state, required service health,
-and the sudoers identity split.
+The host should be checkable through the box surface. `ship box ls --json`
+reports visible app environments. `ship box doctor --json` reports host state,
+required service health, timer state, journal readability, and remediation
+commands.
 
 Future doctor hardening checks should cover:
 
@@ -141,8 +141,8 @@ Future doctor hardening checks should cover:
 - Public `80` and `443` match the desired ingress mode.
 - Tailscale, cloudflared, Caddy, fail2ban, and unattended upgrades state in
   more detail than simple active/inactive reporting.
-- The deploy sudoers grant is limited to `server app *`, `server status`, and
-  `server doctor`.
+- The deploy sudoers grant is limited to `server app *`, `server doctor`,
+  `server doctor *`, and `server key add *`.
 - The operator/deploy split is healthy.
 - Generated Caddy config validates.
 

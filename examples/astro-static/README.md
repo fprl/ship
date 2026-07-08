@@ -1,25 +1,23 @@
 # Astro Static
 
-> **Superseded:** This document describes the pre-ship surface and is not current.
-> **Pending:** The Phase 3 rewrite will replace it; only broken commands are patched here.
+Static-only Astro app. ship serves the generated `dist/` directory directly
+through Caddy.
 
-Real static-only Astro app. `ship` serves `dist/`; Astro builds that
-directory before deploy.
-
-Before deploying, edit `ship.toml`:
-
-- set `box`
-- set the route host
+Before deploying, set `box` and the route host in `ship.toml`, then build the
+site:
 
 ```bash
-npm install
-npm run build
-git init
-git add .
-git commit -m "initial ship app"
-ship
-curl https://site.example.com/
+npm install --no-package-lock && npm run build
 ```
 
-For static-only apps, ship deploys the generated output. It does not run
-`npm run build` for you.
+```bash
+git add . && git commit -m "initial ship app"
+ship
+```
+
+`ship.toml`:
+
+- `box` is the deploy SSH target for the VPS.
+- There are no container processes.
+- `[routes]` maps `site.example.com` to the static `dist` directory.
+- Build output is uploaded with the release; it does not need to be committed.
