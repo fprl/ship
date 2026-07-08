@@ -274,15 +274,22 @@ ship box doctor [--json]  existing doctor, output upgraded per §9
                           (ship.toml: box = "203.0.113.7"; user@ forms
                           remain only in box setup's bootstrap target).
                           Box verbs resolve their target: explicit
-                          positional → app dir's ship.toml → the memo
-                          file ~/.config/ship/boxes iff it holds
-                          exactly one host (written on successful
-                          setup, plain text, hand-editable, pure
-                          convenience — deleting it costs retyping,
-                          never truth). ANTI-MAGIC RULE (product-wide):
-                          whenever ship fills a blank, it narrates the
-                          value and its source on stderr; two known
-                          boxes and no target → refuse, list them.
+                          positional → app dir's ship.toml. Outside an
+                          app dir with no target they ALWAYS refuse —
+                          never implicit selection at any count
+                          (Franco: one behavior forever; no cliff when
+                          box #2 appears) — and the refusal lists the
+                          known boxes from the memo file
+                          ~/.config/ship/boxes (written on successful
+                          setup, plain text, hand-editable, reminder
+                          not resolver; deleting it costs nothing but
+                          the list). With exactly one known box the
+                          next: line carries the literal host
+                          (follow-blindly); otherwise
+                          next: ship box <verb> <host>.
+                          ANTI-MAGIC RULE (product-wide): whenever
+                          ship fills a blank, it narrates the value
+                          and its source on stderr.
                           NARRATION DIET (box setup): print decisions,
                           facts, and non-defaults only — never internal
                           unix users (operator/deploy), never
