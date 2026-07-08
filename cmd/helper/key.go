@@ -1,8 +1,6 @@
 package helper
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +12,7 @@ import (
 
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
+	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
@@ -36,25 +35,9 @@ type keyRmCmd struct {
 	Name string `arg:"" help:"Member name whose keys should be removed."`
 }
 
-type authorizedKey struct {
-	Line        string
-	Material    string
-	Type        string
-	Body        string
-	Comment     string
-	Fingerprint string
-}
-
-type keyAddResult struct {
-	Key   authorizedKey
-	Added bool
-}
-
-type memberKeyRow struct {
-	Name        string `json:"name"`
-	KeyType     string `json:"key_type"`
-	Fingerprint string `json:"fingerprint"`
-}
+type authorizedKey = memberkeys.AuthorizedKey
+type keyAddResult = memberkeys.AddResult
+type memberKeyRow = memberkeys.Row
 
 type memberKeyListPayload struct {
 	Members []memberKeyRow `json:"members"`
@@ -180,24 +163,7 @@ func appendDeployAuthorizedKeys(user string, keys []authorizedKey) ([]keyAddResu
 	if err != nil {
 		return nil, err
 	}
-	seen := map[string]bool{}
-	var lines []string
-	for _, key := range existing {
-		lines = append(lines, key.Line)
-		if key.Material != "" {
-			seen[key.Material] = true
-		}
-	}
-	var results []keyAddResult
-	for _, key := range keys {
-		if seen[key.Material] {
-			results = append(results, keyAddResult{Key: key})
-			continue
-		}
-		lines = append(lines, key.Line)
-		seen[key.Material] = true
-		results = append(results, keyAddResult{Key: key, Added: true})
-	}
+	lines, results := memberkeys.Merge(existing, keys)
 	if err := writeDeployAuthorizedKeys(user, sshDir, path, lines); err != nil {
 		return nil, err
 	}
@@ -300,145 +266,19 @@ func readAuthorizedKeys(path string) ([]authorizedKey, error) {
 		}
 		return nil, fmt.Errorf("read %s: %v", path, err)
 	}
-	var keys []authorizedKey
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		key, err := parseAuthorizedKeyLine(line)
-		if err != nil {
-			key = authorizedKey{Line: line}
-		}
-		keys = append(keys, key)
-	}
-	return keys, nil
+	return memberkeys.Parse(data), nil
 }
 
 func normalizeAuthorizedKeys(raw, comment string) ([]authorizedKey, error) {
-	var keys []authorizedKey
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, err := normalizeAuthorizedKeyLine(line, comment)
-		if err != nil {
-			return nil, err
-		}
-		keys = append(keys, key)
-	}
-	if len(keys) == 0 {
-		return nil, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "no SSH public keys provided"})
-	}
-	return keys, nil
-}
-
-func normalizeAuthorizedKeyLine(line, comment string) (authorizedKey, error) {
-	fields := strings.Fields(line)
-	if len(fields) < 2 {
-		return authorizedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "public key line must contain key type and key body"})
-	}
-	if !supportedAuthorizedKeyType(fields[0]) {
-		return authorizedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": fmt.Sprintf("unsupported public key type %q", fields[0])})
-	}
-	if fields[1] == "" {
-		return authorizedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "public key body is empty"})
-	}
-	fingerprint, err := publicKeyFingerprint(fields[1])
-	if err != nil {
-		return authorizedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": err.Error()})
-	}
-	comment = strings.Join(strings.Fields(comment), " ")
-	if comment == "" {
-		comment = "ship-member"
-	}
-	line = fields[0] + " " + fields[1] + " " + comment
-	return authorizedKey{
-		Line:        line,
-		Material:    keyMaterial(fields[0], fields[1]),
-		Type:        fields[0],
-		Body:        fields[1],
-		Comment:     comment,
-		Fingerprint: fingerprint,
-	}, nil
-}
-
-func parseAuthorizedKeyLine(line string) (authorizedKey, error) {
-	fields := strings.Fields(line)
-	if len(fields) < 2 || !supportedAuthorizedKeyType(fields[0]) {
-		return authorizedKey{}, fmt.Errorf("not a plain SSH public key")
-	}
-	fingerprint, err := publicKeyFingerprint(fields[1])
-	if err != nil {
-		return authorizedKey{}, err
-	}
-	comment := ""
-	if len(fields) > 2 {
-		comment = strings.Join(fields[2:], " ")
-	}
-	if comment == "" {
-		comment = "unknown"
-	}
-	return authorizedKey{
-		Line:        line,
-		Material:    keyMaterial(fields[0], fields[1]),
-		Type:        fields[0],
-		Body:        fields[1],
-		Comment:     comment,
-		Fingerprint: fingerprint,
-	}, nil
-}
-
-func supportedAuthorizedKeyType(value string) bool {
-	switch value {
-	case "ssh-ed25519", "ssh-rsa",
-		"ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
-		"sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com":
-		return true
-	default:
-		return false
-	}
-}
-
-func keyMaterial(kind, body string) string {
-	return kind + "\x00" + body
-}
-
-func publicKeyFingerprint(body string) (string, error) {
-	blob, err := base64.StdEncoding.DecodeString(body)
-	if err != nil {
-		return "", fmt.Errorf("public key body is not valid base64")
-	}
-	if len(blob) == 0 {
-		return "", fmt.Errorf("public key body is empty")
-	}
-	sum := sha256.Sum256(blob)
-	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:]), nil
+	return memberkeys.Normalize(raw, comment)
 }
 
 func memberRows(keys []authorizedKey) []memberKeyRow {
-	var rows []memberKeyRow
-	for _, key := range keys {
-		if key.Material == "" {
-			continue
-		}
-		rows = append(rows, memberKeyRow{
-			Name:        key.Comment,
-			KeyType:     key.Type,
-			Fingerprint: key.Fingerprint,
-		})
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Name != rows[j].Name {
-			return rows[i].Name < rows[j].Name
-		}
-		if rows[i].KeyType != rows[j].KeyType {
-			return rows[i].KeyType < rows[j].KeyType
-		}
-		return rows[i].Fingerprint < rows[j].Fingerprint
-	})
-	return rows
+	return memberkeys.Rows(keys)
+}
+
+func publicKeyFingerprint(body string) (string, error) {
+	return memberkeys.PublicKeyFingerprint(body)
 }
 
 func formatKeyAddResult(result keyAddResult) string {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/provision"
 	"github.com/fprl/ship/internal/provision/local"
 	"github.com/fprl/ship/internal/utils"
@@ -125,11 +126,12 @@ func (i *Installer) RunOptions(opts Options) error {
 		return err
 	}
 
+	var summary provision.InstallSummary
 	switch plan.Mode {
 	case "remote":
-		err = i.runRemote(plan, keyPlan)
+		summary, err = i.runRemote(plan, keyPlan)
 	case "local":
-		err = i.runLocal(plan, keyPlan)
+		summary, err = i.runLocal(plan, keyPlan)
 	default:
 		err = internalInstallError(fmt.Sprintf("invalid resolved install mode: %s", plan.Mode), boxSetupCommand(plan.TargetHost))
 	}
@@ -138,8 +140,8 @@ func (i *Installer) RunOptions(opts Options) error {
 	}
 
 	i.info("Provisioning complete")
-	if plan.NarrateSetup {
-		i.printMemberAdded(keyPlan)
+	if !plan.CheckMode {
+		i.printMemberEnrollment(summary.DeployKeyResults)
 	}
 	i.printNextSteps(plan)
 	return nil
@@ -384,9 +386,9 @@ func applyInstallPresets(opts Options) (Options, error) {
 	return opts, nil
 }
 
-func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) error {
+func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) (provision.InstallSummary, error) {
 	if err := i.preflightSSH(plan); err != nil {
-		return err
+		return provision.InstallSummary{}, err
 	}
 	if plan.NarrateSetup {
 		i.printSetupNarration(plan)
@@ -394,30 +396,30 @@ func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) error {
 	i.printInstallSummary(plan)
 	i.info("Running in remote mode against %s", bootstrapSSHTarget(plan))
 	if err := i.ensureRemoteBootstrapAuthorizedKeys(plan); err != nil {
-		return err
+		return provision.InstallSummary{}, err
 	}
 
 	arch, err := i.remoteArch(plan)
 	if err != nil {
-		return err
+		return provision.InstallSummary{}, err
 	}
 	helper, cleanupHelper, err := i.prepareRemoteHelperBinary(plan, arch)
 	if err != nil {
-		return err
+		return provision.InstallSummary{}, err
 	}
 	defer cleanupHelper()
 
 	remoteHelper := "/tmp/ship-host-install"
 	if err := i.copyRemote(plan, helper, remoteHelper); err != nil {
-		return remoteInstallTransferError(plan, "copy helper binary to target", err)
+		return provision.InstallSummary{}, remoteInstallTransferError(plan, "copy helper binary to target", err)
 	}
 	chmodHelperCommand := "chmod 0755 " + utils.ShellEscape(remoteHelper)
 	if err := i.remoteCommand(plan, chmodHelperCommand); err != nil {
-		return remoteInstallCommandError(plan, "chmod helper binary on target", chmodHelperCommand, err)
+		return provision.InstallSummary{}, remoteInstallCommandError(plan, "chmod helper binary on target", chmodHelperCommand, err)
 	}
 	operatorKeyFile, deployKeyFile, cleanupKeys, err := i.writeRemoteKeyFiles(plan, keyPlan)
 	if err != nil {
-		return err
+		return provision.InstallSummary{}, err
 	}
 	defer cleanupKeys()
 
@@ -425,26 +427,26 @@ func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) error {
 	i.step("Running Go provisioner on target")
 	if plan.BootstrapUser == "root" {
 		if err := i.remoteCommand(plan, cmd); err != nil {
-			return hostInstallApplyError(plan, err)
+			return provision.InstallSummary{}, hostInstallApplyError(plan, err)
 		}
-		return nil
+		return provision.InstallSummary{}, nil
 	}
 	if err := i.remoteCommand(plan, "sudo -n "+cmd); err != nil {
-		return hostInstallApplyError(plan, err)
+		return provision.InstallSummary{}, hostInstallApplyError(plan, err)
 	}
-	return nil
+	return provision.InstallSummary{}, nil
 }
 
-func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) error {
+func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) (provision.InstallSummary, error) {
 	if i.geteuid() != 0 {
-		return errcat.New(errcat.CodeHostInstallRequiresRoot, errcat.Fields{
+		return provision.InstallSummary{}, errcat.New(errcat.CodeHostInstallRequiresRoot, errcat.Fields{
 			"command": "sudo " + boxSetupCommand("localhost", "--mode", "local"),
 		})
 	}
 
 	helperPath, err := os.Executable()
 	if err != nil {
-		return internalInstallError("resolve current executable failed: "+oneLineError(err), boxSetupCommand("localhost", "--mode", "local"))
+		return provision.InstallSummary{}, internalInstallError("resolve current executable failed: "+oneLineError(err), boxSetupCommand("localhost", "--mode", "local"))
 	}
 
 	if plan.NarrateSetup {
@@ -475,10 +477,10 @@ func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) error {
 		HelperBinaryPath:       helperPath,
 	})
 	if err != nil {
-		return hostInstallApplyError(plan, err)
+		return provision.InstallSummary{}, hostInstallApplyError(plan, err)
 	}
 	i.info("Apply %s changed %d operations", summary.ApplyID, summary.OperationsChanged)
-	return nil
+	return summary, nil
 }
 
 func (i *Installer) printInstallSummary(plan Plan) {
@@ -1021,9 +1023,13 @@ func (i *Installer) printSetupNarration(plan Plan) {
 	fmt.Fprintln(i.Stdout, adminNarration(plan))
 }
 
-func (i *Installer) printMemberAdded(keys keyPlan) {
-	for _, key := range keys.Deploy {
-		fmt.Fprintf(i.Stdout, "member added: %s (%s)\n", key.Comment, key.Fingerprint)
+func (i *Installer) printMemberEnrollment(results []memberkeys.AddResult) {
+	for _, result := range results {
+		if result.Added {
+			fmt.Fprintf(i.Stdout, "member added: %s (%s)\n", result.Key.Comment, result.Key.Fingerprint)
+			continue
+		}
+		fmt.Fprintf(i.Stdout, "member %s already authorized\n", result.Key.Comment)
 	}
 }
 

@@ -1,8 +1,46 @@
 # Changelog
 
-## Unreleased
+## v0.1.1
 
-This is the v0.1.0 release draft for the ship product pivot.
+The first-contact release, driven by real first-time usage.
+
+### Added
+
+- Ship identity: the first command that needs SSH creates
+  `~/.ssh/ship` once per machine (name derived from git config,
+  narrated in one line, never a prompt); every ship connection pins
+  it. `SHIP_SSH_KEY` still overrides.
+- `ship member add|ls|rm` — members with printed SHA256 fingerprints,
+  GitHub key fetch (`member add <username>`), dedupe, and a last-key
+  lockout guard. Replaces `box add-key`.
+- `ship box setup` narrates each decision with its alternative flag,
+  truthfully ordered: identity, connected-as, ingress, admin, and
+  `member added` only after enrollment actually executes.
+- Password-provisioned boxes get a one-command bridge in the error
+  (`ssh-copy-id -i ~/.ssh/ship.pub root@<ip>`); hardening then
+  disables password login permanently.
+
+### Changed
+
+- `ship box init` is now `ship box setup`; setup enrolls your ship
+  identity as the box's first member and never bulk-imports bootstrap
+  keys. Re-running setup preserves existing members (additive
+  enrollment, shared with member add).
+- `ship box setup user@host` sets the bootstrap user from the target;
+  a conflicting `--bootstrap-user` is a usage error.
+- `SHIP_URL`, `SHIP_BRANCH`, `SHIP_ENV`, `SHIP_RELEASE` are injected
+  into every release process (previously exec-only).
+- `ship logs` distinguishes empty success (`no log lines yet`,
+  `lines: []`) from real output; status JSON unified on `class`.
+- Every `box setup` failure carries a stable error code with a
+  runnable remediation (the hostinstall error sweep).
+
+### Removed
+
+- `box add-key`, `box init`, the `~/.ssh/ship-deploy` magic default,
+  and `--shared-key` — no aliases.
+
+## v0.1.0
 
 ### Added
 

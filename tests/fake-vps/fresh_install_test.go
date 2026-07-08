@@ -60,18 +60,42 @@ func TestFreshHostInstall(t *testing.T) {
 	env.assertHostDoctorHealthy(t)
 
 	env.ssh(t, "mkdir -p /var/apps/api.production/data && printf sentinel > /var/apps/api.production/data/sentinel && chmod 600 /var/apps/api.production/data/sentinel")
-	second, _ := env.installHost(t, "")
+	second, secondOutput := env.installHost(t, "")
 	if second != 0 {
 		t.Fatalf("second install changed %d operations, want 0", second)
 	}
+	assertContains(t, secondOutput, "member fake-vps-smoke already authorized")
+	env.assertDeployAuthorizedKeys(t, identityKey)
+	env.assertDeployAuthorizedKeysLineCount(t, identityKey, 1)
 	assertEqual(t, strings.TrimSpace(env.ssh(t, "cat /var/apps/api.production/data/sentinel")), "sentinel")
 	assertEqual(t, strings.TrimSpace(env.ssh(t, "stat -c '%a' /var/apps/api.production/data/sentinel")), "600")
+
+	memberApp := env.memberListApp(t, "setup-preserve-members")
+	teammateKeyPath := filepath.Join(env.tmp, "setup-preserved-member")
+	teammateComment := filepath.Base(teammateKeyPath + ".pub")
+	env.mustRun(t, env.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", teammateComment, "-f", teammateKeyPath)
+	addedTeammate := env.ship(t, memberApp, nil, "member", "add", teammateKeyPath+".pub")
+	addFields := strings.Fields(strings.TrimSpace(addedTeammate))
+	if len(addFields) != 4 || addFields[0] != "added" || addFields[1] != teammateComment || addFields[2] != "ssh-ed25519" {
+		t.Fatalf("unexpected member add output: %q", addedTeammate)
+	}
+	teammateFingerprint := addFields[3]
+	teammateKey := strings.TrimSpace(readFile(t, teammateKeyPath+".pub"))
+	_, preserveOutput := env.installHost(t, "")
+	assertContains(t, preserveOutput, "member fake-vps-smoke already authorized")
+	preservedMembers := env.ship(t, memberApp, nil, "member", "ls")
+	assertContains(t, preservedMembers, "fake-vps-smoke ssh-ed25519 SHA256:")
+	assertContains(t, preservedMembers, teammateComment+" ssh-ed25519 "+teammateFingerprint)
+	env.assertDeployAuthorizedKeysLineCount(t, identityKey, 1)
+	env.assertDeployAuthorizedKeysLineCount(t, teammateKey, 1)
 
 	explicitKeyPath := filepath.Join(env.tmp, "explicit-deploy")
 	env.mustRun(t, env.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "explicit-deploy", "-f", explicitKeyPath)
 	_, _ = env.installHost(t, explicitKeyPath+".pub")
 	explicitKey := strings.TrimSpace(readFile(t, explicitKeyPath+".pub"))
-	env.assertDeployAuthorizedKeys(t, explicitKey)
+	env.assertDeployAuthorizedKeysContains(t, identityKey)
+	env.assertDeployAuthorizedKeysContains(t, teammateKey)
+	env.assertDeployAuthorizedKeysContains(t, explicitKey)
 	env.assertOperatorAuthorizedKeys(t, identityKey)
 
 	env.assertDoctorRecordingDeltaForStoppedReaper(t)
@@ -250,6 +274,28 @@ func (e *smokeEnv) assertOperatorAuthorizedKeys(t *testing.T, want string) {
 	assertEqual(t, got, strings.TrimSpace(want))
 }
 
+func (e *smokeEnv) assertDeployAuthorizedKeysContains(t *testing.T, want string) {
+	t.Helper()
+	got := strings.TrimSpace(e.ssh(t, "cat /home/deploy/.ssh/authorized_keys"))
+	if !strings.Contains(got, strings.TrimSpace(want)) {
+		t.Fatalf("deploy authorized_keys missing key\nwanted present:\n%s\nactual:\n%s", want, got)
+	}
+}
+
+func (e *smokeEnv) assertDeployAuthorizedKeysLineCount(t *testing.T, want string, count int) {
+	t.Helper()
+	got := strings.TrimSpace(e.ssh(t, "cat /home/deploy/.ssh/authorized_keys"))
+	actual := 0
+	for _, line := range strings.Split(got, "\n") {
+		if strings.TrimSpace(line) == strings.TrimSpace(want) {
+			actual++
+		}
+	}
+	if actual != count {
+		t.Fatalf("deploy authorized_keys line count = %d, want %d\nline:\n%s\nactual:\n%s", actual, count, want, got)
+	}
+}
+
 func (e *smokeEnv) assertDeployAuthorizedKeysDoesNotContain(t *testing.T, unwanted string) {
 	t.Helper()
 	got := strings.TrimSpace(e.ssh(t, "cat /home/deploy/.ssh/authorized_keys"))
@@ -265,7 +311,14 @@ func (e *smokeEnv) shipIdentityPublicKey(t *testing.T) string {
 
 func (e *smokeEnv) assertSetupMemberVisible(t *testing.T) {
 	t.Helper()
-	app := filepath.Join(e.tmp, "member-list")
+	app := e.memberListApp(t, "member-list")
+	list := e.ship(t, app, nil, "member", "ls")
+	assertContains(t, list, "fake-vps-smoke ssh-ed25519 SHA256:")
+}
+
+func (e *smokeEnv) memberListApp(t *testing.T, name string) string {
+	t.Helper()
+	app := filepath.Join(e.tmp, name)
 	mustMkdir(t, app)
 	mustWrite(t, filepath.Join(app, "Dockerfile"), "FROM alpine\nCMD [\"sleep\", \"3600\"]\n")
 	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "memberlist"
@@ -274,8 +327,7 @@ box = "fake-vps"
 [processes]
 web = { port = 3000 }
 `)
-	list := e.ship(t, app, nil, "member", "ls")
-	assertContains(t, list, "fake-vps-smoke ssh-ed25519 SHA256:")
+	return app
 }
 
 func (e *smokeEnv) allowSSHWithEmptyRootAuthorizedKeys(t *testing.T) {

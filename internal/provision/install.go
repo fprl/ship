@@ -13,6 +13,7 @@ import (
 
 	"github.com/fprl/ship/internal/cloudflare"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/provision/host"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/version"
@@ -57,6 +58,7 @@ type InstallOptions struct {
 type InstallSummary struct {
 	ApplyID           string
 	OperationsChanged int
+	DeployKeyResults  []memberkeys.AddResult
 }
 
 type operation struct {
@@ -79,7 +81,8 @@ func RunInstall(ctx context.Context, runner host.Runner, opts InstallOptions) (I
 		applyID = startedAt.Format("20060102T150405Z")
 	}
 
-	ops := installOperations(opts, stateStore)
+	summary := InstallSummary{ApplyID: applyID}
+	ops := installOperations(opts, stateStore, &summary)
 	changedCount := 0
 	for _, op := range ops {
 		changed, err := op.run(apply)
@@ -87,7 +90,8 @@ func RunInstall(ctx context.Context, runner host.Runner, opts InstallOptions) (I
 			if !opts.CheckMode {
 				_ = writeApplyState(stateStore, opts, applyID, startedAt, opts.Now().UTC(), "failed", changedCount)
 			}
-			return InstallSummary{ApplyID: applyID, OperationsChanged: changedCount}, fmt.Errorf("%s: %w", op.name, err)
+			summary.OperationsChanged = changedCount
+			return summary, fmt.Errorf("%s: %w", op.name, err)
 		}
 		if changed {
 			changedCount++
@@ -96,13 +100,15 @@ func RunInstall(ctx context.Context, runner host.Runner, opts InstallOptions) (I
 
 	if !opts.CheckMode {
 		if err := writeApplyState(stateStore, opts, applyID, startedAt, opts.Now().UTC(), "ok", changedCount); err != nil {
-			return InstallSummary{ApplyID: applyID, OperationsChanged: changedCount}, err
+			summary.OperationsChanged = changedCount
+			return summary, err
 		}
 	}
-	return InstallSummary{ApplyID: applyID, OperationsChanged: changedCount}, nil
+	summary.OperationsChanged = changedCount
+	return summary, nil
 }
 
-func installOperations(opts InstallOptions, stateStore store.Store) []operation {
+func installOperations(opts InstallOptions, stateStore store.Store, summary *InstallSummary) []operation {
 	var ops []operation
 	add := func(name string, run func(host.Apply) (bool, error)) {
 		ops = append(ops, operation{name: name, run: run})
@@ -153,8 +159,10 @@ func installOperations(opts InstallOptions, stateStore store.Store) []operation 
 	add("ensure deploy user", func(apply host.Apply) (bool, error) {
 		return host.EnsureUser(apply, host.User{Name: opts.DeployUser, PrimaryGroup: opts.DeployUser, Shell: "/bin/bash", CreateHome: true})
 	})
-	addAuthorizedKeys(&ops, opts.OperatorUser, opts.OperatorSSHPublicKeys)
-	addAuthorizedKeys(&ops, opts.DeployUser, opts.DeploySSHPublicKeys)
+	addAuthorizedKeys(&ops, opts.OperatorUser, opts.OperatorSSHPublicKeys, nil)
+	addAuthorizedKeys(&ops, opts.DeployUser, opts.DeploySSHPublicKeys, func(results []memberkeys.AddResult) {
+		summary.DeployKeyResults = results
+	})
 
 	add("timezone", func(apply host.Apply) (bool, error) {
 		return host.EnsureTimezone(apply, opts.Timezone)
@@ -187,19 +195,32 @@ func installOperations(opts InstallOptions, stateStore store.Store) []operation 
 	return ops
 }
 
-func addAuthorizedKeys(ops *[]operation, user string, keys []string) {
+func addAuthorizedKeys(ops *[]operation, user string, keyLines []string, capture func([]memberkeys.AddResult)) {
 	dir := fmt.Sprintf("/home/%s/.ssh", user)
 	*ops = append(*ops, operation{name: "ssh directory " + user, run: func(apply host.Apply) (bool, error) {
 		return host.EnsureDirectory(apply, host.Directory{Path: dir, Owner: user, Group: user, Mode: 0700})
 	}})
 	*ops = append(*ops, operation{name: "authorized keys " + user, run: func(apply host.Apply) (bool, error) {
-		content := ""
-		if len(keys) > 0 {
-			content = strings.Join(keys, "\n") + "\n"
+		var keys []memberkeys.AuthorizedKey
+		if len(keyLines) > 0 {
+			var err error
+			keys, err = memberkeys.Normalize(strings.Join(keyLines, "\n"), "")
+			if err != nil {
+				return false, err
+			}
+		}
+		current, err := apply.Runner.ReadFile(apply.ContextOrBackground(), filepath.Join(dir, "authorized_keys"))
+		if err != nil && !errors.Is(err, host.ErrNotExist) {
+			return false, err
+		}
+		existing := memberkeys.Parse(current.Content)
+		lines, results := memberkeys.Merge(existing, keys)
+		if capture != nil {
+			capture(results)
 		}
 		return host.EnsureFile(apply, host.File{
 			Path:    filepath.Join(dir, "authorized_keys"),
-			Content: []byte(content),
+			Content: memberkeys.Content(lines),
 			Owner:   user,
 			Group:   user,
 			Mode:    0600,

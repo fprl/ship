@@ -15,6 +15,11 @@ import (
 	"github.com/fprl/ship/internal/store"
 )
 
+const (
+	operatorTestPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/ operator"
+	deployTestPublicKey   = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICtppnbbz76teU3iU6BguTmo//WITtYN35e4gSER6UNt deploy"
+)
+
 func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	root := t.TempDir()
 	helper := filepath.Join(root, "ship")
@@ -27,8 +32,8 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	summary, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Timezone:              "UTC",
 		Locale:                "en_US.UTF-8",
 		Tailscale:             false,
@@ -95,8 +100,8 @@ func TestRunInstallDoesNotRestartSSHWhenConfigAlreadyConverged(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
 		CloudflareTunnel:      false,
 		InstallLitestream:     false,
@@ -111,6 +116,64 @@ func TestRunInstallDoesNotRestartSSHWhenConfigAlreadyConverged(t *testing.T) {
 			t.Fatalf("ssh restart should be gated on sshd_config drift, commands: %+v", runner.commands)
 		}
 	}
+}
+
+func TestRunInstallEnrollsAuthorizedKeysWithoutReplacingExistingMembers(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "ship")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	existingDeploy := strings.Replace(operatorTestPublicKey, " operator", " teammate", 1)
+	existingOperator := strings.Replace(deployTestPublicKey, " deploy", " bootstrap-operator", 1)
+	runner := &installFakeRunner{files: map[string]host.FileState{
+		"/home/deploy/.ssh/authorized_keys": {
+			Content: []byte(existingDeploy + "\n"),
+			Owner:   "deploy",
+			Group:   "deploy",
+			Mode:    0600,
+		},
+		"/home/operator/.ssh/authorized_keys": {
+			Content: []byte(existingOperator + "\n"),
+			Owner:   "operator",
+			Group:   "operator",
+			Mode:    0600,
+		},
+	}}
+
+	opts := InstallOptions{
+		OperatorUser:          "operator",
+		DeployUser:            "deploy",
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
+		Tailscale:             false,
+		CloudflareTunnel:      false,
+		InstallLitestream:     false,
+		StateRoot:             root,
+		HelperBinaryPath:      helper,
+		ApplyID:               "enroll-test",
+	}
+	summary, err := RunInstall(context.Background(), runner, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summary.DeployKeyResults) != 1 || !summary.DeployKeyResults[0].Added {
+		t.Fatalf("deploy enrollment results = %+v, want one added key", summary.DeployKeyResults)
+	}
+	deployKeys := string(runner.files["/home/deploy/.ssh/authorized_keys"].Content)
+	assertAuthorizedKeysLines(t, deployKeys, []string{existingDeploy, deployTestPublicKey})
+	operatorKeys := string(runner.files["/home/operator/.ssh/authorized_keys"].Content)
+	assertAuthorizedKeysLines(t, operatorKeys, []string{existingOperator, operatorTestPublicKey})
+
+	summary, err = RunInstall(context.Background(), runner, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summary.DeployKeyResults) != 1 || summary.DeployKeyResults[0].Added {
+		t.Fatalf("second deploy enrollment results = %+v, want already authorized", summary.DeployKeyResults)
+	}
+	assertAuthorizedKeysLines(t, string(runner.files["/home/deploy/.ssh/authorized_keys"].Content), []string{existingDeploy, deployTestPublicKey})
+	assertAuthorizedKeysLines(t, string(runner.files["/home/operator/.ssh/authorized_keys"].Content), []string{existingOperator, operatorTestPublicKey})
 }
 
 func TestRunInstallSkipsPinnedLitestream(t *testing.T) {
@@ -129,8 +192,8 @@ func TestRunInstallSkipsPinnedLitestream(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
 		CloudflareTunnel:      false,
 		InstallLitestream:     true,
@@ -159,8 +222,8 @@ func TestRunInstallRejectsLitestreamChecksumMismatch(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
 		CloudflareTunnel:      false,
 		InstallLitestream:     true,
@@ -202,8 +265,8 @@ func TestRunInstallInstallsLitestreamAfterChecksumMatch(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
 		CloudflareTunnel:      false,
 		InstallLitestream:     true,
@@ -306,8 +369,8 @@ func TestRunInstallDoesNotRestartConvergedCloudflaredService(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
 		CloudflareTunnel:      true,
 		CloudflareTunnelToken: "token-test",
@@ -350,8 +413,8 @@ func TestRunInstallRestartsCloudflaredWhenTokenChanges(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
 		CloudflareTunnel:      true,
 		CloudflareTunnelToken: "new-token",
@@ -397,8 +460,8 @@ func TestRunInstallStartsInactiveConvergedCloudflaredService(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
 		CloudflareTunnel:      true,
 		CloudflareTunnelToken: "token-test",
@@ -435,8 +498,8 @@ func TestRunInstallUsesHostUbuntuCodenameForDockerAndTailscaleRepos(t *testing.T
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             true,
 		CloudflareTunnel:      false,
 		InstallDocker:         true,
@@ -520,8 +583,8 @@ func TestRunInstallInstallsPodmanFromUbuntuUniverse(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
 		HelperBinaryPath:      helper,
 	})
@@ -562,8 +625,8 @@ func TestRunInstallCreatesIngressNetworkWhenAbsent(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
 		HelperBinaryPath:      helper,
 	})
@@ -587,8 +650,8 @@ func TestRunInstallCreatesDeployTmpDirWithStickyMode(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
 		HelperBinaryPath:      helper,
 	})
@@ -614,8 +677,8 @@ func TestRunInstallWritesCaddyContainerSystemdUnit(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
 		HelperBinaryPath:      helper,
 	})
@@ -667,8 +730,8 @@ func TestRunInstallWritesPreviewReaperAndDoctorTimers(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
 		HelperBinaryPath:      helper,
 	})
@@ -919,8 +982,8 @@ func TestRunInstallWritesPodmanHostBaseline(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
 		HelperBinaryPath:      helper,
 	})
@@ -984,8 +1047,8 @@ func TestRunInstallSkipsIngressNetworkCreationWhenPresent(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorUser:          "operator",
 		DeployUser:            "deploy",
-		OperatorSSHPublicKeys: []string{"ssh-ed25519 AAAAoperator test"},
-		DeploySSHPublicKeys:   []string{"ssh-ed25519 AAAAdeploy test"},
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
 		HelperBinaryPath:      helper,
 	})
@@ -1006,6 +1069,15 @@ func TestUbuntuCodenameFallsBackToNoble(t *testing.T) {
 	}
 	if got != "noble" {
 		t.Fatalf("ubuntuCodename() = %q, want noble", got)
+	}
+}
+
+func assertAuthorizedKeysLines(t *testing.T, got string, want []string) {
+	t.Helper()
+	got = strings.TrimSpace(got)
+	wantText := strings.Join(want, "\n")
+	if got != wantText {
+		t.Fatalf("authorized_keys mismatch\nwant:\n%s\ngot:\n%s", wantText, got)
 	}
 }
 
