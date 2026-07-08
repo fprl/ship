@@ -208,7 +208,18 @@ ship secret set <KEY> [--preview|--branch <name>]   stdin-only (§6)
 ship secret ls [--json] / ship secret rm <KEY> [--preview|--branch <name>]
 ship save [--to path] / ship restore --from <id|path>   existing backup/restore
 ship ssh                  existing
-ship box init <ssh-target> [--ingress ...] [--admin ...]   existing host install
+ship box init <ssh-target> [--ingress ...] [--admin ...]   host install.
+                          Zero key decisions by default (§0 bar #5):
+                          the keys already in the bootstrap user's
+                          authorized_keys (the provider put yours
+                          there) are promoted to the deploy user as
+                          the box's first member(s), printed with
+                          fingerprints. --deploy-ssh-public-key-file
+                          remains for split-key/CI setups; the
+                          ~/.ssh/ship-deploy magic default and
+                          --shared-key are removed. box init = create
+                          the box with you as first member; all later
+                          identity goes through ship member.
 ship member add <github-user|key|path>   authorize a teammate's SSH key
                           (bare word → fetches github.com/<user>.keys;
                           prints type + SHA256 fingerprint per key
