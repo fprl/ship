@@ -301,6 +301,37 @@ ship box doctor [--json]  existing doctor, output upgraded per §9
                           default-off features, never the same header
                           block twice; the full state dump belongs to
                           box doctor, not the deploy terminal.
+                          BOX IDENTITY / HOST KEYS (v0.2.1): a box's SSH
+                          host key is part of its identity, pinned in a
+                          ship-owned file and NEVER in the user's
+                          ~/.ssh/known_hosts (symmetric with the ship
+                          identity — ship's SSH is fully self-contained).
+                          Mechanism, not a reimplementation: every ship
+                          SSH passes -o UserKnownHostsFile=
+                          ~/.config/ship/known_hosts and sets
+                          -o StrictHostKeyChecking per context; that file
+                          also IS the known-boxes list for the
+                          targetless refusal (hostnames parsed from it;
+                          the plain boxes memo is subsumed). Rules:
+                          (a) box setup is the trust-establishing act —
+                          connects accept-new and PERSISTS the host key
+                          only AFTER bootstrap auth + provisioning
+                          succeed (auth is the real proof; a stranger's
+                          box on a recycled IP fails auth, so re-pin buys
+                          an attacker nothing); a changed key at setup =
+                          a rebuild → re-pin, narrated (`host key changed
+                          since last setup — re-pinning (box rebuilt?)`).
+                          (b) daily verbs verify STRICT — a changed key
+                          refuses (errcat host_key_changed, remediation
+                          `ship box setup <ssh-target>` or investigate);
+                          this is where MITM / IP-recycling is caught.
+                          (c) ship box forget <box> clears the entry
+                          (ssh-keygen -R on ship's file); box setup
+                          re-pins next run. Rationale: ~/.ssh/known_hosts
+                          made ship depend on the user's SSH history and
+                          polluted it (a rebuilt box left 30 stale
+                          entries in dev) and fought the
+                          rebuild-a-box-freely ethos.
 ship box ls [--json]      existing app list (explicit scope, works
                           anywhere); --json is the fleet view: per-app
                           envs, branches, urls, releases, health,
@@ -308,6 +339,9 @@ ship box ls [--json]      existing app list (explicit scope, works
 ship box rm <app> [--confirm <app>]   destroy an app and all its envs
                           without the repo dir (orphan cleanup; same
                           confirm guard as prod rm; Phase 3)
+ship box forget <box>     drop this box's host-key pin from
+                          ~/.config/ship/known_hosts (decommission;
+                          pairs with box rm; box setup re-establishes)
 ship docs                 print the agent contract (§9)
 ship version
 ```
