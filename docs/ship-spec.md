@@ -236,11 +236,20 @@ ship box setup <ssh-target> [--ingress ...] [--admin ...]   host install
                           --deploy-ssh-public-key-file (split-key/CI:
                           enrolls that key instead) override. Output
                           narrates every decision with its alternative
-                          flag, wizard-grade without prompts:
+                          flag, wizard-grade without prompts — and
+                          truthfully: each line prints when the fact
+                          becomes true, never before (identity at
+                          local creation; member added only after
+                          enrollment actually executes on the box):
                             identity: franco (created ~/.ssh/ship)
-                            member added: franco (SHA256:...)
+                            connected as root (bootstrap)
                             ingress: public 80/443 (--ingress ...)
                             admin: SSH keys only (--admin tailscale)
+                            member added: franco (SHA256:...)
+                          The <ssh-target> accepts host or user@host;
+                          user@host sets the bootstrap user (a
+                          conflicting --bootstrap-user is a usage
+                          error).
                           One sentence: ship knows who you are; setup
                           introduces you to the box; everyone else is
                           ship member add. Members and approvals are
