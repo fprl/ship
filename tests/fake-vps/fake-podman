@@ -19,6 +19,22 @@ state_dir=/run/fake-podman
 mkdir -p "$state_dir/networks" "$state_dir/containers" "$state_dir/images" "$state_dir/listeners"
 chmod -R 1777 "$state_dir" 2>/dev/null || true
 
+image_safe_name() {
+  printf '%s' "$1" | tr '/:' '__'
+}
+
+image_in_use() {
+  local ref="$1"
+  local image_file
+  for image_file in "$state_dir"/containers/*.image; do
+    [[ -e "$image_file" ]] || continue
+    if [[ "$(cat "$image_file" 2>/dev/null || true)" == "$ref" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 log_path="$state_dir/commands.log"
 printf '%s\n' "podman $*" >> "$log_path"
 
@@ -201,10 +217,72 @@ for image_path in sorted(glob.glob(os.path.join(state_dir, "images", "*")), key=
     infra_id = labels.get("ship.infra_id", "")
     if infra_id:
         repo = f"ship/{infra_id}"
-    out.append({"Repository": repo, "Tag": tag, "Labels": labels})
+    names = []
+    if repo and tag:
+        names = [f"{repo}:{tag}"]
+    out.append({"Repository": repo, "Tag": tag, "Names": names, "Labels": labels})
 print(json.dumps(out))
 PY
     exit 0
+    ;;
+
+  rmi)
+    if [[ -f "$state_dir/fail-rmi" ]]; then
+      echo "fake podman: forced rmi failure" >&2
+      exit 42
+    fi
+    status=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -f|--force|--ignore)
+          shift
+          ;;
+        *)
+          ref="$1"
+          safe="$(image_safe_name "$ref")"
+          if image_in_use "$ref"; then
+            echo "fake podman: image $ref is used by a container" >&2
+            status=2
+          elif [[ ! -f "$state_dir/images/$safe" ]]; then
+            echo "fake podman: no such image: $ref" >&2
+            status=1
+          else
+            rm -f "$state_dir/images/$safe" "$state_dir/images/$safe.labels"
+          fi
+          shift
+          ;;
+      esac
+    done
+    exit "$status"
+    ;;
+
+  image)
+    sub="${1:-}"
+    shift || true
+    case "$sub" in
+      prune)
+        if [[ -f "$state_dir/fail-image-prune" ]]; then
+          echo "fake podman: forced image prune failure" >&2
+          exit 42
+        fi
+        # The real `podman image prune` without `-a` removes dangling
+        # untagged images. In fake state, those are image records with
+        # no ship.release label.
+        for image_path in "$state_dir"/images/*; do
+          [[ -e "$image_path" ]] || continue
+          [[ "$image_path" == *.labels ]] && continue
+          labels_path="$image_path.labels"
+          if [[ ! -f "$labels_path" ]] || ! grep -q '^ship.release=' "$labels_path"; then
+            rm -f "$image_path" "$labels_path"
+          fi
+        done
+        exit 0
+        ;;
+      *)
+        echo "fake podman: unsupported image command: $sub" >&2
+        exit 1
+        ;;
+    esac
     ;;
 
   rm)

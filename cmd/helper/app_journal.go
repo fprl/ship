@@ -56,6 +56,7 @@ type deployJournalEntry struct {
 	AttemptedRelease string         `json:"attempted_release"`
 	FailingStep      string         `json:"failing_step"`
 	StderrTail       string         `json:"stderr_tail"`
+	ImagePrune       string         `json:"image_prune,omitempty"`
 	Identity         deployIdentity `json:"identity"`
 	Member           *journalMember `json:"member,omitempty"`
 	Probe            *journalProbe  `json:"probe"`

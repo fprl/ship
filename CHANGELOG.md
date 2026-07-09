@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.2.2
+
+### Fixed
+
+- Teammates can ship: daily verbs now trust a box's host key on first
+  contact (`accept-new`) and pin it, instead of refusing any box the
+  local machine had not personally run `box setup` against. A *changed*
+  key is still refused (`host_key_changed`) — MITM/rebuild protection is
+  unchanged. Regression from v0.2.1's strict checking; a member added via
+  `ship member add` never runs `box setup`, so their first `ship` was
+  wrongly refused.
+
+### Changed
+
+- Proactive image pruning: after a successful, healthy deploy ship prunes
+  that environment's old release images — prod keeps 5, previews keep 2,
+  the live release is always kept — and the preview reaper purges a
+  reaped env's images. Best-effort (never fails a deploy); no
+  configuration (ADR-0010). `box doctor`'s disk check stays the backstop.
+
 ## v0.2.1
 
 ### Changed

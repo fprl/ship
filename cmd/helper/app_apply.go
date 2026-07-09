@@ -190,6 +190,7 @@ func (c appApplyCmd) runLockedE() (err error) {
 		Identity:         c.actor(),
 		Member:           currentServerMemberForJournal(),
 	}, nil)
+	entry.ImagePrune = bestEffortPruneReleaseImagesAfterDeploy(c.App, c.Env, c.SHA, entry)
 	if err := appendSanitizedDeployJournalEntry(c.App, c.Env, entry); err != nil {
 		return err
 	}

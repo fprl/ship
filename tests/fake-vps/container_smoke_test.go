@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -58,6 +60,7 @@ func TestContainerSmoke(t *testing.T) {
 
 	t.Run("notify webhook events", env.testNotifyWebhooks)
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
+	t.Run("daily verbs pin unknown host and refuse changed host", env.testDailyVerbHostKeyTOFU)
 	t.Run("phase 1 acceptance init ship branch and sslip", env.testPhase1AcceptanceAndZeroDNS)
 	t.Run("member add ls rm manages deploy access", env.testMemberAccess)
 	t.Run("agent role prod ship approval flow", env.testAgentRoleApprovalFlow)
@@ -67,6 +70,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("branch env resolution and production guards", env.testBranchEnvironmentGuards)
 	t.Run("preview lifecycle mapping pin and reap", env.testPreviewLifecycle)
 	t.Run("container rollback runs an older image release", env.testRollback)
+	t.Run("proactive release image pruning", env.testImagePruning)
 	t.Run("backup and restore round-trip app state", env.testBackupRestore)
 	t.Run("deploy removes processes dropped from the manifest", env.testRemovedProcessReconciliation)
 	t.Run("concurrent deploys of the same app env serialize", env.testConcurrentDeploys)
@@ -347,6 +351,40 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	commandsLog = e.ssh(t, "cat /run/fake-podman/commands.log")
 	assertContains(t, commandsLog, "podman build --no-cache --pull=always")
 
+}
+
+func (e *smokeEnv) testDailyVerbHostKeyTOFU(t *testing.T) {
+	app := filepath.Join(e.tmp, "container-api")
+	freshHome := filepath.Join(e.tmp, "daily-tofu-home")
+	copyShipIdentityForHome(t, e.shipHome, freshHome)
+	knownHosts := filepath.Join(freshHome, ".config", "ship", "known_hosts")
+
+	first := e.runCommand(t, app, []string{"HOME=" + freshHome}, nil, e.goBin, "status")
+	if first.err != nil {
+		t.Fatalf("daily status should pin unknown host and succeed: %v\nstdout:\n%s\nstderr:\n%s", first.err, first.stdout, first.stderr)
+	}
+	assertContains(t, first.stdout, "Production main")
+	pinned := readFile(t, knownHosts)
+	assertContains(t, pinned, "fake-vps ")
+
+	second := e.runCommand(t, app, []string{"HOME=" + freshHome}, nil, e.goBin, "status")
+	if second.err != nil {
+		t.Fatalf("daily status should verify existing host pin: %v\nstdout:\n%s\nstderr:\n%s", second.err, second.stdout, second.stderr)
+	}
+	assertContains(t, second.stdout, "Production main")
+
+	wrongKey := strings.Join(strings.Fields(alicePublicKeyForFreshInstallTest())[:2], " ")
+	if err := os.WriteFile(knownHosts, []byte("fake-vps "+wrongKey+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	changed := e.runCommand(t, app, []string{"HOME=" + freshHome}, nil, e.goBin, "status")
+	if changed.err == nil {
+		t.Fatalf("daily status should refuse changed host key\nstdout:\n%s\nstderr:\n%s", changed.stdout, changed.stderr)
+	}
+	output := changed.stdout + changed.stderr
+	assertContains(t, output, "box host key changed")
+	assertContains(t, output, "SSH host key for fake-vps is unknown or changed")
+	assertContains(t, output, "next: ship box setup <ssh-target>")
 }
 
 func (e *smokeEnv) testPhase1AcceptanceAndZeroDNS(t *testing.T) {
@@ -1191,6 +1229,70 @@ func (e *smokeEnv) testRollback(t *testing.T) {
 	if whyJSON.Outcome != "rolled_back" || whyJSON.PreviousRelease != newRelease || whyJSON.AttemptedRelease != oldRelease {
 		t.Fatalf("unexpected rollback journal entry: %+v", whyJSON)
 	}
+}
+
+func (e *smokeEnv) testImagePruning(t *testing.T) {
+	e.ensureSmokeHostSeed(t)
+	app := filepath.Join(e.tmp, "image-prune-api")
+	mustMkdir(t, app)
+	writeImagePruneFixture(t, app)
+	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+
+	prodReleases := []string{gitRelease(t, e, app)}
+	e.ship(t, app, nil)
+	for i := 2; i <= 7; i++ {
+		prodReleases = append(prodReleases, commitImagePruneChange(t, e, app, fmt.Sprintf("prod release %d", i)))
+		e.ship(t, app, nil)
+	}
+	assertFakeImageReleases(t, e, "imgprune", productionEnv, prodReleases[2:]...)
+	assertFakeImageAbsent(t, e, "imgprune", productionEnv, prodReleases[0])
+	assertFakeImageAbsent(t, e, "imgprune", productionEnv, prodReleases[1])
+	status := statusEnvByClass(t, e, app, "production")
+	if status.Release != prodReleases[len(prodReleases)-1] {
+		t.Fatalf("prod live release = %s, want %s", status.Release, prodReleases[len(prodReleases)-1])
+	}
+
+	rollbackTarget := prodReleases[3]
+	e.ship(t, app, nil, "rollback", rollbackTarget)
+	nextRelease := commitImagePruneChange(t, e, app, "prod release 8 after rollback")
+	e.ship(t, app, nil)
+	assertFakeImagePresent(t, e, "imgprune", productionEnv, rollbackTarget)
+	assertFakeImageReleases(t, e, "imgprune", productionEnv,
+		rollbackTarget,
+		prodReleases[4],
+		prodReleases[5],
+		prodReleases[6],
+		nextRelease,
+	)
+
+	e.dockerExec(t, "touch /run/fake-podman/fail-rmi")
+	pruneFailureRelease := commitImagePruneChange(t, e, app, "prod release 9 with prune failure")
+	pruneFailure := e.runShip(t, app, nil)
+	e.dockerExec(t, "rm -f /run/fake-podman/fail-rmi")
+	if pruneFailure.err != nil {
+		t.Fatalf("deploy should succeed when image pruning fails: %v\nstdout:\n%s\nstderr:\n%s", pruneFailure.err, pruneFailure.stdout, pruneFailure.stderr)
+	}
+	assertContains(t, pruneFailure.stdout, "https://img-prune.example.com")
+	assertFakeImagePresent(t, e, "imgprune", productionEnv, pruneFailureRelease)
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/image-pruning")
+	previewReleases := []string{gitRelease(t, e, app)}
+	e.ship(t, app, nil)
+	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "imgprune", "feature/image-pruning")
+	for i := 2; i <= 4; i++ {
+		previewReleases = append(previewReleases, commitImagePruneChange(t, e, app, fmt.Sprintf("preview release %d", i)))
+		e.ship(t, app, nil)
+	}
+	assertFakeImageReleases(t, e, "imgprune", previewEnv, previewReleases[2:]...)
+	assertFakeImageAbsent(t, e, "imgprune", previewEnv, previewReleases[0])
+	assertFakeImageAbsent(t, e, "imgprune", previewEnv, previewReleases[1])
+
+	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "imgprune", previewEnv)
+	e.dockerExec(t, "/usr/local/bin/ship server env reap")
+	assertFakeImageReleases(t, e, "imgprune", previewEnv)
+	e.dockerExec(t, "test ! -e "+identity.EnvRoot("imgprune", previewEnv))
+	e.dockerExec(t, "test ! -e /etc/ship/secrets/imgprune/"+previewEnv)
 }
 
 func (e *smokeEnv) testConcurrentDeploys(t *testing.T) {
@@ -2247,6 +2349,24 @@ worker = "sleep 3600"
 `)
 }
 
+func writeImagePruneFixture(t *testing.T, app string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "imgprune"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"img-prune.example.com" = "web"
+`)
+}
+
 func writeStaticFixture(t *testing.T, app string) {
 	t.Helper()
 	mustMkdir(t, filepath.Join(app, "dist"))
@@ -2282,6 +2402,66 @@ web = { port = 3000 }
 func gitRelease(t *testing.T, e *smokeEnv, app string) string {
 	t.Helper()
 	return strings.TrimSpace(e.mustRun(t, app, nil, "git", "rev-parse", "--short=12", "HEAD"))
+}
+
+func commitImagePruneChange(t *testing.T, e *smokeEnv, app string, message string) string {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "README.md"), message+"\n")
+	e.mustRun(t, app, nil, "git", "add", ".")
+	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", message)
+	return gitRelease(t, e, app)
+}
+
+func fakeImageReleases(t *testing.T, e *smokeEnv, app, env string) []string {
+	t.Helper()
+	raw := e.dockerExec(t, "podman images --format json")
+	var images []struct {
+		Labels map[string]string `json:"Labels"`
+	}
+	if err := json.Unmarshal([]byte(raw), &images); err != nil {
+		t.Fatalf("podman images JSON not parseable: %v\nraw:\n%s", err, raw)
+	}
+	var releases []string
+	for _, image := range images {
+		labels := image.Labels
+		if labels["ship.app"] != app || labels["ship.env"] != env || labels["ship.infra_id"] != identity.InfraID(app, env) {
+			continue
+		}
+		if labels["ship.release"] != "" {
+			releases = append(releases, labels["ship.release"])
+		}
+	}
+	sort.Strings(releases)
+	return releases
+}
+
+func assertFakeImageReleases(t *testing.T, e *smokeEnv, app, env string, want ...string) {
+	t.Helper()
+	got := fakeImageReleases(t, e, app, env)
+	want = append([]string(nil), want...)
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("images for %s/%s:\nwant: %v\n got: %v", app, env, want, got)
+	}
+}
+
+func assertFakeImagePresent(t *testing.T, e *smokeEnv, app, env, release string) {
+	t.Helper()
+	for _, got := range fakeImageReleases(t, e, app, env) {
+		if got == release {
+			return
+		}
+	}
+	t.Fatalf("image %s/%s:%s not found; images=%v", app, env, release, fakeImageReleases(t, e, app, env))
+}
+
+func assertFakeImageAbsent(t *testing.T, e *smokeEnv, app, env, release string) {
+	t.Helper()
+	for _, got := range fakeImageReleases(t, e, app, env) {
+		if got == release {
+			t.Fatalf("image %s/%s:%s should have been pruned; images=%v", app, env, release, fakeImageReleases(t, e, app, env))
+		}
+	}
 }
 
 func assertOnlyURL(t *testing.T, stdout string) string {

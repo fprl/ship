@@ -251,14 +251,22 @@ func destroyEnv(app, env string, purge bool) (destroySummary, error) {
 		_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
 	}
 
-	// 3. Drop the env directory.
+	// 3. Drop release images for this exact (app, env). Containers are gone,
+	// so Podman can safely remove the tags while preserving shared layers
+	// that other images still need.
+	removedImages, err := purgeReleaseImagesForEnv(app, env)
+	if err != nil {
+		return destroySummary{}, fmt.Errorf("remove release images for %s (%s): %v", app, env, err)
+	}
+
+	// 4. Drop the env directory.
 	if _, err := os.Stat(envRoot); err == nil {
 		if err := os.RemoveAll(envRoot); err != nil {
 			return destroySummary{}, err
 		}
 	}
 
-	// 4. Drop the per-env user (and its primary group).
+	// 5. Drop the per-env user (and its primary group).
 	if host.CommandSucceeds("id", "-u", user) {
 		_, _ = utils.RunChecked("userdel", []string{user}, "")
 	}
@@ -266,7 +274,7 @@ func destroyEnv(app, env string, purge bool) (destroySummary, error) {
 		_, _ = utils.RunChecked("groupdel", []string{user}, "")
 	}
 
-	// 5. Drop the per-env Podman network.
+	// 6. Drop the per-env Podman network.
 	if host.CommandSucceeds("podman", "network", "exists", network) {
 		_, _ = utils.RunChecked("podman", []string{"network", "rm", network}, "")
 	}
@@ -285,6 +293,7 @@ func destroyEnv(app, env string, purge bool) (destroySummary, error) {
 
 	return destroySummary{
 		Containers:    removedContainers,
+		Images:        removedImages,
 		CaddyFragment: caddyRemoved,
 		SecretsPurged: secretsPurged,
 	}, nil
@@ -292,6 +301,7 @@ func destroyEnv(app, env string, purge bool) (destroySummary, error) {
 
 type destroySummary struct {
 	Containers    []string
+	Images        int
 	CaddyFragment bool
 	SecretsPurged bool
 }
@@ -348,6 +358,14 @@ func renderDestroyText(app, env string, summary destroySummary) string {
 		out += "  route: removed\n"
 	} else {
 		out += "  route: none\n"
+	}
+	switch summary.Images {
+	case 0:
+		out += "  images: none\n"
+	case 1:
+		out += "  images: 1 removed\n"
+	default:
+		out += fmt.Sprintf("  images: %d removed\n", summary.Images)
 	}
 	if summary.SecretsPurged {
 		out += "  secrets: purged\n"

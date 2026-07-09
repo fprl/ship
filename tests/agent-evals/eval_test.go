@@ -163,6 +163,7 @@ func (s *evalSuite) newCase(t *testing.T) *evalCase {
 		}
 	})
 
+	e.resetShipKnownHosts(t)
 	e.startContainer(t)
 	e.configureSSH(t, "deploy")
 	e.waitForSSH(t)
@@ -172,6 +173,17 @@ func (s *evalSuite) newCase(t *testing.T) *evalCase {
 		t.Fatal("ship docs returned empty output")
 	}
 	return e
+}
+
+func (e *evalCase) resetShipKnownHosts(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(e.shipHome, ".config", "ship", "known_hosts")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (e *evalCase) startContainer(t *testing.T) {

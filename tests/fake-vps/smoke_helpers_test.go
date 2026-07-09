@@ -415,6 +415,29 @@ func mustMkdir(t *testing.T, path string) {
 	}
 }
 
+func copyShipIdentityForHome(t *testing.T, fromHome, toHome string) {
+	t.Helper()
+	sshDir := filepath.Join(toHome, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		name string
+		mode os.FileMode
+	}{
+		{name: "ship", mode: 0600},
+		{name: "ship.pub", mode: 0644},
+	} {
+		data, err := os.ReadFile(filepath.Join(fromHome, ".ssh", item.name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sshDir, item.name), data, item.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func assertContains(t *testing.T, got string, want string) {
 	t.Helper()
 	if !strings.Contains(got, want) {

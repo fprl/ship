@@ -68,13 +68,14 @@ Findings that settle it:
 
 ## Deferred / noted (not gaps)
 
-- **Proactive image pruning.** Every stack accumulates one image per
-  release on disk, independent of the build question. Today this is
-  handled *reactively* — `box doctor` reports disk pressure and the
-  future resident (RFD-0002) prunes. If it bites, promote to *proactive*:
-  keep the last N releases (rollback window) and prune older on every
-  successful deploy, as an invisible default (N not configurable). Not
-  urgent because the reactive net exists.
+- **Proactive image pruning.** *Done (v0.2.2).* Every stack accumulates
+  one image per release on disk, independent of the build question. After
+  a successful, healthy deploy ship prunes that env's release images
+  beyond an invisible window — **prod keeps 5, preview keeps 2, the live
+  release is always kept** (rolled-back-to case) — best-effort so a prune
+  failure never fails a deploy; the reaper purges a reaped preview's
+  images. `box doctor`'s disk check remains the backstop. Defaults are
+  hardcoded, not ship.toml keys (this ADR's rule).
 - **Build-location seam.** Three ways to get an image onto the box:
   on-box (today); local-save-load-over-SSH (build on the laptop,
   `podman save | ssh | podman load` — no registry, needs arch match);

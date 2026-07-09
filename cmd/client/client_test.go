@@ -558,7 +558,7 @@ func TestCommandRunnerWithoutEnvKeyPinsShipIdentity(t *testing.T) {
 	assertSSHOptionSequence(t, runner.SshOptions, "-i", filepath.Join(home, ".ssh", "ship"))
 	assertSSHOptionSequence(t, runner.SshOptions, "-o", "IdentitiesOnly=yes")
 	assertSSHOptionSequence(t, runner.SshOptions, "-o", "UserKnownHostsFile="+filepath.Join(home, ".config", "ship", "known_hosts"))
-	assertSSHOptionSequence(t, runner.SshOptions, "-o", "StrictHostKeyChecking=yes")
+	assertSSHOptionSequence(t, runner.SshOptions, "-o", "StrictHostKeyChecking=accept-new")
 	assertSSHOptionSequence(t, runner.SshOptions, "-o", "HashKnownHosts=no")
 	if !strings.Contains(runner.RsyncRemoteShell, filepath.Join(home, ".ssh", "ship")) {
 		t.Fatalf("rsync remote shell should pin ship identity, got %q", runner.RsyncRemoteShell)
@@ -585,7 +585,7 @@ func TestCommandRunnerEnvKeyWinsOverShipIdentity(t *testing.T) {
 		t.Fatalf("env key should win over ~/.ssh/ship, got %v", runner.SshOptions)
 	}
 	assertSSHOptionSequence(t, runner.SshOptions, "-o", "UserKnownHostsFile="+filepath.Join(home, ".config", "ship", "known_hosts"))
-	assertSSHOptionSequence(t, runner.SshOptions, "-o", "StrictHostKeyChecking=yes")
+	assertSSHOptionSequence(t, runner.SshOptions, "-o", "StrictHostKeyChecking=accept-new")
 	assertSSHOptionSequence(t, runner.SshOptions, "-o", "HashKnownHosts=no")
 	if runner.MemberFingerprint == "" {
 		t.Fatal("env key should derive a member fingerprint")

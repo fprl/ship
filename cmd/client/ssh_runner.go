@@ -25,7 +25,7 @@ type CommandRunner struct {
 
 func NewCommandRunner() (*CommandRunner, error) {
 	sshOpts := []string{"-o", "BatchMode=yes"}
-	knownHostOpts, err := knownhosts.CanonicalSSHOptions("yes")
+	knownHostOpts, err := knownhosts.CanonicalSSHOptions("accept-new")
 	if err != nil {
 		return nil, err
 	}
