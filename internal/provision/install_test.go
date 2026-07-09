@@ -606,6 +606,9 @@ func TestRunInstallInstallsPodmanFromUbuntuUniverse(t *testing.T) {
 	if !runner.ranCommand("apt-get", "install -y podman") {
 		t.Fatalf("expected podman to be installed via apt-get, commands: %+v", runner.commands)
 	}
+	if !runner.ranCommand("apt-get", "install -y sqlite3") {
+		t.Fatalf("expected sqlite3 to be installed via apt-get, commands: %+v", runner.commands)
+	}
 
 	loaded, err := (store.Store{Root: root}).ReadHost()
 	if err != nil {
@@ -617,6 +620,9 @@ func TestRunInstallInstallsPodmanFromUbuntuUniverse(t *testing.T) {
 	}
 	if got.Source != "ubuntu" {
 		t.Fatalf("expected podman source=ubuntu, got %+v", got)
+	}
+	if got, ok := loaded.Desired.Packages["sqlite3"]; !ok || got.Source != "ubuntu" {
+		t.Fatalf("expected sqlite3 in desired packages, got %+v", loaded.Desired.Packages)
 	}
 }
 

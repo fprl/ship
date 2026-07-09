@@ -152,6 +152,22 @@ Secret scoping:
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `rm_confirmation_required`, `unknown_preview_branch`, `production_branch_not_preview`, `operation_failed`
 
+### `data fork`
+- Purpose: Fork Production /data into the current branch Preview.
+- Usage: `ship data fork [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest.
+- Notes: Run from a Preview branch whose environment already exists. Production branches are refused. Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command. SQLite files are copied on the box with `VACUUM INTO`; other files copy with `cp -a` using reflink when supported. The client never receives data contents.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `data_fork_on_production`, `no_preview_env`, `approval_required`, `host_key_changed`, `missing_tool`, `operation_failed`
+
+### `data rm`
+- Purpose: Reset the current branch Preview /data to empty.
+- Usage: `ship data rm [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest.
+- Notes: Run from a Preview branch whose environment already exists. Production branches are refused. Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `data_fork_on_production`, `no_preview_env`, `approval_required`, `host_key_changed`, `operation_failed`
+
 ### `pin`
 - Purpose: Pin a Preview environment so the reaper leaves it running.
 - Usage: `ship pin <branch> [--config <path>]`
@@ -321,6 +337,16 @@ Secret scoping:
 - Exit codes are `0` success, `1` operation failed, `2` usage or manifest error, except `ship exec` passes through the remote command exit status after setup.
 - User-facing language is `Production <branch>` or `Preview <branch>`. Internal env slugs appear only in URLs and JSON fields.
 
+## Data forks
+
+- `ship data fork` copies Production `/data` into the current branch Preview and bounces the existing Preview containers.
+- `ship data rm` empties the current branch Preview `/data` and bounces the existing Preview containers.
+- Both commands require an existing Preview environment. If none exists, the error code is `no_preview_env` with remediation `ship`.
+- Both commands refuse Production branches with `data_fork_on_production`.
+- Owner and shipper roles may run data commands. Agents get `approval_required` because Production data is above the agent default role.
+- `ship data fork` prints forked relative file names and byte sizes, the Preview URL, and this exact PII line: `note: Production data, including any PII, now exists in this less-guarded Preview.`.
+- If no SQLite files are found, `ship data fork` still copies non-database files and prints: `note: No SQLite files found; copied non-database files from /data only.`.
+
 ## Deploy journal schema
 
 Each env has an append-only `journal.jsonl`. Each line is:
@@ -350,6 +376,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `box_rm_confirmation_required`: box rm confirmation failed; cause: box rm requires --confirm {app}; remediation: `ship box rm {app} --confirm {app}`.
 - `box_target_required`: target a box; cause: {known_boxes}; remediation: `{command}`; defaults: `command="ship box ls <box>", known_boxes="known boxes (~/.config/ship/known_hosts):\n  none known yet"`.
 - `branch_flag_requires_detached_head`: branch resolution failed; cause: --branch is only accepted on ship when HEAD is detached; remediation: `ship`.
+- `data_fork_on_production`: data command refused on Production; cause: branch {branch} maps to Production; data commands target Preview branches only; remediation: `git checkout <preview-branch>`.
 - `deploy_blocked_local_checks`: deploy blocked by local checks; cause: {detail}; remediation: `{command}`; defaults: `command="fix local checks", detail="local checks reported errors; see stderr above"`.
 - `deploy_key_missing`: bootstrap SSH key is missing; cause: {detail}; remediation: `{command}`; defaults: `command="ssh-copy-id -i ~/.ssh/ship.pub root@<ip>", detail="provider gave a password; this installs your ship key using it once; hardening then disables password login permanently"`.
 - `deploy_tmp_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.
@@ -384,6 +411,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 - `missing_tool`: host preflight failed; cause: missing host tool: {tool}; remediation: `ship box setup <ssh-target>`.
 - `multi_process_no_web_route`: route synthesis failed; cause: manifest declares multiple processes but no [routes] host and no process named "web"; remediation: `fix ship.toml`.
 - `no_deploys`: deploy journal lookup failed; cause: no deploys recorded for {app} ({env}); remediation: `ship`.
+- `no_preview_env`: preview environment lookup failed; cause: no Preview environment exists for branch {branch}; remediation: `ship`.
 - `not_a_git_repo`: git worktree required; cause: current directory is not inside a Git worktree; remediation: `git init && git add . && git commit -m "initial ship app"`.
 - `operation_failed`: operation failed; cause: {detail}; remediation: `{command}`; defaults: `command="ship status"`.
 - `operator_key_missing`: operator SSH key is missing; cause: no SSH public key source found for operator user; remediation: `{command}`.

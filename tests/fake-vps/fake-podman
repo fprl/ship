@@ -452,6 +452,9 @@ PY
         [[ -n "$line" ]] && run_env+=("$line")
       done < "$env_file"
     fi
+    if [[ -n "$data_mount" ]]; then
+      run_env+=("SHIP_FAKE_DATA_DIR=$data_mount")
+    fi
     for assignment in "${env_assignments[@]:-}"; do
       [[ -n "$assignment" ]] && run_env+=("$assignment")
     done
@@ -501,6 +504,9 @@ PY
     printf '%s\n' "$image" > "$state_dir/containers/$name.image"
     if [[ -n "$env_file" ]]; then
       printf '%s\n' "$env_file" > "$state_dir/containers/$name.env-file"
+    fi
+    if [[ -n "$data_mount" ]]; then
+      printf '%s\n' "$data_mount" > "$state_dir/containers/$name.data-mount"
     fi
     log_file="$state_dir/containers/$name.log"
     : > "$log_file"
@@ -644,6 +650,13 @@ PY
               while IFS= read -r line || [[ -n "$line" ]]; do
                 [[ -n "$line" ]] && run_env+=("$line")
               done < "$source_env_file"
+            fi
+          fi
+          data_mount_file="$state_dir/containers/$name.data-mount"
+          if [[ -f "$data_mount_file" ]]; then
+            data_mount="$(cat "$data_mount_file" 2>/dev/null || true)"
+            if [[ -n "$data_mount" ]]; then
+              run_env+=("SHIP_FAKE_DATA_DIR=$data_mount")
             fi
           fi
           env "${run_env[@]}" python3 -u "$(dirname "$0")/fake-podman.app.py" "$port_file" \

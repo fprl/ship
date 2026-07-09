@@ -432,6 +432,7 @@ func (e *smokeEnv) assertHostDoctorHealthy(t *testing.T) {
 		"host_state ok -",
 		"service_health ok -",
 		"sudoers_identity ok -",
+		"host_tools ok -",
 		"disk_space ok -",
 		"tls_certs ok -",
 		"reaper_timer ok -",
@@ -445,7 +446,7 @@ func (e *smokeEnv) assertHostDoctorHealthy(t *testing.T) {
 	if err := json.Unmarshal([]byte(rawDoctorJSON), &doctorPayload); err != nil {
 		t.Fatalf("box doctor --json output not parseable as JSON: %v\nraw:\n%s", err, rawDoctorJSON)
 	}
-	for _, id := range []string{"host_state", "service_health", "sudoers_identity", "disk_space", "tls_certs", "reaper_timer", "deploy_journals"} {
+	for _, id := range []string{"host_state", "service_health", "sudoers_identity", "host_tools", "disk_space", "tls_certs", "reaper_timer", "deploy_journals"} {
 		check := findDoctorCheck(t, doctorPayload, id)
 		if check.Status != "ok" || check.Evidence == "" || check.Remediation == "" {
 			t.Fatalf("unexpected healthy doctor check %s: %+v", id, check)

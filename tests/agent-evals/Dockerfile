@@ -11,6 +11,7 @@ RUN apt-get update \
     openssh-server \
     python3 \
     rsync \
+    sqlite3 \
     sudo \
   && rm -rf /var/lib/apt/lists/*
 

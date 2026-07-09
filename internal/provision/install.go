@@ -1243,8 +1243,9 @@ func desiredHost(opts InstallOptions) store.HostDesired {
 		ingress = store.HostIngressDesired{Expose: store.ExposePrivate, Tunnel: store.TunnelNone}
 	}
 	packages := map[string]store.DesiredPackage{
-		"caddy":  {Source: "caddy-apt", Track: "stable"},
-		"podman": {Source: "ubuntu", Track: "noble"},
+		"caddy":   {Source: "caddy-apt", Track: "stable"},
+		"podman":  {Source: "ubuntu", Track: "noble"},
+		"sqlite3": {Source: "ubuntu", Track: "noble"},
 	}
 	if opts.InstallLitestream {
 		packages["litestream"] = store.DesiredPackage{Source: "github-release", Version: litestreamVersion}
@@ -1329,6 +1330,7 @@ func essentialPackages() []string {
 		"gnupg",
 		"jq",
 		"rsync",
+		"sqlite3",
 		"sudo",
 		"ufw",
 		"unattended-upgrades",

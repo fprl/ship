@@ -1035,6 +1035,8 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "preview resolve", command: serverAppPreviewResolveCommand("api", "feat/x")},
 		{name: "preview pin", command: serverAppPreviewPinCommand("api", "feat/x")},
 		{name: "preview unpin", command: serverAppPreviewUnpinCommand("api", "feat/x")},
+		{name: "data fork", command: serverAppDataForkCommand("api", "prod", "feat-x-abcd")},
+		{name: "data rm", command: serverAppDataRmCommand("api", "feat-x-abcd")},
 		{name: "secret set", command: serverAppSecretSetCommand("api", "production", "DATABASE_URL")},
 		{name: "secret list", command: serverAppSecretListCommand("api", "production", false)},
 		{name: "secret list json", command: serverAppSecretListCommand("api", "production", true)},
@@ -1350,6 +1352,63 @@ func TestServerAppPreviewCommands(t *testing.T) {
 				t.Fatalf("unexpected command:\nwant: %s\n got: %s", tt.want, tt.got)
 			}
 		})
+	}
+}
+
+func TestServerAppDataCommands(t *testing.T) {
+	tests := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{
+			name: "fork",
+			got:  serverAppDataForkCommand("api", "prod", "feat-x-abcd"),
+			want: "sudo -n /usr/local/bin/ship server app data fork api prod feat-x-abcd",
+		},
+		{
+			name: "rm",
+			got:  serverAppDataRmCommand("api", "feat-x-abcd"),
+			want: "sudo -n /usr/local/bin/ship server app data rm api feat-x-abcd",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Fatalf("unexpected command:\nwant: %s\n got: %s", tt.want, tt.got)
+			}
+		})
+	}
+}
+
+func TestRenderDataForkSummaryIncludesStableNotes(t *testing.T) {
+	got := renderDataForkSummary("feature/data", "https://feat.example.com", dataForkSummary{
+		Files: []dataForkFile{
+			{Path: "uploads/avatar.txt", Size: 11},
+			{Path: "app.db", Size: 8192, SQLite: true},
+		},
+		SQLiteFiles: 1,
+	})
+	for _, want := range []string{
+		"Forked data for Preview feature/data\n",
+		"  app.db 8192 bytes (sqlite)\n",
+		"  uploads/avatar.txt 11 bytes\n",
+		"preview: https://feat.example.com\n",
+		DataForkPIINote + "\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, DataForkNoSQLiteNote) {
+		t.Fatalf("SQLite summary should not include no-SQLite note:\n%s", got)
+	}
+
+	noSQLite := renderDataForkSummary("feature/uploads", "https://uploads.example.com", dataForkSummary{
+		Files: []dataForkFile{{Path: "uploads/avatar.txt", Size: 1}},
+	})
+	if !strings.Contains(noSQLite, DataForkNoSQLiteNote+"\n") {
+		t.Fatalf("no-SQLite summary missing note:\n%s", noSQLite)
 	}
 }
 

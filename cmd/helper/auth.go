@@ -28,6 +28,7 @@ const (
 	helperVerbSecretRead    helperVerb = "secret_read"
 	helperVerbSecretRemove  helperVerb = "secret_remove"
 	helperVerbPreviewPin    helperVerb = "preview_pin"
+	helperVerbData          helperVerb = "data"
 	helperVerbRemoveEnv     helperVerb = "rm"
 	helperVerbMember        helperVerb = "member"
 	helperVerbBackupCreate  helperVerb = "save"
@@ -66,6 +67,9 @@ var helperRoleMatrix = map[helperVerb]map[store.MemberRole]roleScope{
 	helperVerbPreviewPin: {
 		store.MemberRoleShipper: roleScopeAny,
 		store.MemberRoleAgent:   roleScopePreview,
+	},
+	helperVerbData: {
+		store.MemberRoleShipper: roleScopeAny,
 	},
 	helperVerbRemoveEnv: {
 		store.MemberRoleShipper: roleScopePreview,

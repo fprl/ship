@@ -8,6 +8,7 @@ Caddy-proxied request both succeed.
 """
 
 import os
+import sqlite3
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -32,9 +33,43 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _data_count(self):
+        data_dir = os.environ.get("SHIP_FAKE_DATA_DIR", "")
+        db = os.path.join(data_dir, "app.db")
+        count = "missing"
+        if os.path.exists(db):
+            with sqlite3.connect(db) as conn:
+                count = str(conn.execute("select count(*) from items").fetchone()[0])
+        body = count.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _upload_file(self):
+        data_dir = os.environ.get("SHIP_FAKE_DATA_DIR", "")
+        path = os.path.join(data_dir, "uploads", "file.txt")
+        try:
+            with open(path, "rb") as f:
+                body = f.read()
+        except OSError:
+            body = b"missing"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         if self.path == "/ship-env":
             self._ship_env()
+            return
+        if self.path == "/data-count":
+            self._data_count()
+            return
+        if self.path == "/upload-file":
+            self._upload_file()
             return
         self._ok()
 

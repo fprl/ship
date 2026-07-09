@@ -215,6 +215,24 @@ func TestRoleMatrixShipperDeniedMemberOwnerUnrestricted(t *testing.T) {
 	}
 }
 
+func TestDataForkRequiresShipperOwnerAndAgentsRequestApproval(t *testing.T) {
+	setupAuthTest(t, map[string]store.MemberRecord{
+		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
+		bobFingerprint:   {Name: "bob", Role: store.MemberRoleShipper},
+	})
+	target := authTargetForAppEnv("api", "feat-x-abcd", "data=fork", "from=prod")
+
+	setServerMemberFingerprint(aliceFingerprint)
+	if _, err := authorizeHelper(helperVerbData, target); !errcat.Is(err, errcat.CodeApprovalRequired) {
+		t.Fatalf("agent data fork err = %v, want approval_required", err)
+	}
+
+	setServerMemberFingerprint(bobFingerprint)
+	if _, err := authorizeHelper(helperVerbData, target); err != nil {
+		t.Fatalf("shipper data fork should be allowed: %v", err)
+	}
+}
+
 func TestApprovalListHumanTable(t *testing.T) {
 	requests := []store.ApprovalRequest{{
 		ID: "abc123xy",

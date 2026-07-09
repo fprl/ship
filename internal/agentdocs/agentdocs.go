@@ -653,6 +653,31 @@ var verbs = []Verb{
 		Errors:    []string{"rm_confirmation_required", "unknown_preview_branch", "production_branch_not_preview", "operation_failed"},
 	},
 	{
+		Verb:      "data fork",
+		Purpose:   "Fork Production /data into the current branch Preview.",
+		Usage:     "ship data fork [--config <path>]",
+		Flags:     []Flag{configFlag},
+		ExitCodes: normalExit,
+		Errors:    []string{"data_fork_on_production", "no_preview_env", "approval_required", "host_key_changed", "missing_tool", "operation_failed"},
+		Notes: []string{
+			"Run from a Preview branch whose environment already exists. Production branches are refused.",
+			"Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command.",
+			"SQLite files are copied on the box with `VACUUM INTO`; other files copy with `cp -a` using reflink when supported. The client never receives data contents.",
+		},
+	},
+	{
+		Verb:      "data rm",
+		Purpose:   "Reset the current branch Preview /data to empty.",
+		Usage:     "ship data rm [--config <path>]",
+		Flags:     []Flag{configFlag},
+		ExitCodes: normalExit,
+		Errors:    []string{"data_fork_on_production", "no_preview_env", "approval_required", "host_key_changed", "operation_failed"},
+		Notes: []string{
+			"Run from a Preview branch whose environment already exists. Production branches are refused.",
+			"Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command.",
+		},
+	},
+	{
 		Verb:      "pin",
 		Purpose:   "Pin a Preview environment so the reaper leaves it running.",
 		Usage:     "ship pin <branch> [--config <path>]",
@@ -1029,6 +1054,16 @@ const outputAndDataContracts = `
 - JSON errors are ` + "`{\"error\":{\"code\":\"...\",\"message\":\"...\",\"cause\":\"...\",\"remediation\":\"...\"}}`" + `.
 - Exit codes are ` + "`0`" + ` success, ` + "`1`" + ` operation failed, ` + "`2`" + ` usage or manifest error, except ` + "`ship exec`" + ` passes through the remote command exit status after setup.
 - User-facing language is ` + "`Production <branch>`" + ` or ` + "`Preview <branch>`" + `. Internal env slugs appear only in URLs and JSON fields.
+
+## Data forks
+
+- ` + "`ship data fork`" + ` copies Production ` + "`/data`" + ` into the current branch Preview and bounces the existing Preview containers.
+- ` + "`ship data rm`" + ` empties the current branch Preview ` + "`/data`" + ` and bounces the existing Preview containers.
+- Both commands require an existing Preview environment. If none exists, the error code is ` + "`no_preview_env`" + ` with remediation ` + "`ship`" + `.
+- Both commands refuse Production branches with ` + "`data_fork_on_production`" + `.
+- Owner and shipper roles may run data commands. Agents get ` + "`approval_required`" + ` because Production data is above the agent default role.
+- ` + "`ship data fork`" + ` prints forked relative file names and byte sizes, the Preview URL, and this exact PII line: ` + "`note: Production data, including any PII, now exists in this less-guarded Preview.`" + `.
+- If no SQLite files are found, ` + "`ship data fork`" + ` still copies non-database files and prints: ` + "`note: No SQLite files found; copied non-database files from /data only.`" + `.
 
 ## Deploy journal schema
 

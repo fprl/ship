@@ -19,6 +19,7 @@ type appCmd struct {
 	Logs              appLogsCmd       `cmd:"logs" help:"Tail logs for one process via podman logs."`
 	Secret            appSecretCmd     `cmd:"secret" help:"Manage the per-(app, env, key) secret store."`
 	Preview           appPreviewCmd    `cmd:"preview" help:"Manage preview branch mappings."`
+	Data              appDataCmd       `cmd:"data" help:"Manage preview data forks."`
 }
 
 func (c appCmd) BeforeApply() error {

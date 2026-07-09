@@ -99,7 +99,7 @@ func appPreflightIssues(app, env string, requiredSecrets []string) []appPrefligh
 	} else if _, err := stateStore.ReadHost(); err != nil {
 		addIssue(appPreflightHostInvalid, fmt.Sprintf("host install state is invalid: %v", err))
 	}
-	for _, tool := range []string{"podman", "rsync"} {
+	for _, tool := range []string{"podman", "rsync", "sqlite3"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			addIssue(appPreflightMissingTool, fmt.Sprintf("missing host tool: %s", tool))
 		}

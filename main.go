@@ -29,6 +29,7 @@ type cli struct {
 	Why        whyCmd           `cmd:"" group:"project" help:"Explain the latest deploy outcome for the current branch environment."`
 	Rollback   rollbackCmd      `cmd:"" group:"project" help:"Roll back the current branch environment."`
 	Rm         rmCmd            `cmd:"rm" group:"project" help:"Remove an environment by branch name."`
+	Data       dataCmd          `cmd:"" group:"project" help:"Manage Preview data forks."`
 	Pin        pinCmd           `cmd:"" group:"project" help:"Pin a preview environment so the reaper leaves it running."`
 	Unpin      unpinCmd         `cmd:"" group:"project" help:"Unpin a preview environment so normal expiry applies."`
 	Save       saveCmd          `cmd:"" group:"project" help:"Create a backup for the current branch environment."`
@@ -301,6 +302,37 @@ func (c rmCmd) Run() error {
 		return err
 	}
 	client.CmdRm(root, c.Branch, c.Confirm)
+	return nil
+}
+
+type dataCmd struct {
+	Fork dataForkCmd `cmd:"" help:"Fork Production /data into this branch's Preview."`
+	Rm   dataRmCmd   `cmd:"rm" help:"Reset this branch's Preview /data to empty."`
+}
+
+type dataForkCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+}
+
+func (c dataForkCmd) Run() error {
+	root, err := projectAppRoot(c.Config)
+	if err != nil {
+		return err
+	}
+	client.CmdDataFork(root)
+	return nil
+}
+
+type dataRmCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+}
+
+func (c dataRmCmd) Run() error {
+	root, err := projectAppRoot(c.Config)
+	if err != nil {
+		return err
+	}
+	client.CmdDataRm(root)
 	return nil
 }
 

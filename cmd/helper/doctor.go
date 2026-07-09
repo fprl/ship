@@ -33,6 +33,7 @@ const (
 	doctorCheckHostState      = "host_state"
 	doctorCheckServiceHealth  = "service_health"
 	doctorCheckSudoersID      = "sudoers_identity"
+	doctorCheckHostTools      = "host_tools"
 	doctorCheckDiskSpace      = "disk_space"
 	doctorCheckTLSCerts       = "tls_certs"
 	doctorCheckReaperTimer    = "reaper_timer"
@@ -307,6 +308,7 @@ func doctorChecksFor(opts doctorOptions) []store.DoctorCheck {
 		doctorHostStateCheck(opts.StateStore, opts.BoxTarget),
 		doctorServiceHealthCheck(opts.StateStore, opts.Service, opts.BoxTarget),
 		doctorSudoersIdentityCheck(opts.BoxTarget),
+		doctorHostToolsCheck(opts.BoxTarget),
 		doctorDiskSpaceCheck(opts.Disk, opts.BoxTarget),
 		doctorTLSCertsCheck(opts.TLSStatuses, opts.Now(), opts.BoxTarget),
 		doctorReaperTimerCheck(opts.Timer, opts.BoxTarget),
@@ -385,6 +387,19 @@ func doctorSudoersIdentityCheck(boxTarget string) store.DoctorCheck {
 		return doctorCheck(doctorCheckSudoersID, doctorStatusDegraded, strings.Join(findings, "; "), doctorBoxSetupCommand(boxTarget))
 	}
 	return doctorCheck(doctorCheckSudoersID, doctorStatusOK, "operator and deploy sudoers grants are split", doctorRerunCommand(boxTarget))
+}
+
+func doctorHostToolsCheck(boxTarget string) store.DoctorCheck {
+	var missing []string
+	for _, tool := range []string{"sqlite3"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			missing = append(missing, tool)
+		}
+	}
+	if len(missing) > 0 {
+		return doctorCheck(doctorCheckHostTools, doctorStatusFailed, "missing host tools: "+strings.Join(missing, ", "), doctorBoxSetupCommand(boxTarget))
+	}
+	return doctorCheck(doctorCheckHostTools, doctorStatusOK, "sqlite3 available", doctorRerunCommand(boxTarget))
 }
 
 type diskUsage struct {

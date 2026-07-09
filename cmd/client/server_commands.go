@@ -181,6 +181,14 @@ func serverAppPreviewUnpinCommand(appName, branch string) string {
 	return serverCommand("app", "preview", "unpin", appName, branch)
 }
 
+func serverAppDataForkCommand(appName, prodEnv, previewEnv string) string {
+	return serverCommand("app", "data", "fork", appName, prodEnv, previewEnv)
+}
+
+func serverAppDataRmCommand(appName, previewEnv string) string {
+	return serverCommand("app", "data", "rm", appName, previewEnv)
+}
+
 func serverAppSecretSetCommand(appName, envName, key string) string {
 	return serverCommand("app", "secret", "set", appName, envName, key)
 }

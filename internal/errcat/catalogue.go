@@ -24,6 +24,8 @@ const (
 	CodeBehindProduction                  Code = "behind_production"
 	CodeSecretScopeConflict               Code = "secret_scope_conflict"
 	CodeProductionBranchNotPreview        Code = "production_branch_not_preview"
+	CodeDataForkOnProduction              Code = "data_fork_on_production"
+	CodeNoPreviewEnv                      Code = "no_preview_env"
 	CodeMultiProcessNoWebRoute            Code = "multi_process_no_web_route"
 	CodeSecretMissing                     Code = "secret_missing"
 	CodeUnknownPreviewBranch              Code = "unknown_preview_branch"
@@ -166,6 +168,18 @@ var catalogue = map[Code]Entry{
 		CauseTemplate:       "branch {branch} maps to Production",
 		RemediationTemplate: "{command}",
 		Defaults:            Fields{"command": "ship pin <preview-branch>"},
+	},
+	CodeDataForkOnProduction: {
+		Code:                CodeDataForkOnProduction,
+		MessageTemplate:     "data command refused on Production",
+		CauseTemplate:       "branch {branch} maps to Production; data commands target Preview branches only",
+		RemediationTemplate: "git checkout <preview-branch>",
+	},
+	CodeNoPreviewEnv: {
+		Code:                CodeNoPreviewEnv,
+		MessageTemplate:     "preview environment lookup failed",
+		CauseTemplate:       "no Preview environment exists for branch {branch}",
+		RemediationTemplate: "ship",
 	},
 	CodeMultiProcessNoWebRoute: {
 		Code:                CodeMultiProcessNoWebRoute,

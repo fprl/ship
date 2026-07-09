@@ -64,6 +64,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("phase 1 acceptance init ship branch and sslip", env.testPhase1AcceptanceAndZeroDNS)
 	t.Run("member add ls rm manages deploy access", env.testMemberAccess)
 	t.Run("agent role prod ship approval flow", env.testAgentRoleApprovalFlow)
+	t.Run("data fork and rm", env.testDataForks)
 	t.Run("release command failure leaves old traffic unchanged", env.testReleaseCommandFailure)
 	t.Run("probe failure explains old traffic kept serving", env.testProbeFailureWhy)
 	t.Run("caddy switch failure restores runtime state", env.testCaddySwitchFailureRollback)
@@ -1079,6 +1080,136 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	journal := e.ssh(t, "cat "+identity.DeployJournalFile("roleapi", productionEnv))
 	assertContains(t, journal, `"name":"agent-role"`)
 	assertContains(t, journal, `"role":"agent"`)
+}
+
+func (e *smokeEnv) testDataForks(t *testing.T) {
+	e.ensureSmokeHostSeed(t)
+	app := filepath.Join(e.tmp, "data-api")
+	mustMkdir(t, app)
+	writeDataForkFixture(t, app, "dataapi", "data.example.com")
+	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+	e.ship(t, app, nil)
+	e.ship(t, app, nil, "exec", "sqlite3", "/data/app.db", "CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT); INSERT INTO items(name) VALUES ('one'), ('two'), ('three');")
+	e.ship(t, app, nil, "exec", "sh", "-c", "mkdir -p /data/uploads && printf prod-upload > /data/uploads/file.txt")
+	prodHash := remoteDataHash(t, e, "dataapi", productionEnv)
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/data")
+	mustWrite(t, filepath.Join(app, "README.md"), "data preview\n")
+	e.mustRun(t, app, nil, "git", "add", ".")
+	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "data preview")
+	previewURL := assertOnlyURL(t, e.ship(t, app, nil))
+	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "dataapi", "feature/data")
+
+	forkOut := e.ship(t, app, nil, "data", "fork")
+	for _, want := range []string{
+		"Forked data for Preview feature/data\n",
+		"app.db ",
+		"(sqlite)",
+		"uploads/file.txt",
+		"preview: " + previewURL + "\n",
+		"note: Production data, including any PII, now exists in this less-guarded Preview.\n",
+	} {
+		assertContains(t, forkOut, want)
+	}
+	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/data-count")); got != "3" {
+		t.Fatalf("preview row count after fork = %q, want 3", got)
+	}
+	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/upload-file")); got != "prod-upload" {
+		t.Fatalf("preview upload after fork = %q", got)
+	}
+	if got := remoteDataHash(t, e, "dataapi", productionEnv); got != prodHash {
+		t.Fatalf("prod data changed after fork:\nbefore:\n%s\nafter:\n%s", prodHash, got)
+	}
+
+	e.ship(t, app, nil, "exec", "sqlite3", "/data/app.db", "INSERT INTO items(name) VALUES ('preview-only');")
+	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/data-count")); got != "4" {
+		t.Fatalf("preview write row count = %q, want 4", got)
+	}
+	e.ship(t, app, nil, "data", "fork")
+	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/data-count")); got != "3" {
+		t.Fatalf("preview row count after refresh = %q, want 3", got)
+	}
+	if got := remoteDataHash(t, e, "dataapi", productionEnv); got != prodHash {
+		t.Fatalf("prod data changed after refresh:\nbefore:\n%s\nafter:\n%s", prodHash, got)
+	}
+
+	rmOut := e.ship(t, app, nil, "data", "rm")
+	assertContains(t, rmOut, "Reset data for Preview feature/data\n")
+	assertContains(t, rmOut, "preview: "+previewURL+"\n")
+	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/data-count")); got != "missing" {
+		t.Fatalf("preview row count after data rm = %q, want missing", got)
+	}
+	e.dockerExec(t, "test ! -e "+identity.DataDir("dataapi", previewEnv)+"/app.db")
+	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, previewURL)
+
+	e.mustRun(t, app, nil, "git", "checkout", "main")
+	onProd := e.runShip(t, app, nil, "data", "fork")
+	if onProd.err == nil {
+		t.Fatal("data fork on production branch should fail")
+	}
+	assertContains(t, onProd.stdout+onProd.stderr, "data command refused on Production")
+	assertContains(t, onProd.stdout+onProd.stderr, "branch \"main\" maps to Production; data commands target Preview branches only")
+	assertContains(t, onProd.stdout+onProd.stderr, "next: git checkout <preview-branch>")
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/not-shipped")
+	noPreview := e.runShip(t, app, nil, "data", "fork")
+	if noPreview.err == nil {
+		t.Fatal("data fork without preview env should fail")
+	}
+	assertContains(t, noPreview.stdout+noPreview.stderr, "preview environment lookup failed")
+	assertContains(t, noPreview.stdout+noPreview.stderr, "no Preview environment exists for branch \"feature/not-shipped\"")
+	assertContains(t, noPreview.stdout+noPreview.stderr, "next: ship")
+
+	e.mustRun(t, app, nil, "git", "checkout", "feature/data")
+	agentKeyPath := filepath.Join(e.tmp, "data-agent")
+	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "data-agent", "-f", agentKeyPath)
+	added := e.ship(t, app, nil, "member", "add", agentKeyPath+".pub", "--role", "agent")
+	assertContains(t, added, "member added: data-agent (agent, ")
+	agentKey, err := os.ReadFile(agentKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentEnv := []string{"SHIP_SSH_KEY=" + string(agentKey)}
+	ownerPrefix := e.pathPrefix
+	agentPrefix := e.configureSSHWithKey(t, agentKeyPath)
+	t.Cleanup(func() { e.pathPrefix = ownerPrefix })
+	e.pathPrefix = agentPrefix
+	denied := e.runCommand(t, app, agentEnv, nil, e.goBin, "data", "fork")
+	if denied.err == nil {
+		t.Fatal("agent data fork should require approval")
+	}
+	deniedText := denied.stdout + denied.stderr
+	assertContains(t, deniedText, "approval required for app=dataapi env="+previewEnv+" class=preview data=fork from=prod")
+	approvalID := approvalIDFromOutput(t, deniedText)
+	e.pathPrefix = ownerPrefix
+	approved := e.ship(t, app, nil, "approve", approvalID)
+	assertContains(t, approved, "approved "+approvalID+" for data-agent")
+	e.pathPrefix = agentPrefix
+	retry := e.runCommand(t, app, agentEnv, nil, e.goBin, "data", "fork")
+	if retry.err != nil {
+		t.Fatalf("approved agent data fork should succeed: %v\nstdout:\n%s\nstderr:\n%s", retry.err, retry.stdout, retry.stderr)
+	}
+	e.pathPrefix = ownerPrefix
+
+	uploadsOnly := filepath.Join(e.tmp, "uploads-only")
+	mustMkdir(t, uploadsOnly)
+	writeDataForkFixture(t, uploadsOnly, "uploadsonly", "uploads-only.example.com")
+	e.commitFixture(t, uploadsOnly)
+	e.mustRun(t, uploadsOnly, nil, "git", "checkout", "-B", "main")
+	e.ship(t, uploadsOnly, nil)
+	e.ship(t, uploadsOnly, nil, "exec", "sh", "-c", "mkdir -p /data/uploads && printf only-upload > /data/uploads/file.txt")
+	e.mustRun(t, uploadsOnly, nil, "git", "checkout", "-B", "feature/uploads")
+	mustWrite(t, filepath.Join(uploadsOnly, "README.md"), "uploads preview\n")
+	e.mustRun(t, uploadsOnly, nil, "git", "add", ".")
+	e.mustRun(t, uploadsOnly, nil, "git", "commit", "-q", "-m", "uploads preview")
+	uploadsURL := assertOnlyURL(t, e.ship(t, uploadsOnly, nil))
+	noSQLiteOut := e.ship(t, uploadsOnly, nil, "data", "fork")
+	assertContains(t, noSQLiteOut, "note: No SQLite files found; copied non-database files from /data only.\n")
+	assertContains(t, noSQLiteOut, "preview: "+uploadsURL+"\n")
+	if got := strings.TrimSpace(e.urlBody(t, uploadsURL, "/upload-file")); got != "only-upload" {
+		t.Fatalf("uploads-only forked file = %q, want only-upload", got)
+	}
 }
 
 func (e *smokeEnv) testBoxRm(t *testing.T) {
@@ -2287,6 +2418,24 @@ web = { port = 3000 }
 `)
 }
 
+func writeDataForkFixture(t *testing.T, app, name, host string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "`+name+`"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"`+host+`" = "web"
+`)
+}
+
 func writeProbeFailFixture(t *testing.T, app string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
@@ -2494,6 +2643,12 @@ func lastNonEmptyLine(text string) string {
 		}
 	}
 	return ""
+}
+
+func remoteDataHash(t *testing.T, e *smokeEnv, app, env string) string {
+	t.Helper()
+	dir := identity.DataDir(app, env)
+	return e.dockerExec(t, "cd "+dir+" && find . -type f -print | sort | xargs sha256sum")
 }
 
 func approvalIDFromOutput(t *testing.T, output string) string {

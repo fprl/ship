@@ -10,6 +10,7 @@ RUN apt-get update \
     git \
     openssh-server \
     rsync \
+    sqlite3 \
     sudo \
   && rm -rf /var/lib/apt/lists/*
 

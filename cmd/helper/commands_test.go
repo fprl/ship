@@ -46,6 +46,8 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "preview", "resolve", "api", "feat/x"},
 		{"app", "preview", "pin", "api", "feat/x"},
 		{"app", "preview", "unpin", "api", "feat/x"},
+		{"app", "data", "fork", "api", "prod", "feat-x-abcd"},
+		{"app", "data", "rm", "api", "feat-x-abcd"},
 		{"app", "secret", "set", "api", "production", "DATABASE_URL"},
 		{"app", "secret", "list", "api", "production"},
 		{"app", "secret", "list", "--json", "api", "production"},
