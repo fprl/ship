@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.3.0
+
+Data forks — test against real prod-shaped data in a throwaway sandbox.
+A PaaS cannot do this; it does not own your data. With the SQLite
+doctrine a fork is a file copy, so it is RAM-cheap.
+
+### Added
+
+- `ship data fork` — from a preview branch, copies prod's `/data` into
+  this preview and bounces it, so the preview runs the same release
+  against prod-shaped data. SQLite files (extension + header magic) copy
+  with `VACUUM INTO` (consistent under prod's live writes); everything
+  else with `cp -a`. Prod is strictly read-only. The fork is built in a
+  temp dir and committed with an atomic `renameat2(RENAME_EXCHANGE)`, so
+  a crash before the swap leaves the preview's data intact. Re-running
+  refreshes.
+- `ship data rm` — resets this preview's `/data` to empty and bounces it.
+- Guards: preview branches only (production is refused,
+  `data_fork_on_production`); shipper/owner roles, agent →
+  `approval_required` (reading prod data is above the agent default). A
+  managed `DATABASE_URL` is untouched; a `/data` with no SQLite copies
+  the remaining files.
+- `box doctor` verifies `sqlite3` is available on the box.
+
 ## v0.2.2
 
 ### Fixed
