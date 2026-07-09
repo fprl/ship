@@ -598,3 +598,58 @@ agent-role key cannot open a shell (ssh attempt refused by
 forced-command); member ls shows roles; one new agent-eval scenario:
 recover from `approval_required` via the oracle approving. Tag v0.2.0
 when green on a real-box role round-trip.
+
+## 14. Data forks (v0.3 arc — promotes RFD-0001's fork slice)
+
+Opt-in, on-demand — never automatic. The `data` noun bucket. This is
+one of the two things a PaaS structurally cannot do (it doesn't own
+your data); with the SQLite doctrine a fork is a file copy, so it is
+RAM-cheap.
+
+Surface:
+
+```
+ship data fork        fork prod's current /data into this branch's preview
+ship data rm          reset this preview's /data to empty
+```
+
+- **`ship data fork`** — run from a **preview** branch: copies prod's
+  current `/data` into this preview's data dir, then bounces the
+  preview (stop → swap → start, same release) so it runs against
+  prod-shaped data. SQLite files (`*.db`, `*.sqlite*`) copy with
+  `VACUUM INTO` (consistent under prod's live writes, WAL-safe); other
+  `/data` files with `cp -a` (reflink when the filesystem supports it).
+  **Prod is READ-ONLY throughout — never modified.** Re-running
+  refreshes the fork.
+- **`ship data rm`** — resets this preview's `/data` to empty and
+  bounces it (clean-slate previews).
+- **Guards:** preview branch only — the production branch errors
+  `data_fork_on_production` (you cannot fork into prod, and you cannot
+  fork *from* a preview). The preview env must already exist (error
+  `no_preview_env`, remediation `ship`). Both verbs read/replace real
+  data, so they require role **shipper** or **owner**; an **agent** →
+  `approval_required` (§13) — reading prod data is above the agent
+  default.
+- **Managed DBs:** forks only what is on the box (`/data`: SQLite +
+  uploads). A managed `DATABASE_URL` is untouched — provider branching
+  plus `--branch` secrets (§6) is the managed path, deferred. If the
+  app is managed-DB-only, `data fork` copies whatever non-DB files live
+  in `/data` and says so.
+- **Output** narrates what was forked (files + sizes) and prints the
+  preview URL; a one-line note that prod data (incl. any PII) now lives
+  in a less-guarded preview. Disk cost is bounded by the preview reaper
+  (72 h TTL) and the `box doctor` disk check.
+- **Never bakes data into logs/argv** (§12); the copy runs box-side in
+  the helper (the client never touches prod data).
+
+Deferred (RFD-0001 open questions, do not build now): manifest
+`[data] fork = true` (auto-fork on preview create); a `fork_sanitize`
+hook run against the fork before first use; `ship data rewind`;
+provider branch-API integration for managed DBs.
+
+Acceptance (fake-vps): fork prod SQLite into a preview → the preview
+serves prod's rows while prod is byte-for-byte unchanged; `data rm`
+empties the preview; `data fork` on the production branch is refused;
+an agent-role key → `approval_required`; a `/data` with only uploads
+(no SQLite) copies the files; a second `data fork` refreshes. Tag
+v0.3.0 when green on a real-box fork round-trip.
