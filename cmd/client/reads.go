@@ -6,7 +6,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
@@ -36,13 +35,6 @@ type fleetEnvJSON struct {
 	ShippedBy      *deployIdentityJSON `json:"shipped_by,omitempty"`
 	Processes      []processJSON       `json:"processes"`
 	Static         *staticJSON         `json:"static,omitempty"`
-}
-
-type previewStatusJSON struct {
-	Branch     string `json:"branch"`
-	ExpiresAt  string `json:"expires_at,omitempty"`
-	Pinned     bool   `json:"pinned"`
-	LastShipAt string `json:"last_ship_at,omitempty"`
 }
 
 type processJSON struct {
@@ -304,17 +296,6 @@ func statusEnvFromFleetItem(ctx *config.AppContext, item fleetEnvJSON) statusEnv
 		ShippedBy:  item.ShippedBy,
 		Processes:  item.Processes,
 	}
-}
-
-func ageSeconds(createdAt string) int64 {
-	if createdAt == "" {
-		return 0
-	}
-	t, err := time.Parse(timeRFC3339UTC, createdAt)
-	if err != nil {
-		return 0
-	}
-	return int64(time.Since(t).Seconds())
 }
 
 func renderStatusSummary(payload statusPayload) string {

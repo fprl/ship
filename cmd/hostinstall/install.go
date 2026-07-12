@@ -34,10 +34,6 @@ type Options struct {
 	OperatorSSHPublicKeyFile string
 	DeploySSHPublicKeyFile   string
 	DeployKeyIsShipIdentity  bool
-	OperatorUser             string
-	DeployUser               string
-	Timezone                 string
-	Locale                   string
 	Ingress                  string
 	Admin                    string
 	Tailscale                bool
@@ -48,10 +44,8 @@ type Options struct {
 	CloudflareAccountID      string
 	CloudflareTunnelToken    string
 	CloudflareTunnelConfig   string
-	InstallDocker            bool
 	InstallLitestream        bool
 	CheckMode                bool
-	AssumeYes                bool
 	NarrateSetup             bool
 }
 
@@ -65,10 +59,6 @@ type Plan struct {
 	OperatorSSHPublicKeyFile string
 	DeploySSHPublicKeyFile   string
 	DeployKeyIsShipIdentity  bool
-	OperatorUser             string
-	DeployUser               string
-	Timezone                 string
-	Locale                   string
 	Ingress                  string
 	Admin                    string
 	Tailscale                bool
@@ -81,7 +71,6 @@ type Plan struct {
 	CloudflareTunnelToken    string
 	CloudflareTunnelConfig   string
 	CloudflareServiceMode    string
-	InstallDocker            bool
 	InstallLitestream        bool
 	CheckMode                bool
 	NarrateSetup             bool
@@ -94,7 +83,6 @@ type Installer struct {
 	Env    map[string]string
 
 	geteuid   func() int
-	run       func(name string, args []string, cwd string) error
 	look      func(file string) (string, error)
 	remoteOut func(plan Plan, command string) (string, error)
 	sleep     func(time.Duration)
@@ -111,7 +99,6 @@ func NewInstaller() *Installer {
 		geteuid: func() int {
 			return os.Geteuid()
 		},
-		run:   runPassthrough,
 		look:  exec.LookPath,
 		sleep: time.Sleep,
 	}
@@ -183,10 +170,6 @@ func DefaultOptions(env map[string]string) Options {
 		BootstrapUser:            "root",
 		OperatorSSHPublicKeyFile: env["SHIP_OPERATOR_SSH_PUBLIC_KEY_FILE"],
 		DeploySSHPublicKeyFile:   env["SHIP_DEPLOY_SSH_PUBLIC_KEY_FILE"],
-		OperatorUser:             envDefault(env, "SHIP_OPERATOR_USER", "operator"),
-		DeployUser:               envDefault(env, "SHIP_DEPLOY_USER", "deploy"),
-		Timezone:                 envDefault(env, "SHIP_TIMEZONE", "UTC"),
-		Locale:                   envDefault(env, "SHIP_LOCALE", "en_US.UTF-8"),
 		Ingress:                  env["SHIP_INGRESS"],
 		Admin:                    env["SHIP_ADMIN"],
 		Tailscale:                false,
@@ -197,7 +180,6 @@ func DefaultOptions(env map[string]string) Options {
 		CloudflareAccountID:      env["SHIP_CLOUDFLARE_ACCOUNT_ID"],
 		CloudflareTunnelToken:    env["SHIP_CLOUDFLARE_TUNNEL_TOKEN"],
 		CloudflareTunnelConfig:   env["SHIP_CLOUDFLARE_TUNNEL_CONFIG"],
-		InstallDocker:            envBool(env, "SHIP_INSTALL_DOCKER", false),
 		InstallLitestream:        envBool(env, "SHIP_INSTALL_LITESTREAM", false),
 		NarrateSetup:             true,
 	}
@@ -245,9 +227,6 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 		}
 	}
 
-	if opts.OperatorUser == opts.DeployUser {
-		return Plan{}, installUsageError("Operator and deploy users must be different", boxSetupCommand(opts.TargetHost, "--operator-user", "operator", "--deploy-user", "deploy"))
-	}
 	if !opts.Tailscale {
 		if opts.TailscaleAuthKey != "" {
 			return Plan{}, installUsageError("--tailscale-auth-key requires Tailscale to be enabled", boxSetupCommand(opts.TargetHost, "--tailscale", "--tailscale-auth-key", "<key>"))
@@ -295,10 +274,6 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 		OperatorSSHPublicKeyFile: operatorKeyFile,
 		DeploySSHPublicKeyFile:   deployKeyFile,
 		DeployKeyIsShipIdentity:  opts.DeployKeyIsShipIdentity,
-		OperatorUser:             opts.OperatorUser,
-		DeployUser:               opts.DeployUser,
-		Timezone:                 opts.Timezone,
-		Locale:                   opts.Locale,
 		Ingress:                  opts.Ingress,
 		Admin:                    opts.Admin,
 		Tailscale:                opts.Tailscale,
@@ -311,7 +286,6 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 		CloudflareTunnelToken:    opts.CloudflareTunnelToken,
 		CloudflareTunnelConfig:   opts.CloudflareTunnelConfig,
 		CloudflareServiceMode:    cloudflareServiceMode(opts),
-		InstallDocker:            opts.InstallDocker,
 		InstallLitestream:        opts.InstallLitestream,
 		CheckMode:                opts.CheckMode,
 		NarrateSetup:             opts.NarrateSetup,
@@ -480,12 +454,8 @@ func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) (provision.InstallSumma
 		i.printInstallSummary(plan)
 	}
 	summary, err := provision.RunInstall(context.Background(), local.Runner{}, provision.InstallOptions{
-		OperatorUser:           plan.OperatorUser,
-		DeployUser:             plan.DeployUser,
 		OperatorSSHPublicKeys:  keyLines(keyPlan.Operator),
 		DeploySSHPublicKeys:    keyLines(keyPlan.Deploy),
-		Timezone:               plan.Timezone,
-		Locale:                 plan.Locale,
 		Ingress:                plan.Ingress,
 		Admin:                  plan.Admin,
 		Tailscale:              plan.Tailscale,
@@ -496,7 +466,6 @@ func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) (provision.InstallSumma
 		CloudflareAccountID:    plan.CloudflareAccountID,
 		CloudflareTunnelToken:  plan.CloudflareTunnelToken,
 		CloudflareTunnelConfig: plan.CloudflareTunnelConfig,
-		InstallDocker:          plan.InstallDocker,
 		InstallLitestream:      plan.InstallLitestream,
 		CheckMode:              plan.CheckMode,
 		HelperBinaryPath:       helperPath,
@@ -509,12 +478,6 @@ func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) (provision.InstallSumma
 }
 
 func (i *Installer) printInstallSummary(plan Plan) {
-	if plan.Timezone != "" && plan.Timezone != "UTC" {
-		i.info("timezone: %s", plan.Timezone)
-	}
-	if plan.Locale != "" && plan.Locale != "en_US.UTF-8" {
-		i.info("locale: %s", plan.Locale)
-	}
 	if plan.Tailscale {
 		i.info("tailscale: enabled")
 		i.info("tailscale auth: %s", presentOrMissing(plan.TailscaleAuthKey, "auth key provided", "manual login required"))
@@ -530,9 +493,6 @@ func (i *Installer) printInstallSummary(plan Plan) {
 			i.info("cloudflare tunnel auth: %s", presentOrMissing(plan.CloudflareTunnelToken, "token provided", "service not enabled"))
 		}
 	}
-	if plan.InstallDocker {
-		i.info("docker: enabled")
-	}
 	if plan.InstallLitestream {
 		i.info("litestream: enabled")
 	}
@@ -547,15 +507,12 @@ func (i *Installer) dumpInstallPlan(plan Plan) error {
 	fmt.Fprintf(i.Stdout, "plan.mode=%s\n", plan.Mode)
 	fmt.Fprintf(i.Stdout, "plan.target_host=%s\n", plan.TargetHost)
 	fmt.Fprintf(i.Stdout, "plan.bootstrap_user=%s\n", plan.BootstrapUser)
-	fmt.Fprintf(i.Stdout, "plan.operator_user=%s\n", plan.OperatorUser)
-	fmt.Fprintf(i.Stdout, "plan.deploy_user=%s\n", plan.DeployUser)
 	fmt.Fprintf(i.Stdout, "plan.ingress=%s\n", plan.Ingress)
 	fmt.Fprintf(i.Stdout, "plan.admin=%s\n", plan.Admin)
 	fmt.Fprintf(i.Stdout, "plan.tailscale=%s\n", boolText(plan.Tailscale))
 	fmt.Fprintf(i.Stdout, "plan.tailscale_auth_mode=%s\n", plan.TailscaleAuthMode)
 	fmt.Fprintf(i.Stdout, "plan.cloudflare_tunnel=%s\n", boolText(plan.CloudflareTunnel))
 	fmt.Fprintf(i.Stdout, "plan.cloudflare_service_mode=%s\n", plan.CloudflareServiceMode)
-	fmt.Fprintf(i.Stdout, "plan.docker=%s\n", boolText(plan.InstallDocker))
 	fmt.Fprintf(i.Stdout, "plan.litestream=%s\n", boolText(plan.InstallLitestream))
 	fmt.Fprintf(i.Stdout, "plan.check_mode=%s\n", boolText(plan.CheckMode))
 	fmt.Fprintf(i.Stdout, "plan.operator_key=%s\n", presentOrMissingKeys(keyPlan.Operator, "present", "missing"))
@@ -839,10 +796,6 @@ func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string,
 		"setup",
 		"localhost",
 		"--mode", "local",
-		"--operator-user", plan.OperatorUser,
-		"--deploy-user", plan.DeployUser,
-		"--timezone", plan.Timezone,
-		"--locale", plan.Locale,
 		"--ingress", plan.Ingress,
 		"--admin", plan.Admin,
 		"--suppress-setup-narration",
@@ -878,9 +831,6 @@ func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string,
 		}
 	} else {
 		args = append(args, "--no-cloudflare-tunnel")
-	}
-	if plan.InstallDocker {
-		args = append(args, "--docker")
 	}
 	if plan.InstallLitestream {
 		args = append(args, "--litestream")
@@ -1174,27 +1124,6 @@ func presentOrMissingKeys(value []plannedKey, present string, missing string) st
 		return present
 	}
 	return missing
-}
-
-func runPassthrough(name string, args []string, cwd string) error {
-	cmd := exec.Command(name, args...)
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
-	cmd.Stdin = os.Stdin
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &stdout)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderr)
-	if err := cmd.Run(); err != nil {
-		return &utils.CommandError{
-			Name:   name,
-			Args:   append([]string(nil), args...),
-			Stdout: stdout.String(),
-			Stderr: stderr.String(),
-			Err:    err,
-		}
-	}
-	return nil
 }
 
 func runCaptured(name string, args []string, cwd string) (string, string, error) {
@@ -1535,11 +1464,6 @@ func deployPrivateKeyHint(plan Plan) string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
-}
-
-func nonEmptyFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Size() > 0
 }
 
 func (i *Installer) info(format string, args ...any) {

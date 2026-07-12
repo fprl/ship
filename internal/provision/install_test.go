@@ -30,12 +30,8 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	runner := &installFakeRunner{files: map[string]host.FileState{}}
 	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
 	summary, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
-		Timezone:              "UTC",
-		Locale:                "en_US.UTF-8",
 		Tailscale:             false,
 		CloudflareTunnel:      false,
 		InstallLitestream:     false,
@@ -109,8 +105,6 @@ func TestRunInstallDoesNotRestartSSHWhenConfigAlreadyConverged(t *testing.T) {
 	}}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
@@ -153,8 +147,6 @@ func TestRunInstallEnrollsAuthorizedKeysWithoutReplacingExistingMembers(t *testi
 	}}
 
 	opts := InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
@@ -201,8 +193,6 @@ func TestRunInstallSkipsPinnedLitestream(t *testing.T) {
 	}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
@@ -231,8 +221,6 @@ func TestRunInstallRejectsLitestreamChecksumMismatch(t *testing.T) {
 	runner := &installFakeRunner{files: map[string]host.FileState{}}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
@@ -274,8 +262,6 @@ func TestRunInstallInstallsLitestreamAfterChecksumMatch(t *testing.T) {
 	}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
@@ -378,8 +364,6 @@ func TestRunInstallDoesNotRestartConvergedCloudflaredService(t *testing.T) {
 	}}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
@@ -422,8 +406,6 @@ func TestRunInstallRestartsCloudflaredWhenTokenChanges(t *testing.T) {
 	}}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
@@ -469,8 +451,6 @@ func TestRunInstallStartsInactiveConvergedCloudflaredService(t *testing.T) {
 	}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             false,
@@ -491,7 +471,7 @@ func TestRunInstallStartsInactiveConvergedCloudflaredService(t *testing.T) {
 	}
 }
 
-func TestRunInstallUsesHostUbuntuCodenameForDockerAndTailscaleRepos(t *testing.T) {
+func TestRunInstallUsesHostUbuntuCodenameForTailscaleRepo(t *testing.T) {
 	root := t.TempDir()
 	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
@@ -507,13 +487,10 @@ func TestRunInstallUsesHostUbuntuCodenameForDockerAndTailscaleRepos(t *testing.T
 	}}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		Tailscale:             true,
 		CloudflareTunnel:      false,
-		InstallDocker:         true,
 		InstallLitestream:     false,
 		StateRoot:             root,
 		HelperBinaryPath:      helper,
@@ -521,11 +498,7 @@ func TestRunInstallUsesHostUbuntuCodenameForDockerAndTailscaleRepos(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	dockerSource := string(runner.files["/etc/apt/sources.list.d/docker.list"].Content)
 	tailscaleSource := string(runner.files["/etc/apt/sources.list.d/tailscale.list"].Content)
-	if !strings.Contains(dockerSource, " jammy stable") {
-		t.Fatalf("docker repo did not use host codename:\n%s", dockerSource)
-	}
 	if !strings.Contains(tailscaleSource, " jammy main") {
 		t.Fatalf("tailscale repo did not use host codename:\n%s", tailscaleSource)
 	}
@@ -592,8 +565,6 @@ func TestRunInstallInstallsPodmanFromUbuntuUniverse(t *testing.T) {
 	runner := &installFakeRunner{files: map[string]host.FileState{}}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
@@ -640,8 +611,6 @@ func TestRunInstallCreatesIngressNetworkWhenAbsent(t *testing.T) {
 	}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
@@ -665,8 +634,6 @@ func TestRunInstallCreatesDeployTmpDirWithStickyMode(t *testing.T) {
 	runner := &installFakeRunner{files: map[string]host.FileState{}}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
@@ -692,8 +659,6 @@ func TestRunInstallWritesCaddyContainerSystemdUnit(t *testing.T) {
 	runner := &installFakeRunner{files: map[string]host.FileState{}}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
@@ -745,8 +710,6 @@ func TestRunInstallWritesPreviewReaperAndDoctorTimers(t *testing.T) {
 	runner := &installFakeRunner{files: map[string]host.FileState{}}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
@@ -997,8 +960,6 @@ func TestRunInstallWritesPodmanHostBaseline(t *testing.T) {
 	}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
@@ -1062,8 +1023,6 @@ func TestRunInstallSkipsIngressNetworkCreationWhenPresent(t *testing.T) {
 	runner := &installFakeRunner{files: map[string]host.FileState{}}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorUser:          "operator",
-		DeployUser:            "deploy",
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
 		StateRoot:             root,
@@ -1234,8 +1193,6 @@ func (r *installFakeRunner) runGPG(command host.Command) (host.CommandResult, er
 	switch {
 	case strings.Contains(path, "caddy"):
 		return host.CommandResult{Stdout: []byte(gpgFingerprintOutput(caddyAptKeyFingerprint))}, nil
-	case strings.Contains(path, "docker"):
-		return host.CommandResult{Stdout: []byte(gpgFingerprintOutput(dockerAptKeyFingerprint))}, nil
 	case strings.Contains(path, "tailscale"):
 		return host.CommandResult{Stdout: []byte(gpgFingerprintOutput(tailscaleAptKeyFingerprint))}, nil
 	case strings.Contains(path, "cloudflare"):

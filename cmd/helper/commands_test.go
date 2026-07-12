@@ -57,7 +57,6 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "exec", "api", "production", "--", "env"},
 		{"app", "exec", "--tty", "api", "production", "--", "sh", "-c", "exit 7"},
 		{"app", "why", "api", "production"},
-		{"app", "why", "--json", "api", "production"},
 		{"app", "logs", "api", "production"},
 		{"app", "logs", "api", "production", "web"},
 		{"app", "logs", "--follow", "api", "production", "web"},
@@ -94,8 +93,8 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 }
 
 func TestServerCLIAppliesMemberFingerprintFlag(t *testing.T) {
-	setServerMemberFingerprint("")
-	t.Cleanup(func() { setServerMemberFingerprint("") })
+	setServerMemberClaims("", "")
+	t.Cleanup(func() { setServerMemberClaims("", "") })
 	parseServerCommand(t, "app", "--member-fingerprint", aliceFingerprint, "status", "--json", "api", "production")
 	if serverMemberFingerprint != aliceFingerprint {
 		t.Fatalf("server member fingerprint = %q, want %q", serverMemberFingerprint, aliceFingerprint)
@@ -103,8 +102,8 @@ func TestServerCLIAppliesMemberFingerprintFlag(t *testing.T) {
 }
 
 func TestServerCLIAppliesPinnedMemberFlag(t *testing.T) {
-	setServerMemberFingerprint("")
-	t.Cleanup(func() { setServerMemberFingerprint("") })
+	setServerMemberClaims("", "")
+	t.Cleanup(func() { setServerMemberClaims("", "") })
 	parseServerCommand(t, "app", "--member-fingerprint", bobFingerprint, "--member", "alice", "status", "--json", "api", "production")
 	if serverPinnedMemberName != "alice" || serverMemberFingerprint != bobFingerprint {
 		t.Fatalf("server member claims fingerprint=%q pinned=%q, want %q/%q", serverMemberFingerprint, serverPinnedMemberName, bobFingerprint, "alice")

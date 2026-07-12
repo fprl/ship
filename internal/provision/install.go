@@ -25,18 +25,17 @@ const (
 	litestreamSHA256X8664       = "854ed88ce4c30da887e7c099ffb2941bae2f7108db89886e7ec5ee80c81356b7"
 	litestreamSHA256ARM64       = "bc92d95bc8203a41afe9b5df552aafe1bc0781c6b4341d52970e3f1cd7220c8d"
 	caddyAptKeyFingerprint      = "65760C51EDEA2017CEA2CA15155B6D79CA56EA34"
-	dockerAptKeyFingerprint     = "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 	tailscaleAptKeyFingerprint  = "2596A99EAAB33821893C0A79458CA832957F5868"
 	cloudflareAptKeyFingerprint = "CC94B39C77AE7342A68B89628A682D308D4E5E73"
+	defaultOperatorUser         = "operator"
+	defaultDeployUser           = "deploy"
+	defaultTimezone             = "UTC"
+	defaultLocale               = "en_US.UTF-8"
 )
 
 type InstallOptions struct {
-	OperatorUser           string
-	DeployUser             string
 	OperatorSSHPublicKeys  []string
 	DeploySSHPublicKeys    []string
-	Timezone               string
-	Locale                 string
 	Ingress                string
 	Admin                  string
 	Tailscale              bool
@@ -47,7 +46,6 @@ type InstallOptions struct {
 	CloudflareAccountID    string
 	CloudflareTunnelToken  string
 	CloudflareTunnelConfig string
-	InstallDocker          bool
 	InstallLitestream      bool
 	CheckMode              bool
 	StateRoot              string
@@ -149,28 +147,28 @@ func installOperations(opts InstallOptions, stateStore store.Store, summary *Ins
 	}
 
 	add("ensure operator user", func(apply host.Apply) (bool, error) {
-		return host.EnsureUser(apply, host.User{Name: opts.OperatorUser, PrimaryGroup: opts.OperatorUser, Shell: "/bin/bash", CreateHome: true})
+		return host.EnsureUser(apply, host.User{Name: defaultOperatorUser, PrimaryGroup: defaultOperatorUser, Shell: "/bin/bash", CreateHome: true})
 	})
 	add("operator sudo group", func(apply host.Apply) (bool, error) {
-		return host.EnsureGroupMembership(apply, opts.OperatorUser, "sudo")
+		return host.EnsureGroupMembership(apply, defaultOperatorUser, "sudo")
 	})
 	add("operator sudoers", func(apply host.Apply) (bool, error) {
-		return host.EnsureSudoersFile(apply, "operator", []byte(fmt.Sprintf("%s ALL=(ALL) NOPASSWD:ALL\n", opts.OperatorUser)))
+		return host.EnsureSudoersFile(apply, "operator", []byte(fmt.Sprintf("%s ALL=(ALL) NOPASSWD:ALL\n", defaultOperatorUser)))
 	})
 	add("ensure deploy user", func(apply host.Apply) (bool, error) {
-		return host.EnsureUser(apply, host.User{Name: opts.DeployUser, PrimaryGroup: opts.DeployUser, Shell: "/bin/bash", CreateHome: true})
+		return host.EnsureUser(apply, host.User{Name: defaultDeployUser, PrimaryGroup: defaultDeployUser, Shell: "/bin/bash", CreateHome: true})
 	})
-	addAuthorizedKeys(&ops, opts.OperatorUser, opts.OperatorSSHPublicKeys, nil)
-	addAuthorizedKeys(&ops, opts.DeployUser, opts.DeploySSHPublicKeys, func(results []memberkeys.AddResult) {
+	addAuthorizedKeys(&ops, defaultOperatorUser, opts.OperatorSSHPublicKeys, nil)
+	addAuthorizedKeys(&ops, defaultDeployUser, opts.DeploySSHPublicKeys, func(results []memberkeys.AddResult) {
 		summary.DeployKeyResults = results
 	})
-	addDeployMembersStore(&ops, stateStore, opts.DeployUser, summary)
+	addDeployMembersStore(&ops, stateStore, defaultDeployUser, summary)
 
 	add("timezone", func(apply host.Apply) (bool, error) {
-		return host.EnsureTimezone(apply, opts.Timezone)
+		return host.EnsureTimezone(apply, defaultTimezone)
 	})
 	add("locale", func(apply host.Apply) (bool, error) {
-		return host.EnsureLocale(apply, opts.Locale)
+		return host.EnsureLocale(apply, defaultLocale)
 	})
 	addSSHHardening(&ops)
 	addSecurity(&ops, opts)
@@ -183,9 +181,6 @@ func installOperations(opts InstallOptions, stateStore store.Store, summary *Ins
 	addCaddy(&ops, opts)
 	if opts.InstallLitestream {
 		addLitestream(&ops)
-	}
-	if opts.InstallDocker {
-		addDocker(&ops, opts)
 	}
 	if opts.Tailscale {
 		addTailscale(&ops, opts)
@@ -414,7 +409,7 @@ func addHelper(ops *[]operation, opts InstallOptions) {
 		return host.EnsureFile(apply, host.File{Path: "/usr/local/bin/ship", Content: data, Owner: "root", Group: "root", Mode: 0755})
 	}})
 	*ops = append(*ops, operation{name: "ship sudoers", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureSudoersFile(apply, "ship", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *\n", opts.DeployUser)))
+		return host.EnsureSudoersFile(apply, "ship", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *\n", defaultDeployUser)))
 	}})
 }
 
@@ -992,36 +987,6 @@ func litestreamInstalled(apply host.Apply) (bool, error) {
 	return strings.TrimSpace(string(result.Stdout)) == litestreamVersion, nil
 }
 
-func addDocker(ops *[]operation, opts InstallOptions) {
-	*ops = append(*ops, operation{name: "docker repo", run: func(apply host.Apply) (bool, error) {
-		codename, err := ubuntuCodename(apply)
-		if err != nil {
-			return false, err
-		}
-		return host.EnsureAptRepo(apply, host.AptRepo{
-			Name:           "docker",
-			KeyURL:         "https://download.docker.com/linux/ubuntu/gpg",
-			KeyPath:        "/usr/share/keyrings/docker.asc",
-			KeyFingerprint: dockerAptKeyFingerprint,
-			SourcePath:     "/etc/apt/sources.list.d/docker.list",
-			SourceLine:     "deb [arch=" + debArch(runtime.GOARCH) + " signed-by=/usr/share/keyrings/docker.asc] https://download.docker.com/linux/ubuntu " + codename + " stable",
-		})
-	}})
-	for _, pkg := range []string{"docker-ce", "docker-ce-cli", "containerd.io", "docker-buildx-plugin", "docker-compose-plugin"} {
-		pkg := pkg
-		*ops = append(*ops, operation{name: "docker package " + pkg, run: func(apply host.Apply) (bool, error) { return host.EnsurePackage(apply, pkg) }})
-	}
-	*ops = append(*ops, operation{name: "operator docker group", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureGroupMembership(apply, opts.OperatorUser, "docker")
-	}})
-	*ops = append(*ops, operation{name: "docker daemon config", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureFile(apply, host.File{Path: "/etc/docker/daemon.json", Content: []byte("{\n  \"log-driver\": \"json-file\",\n  \"log-opts\": {\n    \"max-size\": \"10m\",\n    \"max-file\": \"3\"\n  }\n}\n"), Owner: "root", Group: "root", Mode: 0644})
-	}})
-	*ops = append(*ops, operation{name: "docker service", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureSystemdUnit(apply, host.SystemdUnit{Name: "docker.service", Action: host.Started})
-	}})
-}
-
 func addTailscale(ops *[]operation, opts InstallOptions) {
 	*ops = append(*ops, operation{name: "tailscale repo", run: func(apply host.Apply) (bool, error) {
 		codename, err := ubuntuCodename(apply)
@@ -1210,23 +1175,6 @@ func runCommand(program string, args ...string) func(host.Apply) (bool, error) {
 	}
 }
 
-func runCommandChangedUnlessOutputContains(program string, args []string, unchangedText string) func(host.Apply) (bool, error) {
-	return func(apply host.Apply) (bool, error) {
-		if apply.CheckMode {
-			return true, nil
-		}
-		result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: program, Args: args})
-		if err != nil {
-			return false, err
-		}
-		if err := commandOK(result, program, args); err != nil {
-			return false, err
-		}
-		output := strings.ToLower(string(result.Stdout) + string(result.Stderr))
-		return !strings.Contains(output, strings.ToLower(unchangedText)), nil
-	}
-}
-
 func commandOK(result host.CommandResult, program string, args []string) error {
 	if result.ExitCode == 0 {
 		return nil
@@ -1250,14 +1198,11 @@ func desiredHost(opts InstallOptions) store.HostDesired {
 	if opts.InstallLitestream {
 		packages["litestream"] = store.DesiredPackage{Source: "github-release", Version: litestreamVersion}
 	}
-	if opts.InstallDocker {
-		packages["docker"] = store.DesiredPackage{Source: "docker-apt", Track: "stable"}
-	}
 	return store.HostDesired{
-		Users:   store.HostUsers{Operator: opts.OperatorUser, Deploy: opts.DeployUser},
+		Users:   store.HostUsers{Operator: defaultOperatorUser, Deploy: defaultDeployUser},
 		Ingress: ingress,
 		Features: store.HostFeatures{
-			Docker:     opts.InstallDocker,
+			Docker:     false,
 			Litestream: opts.InstallLitestream,
 		},
 		Packages: packages,
@@ -1300,18 +1245,6 @@ func writeApplyState(stateStore store.Store, opts InstallOptions, applyID string
 }
 
 func normalizeOptions(opts InstallOptions) InstallOptions {
-	if opts.OperatorUser == "" {
-		opts.OperatorUser = "operator"
-	}
-	if opts.DeployUser == "" {
-		opts.DeployUser = "deploy"
-	}
-	if opts.Timezone == "" {
-		opts.Timezone = "UTC"
-	}
-	if opts.Locale == "" {
-		opts.Locale = "en_US.UTF-8"
-	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -1369,17 +1302,6 @@ func osReleaseValue(content []byte, key string) string {
 		return strings.Trim(strings.TrimSpace(value), `"'`)
 	}
 	return ""
-}
-
-func debArch(goarch string) string {
-	switch goarch {
-	case "amd64":
-		return "amd64"
-	case "arm64":
-		return "arm64"
-	default:
-		return goarch
-	}
 }
 
 func litestreamArch(goarch string) string {

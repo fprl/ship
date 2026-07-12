@@ -148,13 +148,6 @@ func manifestNextCommand(details []string) string {
 	return "fix ship.toml"
 }
 
-func manifestCommandFromMessage(message string) string {
-	if manifestMissing(message) {
-		return "ship init"
-	}
-	return "fix ship.toml"
-}
-
 func dockerfileMissingDetails(details []string) bool {
 	for _, detail := range details {
 		if dockerfileMissingMessage(detail) {

@@ -8,9 +8,8 @@ import (
 )
 
 type appWhyCmd struct {
-	App  string `arg:"" help:"App name."`
-	Env  string `arg:"" help:"Env name."`
-	JSON bool   `name:"json" help:"Emit the raw deploy journal entry as JSON."`
+	App string `arg:"" help:"App name."`
+	Env string `arg:"" help:"Env name."`
 }
 
 func (c appWhyCmd) Run() error {

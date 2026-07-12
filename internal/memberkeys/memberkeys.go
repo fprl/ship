@@ -198,30 +198,6 @@ func RenderAuthorizedKeyLine(key AuthorizedKey, record store.MemberRecord) strin
 	return fmt.Sprintf("command=\"/usr/local/bin/ship server agent-shell --member %s\",restrict %s", shellEscapeForForcedCommand(name), public)
 }
 
-func Rows(keys []AuthorizedKey) []Row {
-	var rows []Row
-	for _, key := range keys {
-		if key.Material == "" {
-			continue
-		}
-		rows = append(rows, Row{
-			Name:        key.Comment,
-			KeyType:     key.Type,
-			Fingerprint: key.Fingerprint,
-		})
-	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Name != rows[j].Name {
-			return rows[i].Name < rows[j].Name
-		}
-		if rows[i].KeyType != rows[j].KeyType {
-			return rows[i].KeyType < rows[j].KeyType
-		}
-		return rows[i].Fingerprint < rows[j].Fingerprint
-	})
-	return rows
-}
-
 func RowsWithMembers(keys []AuthorizedKey, members store.MembersFile) []Row {
 	records := EffectiveMemberRecords(keys, members, nil)
 	var rows []Row

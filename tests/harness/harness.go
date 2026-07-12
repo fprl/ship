@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -23,28 +22,6 @@ type CommandResult struct {
 	Stdout string
 	Stderr string
 	Err    error
-}
-
-func (r CommandResult) Combined() string {
-	switch {
-	case r.Stdout != "" && r.Stderr != "":
-		return r.Stdout + "\n" + r.Stderr
-	case r.Stdout != "":
-		return r.Stdout
-	default:
-		return r.Stderr
-	}
-}
-
-func (r CommandResult) ExitCode() int {
-	if r.Err == nil {
-		return 0
-	}
-	var exitErr *exec.ExitError
-	if errors.As(r.Err, &exitErr) {
-		return exitErr.ExitCode()
-	}
-	return 1
 }
 
 func RepoRootForTest(t *testing.T) string {

@@ -205,5 +205,5 @@ func serverAppSecretRmCommand(appName, envName, key string) string {
 }
 
 func serverAppWhyCommand(appName, envName string) string {
-	return serverCommand("app", "why", "--json", appName, envName)
+	return serverCommand("app", "why", appName, envName)
 }

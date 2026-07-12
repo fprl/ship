@@ -97,12 +97,6 @@ var (
 	approvalNow             = func() time.Time { return time.Now().UTC() }
 )
 
-func setServerMemberFingerprint(fingerprint string) {
-	serverMemberFingerprint = strings.TrimSpace(fingerprint)
-	serverPinnedMemberName = ""
-	serverAuthorizedMember = nil
-}
-
 func setServerMemberClaims(fingerprint, member string) {
 	serverMemberFingerprint = strings.TrimSpace(fingerprint)
 	serverPinnedMemberName = strings.Join(strings.Fields(member), " ")

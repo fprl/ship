@@ -26,6 +26,15 @@ func writeClientManifest(t *testing.T, root string, body string) {
 	}
 }
 
+func readClientManifest(t *testing.T, root string) *config.Manifest {
+	t.Helper()
+	manifest, err := config.ReadManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manifest
+}
+
 func TestResolveMemberAddSourceStripsPublicKeyPathExtensions(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"alice.pub", "cami.pem"} {
@@ -166,8 +175,9 @@ func TestResolveDeployAddressMapsBranchesToEnvs(t *testing.T) {
 	writeClientDockerfile(t, root)
 	writeClientManifest(t, root, clientContainerManifest())
 	initCommittedGitApp(t, root, "main")
+	manifest := readClientManifest(t, root)
 
-	addr, err := resolveDeployAddress(root, "")
+	addr, err := resolveDeployAddressForManifest(root, "", manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +186,7 @@ func TestResolveDeployAddressMapsBranchesToEnvs(t *testing.T) {
 	}
 
 	runGit(t, root, "checkout", "-B", "feat/x")
-	addr, err = resolveDeployAddress(root, "")
+	addr, err = resolveDeployAddressForManifest(root, "", manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,8 +210,9 @@ web = { port = 3000 }
 "api.example.com" = "web"
 `)
 	initCommittedGitApp(t, root, "main")
+	manifest := readClientManifest(t, root)
 
-	addr, err := resolveDeployAddress(root, "")
+	addr, err := resolveDeployAddressForManifest(root, "", manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +221,7 @@ web = { port = 3000 }
 	}
 
 	runGit(t, root, "checkout", "-B", "stable")
-	addr, err = resolveDeployAddress(root, "")
+	addr, err = resolveDeployAddressForManifest(root, "", manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,17 +235,18 @@ func TestResolveDeployAddressDetachedBranchGate(t *testing.T) {
 	writeClientDockerfile(t, root)
 	writeClientManifest(t, root, clientContainerManifest())
 	initCommittedGitApp(t, root, "main")
+	manifest := readClientManifest(t, root)
 
-	if _, err := resolveDeployAddress(root, "feat/x"); !errcat.Is(err, errcat.CodeBranchFlagRequiresDetachedHead) {
+	if _, err := resolveDeployAddressForManifest(root, "feat/x", manifest); !errcat.Is(err, errcat.CodeBranchFlagRequiresDetachedHead) {
 		t.Fatalf("expected checked-out --branch rejection, got %v", err)
 	}
 
 	runGit(t, root, "checkout", "--detach")
-	if _, err := resolveDeployAddress(root, ""); !errcat.Is(err, errcat.CodeDetachedHeadRequiresBranch) {
+	if _, err := resolveDeployAddressForManifest(root, "", manifest); !errcat.Is(err, errcat.CodeDetachedHeadRequiresBranch) {
 		t.Fatalf("expected detached HEAD rejection, got %v", err)
 	}
 
-	addr, err := resolveDeployAddress(root, "feat/x")
+	addr, err := resolveDeployAddressForManifest(root, "feat/x", manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,8 +259,9 @@ func TestResolveDeployAddressReportsNotGitRepo(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
 	writeClientManifest(t, root, clientContainerManifest())
+	manifest := readClientManifest(t, root)
 
-	_, err := resolveDeployAddress(root, "")
+	_, err := resolveDeployAddressForManifest(root, "", manifest)
 	if !errcat.Is(err, errcat.CodeNotAGitRepo) || !strings.Contains(err.Error(), "next:") {
 		t.Fatalf("expected not_a_git_repo with next step, got %v", err)
 	}
@@ -436,33 +449,6 @@ func TestWriteDeployManifestOverlaysRoutesAsParseableTOML(t *testing.T) {
 	}
 	if strings.Contains(string(data), "tls") {
 		t.Fatalf("deploy manifest overlay must not write manifest tls:\n%s", string(data))
-	}
-}
-
-func TestResolveDeployAddressDetectsStagedAndUnstagedDirtyState(t *testing.T) {
-	root := t.TempDir()
-	writeClientDockerfile(t, root)
-	writeClientManifest(t, root, clientContainerManifest())
-	initCommittedGitApp(t, root, "main")
-
-	if err := os.WriteFile(filepath.Join(root, "unstaged.txt"), []byte("dirty"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	addr, err := resolveDeployAddress(root, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !addr.Dirty {
-		t.Fatal("unstaged file should mark worktree dirty")
-	}
-
-	runGit(t, root, "add", "unstaged.txt")
-	addr, err = resolveDeployAddress(root, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !addr.Dirty {
-		t.Fatal("staged file should mark worktree dirty")
 	}
 }
 
@@ -1117,9 +1103,10 @@ func TestServerAppListCommandSupportsJSON(t *testing.T) {
 	}
 }
 
-func TestServerAppWhyCommandUsesJSON(t *testing.T) {
+func TestServerAppWhyCommand(t *testing.T) {
+	// The helper always emits journal JSON; the command carries no flag.
 	got := serverAppWhyCommand("api", "prod")
-	want := "sudo -n /usr/local/bin/ship server app why --json api prod"
+	want := "sudo -n /usr/local/bin/ship server app why api prod"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}

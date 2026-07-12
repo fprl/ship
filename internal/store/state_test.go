@@ -93,10 +93,6 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 	}
 	assertMode(t, store.CloudflarePath(), 0600)
 
-	if got := store.SecretsDir(); got != filepath.Join(root, "secrets") {
-		t.Fatalf("unexpected secrets dir: %s", got)
-	}
-
 	if err := store.WriteDoctor(DoctorFile{
 		Version:    CurrentVersion,
 		RecordedAt: "2026-07-07T10:00:00Z",

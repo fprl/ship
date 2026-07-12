@@ -142,8 +142,6 @@ func TestFreshHostInstallEmptyAuthorizedKeysNoFlag(t *testing.T) {
 		"box", "setup", "fake-vps",
 		"--mode", "remote",
 		"--bootstrap-user", "root",
-		"--timezone", "Europe/Madrid",
-		"--locale", "en_US.UTF-8",
 		"--no-tailscale",
 		"--no-cloudflare-tunnel",
 		"--no-litestream",
@@ -167,8 +165,6 @@ func (e *smokeEnv) installHost(t *testing.T, deployPublicKeyFile string) (int, s
 	args := []string{
 		"box", "setup", "root@fake-vps",
 		"--mode", "remote",
-		"--timezone", "Europe/Madrid",
-		"--locale", "en_US.UTF-8",
 		"--no-tailscale",
 		"--no-cloudflare-tunnel",
 		"--no-litestream",

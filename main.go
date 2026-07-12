@@ -540,10 +540,6 @@ type boxSetupCmd struct {
 	SSHKey                   string `name:"ssh-key" help:"SSH private key for remote mode."`
 	OperatorSSHPublicKeyFile string `help:"SSH public key file for operator access."`
 	DeploySSHPublicKeyFile   string `help:"SSH public key file for deploy access. Default: your ship identity becomes the first member."`
-	OperatorUser             string `help:"Operator user."`
-	DeployUser               string `help:"Deploy user."`
-	Timezone                 string `help:"Host timezone."`
-	Locale                   string `help:"Host locale."`
 	Ingress                  string `help:"Ingress mode: public, cloudflare, or private."`
 	Admin                    string `help:"Admin access mode: public-ssh or tailscale."`
 	Tailscale                *bool  `negatable:"" help:"Install and configure Tailscale."`
@@ -554,10 +550,8 @@ type boxSetupCmd struct {
 	CloudflareAccountID      string `help:"Cloudflare account ID."`
 	CloudflareTunnelToken    string `help:"Cloudflare tunnel token."`
 	CloudflareTunnelConfig   string `help:"Cloudflare tunnel config path."`
-	InstallDocker            *bool  `name:"docker" negatable:"" help:"Install Docker."`
 	InstallLitestream        *bool  `name:"litestream" negatable:"" help:"Install Litestream."`
 	CheckMode                bool   `name:"check" help:"Plan changes without writing files or running mutating commands."`
-	AssumeYes                bool   `name:"yes" help:"Non-interactive mode."`
 	SuppressSetupNarration   bool   `name:"suppress-setup-narration" hidden:""`
 }
 
@@ -579,18 +573,6 @@ func (c boxSetupCmd) Run() error {
 	}
 	if c.DeploySSHPublicKeyFile != "" {
 		opts.DeploySSHPublicKeyFile = c.DeploySSHPublicKeyFile
-	}
-	if c.OperatorUser != "" {
-		opts.OperatorUser = c.OperatorUser
-	}
-	if c.DeployUser != "" {
-		opts.DeployUser = c.DeployUser
-	}
-	if c.Timezone != "" {
-		opts.Timezone = c.Timezone
-	}
-	if c.Locale != "" {
-		opts.Locale = c.Locale
 	}
 	if c.Ingress != "" {
 		opts.Ingress = c.Ingress
@@ -622,14 +604,10 @@ func (c boxSetupCmd) Run() error {
 	if c.CloudflareTunnelConfig != "" {
 		opts.CloudflareTunnelConfig = c.CloudflareTunnelConfig
 	}
-	if c.InstallDocker != nil {
-		opts.InstallDocker = *c.InstallDocker
-	}
 	if c.InstallLitestream != nil {
 		opts.InstallLitestream = *c.InstallLitestream
 	}
 	opts.CheckMode = c.CheckMode
-	opts.AssumeYes = c.AssumeYes
 	opts.NarrateSetup = !c.SuppressSetupNarration
 	if !internalLocalBoxSetupWithProvidedKeys(c) {
 		identity, err := shipidentity.EnsureShipIdentity(shipidentity.Options{Output: os.Stderr})
@@ -666,10 +644,6 @@ func cliArgs(args []string) []string {
 		return []string{"--help"}
 	}
 	return args
-}
-
-func boxTarget(configPath, target string) (string, error) {
-	return boxTargetFor(configPath, target, "ship box ls <box>")
 }
 
 func boxTargetFor(configPath, target, command string) (string, error) {

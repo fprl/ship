@@ -332,19 +332,6 @@ func ValidateHost(host string) bool {
 	return true
 }
 
-func ValidateSshTarget(target string) bool {
-	if strings.HasPrefix(target, "-") {
-		return false
-	}
-	if !strings.Contains(target, "@") {
-		return ValidateHost(target)
-	}
-	parts := strings.SplitN(target, "@", 2)
-	user := parts[0]
-	host := parts[1]
-	return SystemUserRe.MatchString(user) && ValidateHost(host)
-}
-
 func ValidateBoxHost(host string) bool {
 	if strings.HasPrefix(host, "-") || strings.Contains(host, "@") {
 		return false

@@ -26,8 +26,6 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 	opts.Mode = "remote"
 	opts.TargetHost = "203.0.113.10"
 	opts.BootstrapUser = "root"
-	opts.OperatorUser = "ops"
-	opts.DeployUser = "deployer"
 	opts.OperatorSSHPublicKeyFile = operatorKeyFile
 	opts.DeploySSHPublicKeyFile = deployKeyFile
 	opts.Ingress = "cloudflare"
@@ -35,7 +33,6 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 	opts.TailscaleAuthKey = "tskey-auth-test"
 	opts.CloudflareAPIToken = "cf-token-test"
 	opts.CloudflareAccountID = "account-test"
-	opts.InstallDocker = true
 	opts.InstallLitestream = false
 	opts.CheckMode = true
 
@@ -64,8 +61,6 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub")
 	for _, want := range []string{
 		`/tmp/ship-host-install box setup localhost --mode local`,
-		`--operator-user ops`,
-		`--deploy-user deployer`,
 		`--ingress cloudflare`,
 		`--admin tailscale`,
 		`--suppress-setup-narration`,
@@ -74,7 +69,6 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 		`--tailscale-auth-key tskey-auth-test`,
 		`--cloudflare-api-token cf-token-test`,
 		`--cloudflare-account-id account-test`,
-		`--docker`,
 		`--no-litestream`,
 		`--check`,
 	} {
@@ -240,7 +234,7 @@ func TestInstallSummaryNarrationDiet(t *testing.T) {
 	installer := NewInstaller()
 	installer.Stderr = &out
 
-	installer.printInstallSummary(Plan{Timezone: "UTC", Locale: "en_US.UTF-8"})
+	installer.printInstallSummary(Plan{})
 
 	for _, notWant := range []string{
 		"ship installer starting",
@@ -374,7 +368,6 @@ func TestPrintNextStepsForRemoteInstall(t *testing.T) {
 	installer.printNextSteps(Plan{
 		Mode:                   "remote",
 		TargetHost:             "203.0.113.12",
-		DeployUser:             "deploy",
 		DeploySSHPublicKeyFile: "/keys/deploy.pub",
 	})
 
@@ -402,7 +395,6 @@ func TestPrintNextStepsForIdentityKeyOmitsKeyEnv(t *testing.T) {
 	installer.printNextSteps(Plan{
 		Mode:                    "remote",
 		TargetHost:              "203.0.113.12",
-		DeployUser:              "deploy",
 		DeploySSHPublicKeyFile:  "/home/me/.ssh/ship.pub",
 		DeployKeyIsShipIdentity: true,
 	})

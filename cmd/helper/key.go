@@ -342,10 +342,6 @@ func memberRows(keys []authorizedKey, members store.MembersFile) []memberKeyRow 
 	return memberkeys.RowsWithMembers(keys, members)
 }
 
-func publicKeyFingerprint(body string) (string, error) {
-	return memberkeys.PublicKeyFingerprint(body)
-}
-
 func formatKeyAddResult(result keyAddResult) string {
 	role := result.Role
 	if role == "" {

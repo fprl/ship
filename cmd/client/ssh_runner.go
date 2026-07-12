@@ -98,14 +98,6 @@ func NewCommandRunner() (*CommandRunner, error) {
 	}, nil
 }
 
-func fingerprintForPrivateKeyPublicHalf(path string) (string, error) {
-	publicLine, err := publicKeyLineForPrivateKey(path)
-	if err != nil {
-		return "", err
-	}
-	return fingerprintForPublicKeyLine(publicLine)
-}
-
 func publicKeyLineForPrivateKey(path string) (string, error) {
 	stdout, stderr, code, err := runCommand("ssh-keygen", []string{"-y", "-f", path}, "")
 	if err != nil || code != 0 {

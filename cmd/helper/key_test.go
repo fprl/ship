@@ -14,16 +14,6 @@ const (
 	bobFingerprint   = "SHA256:pcC/cEQYpaTALptLsyfIG8CzllhYJfcxp1vVNQ9PFDc"
 )
 
-func TestPublicKeyFingerprintMatchesOpenSSHSHA256(t *testing.T) {
-	got, err := publicKeyFingerprint("AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != aliceFingerprint {
-		t.Fatalf("fingerprint = %q, want %q", got, aliceFingerprint)
-	}
-}
-
 func TestNormalizeAuthorizedKeysStampsMemberMetadata(t *testing.T) {
 	keys, err := normalizeAuthorizedKeys(alicePublicKey, "alice.pub")
 	if err != nil {

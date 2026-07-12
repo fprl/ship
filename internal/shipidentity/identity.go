@@ -98,22 +98,6 @@ func ReadShipIdentity(homeOverride string) (Identity, error) {
 	}, nil
 }
 
-func ShipPrivateKeyPath(homeOverride string) (string, error) {
-	home, err := homeDir(homeOverride)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".ssh", privateKeyName), nil
-}
-
-func ShipPublicKeyPath(homeOverride string) (string, error) {
-	home, err := homeDir(homeOverride)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".ssh", publicKeyName), nil
-}
-
 func DeriveMemberName(gitName, user string) string {
 	if name := sanitizeMemberName(gitName); name != "" {
 		return name

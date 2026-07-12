@@ -31,30 +31,6 @@ type readAddress struct {
 	ProductionBranch bool
 }
 
-func resolveDeployAddress(root, branchFlag string) (deployAddress, error) {
-	manifest, err := config.ReadManifest(root)
-	if err != nil {
-		return deployAddress{}, err
-	}
-	address, err := resolveDeployAddressForManifest(root, branchFlag, manifest)
-	if err != nil {
-		return deployAddress{}, err
-	}
-	ctx, err := config.LoadAppContextFromManifest(root, address.EnvName, manifest)
-	if err != nil {
-		return deployAddress{}, err
-	}
-	dirty, err := gitWorktreeDirty(root, staticServeDirs(ctx.Routes))
-	if err != nil {
-		return deployAddress{}, errcat.New(errcat.CodeOperationFailed, errcat.Fields{
-			"detail":  "git status failed; check that Git is installed and this is a valid Git worktree",
-			"command": "git status",
-		})
-	}
-	address.Dirty = dirty
-	return address, nil
-}
-
 func resolveDeployAddressForManifest(root, branchFlag string, manifest *config.Manifest) (deployAddress, error) {
 	baseCtx, err := config.LoadAppContextFromManifest(root, productionEnvName, manifest)
 	if err != nil {

@@ -9,8 +9,7 @@ import (
 )
 
 // Exported regexes used outside the package:
-//   - AppRe and NormalizeApp are consumed by `internal/cloudflare` for
-//     per-route app-name validation.
+//   - AppRe is consumed by callers that validate app names directly.
 //   - SystemUserRe is consumed by `internal/host` (the host-side
 //     primitives package) for SUDO_USER validation.
 var (
@@ -78,27 +77,6 @@ func ValidMemberRole(role MemberRole) bool {
 	default:
 		return false
 	}
-}
-
-// NormalizeApp keeps a tiny "is this a valid app name?" surface for
-// the Cloudflare per-route call site. Treats nil and empty string as
-// "no app set"; non-empty values must match AppRe.
-func NormalizeApp(value any) (string, error) {
-	if value == nil {
-		return "", nil
-	}
-	app, ok := value.(string)
-	if !ok {
-		return "", fmt.Errorf("invalid app name: %v", value)
-	}
-	app = strings.TrimSpace(app)
-	if app == "" {
-		return "", nil
-	}
-	if !AppRe.MatchString(app) {
-		return "", fmt.Errorf("invalid app name: %s", app)
-	}
-	return app, nil
 }
 
 func validateHostDesired(desired HostDesired) error {

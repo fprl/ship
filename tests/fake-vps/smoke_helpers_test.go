@@ -338,15 +338,6 @@ func (e *smokeEnv) mustRun(t *testing.T, dir string, extraEnv []string, name str
 	return result.stdout
 }
 
-func (e *smokeEnv) mustRunWithStdin(t *testing.T, dir string, extraEnv []string, stdin []byte, name string, args ...string) string {
-	t.Helper()
-	result := e.runCommand(t, dir, extraEnv, stdin, name, args...)
-	if result.err != nil {
-		t.Fatalf("%s %s failed: %v\nstdout:\n%s\nstderr:\n%s", name, strings.Join(args, " "), result.err, result.stdout, result.stderr)
-	}
-	return result.stdout
-}
-
 func (e *smokeEnv) run(t *testing.T, dir string, extraEnv []string, name string, args ...string) commandResult {
 	t.Helper()
 	return e.runCommand(t, dir, extraEnv, nil, name, args...)
