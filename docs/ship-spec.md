@@ -204,6 +204,11 @@ ship rollback [release]        previous release of the current branch's env;
                           release = commit short-sha (from ship status)
 ship rm <branch> [--confirm <name>]   destroy an environment
 ship pin <branch> / ship unpin <branch>
+ship preview password [--rotate]   print/rotate the team password and
+                          bypass token for this app's protected
+                          previews (§15)
+ship share [--rm]         mint/print (or revoke) the capability link
+                          for this preview (§15)
 ship secret set <KEY> [--preview|--branch <name>]   stdin-only (§6)
 ship secret ls [--json] / ship secret rm <KEY> [--preview|--branch <name>]
 ship save [--to path] / ship restore --from <id|path>   existing backup/restore
@@ -342,6 +347,13 @@ ship box rm <app> [--confirm <app>]   destroy an app and all its envs
 ship box forget <box>     drop this box's host-key pin from
                           ~/.config/ship/known_hosts (decommission;
                           pairs with box rm; box setup re-establishes)
+ship box status <box> [--json]   one-box summary: helper version vs
+                          client, update hint, disk, apps, pending
+                          approvals (§16)
+ship box update <box>     converge helper + version-owned artifacts
+                          to this client's version (§16)
+ship box notify <box> [<url>|--rm]   read/set/clear the box webhook
+                          for box-scoped events (§17)
 ship docs                 print the agent contract (§9)
 ship version
 ```
@@ -414,16 +426,18 @@ URL), `SHIP_BRANCH`, `SHIP_ENV` (`production` | `preview`),
   affected (with the current engine a failed probe means the old container
   kept serving — say so explicitly), and `next:` command.
 - `notify` (manifest key): the client or helper POSTs a JSON event
-  (`{app, env, event, release, summary, why, remediation, ts}`) on:
-  deploy aborted, deploy succeeded after a previous failure, preview
-  reaped, doctor check newly degraded/failed. `why` and `remediation`
-  carry the full journal entry, so an agent receiving the webhook can
-  act without first querying the box. Fire-and-forget, 2 s timeout,
-  never fails the operation.
+  (`{app, env, event, release, summary, why, remediation, ts}`) on the
+  **app-scoped events**: deploy aborted, deploy succeeded after a
+  previous failure, preview reaped. `why` and `remediation` carry the
+  full journal entry, so an agent receiving the webhook can act without
+  first querying the box. Fire-and-forget, 2 s timeout, never fails the
+  operation. Box-scoped events (doctor degraded, approval requested)
+  fire the **box webhook** instead — once per event, never per app
+  (§17).
 - `box setup` installs a doctor timer (daily, systemd — same pattern as
-  the reaper): newly degraded or failed checks fire `notify` with their
-  remediation. Set-and-forget means the box reports in; nobody has to
-  remember to run doctor.
+  the reaper): newly degraded or failed checks fire the box webhook
+  (§17) with their remediation. Set-and-forget means the box reports
+  in; nobody has to remember to run doctor.
 
 ## 8. Zero-DNS URLs
 
@@ -571,7 +585,8 @@ ship approve <id>           grant one-shot; requests expire in 15 min
 - Out-of-role → errcat `approval_required` carrying the request id and
   the literal `ship approve <id>`; the helper mints the request into a
   box-global queue; a `notify` event `approval_requested` fires with
-  the same payload. Approvals are one-shot and journaled.
+  the same payload (to the box webhook once v0.4.0 lands, §17).
+  Approvals are one-shot and journaled.
 - Scope rule (AGENT.md verbatim): members and approvals belong to the
   box; secrets, envs, and journals belong to the app. Per-app
   membership is explicitly parked (a future role-scope extension, not
@@ -653,3 +668,152 @@ empties the preview; `data fork` on the production branch is refused;
 an agent-role key → `approval_required`; a `/data` with only uploads
 (no SQLite) copies the files; a second `data fork` refreshes. Tag
 v0.3.0 when green on a real-box fork round-trip.
+
+## 15. Preview protection and share links (v0.4 arc — promotes RFD-0004 #10)
+
+Previews are for your team, not the internet. One manifest line and
+every preview URL asks for the team password; prod stays public,
+always. A share link hands one preview to one outsider without handing
+over the password.
+
+Surface:
+
+```
+ship preview password [--rotate]   print (or rotate) the team password +
+                                   bypass token for this app's previews
+ship share [--rm]                  mint/print (or revoke) this preview's
+                                   share link
+```
+
+```toml
+[previews]              # NEW section: preview *behavior* (not env vars —
+protected = true        # [env.preview] stays a pure variable overlay)
+```
+
+- **Opt-in in v0.4.0.** Protected-by-default is a real flag-day decision
+  (RFD-0004 open question) — not made here.
+- **Mechanism:** Caddy `basic_auth` (username `team`, bcrypt hash) added
+  to **preview vhosts only** when the manifest says `protected = true`.
+  Prod vhosts never gain auth — there is no knob for it; structurally
+  impossible, not just discouraged.
+- **Password:** generated box-side (never user-chosen, never in argv or
+  logs, §12) on the first protected apply; stored with app state like a
+  secret. `ship preview password` prints it; `--rotate` regenerates and
+  re-renders the fragments of all live previews. Requires shipper/owner;
+  an agent key → `approval_required` (reading the team credential is
+  above the agent default).
+- **Automation bypass:** requests carrying `x-ship-bypass: <token>` skip
+  auth (CI smoke tests, agents, screenshot tools). The token is separate
+  from the password — rotating one never breaks the other. Printed by
+  `ship preview password`, same role gate.
+- **Probes and doctor are structurally unaffected:** they hit process
+  ports on the box, not Caddy vhosts — a protected deploy can never fail
+  its probe because of protection.
+- **`ship share`** (preview branch only): prints a capability URL —
+  `<preview-url>?ship_share=<token>`. Caddy matches a valid token, sets
+  a signed cookie, redirects to the clean URL; the cookie passes from
+  then on. One active share link per preview: re-running prints the
+  same link, `--rm` revokes it, `--rm` then `share` rotates it. Share
+  links die with the preview (reap destroys them). Requires
+  shipper/owner; agent → `approval_required`. stdout = the share URL
+  (§5).
+- **Errors:** `previews_not_protected` (password/share on an app without
+  `protected = true`; remediation: set it and `ship`),
+  `share_on_production` (share from the production branch; remediation:
+  previews only), plus existing `no_preview_env`.
+
+Deferred (do not build now): the protected-by-default flip; per-member
+credentials / SSO-grade auth; `share --ttl` self-expiry; a branded
+password page (native browser prompt is v0.4.0).
+
+Acceptance (fake-vps): protected preview → anonymous request 401, team
+password 200, bypass header 200; prod URL serves anonymously before and
+after; probe passes during a protected deploy; share token URL → cookie
+→ clean-URL 200, revoked token → 401; `--rotate` invalidates the old
+password while the bypass token keeps working; agent key on
+password/share → `approval_required`; unprotected app →
+`previews_not_protected`. Real-box: one browser round-trip (password
+prompt + share link) on a live preview. Ships in the v0.4.0 tag.
+
+## 16. Box status and update (v0.4 arc)
+
+The box tells you when it's behind, and one command catches it up. The
+helper is pushed from the client at setup, so version skew is a fact of
+life (an old helper already refuses new verbs) — v0.4.0 makes it
+visible and one-command fixable instead of a surprise.
+
+Surface:
+
+```
+ship box status <box> [--json]   one-box summary: helper version vs
+                                 client, disk, apps, pending approvals
+ship box update <box>            converge the box to this client's
+                                 version (helper + version-owned
+                                 artifacts)
+```
+
+- **`ship box status`** prints: helper version vs client version with an
+  update hint when behind (`next: ship box update <box>`), disk usage,
+  apps with env counts, pending approvals count. Any member may read.
+  `--json` is the machine view (resident substrate, RFD-0002).
+- **`ship box update`** pushes the client-matched helper binary over the
+  existing setup transfer path and re-applies **version-owned artifacts**
+  (systemd units, sudoers fragment, agent-shell) idempotently. Journals
+  box-side; narrates changes only (narration diet); exact no-op when
+  already current. Requires owner; others → `approval_required`.
+  `box setup` remains day-0 (and the recovery path); `update` is day-N.
+- **Downgrade guard:** helper newer than client → error
+  `client_behind_helper`, remediation: upgrade ship (install one-liner).
+  Never silently downgrade a box.
+- **Doctor check `helper_version`:** degraded on mismatch, remediation
+  `ship box update <box>` — so the daily timer surfaces skew through the
+  normal §7 channel without anyone remembering to look.
+
+Acceptance (fake-vps): box with a stale helper → `box status` shows
+behind and doctor degrades `helper_version`; `box update` converges
+(status clean, doctor green, journal entry); second update no-ops;
+client older than helper → `client_behind_helper`; shipper/agent
+`box update` → `approval_required`; `--json` schema asserted. Real-box:
+status → update → status round-trip on the testing box. Ships in the
+v0.4.0 tag.
+
+## 17. Notify split: app events vs box events (v0.4 arc)
+
+One box, one pager. Recorded honestly: v0.3.0 fans `doctor_degraded`
+and `approval_requested` to **every app's** webhook, so one disk spike
+on a three-app box wakes three agents. v0.4.0 splits scopes so every
+event fires exactly once, to exactly one URL.
+
+Surface:
+
+```
+ship box notify <box>            print the box webhook (unset: says so)
+ship box notify <box> <url>      set it
+ship box notify <box> --rm       clear it
+```
+
+- **App events** — `deploy_aborted`, `deploy_recovered`,
+  `preview_reaped` — fire to the app's manifest `notify` URL, as today.
+- **Box events** — `doctor_degraded`, `approval_requested`, and future
+  box-scoped events (drift, disk) — fire **once** to the box webhook,
+  and never to app URLs. With no box webhook set, box events go nowhere
+  (the journal and doctor output still record everything); setting one
+  is an explicit act, not a setup default.
+- **Bare verb reads the scalar** (§4 convention: `ls` lists collections;
+  a box has exactly one webhook by design — fan-out stays the receiver's
+  job). Read: any member. Set/clear: owner; others → `approval_required`
+  (the box webhook is where alarms go — moving it is an owner act).
+- **Payloads keep their §7 journal-grade shape**; box events carry the
+  box host, and `approval_requested` keeps the target app inside the
+  payload.
+- **Storage:** box-side state next to members/approvals — no app owns
+  it.
+- **Breaking vs v0.3.0** (zero users, no shim): app webhooks stop
+  receiving box events; CHANGELOG says so.
+
+Acceptance (fake-vps, local HTTP sink, two apps on one box): induced
+doctor degradation → exactly one POST to the box URL, zero to either
+app URL; `approval_requested` → box URL once; `deploy_aborted` → the
+owning app's URL only; read/set/`--rm` round-trip with narration; role
+matrix on set; AGENT.md regenerated (drift test covers the event
+tables). Ships in the v0.4.0 tag.

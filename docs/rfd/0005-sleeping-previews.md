@@ -30,9 +30,10 @@ ships with the wave that creates the workload, not after users complain.
   container is warm. First request pays a cold start; everything after
   is normal.
 - Surface: a manifest knob only (name pinned at spec promotion, e.g.
-  `[env.preview] sleep = "10m"`; `sleep = "never"` opts out). No new
-  verbs, no new daemon. `ship status` shows `sleeping` honestly as a
-  process state.
+  `[previews] sleep = "10m"` — the behavior section §15 introduces;
+  NOT `[env.preview]`, which is a pure env-var overlay). No new verbs,
+  no new daemon. `ship status` shows `sleeping` honestly as a process
+  state.
 
 ## Hard dependency: Preview Protection
 
