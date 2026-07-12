@@ -141,7 +141,40 @@ ship member ls
 teammate to the repo; their first `ship` will use their key and the box member
 record.
 
-## 7. Test a risky data change
+## 7. Protect a Preview
+
+Add Preview protection to `ship.toml`:
+
+```toml
+[previews]
+protected = true
+```
+
+Create and deploy a Preview branch:
+
+```bash
+git switch -c feature/billing
+ship
+```
+
+Print the generated team password and automation bypass token:
+
+```bash
+ship preview password
+```
+
+CI and agents send the token as `x-ship-bypass: <token>`.
+
+To send one outsider access without sharing the password, print a share link:
+
+```bash
+ship share
+```
+
+Opening the link grants that browser access to the clean Preview URL. Production
+never gets Preview protection.
+
+## 8. Test a risky data change
 
 Create and deploy a Preview branch first:
 
@@ -179,7 +212,7 @@ ship approve abc123xy
 
 Approvals expire after 15 minutes.
 
-## 8. Back up and restore
+## 9. Back up and restore
 
 Create a backup for the current branch environment:
 

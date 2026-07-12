@@ -106,6 +106,32 @@ The stdout URL is the Preview for that branch:
 https://feature-billing-x7q2.203-0-113-7.sslip.io
 ```
 
+Put every Preview behind one team password with one manifest line:
+
+```toml
+[previews]
+protected = true
+```
+
+Deploy the change, then print the generated password and automation bypass
+token. CI and agents send the token as `x-ship-bypass: <token>`. Rotating the
+password leaves the bypass token unchanged. Production never gets preview
+protection.
+
+```bash
+ship preview password
+ship preview password --rotate
+```
+
+Send one outsider a link instead of the team password. `ship share` prints the
+same active link until you revoke it; opening it grants that browser access to
+the clean Preview URL.
+
+```bash
+ship share
+ship share --rm
+```
+
 Useful commands during review:
 
 ```bash
@@ -289,6 +315,26 @@ Doctor JSON is a list of checks:
 ]
 ```
 
+Keep the box helper at the same version as your client:
+
+```bash
+ship box status 203.0.113.7
+ship box status 203.0.113.7 --json
+ship box update 203.0.113.7
+```
+
+Boxes set up before v0.4.0 need one `ship box setup <ssh-target>` before they
+can use `status` or `update`.
+
+App `notify` URLs receive deploy and Preview reaper events. Put disk, doctor,
+and approval alerts on the one box pager URL:
+
+```bash
+ship box notify 203.0.113.7 https://ntfy.sh/ship-box
+ship box notify 203.0.113.7
+ship box notify 203.0.113.7 --rm
+```
+
 ## Agents
 
 Agents should start with:
@@ -352,6 +398,9 @@ SMTP_URL     = "@secret:MAIL_URL"   # existing explicit form kept
 LOG_LEVEL    = "debug"
 POSTHOG_KEY  = "phc_test456"
 
+[previews]
+protected = true                    # optional; Preview-only team password
+
 release = "npx drizzle-kit migrate" # top-level only; the [deploy] section is gone
 probe   = "/healthz"                # health check for the routed process
 notify  = "https://ntfy.sh/..."     # NEW: webhook, §7
@@ -366,9 +415,10 @@ notify  = "https://ntfy.sh/..."     # NEW: webhook, §7
 | `[routes]` | Host or host/path routes to a process, static directory, or redirect. |
 | `[env]` | Committed non-secret env plus `@secret` references. |
 | `[env.preview]` | Preview-only overlay; Production ignores it. |
+| `[previews]` | Preview behavior. `protected = true` requires the generated team password on every Preview URL. |
 | `release` | Command run after build and before traffic moves. |
 | `probe` | Health path for the routed process. |
-| `notify` | Webhook URL for deploy, reaper, and doctor events. |
+| `notify` | Webhook URL for this app's deploy and Preview reaper events. |
 
 ## Secrets
 

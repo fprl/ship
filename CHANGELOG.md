@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.4.0
+
+Protected Previews and share links keep unfinished work in your team's hands:
+one generated team password, one CI bypass token, one capability link for an
+outsider — no accounts, no dashboard. Box skew now has one update command;
+each box has one pager.
+
+### Added
+
+- `[previews] protected = true` puts every Preview URL behind generated HTTP
+  basic auth (`team` is the username). `ship preview password` prints the team
+  password and automation bypass token; `--rotate` changes only the password.
+  Production can never get this auth.
+- `ship share` prints one capability URL for the current protected Preview. It
+  grants the recipient's browser access to the clean URL; re-running prints the
+  same active link, and `ship share --rm` revokes it. Links die with Previews.
+- `ship box status [<box>] [--json]` reports helper/client version, disk, apps,
+  and pending approvals. `ship box update [<box>]` converges the helper and its
+  version-owned artifacts to the client version.
+- `ship box notify [<box> [<url>]]` reads or sets the one box pager URL; `--rm`
+  clears it. Deploy and Preview reaper events stay on the app `notify` URL;
+  doctor degradation and approval requests now go once to the box URL.
+
+### Fixed
+
+- `ship box rm` now removes app-wide Preview protection credentials with the
+  app.
+- Failed deploys restore protected Caddy fragment permissions correctly.
+- Caddy reloads are serialized box-wide, preventing stale configuration races
+  during concurrent deploys, share-link changes, and Preview reaping.
+- Source-built helpers are stamped with the client version, so version skew is
+  reported correctly.
+- `ship logs --tail 0` now returns zero historical lines instead of the default
+  tail.
+- Failed restores leave live `/data` intact, and `ship box setup` works again
+  with a non-root bootstrap user after an earlier setup.
+
 ## v0.3.0
 
 Data forks — test against real prod-shaped data in a throwaway sandbox.
