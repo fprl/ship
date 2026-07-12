@@ -117,7 +117,7 @@ Secret scoping:
 ### `logs`
 - Purpose: Print logs for the current branch environment.
 - Usage: `ship logs [process] [--follow] [--tail N] [--json] [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `process`: Process name. Optional only when one process exists; `--follow`: Stream new log lines; `--tail <N>` default `100`: Number of trailing lines in non-follow mode; `--json`: Emit captured log lines as JSON. Cannot be combined with --follow.
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `process`: Process name. Optional only when one process exists; `--follow`: Stream new log lines; `--tail <N>` default `100`: Number of trailing lines. With --follow, use 0 to stream new lines only; `--json`: Emit captured log lines as JSON. Cannot be combined with --follow.
 - `--json` stdout schema: `{"app":"api","env":"prod","process":"web","lines":["line 1","line 2"]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `logs_follow_json_conflict`, `unknown_preview_branch`, `host_key_changed`, `operation_failed`

@@ -106,19 +106,28 @@ func serverApprovalApproveCommand(id string) string {
 	return serverCommand("approval", "approve", id)
 }
 
-func serverAppLogsCommand(appName, envName, process string, follow bool, tail int) string {
+func serverAppLogsCommand(appName, envName, process string, follow bool, tail *int) string {
 	args := []string{"app", "logs"}
 	if follow {
 		args = append(args, "--follow")
 	}
-	if tail > 0 && !follow {
-		args = append(args, fmt.Sprintf("--tail=%d", tail))
+	if tail != nil {
+		args = append(args, fmt.Sprintf("--tail=%d", *tail))
 	}
 	args = append(args, appName, envName)
 	if process != "" {
 		args = append(args, process)
 	}
 	return serverCommand(args...)
+}
+
+// ValidateLogsTail keeps the client-side flag contract separate from the
+// helper default: nil means the flag was omitted, while zero is valid.
+func ValidateLogsTail(tail *int) error {
+	if tail != nil && *tail < 0 {
+		return usageError("--tail must be zero or greater", "ship logs --tail 0")
+	}
+	return nil
 }
 
 func serverAppExecCommand(appName, envName string, tty bool, command []string) string {

@@ -177,11 +177,14 @@ type logsCmd struct {
 	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Process string `arg:"" optional:"" help:"Process name. Optional when only one process runs."`
 	Follow  bool   `name:"follow" short:"f" help:"Stream new log lines."`
-	Tail    int    `name:"tail" default:"100" help:"How many trailing lines to show. Ignored in --follow mode."`
+	Tail    *int   `name:"tail" help:"How many trailing lines to show. Defaults to 100 when omitted; use 0 with --follow to stream new lines only."`
 	JSON    bool   `name:"json" help:"Emit log lines as JSON instead of plain text."`
 }
 
 func (c logsCmd) Run() error {
+	if err := client.ValidateLogsTail(c.Tail); err != nil {
+		return err
+	}
 	root, err := projectAppRoot(c.Config)
 	if err != nil {
 		return err

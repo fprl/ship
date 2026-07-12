@@ -364,9 +364,12 @@ func statusClassLabel(class string) string {
 	return "Preview"
 }
 
-func CmdLogs(root string, process string, follow bool, tail int, jsonFlag bool) {
+func CmdLogs(root string, process string, follow bool, tail *int, jsonFlag bool) {
 	if follow && jsonFlag {
 		utils.DieError(errcat.New(errcat.CodeLogsFollowJSONConflict, nil), 2)
+	}
+	if err := ValidateLogsTail(tail); err != nil {
+		utils.DieError(err, 2)
 	}
 	read, err := currentReadContext(root, "logs")
 	if err != nil {

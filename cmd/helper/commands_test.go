@@ -92,6 +92,14 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 	}
 }
 
+func TestAppLogsPodmanArgsIncludesTailInFollowMode(t *testing.T) {
+	got := appLogsPodmanArgs(true, 0, "ship-api-production-web")
+	want := []string{"logs", "-f", "--tail", "0", "ship-api-production-web"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("args = %q, want %q", got, want)
+	}
+}
+
 func TestServerCLIAppliesMemberFingerprintFlag(t *testing.T) {
 	setServerMemberClaims("", "")
 	t.Cleanup(func() { setServerMemberClaims("", "") })

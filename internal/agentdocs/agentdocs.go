@@ -596,7 +596,7 @@ var verbs = []Verb{
 			configFlag,
 			{Name: "process", Purpose: "Process name. Optional only when one process exists."},
 			{Name: "--follow", Purpose: "Stream new log lines."},
-			{Name: "--tail", Value: "<N>", Default: "100", Purpose: "Number of trailing lines in non-follow mode."},
+			{Name: "--tail", Value: "<N>", Default: "100", Purpose: "Number of trailing lines. With --follow, use 0 to stream new lines only."},
 			{Name: "--json", Purpose: "Emit captured log lines as JSON. Cannot be combined with --follow."},
 		},
 		JSONSchema: schema(

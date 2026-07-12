@@ -100,7 +100,7 @@ type appLogsCmd struct {
 	Env     string `arg:"" help:"Env name."`
 	Process string `arg:"" optional:"" help:"Process name. Optional when only one process exists."`
 	Follow  bool   `name:"follow" short:"f" help:"Stream new log lines (podman logs -f)."`
-	Tail    int    `name:"tail" default:"100" help:"How many trailing lines to show. Ignored in --follow mode."`
+	Tail    int    `name:"tail" default:"100" help:"How many trailing lines to show. Defaults to 100 when omitted; use 0 with --follow to stream new lines only."`
 }
 
 func (c appLogsCmd) Run() error {
@@ -116,13 +116,7 @@ func (c appLogsCmd) Run() error {
 	if err != nil {
 		utils.DieError(err, 1)
 	}
-	logArgs := []string{"logs"}
-	if c.Follow {
-		logArgs = append(logArgs, "-f")
-	} else {
-		logArgs = append(logArgs, "--tail", fmt.Sprintf("%d", c.Tail))
-	}
-	logArgs = append(logArgs, containerName)
+	logArgs := appLogsPodmanArgs(c.Follow, c.Tail, containerName)
 	cmd := exec.Command("podman", logArgs...)
 	if c.Follow {
 		cmd.Stdout = os.Stdout
@@ -153,6 +147,15 @@ func (c appLogsCmd) Run() error {
 	}
 	_, _ = os.Stdout.Write(stdout.Bytes())
 	return nil
+}
+
+func appLogsPodmanArgs(follow bool, tail int, containerName string) []string {
+	args := []string{"logs"}
+	if follow {
+		args = append(args, "-f")
+	}
+	args = append(args, "--tail", fmt.Sprintf("%d", tail), containerName)
+	return args
 }
 
 // --- formatting / parsing ---

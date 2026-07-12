@@ -1006,8 +1006,8 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "status json", command: serverAppStatusCommand("api", "production")},
 		{name: "list text", command: serverAppListCommand(false)},
 		{name: "list json", command: serverAppListCommand(true)},
-		{name: "logs", command: serverAppLogsCommand("api", "production", "web", false, 50)},
-		{name: "logs follow", command: serverAppLogsCommand("api", "production", "", true, 0)},
+		{name: "logs", command: serverAppLogsCommand("api", "production", "web", false, intPtr(50))},
+		{name: "logs follow", command: serverAppLogsCommand("api", "production", "", true, intPtr(0))},
 		{name: "exec pipes", command: serverAppExecCommand("api", "production", false, []string{"sh", "-c", "exit 7"})},
 		{name: "exec tty", command: serverAppExecCommand("api", "production", true, []string{"env"})},
 		{name: "rollback latest", command: serverAppRollbackCommand("api", "production", "", actor)},
@@ -1042,6 +1042,57 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 			assertServerCommandCoveredBySudoers(t, tt.command)
 		})
 	}
+}
+
+func TestServerAppLogsCommandTail(t *testing.T) {
+	tests := []struct {
+		name   string
+		follow bool
+		tail   *int
+		want   string
+	}{
+		{
+			name: "unset omits tail flag",
+			want: "sudo -n /usr/local/bin/ship server app logs api production",
+		},
+		{
+			name:   "zero includes tail flag",
+			follow: true,
+			tail:   intPtr(0),
+			want:   "sudo -n /usr/local/bin/ship server app logs --follow --tail=0 api production",
+		},
+		{
+			name: "positive includes tail flag",
+			tail: intPtr(50),
+			want: "sudo -n /usr/local/bin/ship server app logs --tail=50 api production",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := ValidateLogsTail(tt.tail); err != nil {
+				t.Fatalf("ValidateLogsTail() error = %v", err)
+			}
+			got := serverAppLogsCommand("api", "production", "", tt.follow, tt.tail)
+			if got != tt.want {
+				t.Fatalf("command = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateLogsTailRejectsNegative(t *testing.T) {
+	err := ValidateLogsTail(intPtr(-1))
+	if !errcat.Is(err, errcat.CodeUsageError) {
+		t.Fatalf("ValidateLogsTail(-1) error = %v, want usage error", err)
+	}
+	if got, want := err.Error(), "command usage failed\n--tail must be zero or greater\nnext: ship logs --tail 0"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 func TestDeploySSHTargetAddsConstantDeployUser(t *testing.T) {

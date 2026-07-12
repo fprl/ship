@@ -110,6 +110,59 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 	}
 }
 
+func TestLogsTailTracksWhetherTheFlagWasSet(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want *int
+	}{
+		{name: "unset", args: []string{"logs"}},
+		{name: "zero", args: []string{"logs", "--tail", "0"}, want: intPtrMain(0)},
+		{name: "positive", args: []string{"logs", "--tail", "50"}, want: intPtrMain(50)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := &cli{}
+			parser, err := kong.New(parsed, kong.Name("ship"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parser.Parse(tt.args); err != nil {
+				t.Fatalf("parse %v: %v", tt.args, err)
+			}
+			if tt.want == nil {
+				if parsed.Logs.Tail != nil {
+					t.Fatalf("tail = %d, want unset", *parsed.Logs.Tail)
+				}
+				return
+			}
+			if parsed.Logs.Tail == nil || *parsed.Logs.Tail != *tt.want {
+				t.Fatalf("tail = %v, want %d", parsed.Logs.Tail, *tt.want)
+			}
+		})
+	}
+}
+
+func intPtrMain(v int) *int {
+	return &v
+}
+
+func TestLogsTailRejectsNegative(t *testing.T) {
+	parsed := &cli{}
+	parser, err := kong.New(parsed, kong.Name("ship"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parser.Parse([]string{"logs", "--tail=-1"}); err != nil {
+		t.Fatalf("parse negative tail: %v", err)
+	}
+	err = parsed.Logs.Run()
+	if !errcat.Is(err, errcat.CodeUsageError) {
+		t.Fatalf("logsCmd.Run() error = %v, want usage error", err)
+	}
+}
+
 func TestPublicCLIRejectsRemovedCompatibilityForms(t *testing.T) {
 	tests := [][]string{
 		{"setup", "--env", "production"},
