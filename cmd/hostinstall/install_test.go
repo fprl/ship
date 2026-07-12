@@ -173,7 +173,7 @@ func TestRunRemoteUsesUniqueHelperPathAndCleansItUp(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			const remoteHelper = "/tmp/ship-host-install.ABCDEF"
 			helper := filepath.Join(t.TempDir(), "ship-linux-amd64")
-			if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+			if err := os.WriteFile(helper, elfHeader(62), 0755); err != nil {
 				t.Fatal(err)
 			}
 

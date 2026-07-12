@@ -2,6 +2,7 @@ package helper
 
 import (
 	"archive/tar"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -188,6 +189,35 @@ func TestRestoreCopyFailureLeavesLiveDataUntouched(t *testing.T) {
 	}
 }
 
+func TestRestoreCorruptManifestLeavesLiveDataUntouched(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	dataDir := identity.DataDir("api", "production")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "keep.txt"), []byte("live data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := newReleaseMetadata("abc1234", false, "abc1234abc1234abc1234abc1234abc1234abc1234", "2026-05-30T14:30:12Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writeTestBackupTarWithManifest(t, t.TempDir(), "corrupt-manifest.tar", []byte("not = [valid"), meta)
+
+	_, err = restoreBackup("api", "production", path, "", false)
+	if err == nil || !strings.Contains(err.Error(), "validate backup manifest") {
+		t.Fatalf("restore error = %v, want backup manifest validation error", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dataDir, "keep.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "live data" {
+		t.Fatalf("live data = %q, want unchanged", got)
+	}
+}
+
 func TestRestoreDataSwapCopiesArchiveBytes(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
@@ -258,6 +288,58 @@ func writeTestBackupTarJSON(t *testing.T, dir, name string, releaseMeta releaseM
 	})
 }
 
+func writeTestBackupTarWithManifest(t *testing.T, dir, name string, manifest []byte, releaseMeta releaseMetadata) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tw := tar.NewWriter(f)
+	meta := backupMetadata{
+		SchemaVersion: 1,
+		App:           "api",
+		Env:           "production",
+		ID:            strings.TrimSuffix(name, ".tar"),
+		CreatedAt:     time.Date(2026, 5, 30, 14, 30, 12, 0, time.UTC).Format(time.RFC3339),
+		Release:       "abc1234",
+		Shape:         "container",
+		Processes:     []string{"web"},
+	}
+	for _, entry := range []struct {
+		name string
+		data []byte
+	}{
+		{"metadata.json", mustBackupJSON(t, meta)},
+		{"secrets.json", []byte("{}\n")},
+		{"ship.toml", manifest},
+		{"release.json", mustBackupJSON(t, releaseMeta)},
+	} {
+		if err := writeTarFile(tw, entry.name, entry.data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: "data/", Mode: 0755, Typeflag: tar.TypeDir}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func mustBackupJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 func writeTestBackupTar(t *testing.T, dir, name string, releaseData []byte) string {
 	t.Helper()
 	return writeTestBackupTarWithRelease(t, dir, name, func(tw *tar.Writer) error {
@@ -296,7 +378,7 @@ func writeTestBackupTarWithData(t *testing.T, dir, name string, includeData bool
 	if err := addJSON(tw, "secrets.json", map[string]string{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeTarFile(tw, "ship.toml", []byte("name = \"api\"\n"), 0644); err != nil {
+	if err := writeTarFile(tw, "ship.toml", []byte("name = \"api\"\nbox = \"example.com\"\n\n[routes]\n\"api.example.com\" = { static = \"dist\" }\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if includeData {

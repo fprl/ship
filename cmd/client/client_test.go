@@ -1732,7 +1732,7 @@ func TestClassifyBoxUpdateVersionSkew(t *testing.T) {
 		}
 	})
 
-	t.Run("different dev builds require box setup", func(t *testing.T) {
+	t.Run("different git-describe builds require box setup", func(t *testing.T) {
 		err := classifyBoxUpdate("v0.3.0-17-gabc", "v0.3.0-18-gdef", "203.0.113.7")
 		coded, ok := errcat.As(err)
 		if !ok || coded.Code() != errcat.CodeBoxVersionAmbiguous {
@@ -1742,4 +1742,24 @@ func TestClassifyBoxUpdateVersionSkew(t *testing.T) {
 			t.Fatalf("remediation = %q", got)
 		}
 	})
+}
+
+func TestIsGitDescribeVersion(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{value: "v0.4.0-5-gabc123", want: true},
+		{value: "v0.4.0", want: false},
+		{value: "v0.4.0-rc1", want: false},
+		{value: "v0.4.0-rc1-2-gabc", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			if got := isGitDescribeVersion(tt.value); got != tt.want {
+				t.Fatalf("isGitDescribeVersion(%q) = %t, want %t", tt.value, got, tt.want)
+			}
+		})
+	}
 }

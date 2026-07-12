@@ -279,33 +279,9 @@ func destroyEnv(app, env string, purge bool) (destroySummary, error) {
 		_, _ = utils.RunChecked("podman", []string{"network", "rm", network}, "")
 	}
 
-	secretsPurged := false
-	if purge {
-		secretDir := secrets.EnvDir(app, env)
-		if err := os.RemoveAll(secretDir); err != nil {
-			return destroySummary{}, fmt.Errorf("remove secrets for %s (%s): %v", app, env, err)
-		}
-		secretsPurged = true
-		appSecretDir := filepath.Dir(secretDir)
-		// App-wide generated credentials (the _preview-protection
-		// namespace) must survive preview churn but die with the app's
-		// last environment — without this the namespace keeps the app
-		// secret dir alive after box rm.
-		if remaining, err := identityAppEnvs(); err == nil {
-			last := true
-			for _, item := range remaining {
-				if item.App == app {
-					last = false
-					break
-				}
-			}
-			if last {
-				_ = os.RemoveAll(appSecretDir)
-			}
-		}
-		if dirEmpty(appSecretDir) {
-			_ = os.Remove(appSecretDir)
-		}
+	secretsPurged, err := cleanupDestroyedEnvCredentials(app, env, purge)
+	if err != nil {
+		return destroySummary{}, err
 	}
 
 	return destroySummary{
@@ -314,6 +290,46 @@ func destroyEnv(app, env string, purge bool) (destroySummary, error) {
 		CaddyFragment: caddyRemoved,
 		SecretsPurged: secretsPurged,
 	}, nil
+}
+
+func cleanupDestroyedEnvCredentials(app, env string, purge bool) (bool, error) {
+	if err := secrets.RmShareToken(app, env); err != nil && !errors.Is(err, secrets.ErrNotFound) {
+		return false, fmt.Errorf("remove share token for %s (%s): %v", app, env, err)
+	}
+
+	secretDir := secrets.EnvDir(app, env)
+	appSecretDir := filepath.Dir(secretDir)
+	if purge {
+		if err := os.RemoveAll(secretDir); err != nil {
+			return false, fmt.Errorf("remove secrets for %s (%s): %v", app, env, err)
+		}
+	}
+
+	// Preview-protection credentials are app-wide, so keep them while any env
+	// remains and remove them with the final env. This is the same condition
+	// used by the preview reaper, which always calls destroyEnv with purge.
+	if remaining, err := identityAppEnvs(); err == nil {
+		last := true
+		for _, item := range remaining {
+			if item.App == app {
+				last = false
+				break
+			}
+		}
+		if last {
+			if purge {
+				if err := os.RemoveAll(appSecretDir); err != nil {
+					return false, fmt.Errorf("remove app secrets for %s: %v", app, err)
+				}
+			} else if err := os.RemoveAll(secrets.AppDir(app, previewProtectionNamespace)); err != nil {
+				return false, fmt.Errorf("remove preview protection credentials for %s: %v", app, err)
+			}
+		}
+	}
+	if dirEmpty(appSecretDir) {
+		_ = os.Remove(appSecretDir)
+	}
+	return purge, nil
 }
 
 type destroySummary struct {

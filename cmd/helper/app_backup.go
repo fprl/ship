@@ -228,6 +228,11 @@ func restoreBackupWithOptions(app, env, from, dir string, dryRun bool, opts rest
 	if err := validateRelease(meta.Release); err != nil {
 		return backupMetadata{}, err
 	}
+	appCtx, cleanup, err := loadAppContextFromManifest(app, env, filepath.Join(tmp, "ship.toml"), "backup manifest is missing")
+	if err != nil {
+		return backupMetadata{}, fmt.Errorf("validate backup manifest: %v", err)
+	}
+	defer cleanup()
 	if dryRun {
 		return meta, nil
 	}
@@ -263,11 +268,6 @@ func restoreBackupWithOptions(app, env, from, dir string, dryRun bool, opts rest
 			return backupMetadata{}, err
 		}
 	}
-	appCtx, cleanup, err := loadAppliedAppContext(app, env)
-	if err != nil {
-		return backupMetadata{}, err
-	}
-	defer cleanup()
 	if err := attachPreviewProtection(app, env, appCtx); err != nil {
 		return backupMetadata{}, err
 	}
@@ -383,6 +383,8 @@ func restoreBackupData(app, env, extractedRoot string, opts restoreBackupOptions
 	if _, err := utils.RunChecked("chmod", []string{"2775", tmp}, ""); err != nil {
 		return fmt.Errorf("chmod %s: %v", tmp, err)
 	}
+	// All staged backup validation happens before this exchange. Once live data
+	// moves, this function only performs best-effort cleanup of the old data.
 	if err := exchangeDirs(dataDir, tmp); err != nil {
 		return fmt.Errorf("swap restored data dir: %v", err)
 	}

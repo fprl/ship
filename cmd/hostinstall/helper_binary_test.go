@@ -2,6 +2,7 @@ package hostinstall
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -14,6 +15,56 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/version"
 )
+
+func TestLocalHelperBinaryOverrideValidatesELFArchitecture(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents []byte
+		wantErr  string
+	}{
+		{name: "text file", contents: []byte("not a helper"), wantErr: "not an ELF binary"},
+		{name: "wrong architecture", contents: elfHeader(183), wantErr: "need EM_X86_64"},
+		{name: "valid helper", contents: elfHeader(62)},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "ship-linux-amd64")
+			if err := os.WriteFile(path, test.contents, 0755); err != nil {
+				t.Fatal(err)
+			}
+			installer := NewInstaller()
+			installer.Env = map[string]string{"SHIP_LINUX_HELPER": path}
+
+			got, ok, err := installer.localHelperBinary(helperTestPlan(), "ship-linux-amd64", "amd64")
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("localHelperBinary error = %v, want %q", err, test.wantErr)
+				}
+				if ok || got != "" {
+					t.Fatalf("localHelperBinary = %q, %t after validation error", got, ok)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok || got != path {
+				t.Fatalf("localHelperBinary = %q, %t; want %q, true", got, ok, path)
+			}
+		})
+	}
+}
+
+func elfHeader(machine uint16) []byte {
+	header := make([]byte, 64)
+	copy(header, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
+	binary.LittleEndian.PutUint16(header[16:], 2)
+	binary.LittleEndian.PutUint16(header[18:], machine)
+	binary.LittleEndian.PutUint32(header[20:], 1)
+	binary.LittleEndian.PutUint16(header[52:], 64)
+	return header
+}
 
 func TestPrepareRemoteHelperUsesConfiguredHelperDir(t *testing.T) {
 	dir := t.TempDir()

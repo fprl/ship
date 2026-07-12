@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -270,6 +271,13 @@ func CmdBoxUpdate(server string) {
 }
 
 func classifyBoxUpdate(helperVersion, clientVersion, server string) error {
+	if isGitDescribeVersion(helperVersion) && isGitDescribeVersion(clientVersion) && helperVersion != clientVersion {
+		return errcat.New(errcat.CodeBoxVersionAmbiguous, errcat.Fields{
+			"helper_version": helperVersion,
+			"client_version": clientVersion,
+			"server":         server,
+		})
+	}
 	cmp := compareShipVersions(helperVersion, clientVersion)
 	if cmp > 0 {
 		return errcat.New(errcat.CodeClientBehindHelper, errcat.Fields{"helper_version": helperVersion, "client_version": clientVersion})
@@ -278,6 +286,20 @@ func classifyBoxUpdate(helperVersion, clientVersion, server string) error {
 		return errcat.New(errcat.CodeBoxVersionAmbiguous, errcat.Fields{"helper_version": helperVersion, "client_version": clientVersion, "server": server})
 	}
 	return nil
+}
+
+func isGitDescribeVersion(value string) bool {
+	value = strings.TrimPrefix(strings.TrimSpace(value), "v")
+	_, prerelease, ok := strings.Cut(value, "-")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(prerelease, "-")
+	if len(parts) != 2 || !strings.HasPrefix(parts[1], "g") || len(parts[1]) == 1 {
+		return false
+	}
+	_, err := strconv.Atoi(parts[0])
+	return err == nil
 }
 
 func helperArchitecture(raw string) (string, error) {

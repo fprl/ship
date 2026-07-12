@@ -3,8 +3,10 @@ package hostinstall
 import (
 	"bytes"
 	"crypto/sha256"
+	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -34,7 +36,7 @@ func (i *Installer) PrepareHelperBinaryForArch(target, arch string) (string, fun
 
 func (i *Installer) prepareRemoteHelperBinary(plan Plan, arch string) (string, func(), error) {
 	name := "ship-linux-" + arch
-	if helper, ok, err := i.localHelperBinary(plan, name); err != nil {
+	if helper, ok, err := i.localHelperBinary(plan, name, arch); err != nil {
 		return "", func() {}, err
 	} else if ok {
 		return helper, func() {}, nil
@@ -66,9 +68,15 @@ func (i *Installer) prepareRemoteHelperBinary(plan Plan, arch string) (string, f
 	})
 }
 
-func (i *Installer) localHelperBinary(plan Plan, name string) (string, bool, error) {
+func (i *Installer) localHelperBinary(plan Plan, name, arch string) (string, bool, error) {
 	if exact := strings.TrimSpace(i.Env["SHIP_LINUX_HELPER"]); exact != "" {
 		if fileExists(exact) {
+			if err := validateLinuxHelperBinary(exact, arch); err != nil {
+				return "", false, errcat.New(errcat.CodeHostHelperUnavailable, errcat.Fields{
+					"detail":  "SHIP_LINUX_HELPER " + err.Error(),
+					"command": "SHIP_LINUX_HELPER=<path-to-" + name + "> " + boxSetupCommand(plan.TargetHost),
+				})
+			}
 			i.info("Using ship Linux helper binary from %s", exact)
 			return exact, true, nil
 		}
@@ -97,6 +105,49 @@ func (i *Installer) localHelperBinary(plan Plan, name string) (string, bool, err
 		}
 	}
 	return "", false, nil
+}
+
+func validateLinuxHelperBinary(path, arch string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("cannot be read: %v", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("is not a regular file: %s", path)
+	}
+	if info.Size() == 0 {
+		return fmt.Errorf("is empty: %s", path)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("cannot be opened: %v", err)
+	}
+	defer f.Close()
+	magic := make([]byte, 4)
+	if _, err := io.ReadFull(f, magic); err != nil || !bytes.Equal(magic, []byte{0x7f, 'E', 'L', 'F'}) {
+		return fmt.Errorf("is not an ELF binary: %s", path)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("cannot read ELF header: %v", err)
+	}
+	file, err := elf.NewFile(f)
+	if err != nil {
+		return fmt.Errorf("has an invalid ELF header: %s", path)
+	}
+	defer file.Close()
+
+	want, ok := map[string]elf.Machine{
+		"amd64": elf.EM_X86_64,
+		"arm64": elf.EM_AARCH64,
+	}[arch]
+	if !ok {
+		return fmt.Errorf("has unsupported target architecture %q", arch)
+	}
+	if file.Machine != want {
+		return fmt.Errorf("has ELF machine %s, need %s for target architecture %s", file.Machine, want, arch)
+	}
+	return nil
 }
 
 func (i *Installer) downloadReleaseHelperBinary(plan Plan, tag string, name string) (string, func(), error) {
