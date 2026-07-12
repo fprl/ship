@@ -871,6 +871,22 @@ var verbs = []Verb{
 		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
 	},
 	{
+		Verb:    "box notify",
+		Purpose: "Read, set, or clear the box notification webhook.",
+		Usage:   "ship box notify <box> [url] [--rm]",
+		Flags: []Flag{
+			{Name: "box", Purpose: "Box host. Omit only for a read in an app directory, which uses ship.toml box."},
+			{Name: "url", Purpose: "Webhook URL to set. Omit to print the current URL."},
+			{Name: "--rm", Purpose: "Clear the box webhook."},
+		},
+		ExitCodes: normalExit,
+		Errors:    []string{"usage_error", "box_target_required", "invalid_box_target", "approval_required", "host_key_changed", "operation_failed"},
+		Notes: []string{
+			"Any member may read. Only owners may set or clear; other roles receive approval_required and retry after ship approve <id>.",
+			"When unset, the command prints an unset notice and next: ship box notify <box> <url>.",
+		},
+	},
+	{
 		Verb:    "box ls",
 		Purpose: "List app environments visible on a box.",
 		Usage:   "ship box ls [<box>] [--json]",
@@ -993,8 +1009,8 @@ Truth stores:
 - Manifest truth is the repo ` + "`ship.toml`" + ` plus the manifest snapshot stored with each
   release under the env release directory on the box.
 - Box truth is host state: env identity files, preview mapping metadata,
-  release metadata, deploy journals, members, roles, secrets, Podman labels,
-  Caddy fragments, and doctor state.
+  release metadata, deploy journals, members, roles, box notification settings,
+  secrets, Podman labels, Caddy fragments, and doctor state.
 - Members and approvals belong to the box; secrets, envs, and journals belong
   to the app.
 - Use manifest snapshots to answer "what did this release intend?"
@@ -1069,11 +1085,13 @@ Each env has an append-only ` + "`journal.jsonl`" + `. Each line is:
 
 ## Notify payload schemas
 
-All events POST ` + "`{\"app\",\"env\",\"event\",\"release\",\"summary\",\"why\",\"remediation\",\"ts\"}`" + ` and never fail the operation.
+All events POST ` + "`{\"app\",\"env\",\"event\",\"release\",\"summary\",\"why\",\"remediation\",\"ts\"}`" + ` and never fail the operation. Box events also include ` + "`box`" + ` (the box hostname).
+
+App events go only to the affected app manifest ` + "`notify`" + ` URL: ` + "`deploy_aborted`" + `, ` + "`deploy_recovered`" + `, and ` + "`preview_reaped`" + `. Box events go once to the box URL configured by ` + "`ship box notify`" + `, never to app URLs: ` + "`doctor_degraded`" + ` and ` + "`approval_requested`" + `. No configured box URL silently drops box events; journals and doctor state are still recorded.
 
 - ` + "`deploy_aborted`" + `: ` + "`why`" + ` is a deploy journal entry; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship\",\"journal\":\"<entry>\"}`" + `.
 - ` + "`deploy_recovered`" + `: ` + "`why`" + ` is ` + "`{\"previous_failure\":\"<entry>\",\"current\":\"<entry>\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship status\",\"journal\":\"<current>\",\"previous_failure\":\"<previous>\"}`" + `.
 - ` + "`preview_reaped`" + `: ` + "`why`" + ` is ` + "`{\"branch\":\"feature/x\",\"env\":\"Preview feature/x\",\"expired_at\":\"...\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"git checkout feature/x && ship\",\"branch\":\"feature/x\",\"env\":\"Preview feature/x\"}`" + `.
-- ` + "`doctor_degraded`" + `: ` + "`why`" + ` is a doctor check ` + "`{\"id\",\"status\",\"evidence\",\"remediation\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"<check.remediation>\",\"check\":\"<doctor check>\"}`" + `.
-- ` + "`approval_requested`" + `: ` + "`why`" + ` is ` + "`{\"id\",\"member\",\"verb\",\"target\",\"expires\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship approve <id>\",\"request\":\"<approval request>\"}`" + `.
+- ` + "`doctor_degraded`" + `: box event; ` + "`why`" + ` is a doctor check ` + "`{\"id\",\"status\",\"evidence\",\"remediation\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"<check.remediation>\",\"check\":\"<doctor check>\"}`" + `.
+- ` + "`approval_requested`" + `: box event; ` + "`why`" + ` is ` + "`{\"id\",\"member\",\"verb\",\"target\",\"expires\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship approve <id>\",\"request\":\"<approval request>\"}`" + `. The request target retains the affected app and env when present; box-target approvals have empty app/env.
 `

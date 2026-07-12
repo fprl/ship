@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Store struct {
@@ -50,6 +51,10 @@ func (s Store) DoctorPath() string {
 
 func (s Store) MembersPath() string {
 	return filepath.Join(s.root(), "members.json")
+}
+
+func (s Store) BoxNotifyPath() string {
+	return filepath.Join(s.root(), "box-notify.json")
 }
 
 func (s Store) ApprovalsPath() string {
@@ -203,6 +208,30 @@ func (s Store) WriteMembers(file MembersFile) error {
 		return fmt.Errorf("invalid members.json: %w", err)
 	}
 	return writeJSON(s.MembersPath(), file, 0644)
+}
+
+func (s Store) ReadBoxNotify() (*BoxNotifyFile, error) {
+	var file BoxNotifyFile
+	if err := readJSON(s.BoxNotifyPath(), &file); err != nil {
+		if os.IsNotExist(err) {
+			return &BoxNotifyFile{Version: CurrentVersion}, nil
+		}
+		return nil, err
+	}
+	if err := validateVersion("box-notify.json", file.Version); err != nil {
+		return nil, err
+	}
+	file.URL = strings.TrimSpace(file.URL)
+	return &file, nil
+}
+
+func (s Store) WriteBoxNotify(file BoxNotifyFile) error {
+	if err := validateVersion("box-notify.json", file.Version); err != nil {
+		return err
+	}
+	file.Version = CurrentVersion
+	file.URL = strings.TrimSpace(file.URL)
+	return writeJSON(s.BoxNotifyPath(), file, 0600)
 }
 
 func (s Store) ReadApprovals() (*ApprovalsFile, error) {

@@ -20,4 +20,5 @@ type ServerCmd struct {
 	Env        envCmd        `cmd:"" help:"Manage host environments."`
 	Key        keyCmd        `cmd:"" help:"Manage deploy SSH keys."`
 	Approval   approvalCmd   `cmd:"" help:"Manage one-shot role approvals."`
+	Notify     notifyCmd     `cmd:"" help:"Manage the box notification webhook."`
 }

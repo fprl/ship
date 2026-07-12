@@ -126,6 +126,13 @@ type MembersFile struct {
 	Members map[string]MemberRecord `json:"members"`
 }
 
+// BoxNotifyFile is box-global pager configuration. It deliberately lives
+// beside members and approvals: no app owns box-level notifications.
+type BoxNotifyFile struct {
+	Version int    `json:"version"`
+	URL     string `json:"url"`
+}
+
 type ApprovalMember struct {
 	Fingerprint string     `json:"fingerprint"`
 	Name        string     `json:"name"`

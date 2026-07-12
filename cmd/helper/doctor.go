@@ -45,7 +45,7 @@ const (
 
 var (
 	BroadSudoRe  = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\((?:ALL|ALL:ALL)\)\s+NOPASSWD:\s*ALL$`)
-	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/ship\s+server\s+app\s+\*,\s*/usr/local/bin/ship\s+server\s+doctor,\s*/usr/local/bin/ship\s+server\s+doctor\s+\*,\s*/usr/local/bin/ship\s+server\s+key\s+\*,\s*/usr/local/bin/ship\s+server\s+approval\s+\*$`)
+	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/ship\s+server\s+app\s+\*,\s*/usr/local/bin/ship\s+server\s+doctor,\s*/usr/local/bin/ship\s+server\s+doctor\s+\*,\s*/usr/local/bin/ship\s+server\s+key\s+\*,\s*/usr/local/bin/ship\s+server\s+approval\s+\*,\s*/usr/local/bin/ship\s+server\s+notify\s+\*$`)
 )
 
 type doctorCmd struct {
@@ -304,7 +304,7 @@ func recordDoctorRun(opts doctorOptions) (store.DoctorFile, error) {
 	if err := opts.StateStore.WriteDoctor(file); err != nil {
 		return store.DoctorFile{}, err
 	}
-	notifyDoctorDegraded(delta, now)
+	notifyDoctorDegraded(notifyBoxHost(), delta, now)
 	return file, nil
 }
 

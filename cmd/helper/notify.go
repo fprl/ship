@@ -32,6 +32,7 @@ var (
 )
 
 type notifyPayload struct {
+	Box         string `json:"box,omitempty"`
 	App         string `json:"app"`
 	Env         string `json:"env"`
 	Event       string `json:"event"`
@@ -81,14 +82,6 @@ type approvalNotifyWhy struct {
 type approvalNotifyRemediation struct {
 	Command string                `json:"command"`
 	Request store.ApprovalRequest `json:"request"`
-}
-
-type appliedNotifyTarget struct {
-	App     string
-	Env     string
-	URL     string
-	Label   string
-	Release string
 }
 
 func notifyDeployAborted(url string, ctx *config.AppContext, entry deployJournalEntry, now time.Time) {
@@ -166,49 +159,46 @@ func notifyPreviewReaped(url string, file identity.EnvIdentity, release string, 
 	postNotify(url, payload)
 }
 
-func notifyDoctorDegraded(checks []store.DoctorCheck, now time.Time) {
+func notifyDoctorDegraded(box string, checks []store.DoctorCheck, now time.Time) {
 	if len(checks) == 0 {
 		return
 	}
-	targets := appliedNotifyTargets()
-	for _, target := range targets {
-		for _, check := range checks {
-			payload := notifyPayload{
-				App:     target.App,
-				Env:     target.Label,
-				Event:   notifyEventDoctorDegraded,
-				Release: target.Release,
-				Summary: fmt.Sprintf("Doctor check %s is %s for %s.", check.ID, check.Status, target.Label),
-				Why:     check,
-				Remediation: doctorNotifyRemediation{
-					Command: check.Remediation,
-					Check:   check,
-				},
-				TS: now.UTC().Format(time.RFC3339Nano),
-			}
-			postNotify(target.URL, payload)
+	url := boxNotifyURL()
+	for _, check := range checks {
+		payload := notifyPayload{
+			Box:     box,
+			Event:   notifyEventDoctorDegraded,
+			Summary: fmt.Sprintf("Doctor check %s is %s for box %s.", check.ID, check.Status, dashNotify(box)),
+			Why:     check,
+			Remediation: doctorNotifyRemediation{
+				Command: check.Remediation,
+				Check:   check,
+			},
+			TS: now.UTC().Format(time.RFC3339Nano),
 		}
+		postNotify(url, payload)
 	}
 }
 
 func notifyApprovalRequested(request store.ApprovalRequest, now time.Time) {
-	if strings.TrimSpace(request.Target.App) == "" || strings.TrimSpace(request.Target.Env) == "" {
-		return
-	}
-	ctx, cleanup, err := loadAppliedAppContext(request.Target.App, request.Target.Env)
-	if err != nil {
-		return
-	}
-	defer cleanup()
-	if strings.TrimSpace(ctx.Notify) == "" {
-		return
-	}
 	command := "ship approve " + request.ID
+	box := notifyBoxHost()
+	app := strings.TrimSpace(request.Target.App)
+	env := strings.TrimSpace(request.Target.Env)
+	var ctx *config.AppContext
+	if app != "" && env != "" {
+		loaded, cleanup, err := loadAppliedAppContext(app, env)
+		if err == nil {
+			ctx = loaded
+			defer cleanup()
+		}
+	}
 	payload := notifyPayload{
-		App:     request.Target.App,
-		Env:     notifyEnvLabel(request.Target.App, request.Target.Env, ctx),
+		Box:     box,
+		App:     app,
+		Env:     notifyEnvLabel(app, env, ctx),
 		Event:   notifyEventApprovalRequested,
-		Release: latestSuccessfulRelease(request.Target.App, request.Target.Env),
+		Release: latestSuccessfulRelease(app, env),
 		Summary: fmt.Sprintf("%s requested approval for %s.", request.Member.Name, request.Target.Summary),
 		Why: approvalNotifyWhy{
 			ID:      request.ID,
@@ -223,38 +213,29 @@ func notifyApprovalRequested(request store.ApprovalRequest, now time.Time) {
 		},
 		TS: now.UTC().Format(time.RFC3339Nano),
 	}
-	postNotify(ctx.Notify, payload)
+	postNotify(boxNotifyURL(), payload)
 }
 
-func appliedNotifyTargets() []appliedNotifyTarget {
-	apps, err := identityAppEnvs()
+func boxNotifyURL() string {
+	file, err := store.Default().ReadBoxNotify()
 	if err != nil {
-		return nil
+		return ""
 	}
-	targets := make([]appliedNotifyTarget, 0, len(apps))
-	for _, app := range apps {
-		ctx, cleanup, err := loadAppliedAppContext(app.App, app.Env)
-		if err != nil {
-			continue
-		}
-		url := strings.TrimSpace(ctx.Notify)
-		label := notifyEnvLabel(app.App, app.Env, ctx)
-		cleanup()
-		if url == "" {
-			continue
-		}
-		targets = append(targets, appliedNotifyTarget{
-			App:     app.App,
-			Env:     app.Env,
-			URL:     url,
-			Label:   label,
-			Release: latestSuccessfulRelease(app.App, app.Env),
-		})
+	return strings.TrimSpace(file.URL)
+}
+
+func notifyBoxHost() string {
+	host, err := os.Hostname()
+	if err != nil || strings.TrimSpace(host) == "" {
+		return "box"
 	}
-	return targets
+	return host
 }
 
 func notifyEnvLabel(app, env string, ctx *config.AppContext) string {
+	if strings.TrimSpace(app) == "" || strings.TrimSpace(env) == "" {
+		return ""
+	}
 	if file, err := readEnvIdentity(app, env); err == nil && file.Preview != nil {
 		return "Preview " + file.Preview.Branch
 	}

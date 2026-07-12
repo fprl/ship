@@ -136,9 +136,29 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	app := filepath.Join(e.tmp, "notify-api")
 	mustMkdir(t, app)
 	secretValue := "notify-secret-value"
-	writeNotifyFixture(t, app, sink.URL("/hook"))
+	writeNotifyFixture(t, app, sink.URL("/app-one"))
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+
+	unset := e.ship(t, app, nil, "box", "notify", "fake-vps")
+	assertContains(t, unset, "box notify is unset")
+	assertContains(t, unset, "next: ship box notify <box> <url>")
+	set := e.ship(t, app, nil, "box", "notify", "fake-vps", sink.URL("/box"))
+	assertContains(t, set, "box notify set")
+	if got := e.ship(t, app, nil, "box", "notify", "fake-vps"); got != sink.URL("/box")+"\n" {
+		t.Fatalf("box notify read = %q, want %q", got, sink.URL("/box")+"\n")
+	}
+	cleared := e.ship(t, app, nil, "box", "notify", "fake-vps", "--rm")
+	assertContains(t, cleared, "box notify cleared")
+	e.ship(t, app, nil, "box", "notify", "fake-vps", sink.URL("/box"))
+
+	secondApp := filepath.Join(e.tmp, "notify-second-api")
+	mustMkdir(t, secondApp)
+	writeRoleApprovalFixture(t, secondApp, sink.URL("/app-two"))
+	e.commitFixture(t, secondApp)
+	e.mustRun(t, secondApp, nil, "git", "checkout", "-B", "main")
+	e.ship(t, secondApp, nil)
+
 	e.ship(t, app, []byte(secretValue), "secret", "set", "api_token")
 	e.ship(t, app, []byte(secretValue), "secret", "set", "api_token", "--preview")
 	e.ship(t, app, nil)
@@ -161,6 +181,7 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 		t.Fatal("deploy with failing release command should fail")
 	}
 	aborted := sink.waitForEvent(t, notifyEventDeployAborted)
+	assertNotifySmokeField(t, aborted, "_sink_path", "/app-one")
 	assertNotifySmokeField(t, aborted, "release", failedRelease)
 	assertNotifySmokeNested(t, aborted, "why.outcome", "aborted_release")
 	assertContains(t, notifySmokeNestedString(t, aborted, "why.stderr_tail"), "fake release command failed")
@@ -193,12 +214,21 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	e.dockerExec(t, "systemctl stop ship-preview-reaper.timer")
 	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
 	doctor := sink.waitForEvent(t, notifyEventDoctorDegraded)
-	assertNotifySmokeField(t, doctor, "env", "Production main")
+	assertNotifySmokeField(t, doctor, "_sink_path", "/box")
+	if box, _ := doctor["box"].(string); box == "" {
+		t.Fatalf("doctor_degraded missing box host: %s", prettySmokeJSON(t, doctor))
+	}
 	assertNotifySmokeNested(t, doctor, "why.id", "reaper_timer")
 	assertContains(t, notifySmokeNestedString(t, doctor, "why.evidence"), "active=inactive")
 	assertContains(t, notifySmokeNestedString(t, doctor, "remediation.command"), "systemctl start ship-preview-reaper.timer")
+	if countNotifySmokeEvents(sink.rawEvents(t), notifyEventDoctorDegraded) != 1 {
+		t.Fatalf("doctor_degraded should POST once to the box webhook:\n%s", sink.rawEvents(t))
+	}
 
-	slowManifest := strings.Replace(fixedManifest, sink.URL("/hook"), sink.URL("/slow?token=notify-url-secret"), 1)
+	slowManifest := strings.Replace(fixedManifest, sink.URL("/app-one"), sink.URL("/slow?token=notify-url-secret"), 1)
+	if slowManifest == fixedManifest {
+		t.Fatal("notify fixture did not contain the app webhook URL")
+	}
 	slowFailing := strings.Replace(slowManifest, `release = "touch /data/release-ok"`, `release = "ship-fail-release"`, 1)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 	mustWrite(t, manifestPath, slowFailing)
@@ -971,6 +1001,7 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 	e.ship(t, app, nil)
+	e.ship(t, app, nil, "box", "notify", "fake-vps", sink.URL("/box"))
 
 	agentKeyPath := filepath.Join(e.tmp, "agent-role")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "agent-role", "-f", agentKeyPath)
@@ -994,6 +1025,24 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	setOwner := func() { e.pathPrefix = ownerPrefix }
 	t.Cleanup(setOwner)
 
+	setAgent()
+	notifyDenied := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "notify", "fake-vps", sink.URL("/moved"))
+	if notifyDenied.err == nil {
+		t.Fatal("agent box notify set should require approval")
+	}
+	notifyID := approvalIDFromOutput(t, notifyDenied.stdout+notifyDenied.stderr)
+	notifyRequested := sink.waitForEvent(t, notifyEventApprovalRequested)
+	assertNotifySmokeField(t, notifyRequested, "_sink_path", "/box")
+	assertNotifySmokeNested(t, notifyRequested, "why.target.summary", "box notify set")
+	setOwner()
+	e.ship(t, app, nil, "approve", notifyID)
+	setAgent()
+	if retry := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "notify", "fake-vps", sink.URL("/moved")); retry.err != nil {
+		t.Fatalf("approved agent box notify retry should succeed: %v\nstdout:\n%s\nstderr:\n%s", retry.err, retry.stdout, retry.stderr)
+	}
+	setOwner()
+	e.ship(t, app, nil, "box", "notify", "fake-vps", sink.URL("/box"))
+	e.dockerExec(t, "rm -f "+sink.eventsPath)
 	setAgent()
 	interactive := e.run(t, e.repoRoot, nil, e.sshBin(), "fake-vps")
 	if interactive.err == nil {
@@ -1052,6 +1101,7 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	id := approvalIDFromOutput(t, deniedText)
 
 	requested := sink.waitForEvent(t, notifyEventApprovalRequested)
+	assertNotifySmokeField(t, requested, "_sink_path", "/box")
 	assertNotifySmokeNested(t, requested, "remediation.command", "ship approve "+id)
 
 	setOwner()
@@ -2935,6 +2985,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
+        try:
+            import json
+            payload = json.loads(body)
+            payload["_sink_path"] = self.path
+            body = json.dumps(payload, separators=(",", ":")).encode()
+        except Exception:
+            pass
         with open(events_path, "ab") as f:
             f.write(body + b"\n")
         if self.path.startswith("/slow"):
@@ -2996,6 +3053,17 @@ func (s *smokeNotifySink) waitForEvent(t *testing.T, event string) map[string]an
 	}
 	t.Fatalf("timed out waiting for notify event %s\ncaptured:\n%s", event, lastRaw)
 	return nil
+}
+
+func countNotifySmokeEvents(raw, event string) int {
+	count := 0
+	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
+		var payload map[string]any
+		if json.Unmarshal([]byte(line), &payload) == nil && payload["event"] == event {
+			count++
+		}
+	}
+	return count
 }
 
 func assertNotifySmokeField(t *testing.T, payload map[string]any, field, want string) {

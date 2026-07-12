@@ -77,6 +77,9 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"box", "setup", "root@example.com"},
 		{"box", "doctor", "example.com"},
 		{"box", "doctor", "example.com", "--json"},
+		{"box", "notify", "example.com"},
+		{"box", "notify", "example.com", "https://ntfy.example/ship"},
+		{"box", "notify", "example.com", "--rm"},
 		{"box", "ls", "example.com"},
 		{"box", "ls", "example.com", "--json"},
 		{"box", "rm", "api", "--confirm", "api"},
@@ -212,7 +215,7 @@ func TestBoxWithoutSubcommandShowsSubcommandHelp(t *testing.T) {
 	if strings.Contains(text, "--server") {
 		t.Fatalf("box without subcommand should not mention removed --server: %v", err)
 	}
-	for _, want := range []string{"setup", "doctor", "ls", "rm", "forget"} {
+	for _, want := range []string{"setup", "doctor", "notify", "ls", "rm"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("box parse error should mention %q subcommand, got: %v", want, err)
 		}
@@ -273,6 +276,7 @@ func TestBoxTargetRequiredRefusalListsKnownBoxes(t *testing.T) {
 func TestBoxVerbHelpUsesBoxPlaceholder(t *testing.T) {
 	for _, args := range [][]string{
 		{"box", "doctor", "--help"},
+		{"box", "notify", "--help"},
 		{"box", "ls", "--help"},
 		{"box", "rm", "--help"},
 		{"box", "forget", "--help"},

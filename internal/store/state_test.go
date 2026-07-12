@@ -164,6 +164,21 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 		t.Fatalf("unexpected members state: %+v", membersState)
 	}
 
+	if err := store.WriteBoxNotify(BoxNotifyFile{Version: CurrentVersion, URL: " https://ntfy.example/ship "}); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.BoxNotifyPath(); got != filepath.Join(root, "box-notify.json") {
+		t.Fatalf("unexpected box notify path: %s", got)
+	}
+	assertMode(t, store.BoxNotifyPath(), 0600)
+	boxNotify, err := store.ReadBoxNotify()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if boxNotify.URL != "https://ntfy.example/ship" {
+		t.Fatalf("box notify URL = %q", boxNotify.URL)
+	}
+
 	if err := store.WriteApprovals(ApprovalsFile{
 		Version: CurrentVersion,
 		Requests: []ApprovalRequest{

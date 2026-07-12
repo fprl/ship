@@ -106,6 +106,18 @@ func serverApprovalApproveCommand(id string) string {
 	return serverCommand("approval", "approve", id)
 }
 
+func serverBoxNotifyGetCommand() string {
+	return serverCommand("notify", "get")
+}
+
+func serverBoxNotifySetCommand(url string) string {
+	return serverCommand("notify", "set", url)
+}
+
+func serverBoxNotifyClearCommand() string {
+	return serverCommand("notify", "clear")
+}
+
 func serverAppLogsCommand(appName, envName, process string, follow bool, tail *int) string {
 	args := []string{"app", "logs"}
 	if follow {

@@ -1035,6 +1035,9 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "approval list text", command: serverApprovalListCommand(false)},
 		{name: "approval list json", command: serverApprovalListCommand(true)},
 		{name: "approval approve", command: serverApprovalApproveCommand("abc123xy")},
+		{name: "box notify get", command: serverBoxNotifyGetCommand()},
+		{name: "box notify set", command: serverBoxNotifySetCommand("https://ntfy.example/ship")},
+		{name: "box notify clear", command: serverBoxNotifyClearCommand()},
 	}
 
 	for _, tt := range commands {
@@ -1121,7 +1124,8 @@ func serverSubcommandCoveredBySudoers(subcommand string) bool {
 		subcommand == "doctor" ||
 		strings.HasPrefix(subcommand, "doctor ") ||
 		strings.HasPrefix(subcommand, "key ") ||
-		strings.HasPrefix(subcommand, "approval ")
+		strings.HasPrefix(subcommand, "approval ") ||
+		strings.HasPrefix(subcommand, "notify ")
 }
 
 func TestServerAppSetupEnvCommand(t *testing.T) {

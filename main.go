@@ -404,9 +404,26 @@ func (c secretRmCmd) Run() error {
 type boxCmd struct {
 	Setup  boxSetupCmd  `cmd:"" help:"Install or converge a box."`
 	Doctor boxDoctorCmd `cmd:"" help:"Run box diagnostics."`
+	Notify boxNotifyCmd `cmd:"" help:"Read or set the box notification webhook."`
 	Ls     boxLsCmd     `cmd:"ls" help:"List app environments visible on a box."`
 	Rm     boxRmCmd     `cmd:"rm" help:"Destroy an app and all its environments on a box."`
 	Forget boxForgetCmd `cmd:"" help:"Drop a box host-key pin."`
+}
+
+type boxNotifyCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
+	URL    string `arg:"" optional:"" name:"url" help:"Webhook URL to set."`
+	Remove bool   `name:"rm" help:"Clear the box webhook."`
+}
+
+func (c boxNotifyCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box notify <box>")
+	if err != nil {
+		return err
+	}
+	client.CmdBoxNotify(target, c.URL, c.Remove)
+	return nil
 }
 
 type memberCmd struct {

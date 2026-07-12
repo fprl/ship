@@ -201,6 +201,47 @@ func CmdBoxDoctor(server string, jsonFlag bool) {
 	fmt.Print(stdout)
 }
 
+func CmdBoxNotify(server, url string, remove bool) {
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box notify"), 2)
+	}
+	if remove && strings.TrimSpace(url) != "" {
+		utils.DieError(errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  "--rm cannot be combined with a webhook URL",
+			"command": "ship box notify <box> --rm",
+		}), 2)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer runner.Close()
+
+	command := serverBoxNotifyGetCommand()
+	if remove {
+		command = serverBoxNotifyClearCommand()
+	} else if strings.TrimSpace(url) != "" {
+		command = serverBoxNotifySetCommand(url)
+	}
+	stdout, stderr, code, err := runner.RunSSH(server, command)
+	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			utils.DieError(coded, 1)
+		}
+		remote := extractRemoteError(stdout, stderr, "")
+		if remote.Coded != nil {
+			writeRemoteStderr(stderr)
+			utils.DieError(remote.Coded, 1)
+		}
+		detail := remote.Detail
+		if detail == "" {
+			detail = "box notify failed"
+		}
+		utils.DieError(operationError(detail, "ship box notify "+server), 1)
+	}
+	fmt.Print(stdout)
+}
+
 func invalidBoxTargetError(target string, prefix string) error {
 	box := "203.0.113.7"
 	if host, ok := config.UserHostBoxHost(target); ok {

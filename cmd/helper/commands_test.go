@@ -79,6 +79,9 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"approval", "--member", "alice", "list"},
 		{"approval", "list", "--json"},
 		{"approval", "approve", "abc123xy"},
+		{"notify", "get"},
+		{"notify", "set", "https://ntfy.example/ship"},
+		{"notify", "clear"},
 	}
 
 	for _, tt := range tests {

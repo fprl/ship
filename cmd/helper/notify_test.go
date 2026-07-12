@@ -112,21 +112,14 @@ func TestNotifyPreviewReapedPayloadCarriesBranchAndEnv(t *testing.T) {
 
 func TestNotifyDoctorDegradedPayloadCarriesEvidenceAndRunnableRemediation(t *testing.T) {
 	setupPreviewHostTest(t)
-	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName, InfraID: identity.InfraID("api", productionEnvName)})
+	t.Setenv("SHIP_STATE_DIR", t.TempDir())
 	sink := newNotifyTestSink(t)
-	writeAppliedNotifyManifest(t, "api", productionEnvName, sink.URL)
-	if err := appendDeployJournalEntry("api", productionEnvName, deployJournalEntry{
-		Outcome:          "deployed",
-		StartedAt:        "2026-07-07T10:00:00Z",
-		EndedAt:          "2026-07-07T10:00:01Z",
-		AttemptedRelease: "aaa111bbb222",
-		Identity:         deployIdentity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
-	}, nil); err != nil {
+	if err := store.Default().WriteBoxNotify(store.BoxNotifyFile{Version: store.CurrentVersion, URL: sink.URL}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 7, 7, 10, 4, 5, 0, time.UTC)
 
-	notifyDoctorDegraded([]store.DoctorCheck{{
+	notifyDoctorDegraded("fake-vps", []store.DoctorCheck{{
 		ID:          "reaper_timer",
 		Status:      "degraded",
 		Evidence:    "ship-preview-reaper.timer present, active=inactive, enabled=enabled",
@@ -135,7 +128,7 @@ func TestNotifyDoctorDegradedPayloadCarriesEvidenceAndRunnableRemediation(t *tes
 
 	payload := sink.singlePayload(t)
 	assertNotifyField(t, payload, "event", notifyEventDoctorDegraded)
-	assertNotifyField(t, payload, "release", "aaa111bbb222")
+	assertNotifyField(t, payload, "box", "fake-vps")
 	assertNotifyNestedField(t, payload, "why", "evidence", "ship-preview-reaper.timer present, active=inactive, enabled=enabled")
 	assertNotifyNestedField(t, payload, "remediation", "command", "sudo systemctl enable ship-preview-reaper.timer && sudo systemctl start ship-preview-reaper.timer")
 	t.Logf("doctor_degraded payload:\n%s", prettyNotifyJSON(t, payload))
@@ -143,9 +136,12 @@ func TestNotifyDoctorDegradedPayloadCarriesEvidenceAndRunnableRemediation(t *tes
 
 func TestNotifyApprovalRequestedPayloadCarriesLiteralApproveCommand(t *testing.T) {
 	setupPreviewHostTest(t)
+	t.Setenv("SHIP_STATE_DIR", t.TempDir())
 	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName, InfraID: identity.InfraID("api", productionEnvName)})
 	sink := newNotifyTestSink(t)
-	writeAppliedNotifyManifest(t, "api", productionEnvName, sink.URL)
+	if err := store.Default().WriteBoxNotify(store.BoxNotifyFile{Version: store.CurrentVersion, URL: sink.URL}); err != nil {
+		t.Fatal(err)
+	}
 	if err := appendDeployJournalEntry("api", productionEnvName, deployJournalEntry{
 		Outcome:          "deployed",
 		StartedAt:        "2026-07-08T09:00:00Z",
@@ -177,10 +173,37 @@ func TestNotifyApprovalRequestedPayloadCarriesLiteralApproveCommand(t *testing.T
 
 	payload := sink.singlePayload(t)
 	assertNotifyField(t, payload, "event", notifyEventApprovalRequested)
+	if box, _ := payload["box"].(string); box == "" {
+		t.Fatalf("approval_requested missing box host: %s", prettyNotifyJSON(t, payload))
+	}
 	assertNotifyField(t, payload, "release", "aaa111bbb222")
 	assertNotifyNestedField(t, payload, "why", "id", "abc123xy")
 	assertNotifyNestedField(t, payload, "remediation", "command", "ship approve abc123xy")
 	t.Logf("approval_requested payload:\n%s", prettyNotifyJSON(t, payload))
+}
+
+func TestNotifyApprovalRequestedForBoxTargetUsesBoxWebhook(t *testing.T) {
+	setupPreviewHostTest(t)
+	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	sink := newNotifyTestSink(t)
+	if err := store.Default().WriteBoxNotify(store.BoxNotifyFile{Version: store.CurrentVersion, URL: sink.URL}); err != nil {
+		t.Fatal(err)
+	}
+
+	notifyApprovalRequested(store.ApprovalRequest{
+		ID:        "abc123xy",
+		Member:    store.ApprovalMember{Name: "alice", Role: store.MemberRoleShipper},
+		Verb:      "box_mutation",
+		Target:    store.ApprovalTarget{Summary: "box notify set"},
+		ExpiresAt: "2026-07-08T10:15:00Z",
+	}, time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC))
+
+	payload := sink.singlePayload(t)
+	assertNotifyField(t, payload, "event", notifyEventApprovalRequested)
+	if app, _ := payload["app"].(string); app != "" {
+		t.Fatalf("box approval app = %q, want empty: %s", app, prettyNotifyJSON(t, payload))
+	}
+	assertNotifyNestedField(t, payload, "why", "target.summary", "box notify set")
 }
 
 func TestNotifyFailureIsBoundedAndDoesNotLeakURL(t *testing.T) {
