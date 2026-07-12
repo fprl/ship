@@ -84,11 +84,12 @@ type Installer struct {
 	Stdin  io.Reader
 	Env    map[string]string
 
-	geteuid   func() int
-	look      func(file string) (string, error)
-	remoteOut func(plan Plan, command string) (string, error)
-	remoteRun func(plan Plan, command string, stdin []byte) error
-	sleep     func(time.Duration)
+	geteuid    func() int
+	look       func(file string) (string, error)
+	remoteOut  func(plan Plan, command string) (string, error)
+	remoteRun  func(plan Plan, command string, stdin []byte) error
+	remoteCopy func(plan Plan, src string, dst string) error
+	sleep      func(time.Duration)
 }
 
 const passwordProvisionedDetail = "provider gave a password; this installs your ship key using it once; hardening then disables password login permanently"
@@ -96,6 +97,8 @@ const passwordProvisionedDetail = "provider gave a password; this installs your 
 const (
 	remoteSetupSecretsPattern = "/tmp/ship-setup-secrets.XXXXXX"
 	remoteSetupSecretsExample = "/tmp/ship-setup-secrets.example"
+	remoteHelperPattern       = "/tmp/ship-host-install.XXXXXX"
+	remoteHelperExample       = "/tmp/ship-host-install.example"
 )
 
 type setupSecrets struct {
@@ -426,7 +429,11 @@ func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) (provision.InstallSumm
 	}
 	defer cleanupHelper()
 
-	remoteHelper := "/tmp/ship-host-install"
+	remoteHelper, cleanupRemoteHelper, err := i.createRemoteHelperPath(plan)
+	if err != nil {
+		return provision.InstallSummary{}, err
+	}
+	defer cleanupRemoteHelper()
 	if err := i.copyRemote(plan, helper, remoteHelper); err != nil {
 		return provision.InstallSummary{}, remoteInstallTransferError(plan, "copy helper binary to target", err)
 	}
@@ -446,6 +453,7 @@ func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) (provision.InstallSumm
 	defer cleanupSecrets()
 
 	cmd := remoteLocalInstallCommand(remoteHelper, plan, operatorKeyFile, deployKeyFile, setupSecretsFile)
+	cmd = cleanupRemoteHelperCommand(cmd, remoteHelper)
 	if setupSecretsFile != "" {
 		cmd = cleanupRemoteSetupSecretsCommand(cmd, setupSecretsFile)
 	}
@@ -548,7 +556,7 @@ func (i *Installer) dumpInstallPlan(plan Plan) error {
 		if hasSetupSecrets(plan) {
 			setupSecretsFile = remoteSetupSecretsExample
 		}
-		fmt.Fprintln(i.Stdout, remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/ship-operator.pub", "/tmp/ship-deploy.pub", setupSecretsFile))
+		fmt.Fprintln(i.Stdout, remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/ship-operator.pub", "/tmp/ship-deploy.pub", setupSecretsFile))
 	}
 	return nil
 }
@@ -754,6 +762,9 @@ func (i *Installer) remoteCommandInput(plan Plan, command string, stdin []byte) 
 }
 
 func (i *Installer) copyRemote(plan Plan, src string, dst string) error {
+	if i.remoteCopy != nil {
+		return i.remoteCopy(plan, src, dst)
+	}
 	args := []string{
 		"-q",
 		"-o", "BatchMode=yes",
@@ -768,6 +779,22 @@ func (i *Installer) copyRemote(plan Plan, src string, dst string) error {
 	args = append(args, src, bootstrapSSHTarget(plan)+":"+dst)
 	_, _, err := runCaptured("scp", args, "")
 	return err
+}
+
+func (i *Installer) createRemoteHelperPath(plan Plan) (string, func(), error) {
+	createCommand := "mktemp " + utils.ShellEscape(remoteHelperPattern)
+	path, err := i.remoteOutput(plan, createCommand)
+	if err != nil {
+		return "", func() {}, remoteInstallCommandError(plan, "create helper path on target", createCommand, err)
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", func() {}, fmt.Errorf("create helper path on target: empty path")
+	}
+	cleanup := func() {
+		_ = i.remoteCommand(plan, "rm -f "+utils.ShellEscape(path))
+	}
+	return path, cleanup, nil
 }
 
 func (i *Installer) writeRemoteKeyFiles(plan Plan, keys keyPlan) (string, string, func(), error) {
@@ -849,6 +876,10 @@ func hasSetupSecrets(plan Plan) bool {
 }
 
 func cleanupRemoteSetupSecretsCommand(command string, path string) string {
+	return "sh -c " + utils.ShellEscape(command+"; status=$?; rm -f "+utils.ShellEscape(path)+"; exit $status")
+}
+
+func cleanupRemoteHelperCommand(command string, path string) string {
 	return "sh -c " + utils.ShellEscape(command+"; status=$?; rm -f "+utils.ShellEscape(path)+"; exit $status")
 }
 

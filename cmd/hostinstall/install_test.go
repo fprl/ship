@@ -58,9 +58,9 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 		t.Fatalf("unexpected cloudflare mode: %s", plan.CloudflareServiceMode)
 	}
 
-	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub", remoteSetupSecretsExample)
+	command := remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/operator.pub", "/tmp/deploy.pub", remoteSetupSecretsExample)
 	for _, want := range []string{
-		`/tmp/ship-host-install box setup localhost --mode local`,
+		`/tmp/ship-host-install.example box setup localhost --mode local`,
 		`--ingress cloudflare`,
 		`--admin tailscale`,
 		`--suppress-setup-narration`,
@@ -132,7 +132,7 @@ func TestRemoteSetupSecretsArePipedAndCleanedUp(t *testing.T) {
 		}
 	}
 
-	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub", path)
+	command := remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/operator.pub", "/tmp/deploy.pub", path)
 	for _, secret := range []string{"tskey-auth-test", "cf-token-test", "cf-tunnel-token-test"} {
 		if strings.Contains(command, secret) {
 			t.Fatalf("remote helper argv leaked secret %q:\n%s", secret, command)
@@ -159,6 +159,97 @@ func TestApplySetupSecretsFile(t *testing.T) {
 	}
 	if opts.TailscaleAuthKey != "tskey-auth-test" || opts.CloudflareAPIToken != "cf-token-test" || opts.CloudflareTunnelToken != "cf-tunnel-token-test" {
 		t.Fatalf("setup secrets were not loaded: %+v", opts)
+	}
+}
+
+func TestRunRemoteUsesUniqueHelperPathAndCleansItUp(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		installError error
+	}{
+		{name: "success"},
+		{name: "install failure", installError: errors.New("provisioner failed")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			const remoteHelper = "/tmp/ship-host-install.ABCDEF"
+			helper := filepath.Join(t.TempDir(), "ship-linux-amd64")
+			if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+				t.Fatal(err)
+			}
+
+			var commands []string
+			var copiedTo string
+			installer := NewInstaller()
+			installer.Env = map[string]string{"SHIP_LINUX_HELPER": helper}
+			installer.remoteOut = func(_ Plan, command string) (string, error) {
+				switch command {
+				case "echo connected":
+					return "connected\n", nil
+				case "if test -f ~/.ssh/authorized_keys; then cat ~/.ssh/authorized_keys; fi":
+					return alicePublicKey + "\n", nil
+				case "uname -m":
+					return "x86_64\n", nil
+				case "mktemp /tmp/ship-host-install.XXXXXX":
+					return remoteHelper + "\n", nil
+				case "true":
+					return "", nil
+				default:
+					t.Fatalf("unexpected remote output command: %s", command)
+					return "", nil
+				}
+			}
+			installer.remoteCopy = func(_ Plan, _ string, dst string) error {
+				copiedTo = dst
+				return nil
+			}
+			installer.remoteRun = func(_ Plan, command string, _ []byte) error {
+				commands = append(commands, command)
+				if strings.Contains(command, "box setup localhost") {
+					return tt.installError
+				}
+				return nil
+			}
+
+			_, err := installer.runRemote(Plan{
+				Mode:          "remote",
+				TargetHost:    "203.0.113.10",
+				BootstrapUser: "root",
+				Ingress:       "public",
+				Admin:         "public-ssh",
+			}, keyPlan{})
+			if tt.installError == nil && err != nil {
+				t.Fatal(err)
+			}
+			if tt.installError != nil && err == nil {
+				t.Fatal("expected install failure")
+			}
+			if copiedTo != remoteHelper {
+				t.Fatalf("helper copied to %q, want generated path %q", copiedTo, remoteHelper)
+			}
+
+			installCommandIndex := -1
+			cleanupCommandIndex := -1
+			for index, command := range commands {
+				if strings.Contains(command, "/tmp/ship-host-install ") {
+					t.Fatalf("remote command used fixed helper path: %s", command)
+				}
+				if strings.Contains(command, "box setup localhost") {
+					installCommandIndex = index
+					if !strings.Contains(command, "rm -f /tmp/ship-host-install.ABCDEF") {
+						t.Fatalf("install command did not clean up helper: %s", command)
+					}
+				}
+				if command == "rm -f /tmp/ship-host-install.ABCDEF" {
+					cleanupCommandIndex = index
+				}
+			}
+			if installCommandIndex == -1 {
+				t.Fatalf("missing remote install command: %v", commands)
+			}
+			if cleanupCommandIndex <= installCommandIndex {
+				t.Fatalf("helper fallback cleanup did not run after install: %v", commands)
+			}
+		})
 	}
 }
 
@@ -436,7 +527,7 @@ func TestRemoteLocalInstallCommandEnablesLitestreamExplicitly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub", "")
+	command := remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/operator.pub", "/tmp/deploy.pub", "")
 	if !strings.Contains(command, "--litestream") {
 		t.Fatalf("expected command to explicitly enable litestream:\n%s", command)
 	}
