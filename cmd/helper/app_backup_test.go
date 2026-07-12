@@ -2,6 +2,7 @@ package helper
 
 import (
 	"archive/tar"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,6 +83,158 @@ func TestRestoreDryRunRejectsMismatchedReleaseMetadata(t *testing.T) {
 	}
 }
 
+func TestRestoreDryRunLeavesLiveDataUntouched(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	dataDir := identity.DataDir("api", "production")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "keep.txt"), []byte("live data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := newReleaseMetadata("abc1234", false, "abc1234abc1234abc1234abc1234abc1234abc1234", "2026-05-30T14:30:12Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writeTestBackupTarJSON(t, t.TempDir(), "dry-run.tar", meta)
+
+	if _, err := restoreBackup("api", "production", path, "", true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dataDir, "keep.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "live data" {
+		t.Fatalf("live data = %q, want unchanged", got)
+	}
+}
+
+func TestRestoreRejectsMissingDataDirectoryWithoutTouchingLiveData(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	dataDir := identity.DataDir("api", "production")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "keep.txt"), []byte("live data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	path := writeTestBackupTarWithData(t, t.TempDir(), "missing-data.tar", false, func(tw *tar.Writer) error {
+		meta, err := newReleaseMetadata("abc1234", false, "abc1234abc1234abc1234abc1234abc1234abc1234", "2026-05-30T14:30:12Z")
+		if err != nil {
+			return err
+		}
+		return addJSON(tw, "release.json", meta)
+	})
+	extractDest := filepath.Join(root, "extract")
+	if err := os.MkdirAll(extractDest, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := extractBackupTar(path, extractDest); !errcat.Is(err, errcat.CodeBackupDataMissing) {
+		t.Fatalf("extract error = %v, want backup_data_missing", err)
+	}
+	entries, err := os.ReadDir(extractDest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("missing-data archive mutated extraction destination: %v", entries)
+	}
+
+	_, err = restoreBackup("api", "production", path, "", false)
+	if !errcat.Is(err, errcat.CodeBackupDataMissing) {
+		t.Fatalf("restore error = %v, want backup_data_missing", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dataDir, "keep.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "live data" {
+		t.Fatalf("live data = %q, want unchanged", got)
+	}
+}
+
+func TestRestoreCopyFailureLeavesLiveDataUntouched(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	dataDir := identity.DataDir("api", "production")
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "keep.txt"), []byte("live data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := newReleaseMetadata("abc1234", false, "abc1234abc1234abc1234abc1234abc1234abc1234", "2026-05-30T14:30:12Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writeTestBackupTarJSON(t, t.TempDir(), "copy-failure.tar", meta)
+	copyErr := errors.New("disk full")
+
+	_, err = restoreBackupWithOptions("api", "production", path, "", false, restoreBackupOptions{
+		CopyDataDir: func(_, _ string) error { return copyErr },
+	})
+	if !errors.Is(err, copyErr) {
+		t.Fatalf("restore error = %v, want %v", err, copyErr)
+	}
+	got, err := os.ReadFile(filepath.Join(dataDir, "keep.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "live data" {
+		t.Fatalf("live data = %q, want unchanged", got)
+	}
+}
+
+func TestRestoreDataSwapCopiesArchiveBytes(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	setupBackupDataCommands(t, root)
+	dataDir := identity.DataDir("api", "production")
+	if err := os.MkdirAll(filepath.Join(dataDir, "nested"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "old.txt"), []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	extracted := t.TempDir()
+	want := []byte{0x00, 0xff, 0x01, 0x02, 's', 'h', 'i', 'p'}
+	if err := os.MkdirAll(filepath.Join(extracted, "data", "nested"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(extracted, "data", "nested", "payload.bin"), want, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := restoreBackupData("api", "production", extracted, restoreBackupOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dataDir, "nested", "payload.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("restored bytes = %v, want %v", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "old.txt")); !os.IsNotExist(err) {
+		t.Fatalf("old data survived restore: %v", err)
+	}
+}
+
+func setupBackupDataCommands(t *testing.T, root string) {
+	t.Helper()
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"chown", "chmod"} {
+		writeFakeCommand(t, bin, name, "#!/usr/bin/env sh\nexit 0\n")
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestBackupInfoForPathReadsRequiredReleaseMetadata(t *testing.T) {
 	dir := t.TempDir()
 	meta, err := newReleaseMetadata("abc1234", false, "abc1234abc1234abc1234abc1234abc1234abc1234", "2026-05-30T14:30:12Z")
@@ -116,6 +269,10 @@ func writeTestBackupTar(t *testing.T, dir, name string, releaseData []byte) stri
 }
 
 func writeTestBackupTarWithRelease(t *testing.T, dir, name string, addRelease func(*tar.Writer) error) string {
+	return writeTestBackupTarWithData(t, dir, name, true, addRelease)
+}
+
+func writeTestBackupTarWithData(t *testing.T, dir, name string, includeData bool, addRelease func(*tar.Writer) error) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
 	f, err := os.Create(path)
@@ -142,8 +299,10 @@ func writeTestBackupTarWithRelease(t *testing.T, dir, name string, addRelease fu
 	if err := writeTarFile(tw, "ship.toml", []byte("name = \"api\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := tw.WriteHeader(&tar.Header{Name: "data/", Mode: 0755, Typeflag: tar.TypeDir}); err != nil {
-		t.Fatal(err)
+	if includeData {
+		if err := tw.WriteHeader(&tar.Header{Name: "data/", Mode: 0755, Typeflag: tar.TypeDir}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := addRelease(tw); err != nil {
 		t.Fatal(err)

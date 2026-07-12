@@ -370,6 +370,7 @@ All events POST `{"app","env","event","release","summary","why","remediation","t
 <!-- BEGIN GENERATED ERRCAT -->
 - `approval_expired`: approval expired; cause: approval {id} expired for {summary}; remediation: `retry the command to mint a fresh request`.
 - `approval_required`: approval required for {summary}; cause: {member} ({role}) requested {summary}; approval id {id}; remediation: `ship approve {id}`.
+- `backup_data_missing`: backup is invalid; cause: backup payload is missing data/ directory; remediation: `create a new backup`.
 - `behind_production`: Production ship failed; cause: deployed commit {deployed} {detail}; remediation: `git pull`.
 - `box_missing_tool`: box preflight failed; cause: required server tool is missing on {target}: {tool}; remediation: `ship box setup {target}`.
 - `box_not_initialized`: box preflight failed; cause: ship server API is missing at /usr/local/bin/ship on {target}; remediation: `ship box setup {target}`.

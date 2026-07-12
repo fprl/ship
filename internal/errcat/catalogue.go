@@ -79,6 +79,7 @@ const (
 	CodeHostInstallMissingTool            Code = "host_install_missing_tool"
 	CodeHostInstallPermissionDenied       Code = "host_install_permission_denied"
 	CodeHostInstallApplyFailed            Code = "host_install_apply_failed"
+	CodeBackupDataMissing                 Code = "backup_data_missing"
 )
 
 type Fields map[string]string
@@ -510,6 +511,12 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "host provisioning failed",
 		CauseTemplate:       "{detail}",
 		RemediationTemplate: "{command}",
+	},
+	CodeBackupDataMissing: {
+		Code:                CodeBackupDataMissing,
+		MessageTemplate:     "backup is invalid",
+		CauseTemplate:       "backup payload is missing data/ directory",
+		RemediationTemplate: "create a new backup",
 	},
 }
 

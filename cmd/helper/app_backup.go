@@ -128,6 +128,10 @@ type backupPayload struct {
 	Secrets  map[string]string `json:"secrets"`
 }
 
+type restoreBackupOptions struct {
+	CopyDataDir func(src, dst string) error
+}
+
 func createBackup(app, env, dest string, now time.Time) (string, error) {
 	manifestPath := identity.ManifestFile(app, env)
 	if _, err := os.Stat(manifestPath); err != nil {
@@ -200,6 +204,10 @@ func createBackup(app, env, dest string, now time.Time) (string, error) {
 }
 
 func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, error) {
+	return restoreBackupWithOptions(app, env, from, dir, dryRun, restoreBackupOptions{})
+}
+
+func restoreBackupWithOptions(app, env, from, dir string, dryRun bool, opts restoreBackupOptions) (backupMetadata, error) {
 	path, err := resolveBackupPath(app, env, from, dir)
 	if err != nil {
 		return backupMetadata{}, err
@@ -223,19 +231,8 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 	if dryRun {
 		return meta, nil
 	}
-	dataDir := identity.DataDir(app, env)
-	if err := ensureRestoreLayout(app, env); err != nil {
+	if err := restoreBackupData(app, env, tmp, opts); err != nil {
 		return backupMetadata{}, err
-	}
-	_ = os.RemoveAll(dataDir)
-	if err := copyDir(filepath.Join(tmp, "data"), dataDir); err != nil {
-		return backupMetadata{}, err
-	}
-	if err := chownAppDir(app, env, dataDir); err != nil {
-		return backupMetadata{}, err
-	}
-	if _, err := utils.RunChecked("chmod", []string{"2775", dataDir}, ""); err != nil {
-		return backupMetadata{}, fmt.Errorf("chmod %s: %v", dataDir, err)
 	}
 	currentManifest := identity.ManifestFile(app, env)
 	if err := copyFilePath(filepath.Join(tmp, "ship.toml"), currentManifest, 0644); err != nil {
@@ -347,6 +344,50 @@ func restoreBackup(app, env, from, dir string, dryRun bool) (backupMetadata, err
 	return meta, nil
 }
 
+func restoreBackupData(app, env, extractedRoot string, opts restoreBackupOptions) error {
+	dataDir := identity.DataDir(app, env)
+	info, err := os.Stat(dataDir)
+	if err != nil {
+		return fmt.Errorf("read data dir %s: %v", dataDir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("data path is not a directory: %s", dataDir)
+	}
+
+	// Keep the staging directory beside dataDir: exchangeDirs requires both
+	// paths to be on the same filesystem.
+	tmp, err := os.MkdirTemp(filepath.Dir(dataDir), ".data-restore-")
+	if err != nil {
+		return fmt.Errorf("create restore data staging dir: %v", err)
+	}
+	swapped := false
+	defer func() {
+		if !swapped {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
+
+	copyDataDir := opts.CopyDataDir
+	if copyDataDir == nil {
+		copyDataDir = copyDir
+	}
+	if err := copyDataDir(filepath.Join(extractedRoot, "data"), tmp); err != nil {
+		return fmt.Errorf("stage restored data: %w", err)
+	}
+	if err := chownAppDir(app, env, tmp); err != nil {
+		return err
+	}
+	if _, err := utils.RunChecked("chmod", []string{"2775", tmp}, ""); err != nil {
+		return fmt.Errorf("chmod %s: %v", tmp, err)
+	}
+	if err := exchangeDirs(dataDir, tmp); err != nil {
+		return fmt.Errorf("swap restored data dir: %v", err)
+	}
+	swapped = true
+	_ = os.RemoveAll(tmp) // tmp holds the old live data after the exchange.
+	return nil
+}
+
 func containersOutsideDesiredRelease(entries []containerEntry, app, env string, processes map[string]config.Process, release string) []string {
 	desired := map[string]bool{}
 	for name := range processes {
@@ -406,6 +447,16 @@ func extractBackupTar(path, dest string) (backupPayload, error) {
 		return backupPayload{}, err
 	}
 	defer f.Close()
+	hasDataDir, err := backupTarHasDataDir(f)
+	if err != nil {
+		return backupPayload{}, err
+	}
+	if !hasDataDir {
+		return backupPayload{}, errcat.New(errcat.CodeBackupDataMissing, nil)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return backupPayload{}, err
+	}
 	destAbs, err := filepath.Abs(dest)
 	if err != nil {
 		return backupPayload{}, err
@@ -465,6 +516,22 @@ func extractBackupTar(path, dest string) (backupPayload, error) {
 		payload.Secrets = map[string]string{}
 	}
 	return payload, nil
+}
+
+func backupTarHasDataDir(r io.Reader) (bool, error) {
+	tr := tar.NewReader(r)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if h.Typeflag == tar.TypeDir && strings.TrimSuffix(filepath.ToSlash(h.Name), "/") == "data" {
+			return true, nil
+		}
+	}
 }
 
 func safeExtractPath(dest, name string) (string, error) {
@@ -647,10 +714,6 @@ func staticRouteNames(routes map[string]config.Route) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func ensureRestoreLayout(app, env string) error {
-	return applyEnvLayoutPerms(app, env)
 }
 
 func restoreStaticRelease(app, env, extractedRoot, release string) error {
