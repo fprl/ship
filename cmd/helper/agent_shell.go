@@ -12,7 +12,7 @@ import (
 )
 
 type agentShellCmd struct {
-	Member string `name:"member" required:"" help:"Pinned member name from authorized_keys."`
+	MemberFingerprint string `name:"member-fingerprint" required:"" help:"Pinned member SSH public key fingerprint from authorized_keys."`
 }
 
 type agentShellAction struct {
@@ -28,7 +28,7 @@ const (
 )
 
 func (c agentShellCmd) Run() error {
-	action, err := agentShellActionFor(os.Getenv("SSH_ORIGINAL_COMMAND"), c.Member)
+	action, err := agentShellActionFor(os.Getenv("SSH_ORIGINAL_COMMAND"), c.MemberFingerprint)
 	if err != nil {
 		utilsDieError(err)
 	}
@@ -51,10 +51,10 @@ func (c agentShellCmd) Run() error {
 	}
 }
 
-func agentShellActionFor(original, member string) (agentShellAction, error) {
-	member = strings.Join(strings.Fields(member), " ")
-	if member == "" {
-		return agentShellAction{}, agentShellRefused("missing pinned member")
+func agentShellActionFor(original, fingerprint string) (agentShellAction, error) {
+	fingerprint = strings.TrimSpace(fingerprint)
+	if fingerprint == "" {
+		return agentShellAction{}, agentShellRefused("missing pinned member fingerprint")
 	}
 	original = strings.TrimSpace(original)
 	if original == "" {
@@ -69,7 +69,7 @@ func agentShellActionFor(original, member string) (agentShellAction, error) {
 	}
 	switch {
 	case isAgentHelperCommand(argv):
-		return agentShellAction{Kind: agentShellActionExec, Args: forceAgentMember(argv, member)}, nil
+		return agentShellAction{Kind: agentShellActionExec, Args: forceAgentMemberFingerprint(argv, fingerprint)}, nil
 	case isPrepareUploadCommand(argv):
 		return agentShellAction{Kind: agentShellActionPrepareUpload, Path: argv[2]}, nil
 	case isCleanupUploadCommand(argv):
@@ -110,9 +110,9 @@ func hasShellControlToken(argv []string) bool {
 	return false
 }
 
-func forceAgentMember(argv []string, member string) []string {
+func forceAgentMemberFingerprint(argv []string, fingerprint string) []string {
 	out := append([]string{}, argv[:5]...)
-	out = append(out, "--member", member)
+	out = append(out, "--member-fingerprint", fingerprint)
 	tail := argv[5:]
 	for i := 0; i < len(tail); i++ {
 		if tail[i] == "--" {

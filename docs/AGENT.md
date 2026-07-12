@@ -58,10 +58,10 @@ Member identity and approvals:
   entries are plain SSH keys, and the helper resolves the client-passed
   fingerprint through the box-global members store and authorized_keys.
 - Agent keys are the pinned tier: their authorized_keys entries force
-  `ship server agent-shell --member <name>`. The forced command rejects
+  `ship server agent-shell --member-fingerprint <fingerprint>`. The forced command rejects
   interactive SSH and arbitrary commands, allows only the ship helper protocol
-  and deploy upload staging, and overwrites any client member/fingerprint claim
-  with the pinned member name before the privileged helper runs.
+  and deploy upload staging, and overwrites any client fingerprint claim with
+  the fingerprint bound to the authenticated key before the privileged helper runs.
 - Members and approvals are box-scoped, not app-scoped.
 
 Manifest env:

@@ -1,6 +1,8 @@
 package helper
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/fprl/ship/internal/memberkeys"
@@ -96,13 +98,39 @@ func TestMemberOutputExamples(t *testing.T) {
 	}
 }
 
+func TestAppendDeployAuthorizedKeysRejectsConflictingRoleForExistingMember(t *testing.T) {
+	root := t.TempDir()
+	authorizedKeysPath := filepath.Join(root, "authorized_keys")
+	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
+	t.Setenv("SHIP_STATE_DIR", root)
+	if err := os.WriteFile(authorizedKeysPath, []byte(alicePublicKey+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Default().WriteMembers(store.MembersFile{
+		Version: store.CurrentVersion,
+		Members: map[string]store.MemberRecord{
+			aliceFingerprint: {Name: "shared", Role: store.MemberRoleAgent},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := normalizeAuthorizedKeys(bobPublicKey, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = appendDeployAuthorizedKeys("deploy", keys, store.MemberRoleOwner)
+	if err == nil || err.Error() != "command usage failed\nmember \"shared\" already has role \"agent\"; additional keys must use that role\nnext: ship member add <src> --role agent" {
+		t.Fatalf("conflicting member role err = %v", err)
+	}
+}
+
 func TestAuthorizedKeyLineRenderingUsesAgentForcedCommand(t *testing.T) {
 	keys, err := normalizeAuthorizedKeys(alicePublicKey, "alice")
 	if err != nil {
 		t.Fatal(err)
 	}
 	agentLine := memberkeys.RenderAuthorizedKeyLine(keys[0], store.MemberRecord{Name: "alice", Role: store.MemberRoleAgent})
-	wantAgent := `command="/usr/local/bin/ship server agent-shell --member alice",restrict ` + alicePublicKey
+	wantAgent := `command="/usr/local/bin/ship server agent-shell --member-fingerprint ` + aliceFingerprint + `",restrict ` + alicePublicKey
 	if agentLine != wantAgent {
 		t.Fatalf("agent authorized_keys line:\nwant: %s\n got: %s", wantAgent, agentLine)
 	}
@@ -110,7 +138,7 @@ func TestAuthorizedKeyLineRenderingUsesAgentForcedCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Options != `command="/usr/local/bin/ship server agent-shell --member alice",restrict` ||
+	if parsed.Options != `command="/usr/local/bin/ship server agent-shell --member-fingerprint `+aliceFingerprint+`",restrict` ||
 		parsed.Fingerprint != aliceFingerprint ||
 		parsed.Comment != "alice" {
 		t.Fatalf("parsed forced entry = %+v", parsed)

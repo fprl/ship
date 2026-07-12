@@ -13,7 +13,6 @@ import (
 
 type notifyCmd struct {
 	MemberFingerprint string         `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
-	Member            string         `name:"member" hidden:"" help:"Server-pinned member name from agent-shell."`
 	Get               notifyGetCmd   `cmd:"get" help:"Read the box notification webhook."`
 	Set               notifySetCmd   `cmd:"set" help:"Set the box notification webhook."`
 	Clear             notifyClearCmd `cmd:"clear" help:"Clear the box notification webhook."`
@@ -22,7 +21,7 @@ type notifyCmd struct {
 func (c notifyCmd) BeforeApply() error { return requireRoot() }
 
 func (c notifyCmd) AfterApply() error {
-	setServerMemberClaims(c.MemberFingerprint, c.Member)
+	setServerMemberFingerprint(c.MemberFingerprint)
 	return nil
 }
 

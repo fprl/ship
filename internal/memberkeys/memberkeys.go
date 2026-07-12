@@ -195,7 +195,7 @@ func RenderAuthorizedKeyLine(key AuthorizedKey, record store.MemberRecord) strin
 	if role != store.MemberRoleAgent {
 		return public
 	}
-	return fmt.Sprintf("command=\"/usr/local/bin/ship server agent-shell --member %s\",restrict %s", shellEscapeForForcedCommand(name), public)
+	return fmt.Sprintf("command=\"/usr/local/bin/ship server agent-shell --member-fingerprint %s\",restrict %s", key.Fingerprint, public)
 }
 
 func RowsWithMembers(keys []AuthorizedKey, members store.MembersFile) []Row {
@@ -337,27 +337,6 @@ func isSpace(c byte) bool {
 	default:
 		return false
 	}
-}
-
-func shellEscapeForForcedCommand(value string) string {
-	if value != "" && shellSafe(value) {
-		return value
-	}
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
-}
-
-func shellSafe(value string) bool {
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case strings.ContainsRune("_@%+=:,./-", r):
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func KeyMaterial(kind, body string) string {

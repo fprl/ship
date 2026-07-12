@@ -20,14 +20,13 @@ import (
 
 type updateHelperCmd struct {
 	MemberFingerprint string `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
-	Member            string `name:"member" hidden:"" help:"Server-pinned member name from agent-shell."`
 	Binary            string `name:"binary" required:"" help:"Uploaded client-matched helper binary."`
 }
 
 func (c updateHelperCmd) BeforeApply() error { return requireRoot() }
 
 func (c updateHelperCmd) Run() error {
-	setServerMemberClaims(c.MemberFingerprint, c.Member)
+	setServerMemberFingerprint(c.MemberFingerprint)
 	if _, err := authorizeHelper(helperVerbBoxMutation, authTargetForBox("box update")); err != nil {
 		utils.DieError(err, 1)
 	}

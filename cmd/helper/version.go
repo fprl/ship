@@ -16,14 +16,13 @@ import (
 // to be able to see whether a box is behind their client.
 type versionHelperCmd struct {
 	MemberFingerprint string `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
-	Member            string `name:"member" hidden:"" help:"Server-pinned member name from agent-shell."`
 	JSON              bool   `name:"json" help:"Emit version metadata as JSON."`
 }
 
 func (c versionHelperCmd) BeforeApply() error { return requireRoot() }
 
 func (c versionHelperCmd) Run() error {
-	setServerMemberClaims(c.MemberFingerprint, c.Member)
+	setServerMemberFingerprint(c.MemberFingerprint)
 	if _, err := authorizeHelper(helperVerbRead, authTargetForBox("box version")); err != nil {
 		utils.DieError(err, 1)
 	}

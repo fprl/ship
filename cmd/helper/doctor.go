@@ -54,7 +54,6 @@ var (
 
 type doctorCmd struct {
 	MemberFingerprint string `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
-	Member            string `name:"member" hidden:"" help:"Server-pinned member name from agent-shell."`
 	JSON              bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
 	BoxTarget         string `name:"box-target" hidden:"" help:"SSH target used to render runnable remediation commands."`
 	Action            string `arg:"" optional:"" help:"Optional action. record persists doctor state for the daily timer."`
@@ -66,7 +65,7 @@ func (c doctorCmd) BeforeApply() error {
 
 func (c doctorCmd) Run() error {
 	if c.Action == "record" {
-		if c.MemberFingerprint != "" || c.Member != "" {
+		if c.MemberFingerprint != "" {
 			return errcat.New(errcat.CodeRoleDenied, errcat.Fields{
 				"member":  "member",
 				"role":    "member",
@@ -76,7 +75,7 @@ func (c doctorCmd) Run() error {
 		}
 		return CmdDoctorRecord()
 	}
-	setServerMemberClaims(c.MemberFingerprint, c.Member)
+	setServerMemberFingerprint(c.MemberFingerprint)
 	if c.Action != "" {
 		return fmt.Errorf("unsupported doctor action: %s", c.Action)
 	}

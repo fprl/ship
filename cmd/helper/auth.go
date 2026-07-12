@@ -100,14 +100,12 @@ type serverMember struct {
 
 var (
 	serverMemberFingerprint string
-	serverPinnedMemberName  string
 	serverAuthorizedMember  *serverMember
 	approvalNow             = func() time.Time { return time.Now().UTC() }
 )
 
-func setServerMemberClaims(fingerprint, member string) {
+func setServerMemberFingerprint(fingerprint string) {
 	serverMemberFingerprint = strings.TrimSpace(fingerprint)
-	serverPinnedMemberName = strings.Join(strings.Fields(member), " ")
 	serverAuthorizedMember = nil
 }
 
@@ -195,9 +193,6 @@ func helperAllows(role store.MemberRole, verb helperVerb, class string) bool {
 }
 
 func resolveServerMember() (serverMember, error) {
-	if member := strings.TrimSpace(serverPinnedMemberName); member != "" {
-		return resolvePinnedServerMember(member)
-	}
 	fingerprint := strings.TrimSpace(serverMemberFingerprint)
 	if fingerprint == "" && os.Getenv("SUDO_USER") == "" {
 		return serverMember{Name: "root", Role: store.MemberRoleOwner}, nil
@@ -237,37 +232,6 @@ func resolveServerMember() (serverMember, error) {
 		Name:        record.Name,
 		Role:        record.Role,
 	}, nil
-}
-
-func resolvePinnedServerMember(name string) (serverMember, error) {
-	user, err := deployAuthorizedKeysUser()
-	if err != nil {
-		return serverMember{}, err
-	}
-	keys, err := readDeployAuthorizedKeys(user)
-	if err != nil {
-		return serverMember{}, err
-	}
-	members, err := store.Default().ReadMembers()
-	if err != nil {
-		return serverMember{}, err
-	}
-	records := memberkeys.EffectiveMemberRecords(keys, *members, nil)
-	for _, key := range keys {
-		if key.Material == "" {
-			continue
-		}
-		record := records[key.Fingerprint]
-		if record.Name != name {
-			continue
-		}
-		return serverMember{
-			Fingerprint: key.Fingerprint,
-			Name:        record.Name,
-			Role:        record.Role,
-		}, nil
-	}
-	return serverMember{}, errcat.New(errcat.CodeMemberUnknown, errcat.Fields{"fingerprint": "member:" + name})
 }
 
 func envClassForAuth(app, env string) string {

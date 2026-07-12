@@ -11,7 +11,6 @@ import (
 
 type approvalCmd struct {
 	MemberFingerprint string             `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
-	Member            string             `name:"member" hidden:"" help:"Server-pinned member name from agent-shell."`
 	List              approvalListCmd    `cmd:"list" help:"List pending approval requests."`
 	Approve           approvalApproveCmd `cmd:"approve" help:"Approve one pending request."`
 }
@@ -41,7 +40,7 @@ type approvalListRow struct {
 }
 
 func (c approvalCmd) AfterApply() error {
-	setServerMemberClaims(c.MemberFingerprint, c.Member)
+	setServerMemberFingerprint(c.MemberFingerprint)
 	return nil
 }
 

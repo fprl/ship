@@ -19,7 +19,6 @@ import (
 
 type keyCmd struct {
 	MemberFingerprint string     `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
-	Member            string     `name:"member" hidden:"" help:"Server-pinned member name from agent-shell."`
 	Add               keyAddCmd  `cmd:"add" help:"Append SSH public keys to the deploy user's authorized_keys."`
 	Ls                keyListCmd `cmd:"ls" help:"List deploy SSH keys."`
 	Rm                keyRmCmd   `cmd:"rm" help:"Remove deploy SSH keys by member name."`
@@ -30,7 +29,7 @@ func (c keyCmd) BeforeApply() error {
 }
 
 func (c keyCmd) AfterApply() error {
-	setServerMemberClaims(c.MemberFingerprint, c.Member)
+	setServerMemberFingerprint(c.MemberFingerprint)
 	return nil
 }
 
@@ -195,6 +194,22 @@ func appendDeployAuthorizedKeys(user string, keys []authorizedKey, role store.Me
 	members, err := store.Default().ReadMembers()
 	if err != nil {
 		return nil, err
+	}
+	existingRecords := memberkeys.EffectiveMemberRecords(existing, *members, nil)
+	for _, key := range keys {
+		for _, existingKey := range existing {
+			if existingKey.Material == "" {
+				continue
+			}
+			record := existingRecords[existingKey.Fingerprint]
+			if record.Name != key.Comment || record.Role == role {
+				continue
+			}
+			return nil, errcat.New(errcat.CodeUsageError, errcat.Fields{
+				"detail":  fmt.Sprintf("member %q already has role %q; additional keys must use that role", key.Comment, record.Role),
+				"command": "ship member add <src> --role " + string(record.Role),
+			})
+		}
 	}
 	lines, results := memberkeys.Merge(existing, keys)
 	mergedKeys := memberkeys.Parse(memberkeys.Content(lines))

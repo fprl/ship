@@ -4,7 +4,6 @@ package helper
 
 type appCmd struct {
 	MemberFingerprint string           `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
-	Member            string           `name:"member" hidden:"" help:"Server-pinned member name from agent-shell."`
 	SetupEnv          appSetupEnvCmd   `cmd:"setup-env" help:"Create the per-env Linux user, directories, and Podman network."`
 	Preflight         appPreflightCmd  `cmd:"preflight" help:"Run read-only deploy preflight checks for one app env."`
 	Destroy           appDestroyCmd    `cmd:"destroy" help:"Tear down every environment for one app."`
@@ -28,6 +27,6 @@ func (c appCmd) BeforeApply() error {
 }
 
 func (c appCmd) AfterApply() error {
-	setServerMemberClaims(c.MemberFingerprint, c.Member)
+	setServerMemberFingerprint(c.MemberFingerprint)
 	return nil
 }

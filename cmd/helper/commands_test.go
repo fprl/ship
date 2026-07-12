@@ -27,16 +27,14 @@ func parseServerCommand(t *testing.T, args ...string) *ServerCmd {
 func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 	tests := [][]string{
 		{"doctor"},
-		{"agent-shell", "--member", "alice"},
+		{"agent-shell", "--member-fingerprint", aliceFingerprint},
 		{"doctor", "--member-fingerprint", aliceFingerprint},
-		{"doctor", "--member", "alice", "--json"},
 		{"doctor", "--json"},
 		{"doctor", "--box-target", "example.com", "--json"},
 		{"doctor", "record"},
 		{"cloudflare", "setup-tunnel", "--name", "ship", "--account-id", "account-test", "--token-file", "/tmp/token"},
 		{"app", "setup-env", "api", "production"},
 		{"app", "--member-fingerprint", aliceFingerprint, "status", "--json", "api", "production"},
-		{"app", "--member", "alice", "status", "--json", "api", "production"},
 		{"app", "preflight", "--secret", "DATABASE_URL", "--json", "api", "production"},
 		{"app", "destroy", "api"},
 		{"app", "destroy-env", "api", "production"},
@@ -73,13 +71,11 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"env", "reap"},
 		{"key", "add", "--comment", "alice"},
 		{"key", "--member-fingerprint", aliceFingerprint, "ls"},
-		{"key", "--member", "alice", "ls"},
 		{"key", "add", "--comment", "alice", "--role", "owner"},
 		{"key", "ls"},
 		{"key", "ls", "--json"},
 		{"key", "rm", "alice"},
 		{"approval", "--member-fingerprint", aliceFingerprint, "list"},
-		{"approval", "--member", "alice", "list"},
 		{"approval", "list", "--json"},
 		{"approval", "approve", "abc123xy"},
 		{"notify", "get"},
@@ -107,20 +103,11 @@ func TestAppLogsPodmanArgsIncludesTailInFollowMode(t *testing.T) {
 }
 
 func TestServerCLIAppliesMemberFingerprintFlag(t *testing.T) {
-	setServerMemberClaims("", "")
-	t.Cleanup(func() { setServerMemberClaims("", "") })
+	setServerMemberFingerprint("")
+	t.Cleanup(func() { setServerMemberFingerprint("") })
 	parseServerCommand(t, "app", "--member-fingerprint", aliceFingerprint, "status", "--json", "api", "production")
 	if serverMemberFingerprint != aliceFingerprint {
 		t.Fatalf("server member fingerprint = %q, want %q", serverMemberFingerprint, aliceFingerprint)
-	}
-}
-
-func TestServerCLIAppliesPinnedMemberFlag(t *testing.T) {
-	setServerMemberClaims("", "")
-	t.Cleanup(func() { setServerMemberClaims("", "") })
-	parseServerCommand(t, "app", "--member-fingerprint", bobFingerprint, "--member", "alice", "status", "--json", "api", "production")
-	if serverPinnedMemberName != "alice" || serverMemberFingerprint != bobFingerprint {
-		t.Fatalf("server member claims fingerprint=%q pinned=%q, want %q/%q", serverMemberFingerprint, serverPinnedMemberName, bobFingerprint, "alice")
 	}
 }
 
@@ -137,6 +124,7 @@ func TestServerCLIRejectsRemovedCompatibilityCommands(t *testing.T) {
 		{"app", "backup", "rm", "api", "production", "backup-id"},
 		{"app", "backup", "--json", "list", "api", "production"},
 		{"app", "backup", "--from", "backup-id", "restore", "api", "production"},
+		{"app", "--member", "alice", "status", "api", "production"},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt, "_"), func(t *testing.T) {

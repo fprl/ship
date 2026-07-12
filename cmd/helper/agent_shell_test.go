@@ -7,7 +7,7 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 )
 
-func TestAgentShellAllowsHelperProtocolAndForcesPinnedMember(t *testing.T) {
+func TestAgentShellAllowsHelperProtocolAndForcesPinnedFingerprint(t *testing.T) {
 	tests := []struct {
 		name     string
 		original string
@@ -16,17 +16,17 @@ func TestAgentShellAllowsHelperProtocolAndForcesPinnedMember(t *testing.T) {
 		{
 			name:     "plain helper",
 			original: "sudo -n /usr/local/bin/ship server app list --json",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member", "agent-role", "list", "--json"},
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "list", "--json"},
 		},
 		{
 			name:     "lying fingerprint",
 			original: "sudo -n /usr/local/bin/ship server app --member-fingerprint SHA256:owner list --json",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member", "agent-role", "list", "--json"},
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "list", "--json"},
 		},
 		{
-			name:     "lying member",
+			name:     "lying member claim",
 			original: "sudo -n /usr/local/bin/ship server approval --member owner list --json",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "approval", "--member", "agent-role", "list", "--json"},
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "approval", "--member-fingerprint", "SHA256:agent", "list", "--json"},
 		},
 		{
 			// box notify must reach the helper so its role check can
@@ -34,17 +34,17 @@ func TestAgentShellAllowsHelperProtocolAndForcesPinnedMember(t *testing.T) {
 			// gate, not the authorization boundary (§17).
 			name:     "notify passes to helper role check",
 			original: "sudo -n /usr/local/bin/ship server notify set https://example.com/hook",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "notify", "--member", "agent-role", "set", "https://example.com/hook"},
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "notify", "--member-fingerprint", "SHA256:agent", "set", "https://example.com/hook"},
 		},
 		{
 			name:     "quoted helper arg",
 			original: "sudo -n /usr/local/bin/ship server app apply --git-author 'Smoke <smoke@example.com>' api prod",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member", "agent-role", "apply", "--git-author", "Smoke <smoke@example.com>", "api", "prod"},
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "apply", "--git-author", "Smoke <smoke@example.com>", "api", "prod"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			action, err := agentShellActionFor(tt.original, "agent-role")
+			action, err := agentShellActionFor(tt.original, "SHA256:agent")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -85,7 +85,7 @@ func TestAgentShellAllowsDeployUploadShapes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			action, err := agentShellActionFor(tt.original, "agent-role")
+			action, err := agentShellActionFor(tt.original, "SHA256:agent")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +110,7 @@ func TestAgentShellRefusesInteractiveArbitraryAndInjectionCommands(t *testing.T)
 	}
 	for name, original := range tests {
 		t.Run(name, func(t *testing.T) {
-			_, err := agentShellActionFor(original, "agent-role")
+			_, err := agentShellActionFor(original, "SHA256:agent")
 			if !errcat.Is(err, errcat.CodeOperationFailed) || !strings.Contains(err.Error(), "agent_shell_refused") {
 				t.Fatalf("err = %v, want agent_shell_refused operation_failed", err)
 			}

@@ -1344,7 +1344,7 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	agentFingerprint := fingerprintFromMemberMutation(t, added)
 	assertContains(t, added, "member added: agent-role (agent, "+agentFingerprint+")")
 	authorized := e.dockerExec(t, "cat /home/deploy/.ssh/authorized_keys")
-	assertContains(t, authorized, `command="/usr/local/bin/ship server agent-shell --member agent-role",restrict ssh-ed25519`)
+	assertContains(t, authorized, `command="/usr/local/bin/ship server agent-shell --member-fingerprint `+agentFingerprint+`",restrict ssh-ed25519`)
 	assertContains(t, authorized, "fake-vps-smoke")
 	ownerLine := e.dockerExec(t, "grep 'fake-vps-smoke' /home/deploy/.ssh/authorized_keys")
 	assertNotContains(t, ownerLine, "agent-shell")
