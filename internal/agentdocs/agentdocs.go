@@ -876,7 +876,7 @@ var verbs = []Verb{
 		Usage:   "ship box ls [<box>] [--json]",
 		Flags: []Flag{
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
-			{Name: "--json", Purpose: "Emit the fleet view JSON."},
+			{Name: "--json", Purpose: "Emit the box app/environment list as JSON."},
 		},
 		JSONSchema: schema(
 			`{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"prod","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`,

@@ -21,9 +21,9 @@ what is in scope, what is out, and the tests every new feature must pass.
 
 Not the audience:
 
-- Teams running enterprise compliance workflows on fleets of machines.
+- Teams running enterprise compliance workflows across many machines.
 - Engineers who want a free Heroku — Coolify is closer.
-- Anyone whose deploy story needs multi-host fleet management.
+- Anyone whose deploy story needs multi-host management.
 
 ## In scope
 
@@ -49,7 +49,7 @@ Not features we're going to add by accident. If any of these become
 right for the product, they get their own design from scratch, not
 feature creep into the current shape.
 
-- **Multi-host fleet management.** ship is single-host by
+- **Multi-host management.** ship is single-host by
   design. When users outgrow that, they've outgrown this tool —
   multi-host is a different product shape, not a feature to bolt on.
 - **Dashboard UI shipped by us.** The CLI is the product. A dashboard
@@ -112,7 +112,7 @@ What Kamal does that ship doesn't ship today:
 | **Coolify / Dokploy / CapRover** | Dashboard-first self-hosted PaaS: control panel, database-backed state, app templates, click-driven flows | CLI-first deploy primitive: repo-owned manifest, flat-file host state, JSON API, no dashboard process, no hidden UI-owned config |
 | **Dokku** | Mature, Heroku-shaped, git-push, plugins | Modern Go binary instead of bash sprawl; hardened host included; no buildpack guesswork |
 | **Compose + Traefik + scripts** | Standard Docker tools, fully under your control | Hardened host included; secret management included; route synthesis included; backup/restore included; not a script you have to maintain |
-| **Kubernetes / k3s** | Real fleet management, autoscaling | If you need k8s, you are not the audience |
+| **Kubernetes / k3s** | Multi-host orchestration and autoscaling | If you need k8s, you are not the audience |
 
 The honest answer to "why not Compose + Traefik + scripts": if you have
 already written those scripts and they work, ship probably is not

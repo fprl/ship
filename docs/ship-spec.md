@@ -345,7 +345,7 @@ ship box doctor [--json]  existing doctor, output upgraded per §9
                           entries in dev) and fought the
                           rebuild-a-box-freely ethos.
 ship box ls [--json]      existing app list (explicit scope, works
-                          anywhere); --json is the fleet view: per-app
+                          anywhere); --json is the box app list: per-app
                           envs, branches, urls, releases, health,
                           expiry (Phase 3)
 ship box rm <app> [--confirm <app>]   destroy an app and all its envs
@@ -528,7 +528,7 @@ bypasses the catalogue; `ship docs | wc -l` > 0 and drift test green.
 bulk import: `ship secret set --from .env [--preview|--branch <name>]`
 (merge by default; `--replace` makes the file authoritative for the
 scope and lists removed key names on stderr — never values);
-`member add|ls|rm`, `box rm <app>` + the `box ls --json` fleet view,
+`member add|ls|rm`, `box rm <app>` + the `box ls --json` app list,
 install one-liner (curl script — the only install story; a Homebrew
 tap is deliberately cut, deferred until users ask) + shell
 completions, README rewritten around the four moments (§0),

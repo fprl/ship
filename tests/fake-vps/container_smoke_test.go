@@ -95,7 +95,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("preview env overlay applies before secret resolution", env.testPreviewEnvOverlay)
 	t.Run("exec runs one-off commands in the release environment", env.testExec)
 	t.Run("status + logs surface deployed processes without SSHing in", env.testStatusAndLogs)
-	t.Run("box rm destroys an app fleet", env.testBoxRm)
+	t.Run("box rm destroys an app and its environments", env.testBoxRm)
 	t.Run("rm tears down one app environment", env.testDestroy)
 }
 
@@ -839,14 +839,14 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	if unpinned.Preview == nil || unpinned.Preview.Pinned || unpinned.Preview.ExpiresAt == nil {
 		t.Fatalf("unpin should restore expiry: %+v", unpinned.Preview)
 	}
-	fleet := fleetPayloadForBox(t, e, app)
-	prodFleet := fleetEnvByAppClassBranch(t, fleet, "previewapi", "production", "main")
-	if prodFleet.Env != productionEnv || prodFleet.URL != "https://preview.example.com" || prodFleet.CurrentRelease == "" || prodFleet.Health != "healthy" || prodFleet.ExpiresAt != "" || prodFleet.Pinned || prodFleet.ShippedBy == nil {
-		t.Fatalf("production fleet summary missing fields: %+v", prodFleet)
+	appList := appListPayloadForBox(t, e, app)
+	prodAppListEnv := appListEnvByAppClassBranch(t, appList, "previewapi", "production", "main")
+	if prodAppListEnv.Env != productionEnv || prodAppListEnv.URL != "https://preview.example.com" || prodAppListEnv.CurrentRelease == "" || prodAppListEnv.Health != "healthy" || prodAppListEnv.ExpiresAt != "" || prodAppListEnv.Pinned || prodAppListEnv.ShippedBy == nil {
+		t.Fatalf("production app list summary missing fields: %+v", prodAppListEnv)
 	}
-	previewFleet := fleetEnvByAppClassBranch(t, fleet, "previewapi", "preview", "feature/lifecycle")
-	if previewFleet.Env != previewEnv || !strings.Contains(previewFleet.URL, previewEnv+".") || previewFleet.CurrentRelease == "" || previewFleet.Health != "healthy" || previewFleet.ExpiresAt == "" || previewFleet.Pinned || previewFleet.ShippedBy == nil {
-		t.Fatalf("preview fleet summary missing fields: %+v", previewFleet)
+	previewAppListEnv := appListEnvByAppClassBranch(t, appList, "previewapi", "preview", "feature/lifecycle")
+	if previewAppListEnv.Env != previewEnv || !strings.Contains(previewAppListEnv.URL, previewEnv+".") || previewAppListEnv.CurrentRelease == "" || previewAppListEnv.Health != "healthy" || previewAppListEnv.ExpiresAt == "" || previewAppListEnv.Pinned || previewAppListEnv.ShippedBy == nil {
+		t.Fatalf("preview app list summary missing fields: %+v", previewAppListEnv)
 	}
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "previewapi", previewEnv)
 	reapOutput := e.dockerExec(t, "/usr/local/bin/ship server env reap")
@@ -2760,16 +2760,16 @@ type smokeStatusEnv struct {
 	} `json:"processes"`
 }
 
-type smokeFleetPayload struct {
-	Apps []smokeFleetApp `json:"apps"`
+type smokeAppListPayload struct {
+	Apps []smokeAppListApp `json:"apps"`
 }
 
-type smokeFleetApp struct {
-	App  string          `json:"app"`
-	Envs []smokeFleetEnv `json:"envs"`
+type smokeAppListApp struct {
+	App  string            `json:"app"`
+	Envs []smokeAppListEnv `json:"envs"`
 }
 
-type smokeFleetEnv struct {
+type smokeAppListEnv struct {
 	Class          string `json:"class"`
 	Branch         string `json:"branch"`
 	URL            string `json:"url"`
@@ -2845,17 +2845,17 @@ func statusEnvByBranch(t *testing.T, e *smokeEnv, app string, branch string) smo
 	return smokeStatusEnv{}
 }
 
-func fleetPayloadForBox(t *testing.T, e *smokeEnv, app string) smokeFleetPayload {
+func appListPayloadForBox(t *testing.T, e *smokeEnv, app string) smokeAppListPayload {
 	t.Helper()
 	rawJSON := e.ship(t, app, nil, "box", "ls", "--json")
-	var payload smokeFleetPayload
+	var payload smokeAppListPayload
 	if err := json.Unmarshal([]byte(rawJSON), &payload); err != nil {
 		t.Fatalf("box ls --json output not parseable as JSON: %v\nraw:\n%s", err, rawJSON)
 	}
 	return payload
 }
 
-func fleetEnvByAppClassBranch(t *testing.T, payload smokeFleetPayload, app, class, branch string) smokeFleetEnv {
+func appListEnvByAppClassBranch(t *testing.T, payload smokeAppListPayload, app, class, branch string) smokeAppListEnv {
 	t.Helper()
 	for _, listed := range payload.Apps {
 		if listed.App != app {
@@ -2867,8 +2867,8 @@ func fleetEnvByAppClassBranch(t *testing.T, payload smokeFleetPayload, app, clas
 			}
 		}
 	}
-	t.Fatalf("fleet missing %s %s %s: %+v", app, class, branch, payload.Apps)
-	return smokeFleetEnv{}
+	t.Fatalf("app list missing %s %s %s: %+v", app, class, branch, payload.Apps)
+	return smokeAppListEnv{}
 }
 
 func backupIDFromSaveOutput(t *testing.T, output string) string {

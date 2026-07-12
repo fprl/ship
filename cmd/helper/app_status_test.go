@@ -148,10 +148,10 @@ func TestRenderAppListTextEmpty(t *testing.T) {
 }
 
 func TestRenderAppListTextWithApps(t *testing.T) {
-	payload := appListPayload{Apps: []fleetAppStatus{
+	payload := appListPayload{Apps: []appListAppStatus{
 		{
 			App: "api",
-			Envs: []fleetEnvStatus{
+			Envs: []appListEnvStatus{
 				{
 					Class:          "production",
 					Branch:         "main",
@@ -171,10 +171,10 @@ func TestRenderAppListTextWithApps(t *testing.T) {
 	}
 }
 
-func TestAppFleetFromStatusesSummarizesProductionAndPreview(t *testing.T) {
+func TestAppListFromStatusesSummarizesProductionAndPreview(t *testing.T) {
 	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
 	expires := now.Add(2 * time.Hour)
-	payload := appFleetFromStatuses([]appEnvStatus{
+	payload := appListFromStatuses([]appEnvStatus{
 		{
 			App: "api",
 			Env: productionEnvName,
@@ -204,7 +204,7 @@ func TestAppFleetFromStatusesSummarizesProductionAndPreview(t *testing.T) {
 		},
 	}, now)
 	if len(payload.Apps) != 1 || len(payload.Apps[0].Envs) != 2 {
-		t.Fatalf("unexpected fleet payload: %+v", payload)
+		t.Fatalf("unexpected app list payload: %+v", payload)
 	}
 	prod := payload.Apps[0].Envs[0]
 	if prod.Class != "production" || prod.Branch != "main" || prod.Env != productionEnvName || prod.CurrentRelease != "abc1234" || prod.Health != "healthy" || prod.AgeSeconds != 60 || prod.ShippedBy == nil {

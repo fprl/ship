@@ -78,16 +78,16 @@ func (c appListCmd) Run() error {
 	if err := attachAppListRuntimeMetadata(apps); err != nil {
 		utils.DieError(err, 1)
 	}
-	fleet := appFleetFromStatuses(apps, time.Now().UTC())
+	appList := appListFromStatuses(apps, time.Now().UTC())
 	if c.JSON {
-		buf, err := json.MarshalIndent(fleet, "", "  ")
+		buf, err := json.MarshalIndent(appList, "", "  ")
 		if err != nil {
 			utils.DieError(err, 1)
 		}
 		fmt.Println(string(buf))
 		return nil
 	}
-	fmt.Print(renderAppListText(fleet))
+	fmt.Print(renderAppListText(appList))
 	return nil
 }
 
@@ -166,15 +166,15 @@ type statusPayload struct {
 }
 
 type appListPayload struct {
-	Apps []fleetAppStatus `json:"apps"`
+	Apps []appListAppStatus `json:"apps"`
 }
 
-type fleetAppStatus struct {
-	App  string           `json:"app"`
-	Envs []fleetEnvStatus `json:"envs"`
+type appListAppStatus struct {
+	App  string             `json:"app"`
+	Envs []appListEnvStatus `json:"envs"`
 }
 
-type fleetEnvStatus struct {
+type appListEnvStatus struct {
 	Class          string          `json:"class"`
 	Branch         string          `json:"branch"`
 	URL            string          `json:"url"`
@@ -461,13 +461,13 @@ func dashIfEmptyText(value string) string {
 	return value
 }
 
-func appFleetFromStatuses(statuses []appEnvStatus, now time.Time) appListPayload {
-	grouped := map[string][]fleetEnvStatus{}
+func appListFromStatuses(statuses []appEnvStatus, now time.Time) appListPayload {
+	grouped := map[string][]appListEnvStatus{}
 	for _, item := range statuses {
-		env := fleetEnvFromStatus(item, now)
+		env := appListEnvFromStatus(item, now)
 		grouped[item.App] = append(grouped[item.App], env)
 	}
-	apps := make([]fleetAppStatus, 0, len(grouped))
+	apps := make([]appListAppStatus, 0, len(grouped))
 	for app, envs := range grouped {
 		sort.Slice(envs, func(i, j int) bool {
 			if envs[i].Class != envs[j].Class {
@@ -475,13 +475,13 @@ func appFleetFromStatuses(statuses []appEnvStatus, now time.Time) appListPayload
 			}
 			return envs[i].Branch < envs[j].Branch
 		})
-		apps = append(apps, fleetAppStatus{App: app, Envs: envs})
+		apps = append(apps, appListAppStatus{App: app, Envs: envs})
 	}
 	sort.Slice(apps, func(i, j int) bool { return apps[i].App < apps[j].App })
 	return appListPayload{Apps: apps}
 }
 
-func fleetEnvFromStatus(item appEnvStatus, now time.Time) fleetEnvStatus {
+func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 	class := "production"
 	branch := "main"
 	expiresAt := ""
@@ -517,14 +517,14 @@ func fleetEnvFromStatus(item appEnvStatus, now time.Time) fleetEnvStatus {
 		dirty = release.Dirty
 		createdAt = release.CreatedAt
 	}
-	return fleetEnvStatus{
+	return appListEnvStatus{
 		Class:          class,
 		Branch:         branch,
 		URL:            url,
 		Env:            item.Env,
 		CurrentRelease: currentRelease,
-		Health:         fleetHealth(item),
-		AgeSeconds:     fleetAgeSeconds(createdAt, now),
+		Health:         appListHealth(item),
+		AgeSeconds:     appListAgeSeconds(createdAt, now),
 		ExpiresAt:      expiresAt,
 		Pinned:         pinned,
 		Dirty:          dirty,
@@ -534,7 +534,7 @@ func fleetEnvFromStatus(item appEnvStatus, now time.Time) fleetEnvStatus {
 	}
 }
 
-func fleetHealth(item appEnvStatus) string {
+func appListHealth(item appEnvStatus) string {
 	if len(item.Processes) == 0 {
 		if item.Static != nil {
 			return "healthy"
@@ -549,7 +549,7 @@ func fleetHealth(item appEnvStatus) string {
 	return "healthy"
 }
 
-func fleetAgeSeconds(createdAt string, now time.Time) int64 {
+func appListAgeSeconds(createdAt string, now time.Time) int64 {
 	if createdAt == "" {
 		return 0
 	}

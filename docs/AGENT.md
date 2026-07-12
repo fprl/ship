@@ -277,7 +277,7 @@ Secret scoping:
 ### `box ls`
 - Purpose: List app environments visible on a box.
 - Usage: `ship box ls [<box>] [--json]`
-- Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit the fleet view JSON.
+- Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit the box app/environment list as JSON.
 - `--json` stdout schema: `{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"prod","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_target_required`, `invalid_box_target`, `ssh_unreachable`, `box_not_initialized`, `host_key_changed`, `operation_failed`

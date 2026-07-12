@@ -13,15 +13,15 @@ import (
 )
 
 type appListJSON struct {
-	Apps []fleetAppJSON `json:"apps"`
+	Apps []appListAppJSON `json:"apps"`
 }
 
-type fleetAppJSON struct {
-	App  string         `json:"app"`
-	Envs []fleetEnvJSON `json:"envs"`
+type appListAppJSON struct {
+	App  string           `json:"app"`
+	Envs []appListEnvJSON `json:"envs"`
 }
 
-type fleetEnvJSON struct {
+type appListEnvJSON struct {
 	Class          string              `json:"class"`
 	Branch         string              `json:"branch"`
 	URL            string              `json:"url"`
@@ -257,7 +257,7 @@ func statusFromAppList(ctx *config.AppContext, raw string) (statusPayload, error
 			continue
 		}
 		for _, env := range app.Envs {
-			payload.Envs = append(payload.Envs, statusEnvFromFleetItem(ctx, env))
+			payload.Envs = append(payload.Envs, statusEnvFromAppListItem(ctx, env))
 		}
 	}
 	sort.Slice(payload.Envs, func(i, j int) bool {
@@ -269,7 +269,7 @@ func statusFromAppList(ctx *config.AppContext, raw string) (statusPayload, error
 	return payload, nil
 }
 
-func statusEnvFromFleetItem(ctx *config.AppContext, item fleetEnvJSON) statusEnvJSON {
+func statusEnvFromAppListItem(ctx *config.AppContext, item appListEnvJSON) statusEnvJSON {
 	class := item.Class
 	if class == "" {
 		class = "preview"

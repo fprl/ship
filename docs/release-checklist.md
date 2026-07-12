@@ -58,7 +58,7 @@ pointing at the box.
 (cd examples/mixed-api-docs && ../../dist/ship --tls internal)
 ```
 
-Confirm the fleet view before teardown:
+Confirm the box app list before teardown:
 
 ```bash
 ./dist/ship box ls <IP> --json
