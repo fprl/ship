@@ -29,6 +29,14 @@ func TestAgentShellAllowsHelperProtocolAndForcesPinnedMember(t *testing.T) {
 			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "approval", "--member", "agent-role", "list", "--json"},
 		},
 		{
+			// box notify must reach the helper so its role check can
+			// return approval_required — the agent-shell is the transport
+			// gate, not the authorization boundary (§17).
+			name:     "notify passes to helper role check",
+			original: "sudo -n /usr/local/bin/ship server notify set https://example.com/hook",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "notify", "--member", "agent-role", "set", "https://example.com/hook"},
+		},
+		{
 			name:     "quoted helper arg",
 			original: "sudo -n /usr/local/bin/ship server app apply --git-author 'Smoke <smoke@example.com>' api prod",
 			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member", "agent-role", "apply", "--git-author", "Smoke <smoke@example.com>", "api", "prod"},

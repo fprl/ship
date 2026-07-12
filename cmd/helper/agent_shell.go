@@ -93,7 +93,7 @@ func isAgentHelperCommand(argv []string) bool {
 
 func agentHelperNamespaceAllowed(namespace string) bool {
 	switch namespace {
-	case "app", "approval", "cloudflare", "doctor", "key":
+	case "app", "approval", "cloudflare", "doctor", "key", "notify", "version", "update":
 		return true
 	default:
 		return false
