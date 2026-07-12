@@ -22,15 +22,19 @@ Every decision below optimizes those three. The end state:
 4. **The box is a teammate, not infrastructure.** It reports in, explains
    itself (`why`), and pages your agent with the diagnosis and fix
    attached (journal + notify + doctor here; resident loop in RFD-0002).
-5. **Zero security decisions.** One hardened shape, no knobs, ever.
+5. **Zero security decisions.** One hardened shape. The only choices
+   are topology modes (`--ingress`, `--admin`, §4) — never mechanisms,
+   ciphers, ports, or policies.
 6. **Exit is a feature.** Delete ship and a boring, well-configured Linux
    server keeps serving. No PaaS can say this sentence.
 7. **Proof, not promises.** The agent eval suite (§9) is public evidence
    that an agent can operate the whole thing unaided.
 
-v1 builds none of this speculatively: Phases 1–3 below are the smallest
-surface that points at it. The unscheduled bets live in `docs/rfd/`
-(data forks, resident, members).
+v1 built none of this speculatively: Phases 1–3 below are the smallest
+surface that points at it. Since then, members (§13, v0.2.0) and data
+forks (§14, v0.3.0) promoted out of the RFDs; the v0.4 arc is §15–§17.
+The remaining unscheduled bets live in `docs/rfd/` (resident,
+agent-era catalog, sleeping previews).
 
 ## 0. Mission and constraints
 
@@ -129,10 +133,13 @@ Rules:
 - Per-process `port` is kept (default: the Dockerfile's sole `EXPOSE`,
   else 3000). Per-process `health` is removed — the top-level `probe`
   gates the routed process; other processes just get supervision.
-- `ship init` detects the stack (package.json / requirements / go.mod /
-  static dir), writes `ship.toml` AND a starter `Dockerfile` when none
-  exists (reuse the existing template system in `cmd/client/init.go`).
-  Never overwrite existing files (existing behavior, keep).
+- `ship init` writes `ship.toml` AND a starter `Dockerfile` when none
+  exists, from an explicit template
+  (`--template container|static|php|hono`, default `container`; the
+  existing template system in `cmd/client/init.go`). Stack *detection*
+  (package.json / requirements / go.mod / static dir choosing the
+  template) is not built yet — TODO(§2), a v0.4.x candidate. Never
+  overwrite existing files (existing behavior, keep).
 
 ## 3. Addressing: branch = environment
 
