@@ -162,13 +162,31 @@ func readBoxStatus(runner *CommandRunner, server string) (boxStatusPayload, erro
 	return payload, nil
 }
 
-func readBoxVersion(runner *CommandRunner, server string) (boxVersionPayload, error) {
-	out, err := runSSHDetail(runner, server, serverVersionCommand(true))
-	if err != nil {
-		return boxVersionPayload{}, err
+// readBoxVersion probes the helper version. A box provisioned before the
+// version/update verbs existed fails in one of two shapes — sudoers denies
+// the verb, or an old helper rejects it as usage — and both mean the same
+// thing: converge once with `ship box setup`, the day-0 and recovery path.
+func readBoxVersion(runner sshRunner, server string) (boxVersionPayload, error) {
+	stdout, stderr, code, err := runner.RunSSH(server, serverVersionCommand(true))
+	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			return boxVersionPayload{}, coded
+		}
+		remote := extractRemoteError(stdout, stderr, "box version probe failed")
+		if remote.Coded != nil {
+			if remote.Coded.Code() == errcat.CodeUsageError {
+				return boxVersionPayload{}, errcat.New(errcat.CodeBoxSetupRequired, errcat.Fields{"server": server})
+			}
+			writeRemoteStderr(stderr)
+			return boxVersionPayload{}, remote.Coded
+		}
+		if strings.HasPrefix(remote.Detail, "sudo:") {
+			return boxVersionPayload{}, errcat.New(errcat.CodeBoxSetupRequired, errcat.Fields{"server": server})
+		}
+		return boxVersionPayload{}, operationError(remote.Detail, "ship box status "+server)
 	}
 	var payload boxVersionPayload
-	if err := json.Unmarshal([]byte(out), &payload); err != nil || payload.Version == "" {
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil || payload.Version == "" {
 		return boxVersionPayload{}, operationError("box status failed: invalid helper version JSON", "ship box status "+server)
 	}
 	return payload, nil

@@ -44,8 +44,6 @@ host-key pin. Do not edit `~/.ssh/known_hosts`; ship uses
   --ssh-key ~/.ssh/<root-key> \
   --operator-ssh-public-key-file /tmp/ship-smoke-keys/operator.pub \
   --deploy-ssh-public-key-file /tmp/ship-smoke-keys/deploy.pub \
-  --timezone UTC \
-  --locale en_US.UTF-8 \
   --ingress public \
   --admin public-ssh \
   --no-tailscale \

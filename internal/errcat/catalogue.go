@@ -82,6 +82,7 @@ const (
 	CodeHostInstallApplyFailed            Code = "host_install_apply_failed"
 	CodeBackupDataMissing                 Code = "backup_data_missing"
 	CodeClientBehindHelper                Code = "client_behind_helper"
+	CodeBoxSetupRequired                  Code = "box_setup_required"
 )
 
 type Fields map[string]string
@@ -531,6 +532,12 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "client is behind the box helper",
 		CauseTemplate:       "helper version {helper_version} is newer than client version {client_version}",
 		RemediationTemplate: "curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | bash",
+	},
+	CodeBoxSetupRequired: {
+		Code:                CodeBoxSetupRequired,
+		MessageTemplate:     "box predates one-command update",
+		CauseTemplate:       "this box's helper and sudo rules are older than ship box update",
+		RemediationTemplate: "ship box setup {server}",
 	},
 }
 

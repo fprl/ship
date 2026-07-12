@@ -23,6 +23,7 @@ import (
 	"github.com/fprl/ship/internal/provision/local"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
+	"github.com/fprl/ship/internal/version"
 )
 
 type Options struct {
@@ -593,7 +594,10 @@ func (i *Installer) prepareGoHelperBinaries(repoRoot string, target string) (str
 	i.info("Building ship Go helper binaries")
 	for _, arch := range []string{"amd64", "arm64"} {
 		env := append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
-		cmd := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w", "-o", filepath.Join(outputDir, "ship-linux-"+arch), ".")
+		// Stamp the running client's version so the pushed helper is
+		// client-matched; an unstamped helper reports "dev" and defeats
+		// the §16 skew comparison on every box it lands on.
+		cmd := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w -X github.com/fprl/ship/internal/version.Version="+version.Version, "-o", filepath.Join(outputDir, "ship-linux-"+arch), ".")
 		cmd.Dir = repoRoot
 		cmd.Env = env
 		cmd.Stdout = i.Stdout

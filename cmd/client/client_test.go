@@ -1677,3 +1677,36 @@ func TestEnsureRemoteEnvReadyUsesPostPrepareBoundaryForSecondPreflightFailure(t 
 		t.Fatalf("post-prepare failure must not claim no remote files changed, got %v", err)
 	}
 }
+
+func TestReadBoxVersionMapsPreUpdateBoxesToSetupRequired(t *testing.T) {
+	version := serverVersionCommand(true)
+
+	sudoDenied := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
+		version: {{stderr: "sudo: a password is required", code: 1}},
+	}}
+	_, err := readBoxVersion(sudoDenied, "203.0.113.7")
+	coded, ok := errcat.As(err)
+	if !ok || coded.Code() != errcat.CodeBoxSetupRequired {
+		t.Fatalf("sudo denial should map to box_setup_required, got %v", err)
+	}
+	if !strings.Contains(coded.Remediation(), "ship box setup 203.0.113.7") {
+		t.Fatalf("remediation should name box setup, got %q", coded.Remediation())
+	}
+
+	oldHelper := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
+		version: {{stdout: `{"error":{"code":"usage_error","message":"command usage failed","cause":"unexpected argument version","remediation":"ship help"}}`, code: 2}},
+	}}
+	_, err = readBoxVersion(oldHelper, "203.0.113.7")
+	coded, ok = errcat.As(err)
+	if !ok || coded.Code() != errcat.CodeBoxSetupRequired {
+		t.Fatalf("old-helper usage error should map to box_setup_required, got %v", err)
+	}
+
+	healthy := &fakeSSHRunner{responses: map[string]string{
+		version: `{"version":"v0.4.0","architecture":"x86_64"}`,
+	}}
+	payload, err := readBoxVersion(healthy, "203.0.113.7")
+	if err != nil || payload.Version != "v0.4.0" {
+		t.Fatalf("healthy probe failed: payload=%+v err=%v", payload, err)
+	}
+}

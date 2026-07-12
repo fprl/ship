@@ -1057,6 +1057,19 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 	assertContains(t, agent.stdout+agent.stderr, "approval_required")
 	e.pathPrefix = ownerPrefix
 
+	// App-wide credentials survive preview churn: reap the protected
+	// preview, redeploy the branch, and the bypass token is unchanged.
+	protectedEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "guardapi", "feature/protected")
+	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "guardapi", protectedEnv)
+	e.dockerExec(t, "/usr/local/bin/ship server env reap")
+	e.dockerExec(t, "test ! -e "+identity.EnvRoot("guardapi", protectedEnv))
+	e.dockerExec(t, "test -f /etc/ship/secrets/guardapi/_preview-protection/BYPASS_TOKEN")
+	e.ship(t, app, nil)
+	churned := parsePreviewCredentials(t, e.ship(t, app, nil, "preview", "password"))
+	if churned.BypassToken != rotated.BypassToken {
+		t.Fatalf("preview churn changed bypass token: old=%q new=%q", rotated.BypassToken, churned.BypassToken)
+	}
+
 	open := filepath.Join(e.tmp, "preview-unlocked")
 	mustMkdir(t, open)
 	writeUnprotectedPreviewFixture(t, open)
@@ -1501,6 +1514,9 @@ box = "fake-vps"
 production_branch = "main"
 probe = "/health"
 
+[previews]
+protected = true
+
 [processes]
 web = { port = 3000 }
 
@@ -1516,6 +1532,7 @@ web = { port = 3000 }
 	e.ship(t, app, []byte("preview-cleanup"), "secret", "set", "cleanup_key", "--branch", "feature/box-rm")
 	e.ship(t, app, nil)
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "boxrmapi", "feature/box-rm")
+	e.dockerExec(t, "test -f /etc/ship/secrets/boxrmapi/_preview-protection/BYPASS_TOKEN")
 
 	missingConfirm := e.runShip(t, e.repoRoot, nil, "box", "rm", "boxrmapi", "fake-vps")
 	if missingConfirm.err == nil {
@@ -1534,6 +1551,9 @@ web = { port = 3000 }
 		e.dockerExec(t, "test ! -e /etc/ship/secrets/boxrmapi/"+env)
 		e.dockerExec(t, "test ! -e "+identity.CaddyFragmentFile("boxrmapi", env))
 	}
+	// The app-wide _preview-protection namespace dies with the last env;
+	// box rm must not leave credentials behind.
+	e.dockerExec(t, "test ! -e /etc/ship/secrets/boxrmapi")
 }
 
 func (e *smokeEnv) testBackupRestore(t *testing.T) {

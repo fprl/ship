@@ -286,7 +286,24 @@ func destroyEnv(app, env string, purge bool) (destroySummary, error) {
 			return destroySummary{}, fmt.Errorf("remove secrets for %s (%s): %v", app, env, err)
 		}
 		secretsPurged = true
-		if appSecretDir := filepath.Dir(secretDir); dirEmpty(appSecretDir) {
+		appSecretDir := filepath.Dir(secretDir)
+		// App-wide generated credentials (the _preview-protection
+		// namespace) must survive preview churn but die with the app's
+		// last environment — without this the namespace keeps the app
+		// secret dir alive after box rm.
+		if remaining, err := identityAppEnvs(); err == nil {
+			last := true
+			for _, item := range remaining {
+				if item.App == app {
+					last = false
+					break
+				}
+			}
+			if last {
+				_ = os.RemoveAll(appSecretDir)
+			}
+		}
+		if dirEmpty(appSecretDir) {
 			_ = os.Remove(appSecretDir)
 		}
 	}
