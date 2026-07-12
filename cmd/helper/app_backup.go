@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/secrets"
 	"github.com/fprl/ship/internal/utils"
@@ -174,6 +175,10 @@ func createBackup(app, env, dest string, now time.Time) (string, error) {
 	}
 	id := now.Format("20060102T150405Z") + "-" + release
 	path := filepath.Join(dir, id+".tar")
+	backupSecrets, err := readSecrets(app, env)
+	if err != nil {
+		return "", err
+	}
 	payload := backupPayload{
 		Metadata: backupMetadata{
 			SchemaVersion: 1,
@@ -186,7 +191,7 @@ func createBackup(app, env, dest string, now time.Time) (string, error) {
 			Processes:     processes,
 			StaticRoutes:  staticRouteNames(appCtx.Routes),
 		},
-		Secrets: readSecrets(app, env),
+		Secrets: backupSecrets,
 	}
 	if err := writeBackupTar(path, app, env, manifestPath, payload, appCtx.HasStaticRoutes); err != nil {
 		return "", err
@@ -604,19 +609,24 @@ func readBackupMetadata(path string) (backupMetadata, error) {
 	return payload.Metadata, nil
 }
 
-func readSecrets(app, env string) map[string]string {
+func readSecrets(app, env string) (map[string]string, error) {
 	out := map[string]string{}
 	keys, err := secrets.List(app, env)
 	if err != nil {
-		return out
+		return nil, errcat.New(errcat.CodeSecretReadError, errcat.Fields{
+			"detail": fmt.Sprintf("list secrets for %s (%s): %v", app, env, err),
+		})
 	}
 	for _, key := range keys {
 		val, err := secrets.Get(app, env, key)
-		if err == nil {
-			out[key] = string(val)
+		if err != nil {
+			return nil, errcat.New(errcat.CodeSecretReadError, errcat.Fields{
+				"detail": fmt.Sprintf("read secret %s for %s (%s): %v", key, app, env, err),
+			})
 		}
+		out[key] = string(val)
 	}
-	return out
+	return out, nil
 }
 
 func processNamesFromStatuses(processes []processStatus) []string {

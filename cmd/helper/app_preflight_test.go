@@ -1,11 +1,31 @@
 package helper
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/fprl/ship/internal/identity"
 )
+
+func TestAppPreflightReportJSONUsesIssuesOnly(t *testing.T) {
+	report := appPreflightReport{
+		App:     "api",
+		Env:     "production",
+		Healthy: false,
+		Issues:  []appPreflightIssue{{Code: "env_missing", Message: "app env is not prepared"}},
+	}
+	raw, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"findings"`) {
+		t.Fatalf("preflight payload must not duplicate issues as findings: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"issues":[{`) {
+		t.Fatalf("preflight payload is missing issues: %s", raw)
+	}
+}
 
 func TestRunningContainerExistsRequiresRunningState(t *testing.T) {
 	entries := []containerEntry{

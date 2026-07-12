@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/secrets"
 	"github.com/fprl/ship/internal/utils"
 )
@@ -32,7 +33,7 @@ func (c appSecretSetCmd) Run() error {
 		utils.DieError(err, 1)
 	}
 	if err := secrets.ValidateKey(c.Key); err != nil {
-		utils.DieError(err, 1)
+		return errcat.New(errcat.CodeInvalidSecretKey, errcat.Fields{"key": fmt.Sprintf("%q", c.Key)})
 	}
 	authorizeOrDie(helperVerbSecretSet, authTargetForAppEnv(c.App, c.Env, "key="+c.Key))
 	// stdin only — never argv. The client SSHes the value over the

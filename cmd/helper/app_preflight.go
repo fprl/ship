@@ -24,11 +24,10 @@ type appPreflightCmd struct {
 }
 
 type appPreflightReport struct {
-	App      string              `json:"app"`
-	Env      string              `json:"env"`
-	Healthy  bool                `json:"healthy"`
-	Issues   []appPreflightIssue `json:"issues"`
-	Findings []string            `json:"findings"`
+	App     string              `json:"app"`
+	Env     string              `json:"env"`
+	Healthy bool                `json:"healthy"`
+	Issues  []appPreflightIssue `json:"issues"`
 }
 
 type appPreflightIssue struct {
@@ -59,16 +58,11 @@ func (c appPreflightCmd) Run() error {
 
 func appPreflightReportFor(app, env string, requiredSecrets []string) appPreflightReport {
 	issues := appPreflightIssues(app, env, requiredSecrets)
-	findings := make([]string, 0, len(issues))
-	for _, issue := range issues {
-		findings = append(findings, issue.Message)
-	}
 	return appPreflightReport{
-		App:      app,
-		Env:      env,
-		Healthy:  len(issues) == 0,
-		Issues:   issues,
-		Findings: findings,
+		App:     app,
+		Env:     env,
+		Healthy: len(issues) == 0,
+		Issues:  issues,
 	}
 }
 
@@ -249,8 +243,8 @@ func renderAppPreflightText(report appPreflightReport) string {
 		return b.String()
 	}
 	fmt.Fprintf(&b, "Preflight failed for %s (%s)\n", report.App, report.Env)
-	for _, finding := range report.Findings {
-		fmt.Fprintf(&b, "  - %s\n", finding)
+	for _, issue := range report.Issues {
+		fmt.Fprintf(&b, "  - %s\n", issue.Message)
 	}
 	return b.String()
 }

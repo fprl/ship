@@ -8,9 +8,41 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/store"
 )
+
+func TestDoctorRecordRefusesMemberClaimsWithoutChangingState(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_STATE_DIR", root)
+	before := []byte(`{"version":1,"recorded_at":"2026-07-12T10:00:00Z","checks":[],"delta":[]}`)
+	if err := os.WriteFile(store.Default().DoctorPath(), before, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := (doctorCmd{MemberFingerprint: aliceFingerprint, Action: "record"}).Run()
+	if !errcat.Is(err, errcat.CodeRoleDenied) {
+		t.Fatalf("Run error = %v, want role_denied", err)
+	}
+	after, err := os.ReadFile(store.Default().DoctorPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("member-invoked record changed doctor state:\nwant %s\n got %s", before, after)
+	}
+}
+
+func TestDoctorRecordWithoutMemberClaimsPersistsState(t *testing.T) {
+	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	if err := (doctorCmd{Action: "record"}).Run(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Default().ReadDoctor(); err != nil {
+		t.Fatalf("record action did not persist doctor state: %v", err)
+	}
+}
 
 func TestDoctorHostStateCheckReportsMissingHostWithoutRawError(t *testing.T) {
 	root := t.TempDir()

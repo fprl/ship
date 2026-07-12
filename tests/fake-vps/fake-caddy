@@ -7,6 +7,6 @@ case "${1:-}" in
     ;;
   *)
     echo "fake caddy: unsupported command $*" >&2
-    exit 0
+    exit 2
     ;;
 esac

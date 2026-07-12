@@ -99,11 +99,10 @@ func commandDetail(stdout, stderr, fallback string) string {
 }
 
 type remotePreflightReport struct {
-	App      string                 `json:"app"`
-	Env      string                 `json:"env"`
-	Healthy  bool                   `json:"healthy"`
-	Issues   []remotePreflightIssue `json:"issues"`
-	Findings []string               `json:"findings"`
+	App     string                 `json:"app"`
+	Env     string                 `json:"env"`
+	Healthy bool                   `json:"healthy"`
+	Issues  []remotePreflightIssue `json:"issues"`
 }
 
 type remotePreflightIssue struct {
@@ -177,9 +176,6 @@ func splitPreflightIssueRemediation(message string) (string, string) {
 }
 
 func remotePreflightFindingMessages(report remotePreflightReport) []string {
-	if len(report.Findings) > 0 {
-		return report.Findings
-	}
 	messages := make([]string, 0, len(report.Issues))
 	for _, issue := range report.Issues {
 		messages = append(messages, issue.Message)

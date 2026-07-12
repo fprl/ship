@@ -22,6 +22,18 @@ import (
 
 const productionEnv = "prod"
 
+func TestFakeCaddyRejectsUnsupportedCommand(t *testing.T) {
+	cmd := exec.Command(filepath.Join(h.RepoRootForTest(t), "tests", "fake-vps", "fake-caddy"), "reload")
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("unsupported fake-caddy command succeeded: %s", output)
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 2 {
+		t.Fatalf("unsupported fake-caddy exit = %v, want code 2; output: %s", err, output)
+	}
+}
+
 const (
 	notifyEventDeployAborted     = "deploy_aborted"
 	notifyEventDeployRecovered   = "deploy_recovered"

@@ -18,6 +18,7 @@ import (
 
 	"github.com/fprl/ship/internal/caddy"
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/secrets"
@@ -60,11 +61,18 @@ func (c doctorCmd) BeforeApply() error {
 }
 
 func (c doctorCmd) Run() error {
-	setServerMemberClaims(c.MemberFingerprint, c.Member)
 	if c.Action == "record" {
-		CmdDoctorRecord()
-		return nil
+		if c.MemberFingerprint != "" || c.Member != "" {
+			return errcat.New(errcat.CodeRoleDenied, errcat.Fields{
+				"member":  "member",
+				"role":    "member",
+				"summary": "run doctor record",
+				"command": "wait for ship-doctor-record.timer",
+			})
+		}
+		return CmdDoctorRecord()
 	}
+	setServerMemberClaims(c.MemberFingerprint, c.Member)
 	if c.Action != "" {
 		return fmt.Errorf("unsupported doctor action: %s", c.Action)
 	}
@@ -270,11 +278,9 @@ func CmdDoctor(jsonFlag bool, boxTarget string) {
 	}
 }
 
-func CmdDoctorRecord() {
-	if _, err := recordDoctorRun(defaultDoctorOptions("")); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+func CmdDoctorRecord() error {
+	_, err := recordDoctorRun(defaultDoctorOptions(""))
+	return err
 }
 
 func recordDoctorRun(opts doctorOptions) (store.DoctorFile, error) {

@@ -1517,8 +1517,8 @@ func TestEnsureRemoteEnvReadyPreparesMissingEnv(t *testing.T) {
 		},
 		sequences: map[string][]fakeSSHResult{
 			preflightCmd: {
-				{stdout: `{"app":"api","env":"production","healthy":false,"issues":[{"code":"env_missing","message":"app env is not prepared: missing /var/apps/api.production"}],"findings":["app env is not prepared: missing /var/apps/api.production"]}`, code: 1},
-				{stdout: `{"app":"api","env":"production","healthy":true,"issues":[],"findings":[]}`, code: 0},
+				{stdout: `{"app":"api","env":"production","healthy":false,"issues":[{"code":"env_missing","message":"app env is not prepared: missing /var/apps/api.production"}]}`, code: 1},
+				{stdout: `{"app":"api","env":"production","healthy":true,"issues":[]}`, code: 0},
 			},
 		},
 	}
@@ -1563,7 +1563,7 @@ func TestEnsureRemoteEnvReadyDoesNotPrepareWhenSecretsAreMissing(t *testing.T) {
 			"command -v rsync >/dev/null": "",
 		},
 		failures: map[string]string{
-			preflightCmd: `{"app":"api","env":"production","healthy":false,"issues":[{"code":"env_missing","message":"app env is not prepared: missing /var/apps/api.production"},{"code":"secret_missing","message":"missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL` + "`" + `"}],"findings":["app env is not prepared: missing /var/apps/api.production","missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL` + "`" + `"]}`,
+			preflightCmd: `{"app":"api","env":"production","healthy":false,"issues":[{"code":"env_missing","message":"app env is not prepared: missing /var/apps/api.production"},{"code":"secret_missing","message":"missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL` + "`" + `"}]}`,
 		},
 	}
 
@@ -1593,7 +1593,7 @@ func TestEnsureRemoteEnvReadyUsesPostPrepareBoundaryForSecondPreflightFailure(t 
 		},
 		sequences: map[string][]fakeSSHResult{
 			preflightCmd: {
-				{stdout: `{"app":"api","env":"production","healthy":false,"issues":[{"code":"env_missing","message":"app env is not prepared: missing /var/apps/api.production"}],"findings":["app env is not prepared: missing /var/apps/api.production"]}`, code: 1},
+				{stdout: `{"app":"api","env":"production","healthy":false,"issues":[{"code":"env_missing","message":"app env is not prepared: missing /var/apps/api.production"}]}`, code: 1},
 				{stdout: `not-json`, stderr: `broken preflight`, code: 1},
 			},
 		},
