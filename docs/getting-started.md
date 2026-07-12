@@ -19,8 +19,10 @@ Run this against the fresh VPS:
 ship box setup 203.0.113.7
 ```
 
-`box setup` creates `~/.ssh/ship` on first use, then enrolls that public key as
-the first deploy member; no key flags are needed.
+`box setup` creates this machine's ship identity at `~/.ssh/ship` on first use.
+The member name comes from `git config user.name`, falling back to `$USER`, and
+that public key is enrolled as the box's first member with the `owner` role. No
+key flags are needed for the normal path.
 
 If your provider gave you a root password instead of installing your SSH key,
 install your key once, then run `box setup`:
@@ -33,9 +35,11 @@ ship box setup 203.0.113.7
 ship uses key auth only. During hardening it disables password login
 permanently.
 
-`box setup` pins the box host key in `~/.config/ship/known_hosts`. If you
-rebuild the VPS at the same address, rerun `ship box setup <ssh-target>` to
-re-establish the pin; no manual `ssh-keygen -R` is needed.
+First contact trusts and pins the box host key in
+`~/.config/ship/known_hosts`; ship never writes to `~/.ssh/known_hosts`. A
+changed key is refused. If you rebuild the VPS at the same address, rerun
+`ship box setup <ssh-target>` to re-establish the pin; no manual
+`ssh-keygen -R` is needed.
 
 Ingress modes are selected with `--ingress public|cloudflare|private`.
 `public` opens Caddy on 80/443, `cloudflare` runs Cloudflare Tunnel and keeps
@@ -61,6 +65,9 @@ Edit `ship.toml` so `box` points at the VPS host:
 ```toml
 box = "203.0.113.7"
 ```
+
+The manifest value is host-only. Use `203.0.113.7`, not `root@203.0.113.7`.
+Only `ship box setup <ssh-target>` accepts a bootstrap target with a user.
 
 Commit before the first Production deploy:
 
@@ -119,7 +126,60 @@ You can also pass a literal public key or a path to a `.pub` file:
 ship member add ~/.ssh/alice.pub
 ```
 
-## 7. Back up and restore
+The default role is `shipper`, which covers deploys, logs, exec, rollback,
+secrets, previews, and data forks. Use `--role owner` for someone who should
+manage members and destructive box/app operations, or `--role agent` for a key
+limited to Preview deploys and reads:
+
+```bash
+ship member add alice --role owner
+ship member add ~/.ssh/agent.pub --role agent
+ship member ls
+```
+
+`member add` prints each key's SHA256 fingerprint. After this, invite the
+teammate to the repo; their first `ship` will use their key and the box member
+record.
+
+## 7. Test a risky data change
+
+Create and deploy a Preview branch first:
+
+```bash
+git switch -c migration/accounts-v2
+ship
+```
+
+Then copy Production `/data` into that Preview:
+
+```bash
+ship data fork
+ship exec -- npm run migrate
+ship
+```
+
+Now the Preview has real production-shaped data for verification, while
+Production stays read-only. Data commands only run from Preview branches.
+`owner` and `shipper` can run them directly; an `agent` key gets
+`approval_required`.
+
+Empty the Preview data when you are done:
+
+```bash
+ship data rm
+```
+
+If an out-of-role action asks for approval, an owner or shipper can list and
+grant one retry:
+
+```bash
+ship approve
+ship approve abc123xy
+```
+
+Approvals expire after 15 minutes.
+
+## 8. Back up and restore
 
 Create a backup for the current branch environment:
 

@@ -35,9 +35,11 @@ Start with a fresh Ubuntu box, then converge it:
 ship box setup 203.0.113.7
 ```
 
-`box setup` creates `~/.ssh/ship` on first use, then enrolls that public key as
-the first deploy member. For split-key or CI setups, pass
-`--deploy-ssh-public-key-file`; otherwise no key flags are needed.
+`box setup` creates this machine's ship identity at `~/.ssh/ship` on first use.
+The member name comes from `git config user.name`, falling back to `$USER`, and
+that public key is enrolled as the box's first member with the `owner` role. For
+split-key or CI setups, pass `--deploy-ssh-public-key-file`; otherwise no key
+flags are needed.
 
 If the provider gave you a root password instead of installing your SSH key:
 
@@ -49,10 +51,11 @@ ship box setup 203.0.113.7
 ship never uses password auth itself; hardening disables password login after
 the install.
 
-The installer output is a host-convergence log. It pins the box host key in
-`~/.config/ship/known_hosts` and ends with `next: ship box doctor <box>`. If you
-rebuild the VPS at the same address, rerun `ship box setup <ssh-target>` to
-re-establish the pin; no manual `ssh-keygen -R` is needed.
+The installer output is a host-convergence log. First contact trusts and pins
+the box host key in `~/.config/ship/known_hosts`; ship never writes to
+`~/.ssh/known_hosts`. A changed key is refused. If you rebuild the VPS at the
+same address, rerun `ship box setup <ssh-target>` to re-establish the pin; no
+manual `ssh-keygen -R` is needed.
 
 Inside a repo:
 
@@ -62,8 +65,8 @@ ship init
 
 `ship init` writes `ship.toml`, a starter `Dockerfile`, and a tiny app when the
 chosen template needs one. It never overwrites existing files and ends with
-`next: ship`. Set `box = "203.0.113.7"` in `ship.toml`, commit the repo,
-then deploy:
+`next: ship`. Set `box = "203.0.113.7"` in `ship.toml`; app manifests store a
+host only, never `user@host`. Commit the repo, then deploy:
 
 ```bash
 ship
@@ -112,6 +115,35 @@ ship exec -- node scripts/check-data.js
 ship rollback
 ```
 
+When a change needs production-shaped data, fork Production `/data` into the
+Preview:
+
+```bash
+ship data fork
+ship exec -- npx drizzle-kit migrate
+ship data rm
+```
+
+Run `ship data fork` from a Preview branch after that Preview exists. It copies
+Production `/data` on the box, bounces the Preview, and never sends data to the
+client. Production stays read-only. `ship data rm` empties that Preview's
+`/data` when you are done.
+
+Scary migration loop:
+
+```bash
+git switch -c migration/accounts-v2
+ship
+ship data fork
+ship exec -- npm run migrate
+ship
+```
+
+The Preview now has real production-shaped data, so you can verify the migration
+against the Preview URL while Production is untouched. Data commands are
+Preview-only, require `owner` or `shipper`, and return `approval_required` for
+`agent` keys.
+
 Merge to Production and run the same deploy command:
 
 ```bash
@@ -158,6 +190,23 @@ You can also pass a literal public key or a `.pub` file:
 ```bash
 ship member add ~/.ssh/alice.pub
 ship member ls
+```
+
+`member add` defaults to the `shipper` role. Bare GitHub usernames fetch
+`https://github.com/<user>.keys` and print SHA256 fingerprints for every key
+added or already authorized. Onboarding is intentionally small: run
+`ship member add <user>`, invite them to the repo, and their first `ship` works.
+
+| Role | What it can do |
+| --- | --- |
+| `owner` | Everything, including member management, destructive box/app operations, restore, and approvals. |
+| `shipper` | The daily loop: deploy, logs, exec, rollback, secrets, previews, and data forks. No member management, Production removal, or restore. |
+| `agent` | Preview deploys and reads only. No Production mutations, no secret reads, no shell, and data forks require approval. |
+
+Remove all keys for a member by name:
+
+```bash
+ship member rm alice
 ```
 
 ## Failure
@@ -259,11 +308,24 @@ the output contract, deploy journals, notify payloads, and the error catalogue.
 Operational reads expose `--json`, and `ship --json` gives agents a structured
 deploy result.
 
-The eval suite in `tests/agent-evals/` proves the contract. Six recovery
+Out-of-role actions do not silently run. They return `approval_required` with an
+approval id:
+
+```bash
+ship approve
+ship approve abc123xy
+```
+
+Bare `ship approve` lists pending requests. `ship approve <id>` grants one retry
+by the original member, expires after 15 minutes, and can be run by an `owner` or
+`shipper`. This is the safety valve for agent-role keys: agents can ask for a
+specific risky action without receiving broader credentials.
+
+The eval suite in `tests/agent-evals/` proves the contract. Seven recovery
 scenarios pass with a real agent given only the binary and `ship docs`: missing
 secret, failing release command, probe failure, missing Dockerfile, expired
-preview reference, and dirty branch state. Passing transcripts live in
-`tests/agent-evals/transcripts/`.
+preview reference, dirty branch state, and recovering from an approval request.
+Passing transcripts live in `tests/agent-evals/transcripts/`.
 
 ## Manifest
 
