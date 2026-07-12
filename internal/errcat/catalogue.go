@@ -80,6 +80,7 @@ const (
 	CodeHostInstallPermissionDenied       Code = "host_install_permission_denied"
 	CodeHostInstallApplyFailed            Code = "host_install_apply_failed"
 	CodeBackupDataMissing                 Code = "backup_data_missing"
+	CodeClientBehindHelper                Code = "client_behind_helper"
 )
 
 type Fields map[string]string
@@ -517,6 +518,12 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "backup is invalid",
 		CauseTemplate:       "backup payload is missing data/ directory",
 		RemediationTemplate: "create a new backup",
+	},
+	CodeClientBehindHelper: {
+		Code:                CodeClientBehindHelper,
+		MessageTemplate:     "client is behind the box helper",
+		CauseTemplate:       "helper version {helper_version} is newer than client version {client_version}",
+		RemediationTemplate: "curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | bash",
 	},
 }
 

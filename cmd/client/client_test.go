@@ -962,7 +962,7 @@ func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", false)
 	actor := testDeployIdentity()
 	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, false, "internal")
-	want := "sudo -n /usr/local/bin/ship server app apply --tls internal --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
+	want := "sudo -n /usr/local/bin/ship server app apply --tls internal --client-version dev --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -972,7 +972,7 @@ func TestServerAppApplyCommandSupportsRebuild(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", true)
 	actor := testDeployIdentity()
 	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, "")
-	want := "sudo -n /usr/local/bin/ship server app apply --rebuild --dirty --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
+	want := "sudo -n /usr/local/bin/ship server app apply --rebuild --dirty --client-version dev --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}

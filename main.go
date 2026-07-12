@@ -407,7 +407,38 @@ type boxCmd struct {
 	Notify boxNotifyCmd `cmd:"" help:"Read or set the box notification webhook."`
 	Ls     boxLsCmd     `cmd:"ls" help:"List app environments visible on a box."`
 	Rm     boxRmCmd     `cmd:"rm" help:"Destroy an app and all its environments on a box."`
+	Status boxStatusCmd `cmd:"" help:"Show helper version, disk, apps, and approvals for one box."`
+	Update boxUpdateCmd `cmd:"" help:"Update a box helper and version-owned artifacts."`
 	Forget boxForgetCmd `cmd:"" help:"Drop a box host-key pin."`
+}
+
+type boxStatusCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
+	JSON   bool   `name:"json" help:"Emit stable structured box status JSON."`
+}
+
+func (c boxStatusCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box status <box>")
+	if err != nil {
+		return err
+	}
+	client.CmdBoxStatus(target, c.JSON)
+	return nil
+}
+
+type boxUpdateCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
+}
+
+func (c boxUpdateCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box update <box>")
+	if err != nil {
+		return err
+	}
+	client.CmdBoxUpdate(target)
+	return nil
 }
 
 type boxNotifyCmd struct {

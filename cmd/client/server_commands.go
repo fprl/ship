@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/fprl/ship/internal/utils"
+	"github.com/fprl/ship/internal/version"
 )
 
 func serverCommand(args ...string) string {
@@ -21,6 +22,17 @@ func serverDoctorCommand(server string, jsonFlag bool) string {
 		args = append(args, "--json")
 	}
 	return serverCommand(args...)
+}
+
+func serverVersionCommand(jsonFlag bool) string {
+	if jsonFlag {
+		return serverCommand("version", "--json")
+	}
+	return serverCommand("version")
+}
+
+func serverUpdateCommand(binary string) string {
+	return serverCommand("update", "--binary", binary)
 }
 
 func serverAppSetupEnvCommand(appName string, envName string) string {
@@ -53,6 +65,7 @@ func serverAppApplyCommand(appName string, envName string, tarballPath string, m
 		args = append(args, "--dirty")
 	}
 	args = append(args,
+		"--client-version", version.Version,
 		"--tarball", tarballPath,
 		"--manifest", manifestPath,
 		"--sha", plan.Release,

@@ -11,6 +11,7 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/store"
+	"github.com/fprl/ship/internal/version"
 )
 
 func TestDoctorRecordRefusesMemberClaimsWithoutChangingState(t *testing.T) {
@@ -71,6 +72,49 @@ func TestDoctorHostStateCheckClearsAfterValidHost(t *testing.T) {
 	check := doctorHostStateCheck(stateStore, "fake-vps")
 	if check.Status != doctorStatusOK {
 		t.Fatalf("expected ok check for a valid host, got: %+v", check)
+	}
+}
+
+func TestAppApplyClientVersionRecordsForwardAndDoctorDetectsSkew(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_STATE_DIR", root)
+	stateStore := store.Default()
+	writeValidHost(t, stateStore.HostPath())
+	if err := stateStore.WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{ShipVersion: "v0.4.0"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (appApplyCmd{ClientVersion: "v0.4.1"}).recordClientVersion(); err != nil {
+		t.Fatal(err)
+	}
+	hostFile, err := stateStore.ReadHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hostFile.Meta.ShipVersion != "v0.4.0" || hostFile.Meta.LastClientVersion != "v0.4.1" {
+		t.Fatalf("unexpected version metadata: %+v", hostFile.Meta)
+	}
+
+	previous := version.Version
+	version.Version = "v0.4.0"
+	t.Cleanup(func() { version.Version = previous })
+	check := doctorHelperVersionCheck(stateStore, "fake-vps")
+	if check.Status != doctorStatusDegraded || check.Evidence != "helper=v0.4.0 last_client=v0.4.1" {
+		t.Fatalf("unexpected helper version check: %+v", check)
+	}
+	if check.Remediation != "ship box update fake-vps" {
+		t.Fatalf("unexpected remediation: %q", check.Remediation)
+	}
+
+	if err := (appApplyCmd{ClientVersion: "v0.3.9"}).recordClientVersion(); err != nil {
+		t.Fatal(err)
+	}
+	hostFile, err = stateStore.ReadHost()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hostFile.Meta.LastClientVersion != "v0.4.1" {
+		t.Fatalf("older client moved version backward: %+v", hostFile.Meta)
 	}
 }
 
@@ -319,7 +363,7 @@ func TestRecordDoctorRunPersistsChecksAndDelta(t *testing.T) {
 }
 
 func TestHelperSudoRegexRequiresServerSubtree(t *testing.T) {
-	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server notify *"
+	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *"
 	if !HelperSudoRe.MatchString(good) {
 		t.Fatal("expected server subtree sudoers grant to match")
 	}
@@ -340,7 +384,7 @@ func setupDoctorSudoers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "operator"), []byte("operator ALL=(ALL) NOPASSWD:ALL\n"), 0440); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ship"), []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server notify *\n"), 0440); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ship"), []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *\n"), 0440); err != nil {
 		t.Fatal(err)
 	}
 }

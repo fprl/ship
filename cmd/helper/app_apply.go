@@ -39,6 +39,7 @@ type appApplyCmd struct {
 	TLS           string `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode stamped by the client for this deploy."`
 	SSHKeyComment string `name:"ssh-key-comment" help:"SSH public key comment for the deploying key."`
 	GitAuthor     string `name:"git-author" help:"Git author configured by the deploying client."`
+	ClientVersion string `name:"client-version" hidden:"" help:"Client version contacting the helper."`
 }
 
 type applyReleaseResult struct {
@@ -62,10 +63,31 @@ func (c appApplyCmd) Run() error {
 		utils.DieError(err, 1)
 	}
 	authorizeOrDie(helperVerbShip, authTargetForAppEnv(c.App, c.Env, "release="+c.SHA))
+	if err := c.recordClientVersion(); err != nil {
+		utils.DieError(err, 1)
+	}
 	withAppEnvLock(c.App, c.Env, func() {
 		c.runLocked()
 	})
 	return nil
+}
+
+func (c appApplyCmd) recordClientVersion() error {
+	clientVersion := strings.TrimSpace(c.ClientVersion)
+	if clientVersion == "" {
+		return nil
+	}
+	stateStore := store.Default()
+	hostFile, err := stateStore.ReadHost()
+	if err != nil {
+		return err
+	}
+	seen := strings.TrimSpace(hostFile.Meta.LastClientVersion)
+	if seen != "" && compareShipVersions(clientVersion, seen) <= 0 {
+		return nil
+	}
+	hostFile.Meta.LastClientVersion = clientVersion
+	return stateStore.WriteHostState(hostFile.Observed, hostFile.Meta)
 }
 
 func (c appApplyCmd) runLocked() {

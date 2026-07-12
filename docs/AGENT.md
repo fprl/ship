@@ -266,6 +266,23 @@ Secret scoping:
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `approval_expired`, `member_unknown`, `role_denied`, `host_key_changed`, `operation_failed`
 
+### `box status`
+- Purpose: Show helper version, disk use, apps, and pending approvals for one box.
+- Usage: `ship box status [<box>] [--json]`
+- Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit {helper_version,client_version,last_client_version,update_available,helper_ahead,disk:{status,evidence},apps:[{app,env_count}],pending_approvals}.
+- `--json` stdout schema: `{"helper_version":"v0.4.0","client_version":"v0.4.1","last_client_version":"v0.4.1","update_available":true,"helper_ahead":false,"disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"pending_approvals":1}`
+- Notes: Any member may read. When the helper is behind, text output includes `next: ship box update <box>`.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `box_target_required`, `invalid_box_target`, `ssh_unreachable`, `box_not_initialized`, `host_key_changed`, `operation_failed`
+
+### `box update`
+- Purpose: Converge a box to this client helper version.
+- Usage: `ship box update [<box>]`
+- Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory.
+- Notes: Only owners may update directly; other roles use the normal one-shot approval flow. `box update: already current` is the exact no-op output.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `approval_required`, `client_behind_helper`, `box_target_required`, `invalid_box_target`, `host_key_changed`, `operation_failed`
+
 ### `box doctor`
 - Purpose: Run box diagnostics.
 - Usage: `ship box doctor [<box>] [--json]`
@@ -387,6 +404,7 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 - `box_rm_confirmation_required`: box rm confirmation failed; cause: box rm requires --confirm {app}; remediation: `ship box rm {app} --confirm {app}`.
 - `box_target_required`: target a box; cause: {known_boxes}; remediation: `{command}`; defaults: `command="ship box ls <box>", known_boxes="known boxes (~/.config/ship/known_hosts):\n  none known yet"`.
 - `branch_flag_requires_detached_head`: branch resolution failed; cause: --branch is only accepted on ship when HEAD is detached; remediation: `ship`.
+- `client_behind_helper`: client is behind the box helper; cause: helper version {helper_version} is newer than client version {client_version}; remediation: `curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | bash`.
 - `data_fork_on_production`: data command refused on Production; cause: branch {branch} maps to Production; data commands target Preview branches only; remediation: `git checkout <preview-branch>`.
 - `deploy_blocked_local_checks`: deploy blocked by local checks; cause: {detail}; remediation: `{command}`; defaults: `command="fix local checks", detail="local checks reported errors; see stderr above"`.
 - `deploy_key_missing`: bootstrap SSH key is missing; cause: {detail}; remediation: `{command}`; defaults: `command="ssh-copy-id -i ~/.ssh/ship.pub root@<ip>", detail="provider gave a password; this installs your ship key using it once; hardening then disables password login permanently"`.

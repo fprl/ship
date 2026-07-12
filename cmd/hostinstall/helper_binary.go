@@ -25,6 +25,13 @@ const (
 
 var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$`)
 
+// PrepareHelperBinaryForArch resolves the same client-matched Linux helper
+// used by box setup. Day-N update deliberately shares setup's release,
+// prebuilt-binary, and local-build behavior.
+func (i *Installer) PrepareHelperBinaryForArch(target, arch string) (string, func(), error) {
+	return i.prepareRemoteHelperBinary(Plan{TargetHost: target}, arch)
+}
+
 func (i *Installer) prepareRemoteHelperBinary(plan Plan, arch string) (string, func(), error) {
 	name := "ship-linux-" + arch
 	if helper, ok, err := i.localHelperBinary(plan, name); err != nil {

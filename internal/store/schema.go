@@ -67,9 +67,10 @@ type HostIngressObserved struct {
 }
 
 type HostMeta struct {
-	InstalledAt string     `json:"installed_at,omitempty"`
-	ShipVersion string     `json:"ship_version,omitempty"`
-	LastApply   *ApplyMeta `json:"last_apply,omitempty"`
+	InstalledAt       string     `json:"installed_at,omitempty"`
+	ShipVersion       string     `json:"ship_version,omitempty"`
+	LastClientVersion string     `json:"last_client_version,omitempty"`
+	LastApply         *ApplyMeta `json:"last_apply,omitempty"`
 }
 
 type ApplyMeta struct {

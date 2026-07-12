@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -95,8 +96,96 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("preview env overlay applies before secret resolution", env.testPreviewEnvOverlay)
 	t.Run("exec runs one-off commands in the release environment", env.testExec)
 	t.Run("status + logs surface deployed processes without SSHing in", env.testStatusAndLogs)
+	t.Run("box status and update converge helper version", env.testBoxStatusAndUpdate)
 	t.Run("box rm destroys an app and its environments", env.testBoxRm)
 	t.Run("rm tears down one app environment", env.testDestroy)
+}
+
+func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
+	e.ensureSmokeHostSeed(t)
+	const oldVersion = "v0.4.0"
+	const currentVersion = "v0.4.1"
+	const newerVersion = "v0.4.2"
+	clientBinary := e.buildStampedShip(t, "ship-client-current", "", currentVersion)
+	currentHelper := e.buildStampedShip(t, "ship-helper-current", "linux", currentVersion)
+	oldHelper := e.buildStampedShip(t, "ship-helper-old", "linux", oldVersion)
+	newerHelper := e.buildStampedShip(t, "ship-helper-newer", "linux", newerVersion)
+	recordApp := filepath.Join(e.tmp, "box-version-api")
+	mustMkdir(t, recordApp)
+	writeBoxVersionFixture(t, recordApp)
+	e.commitFixture(t, recordApp)
+	e.mustRun(t, e.repoRoot, nil, "docker", "cp", oldHelper, e.container+":/usr/local/bin/ship")
+
+	clientEnv := []string{"SHIP_LINUX_HELPER=" + currentHelper}
+	recorded := e.runCommand(t, recordApp, clientEnv, nil, clientBinary, "--tls", "internal")
+	if recorded.err != nil {
+		t.Fatalf("client deploy to record version failed: %v\nstdout:\n%s\nstderr:\n%s", recorded.err, recorded.stdout, recorded.stderr)
+	}
+	status := e.runCommand(t, e.repoRoot, clientEnv, nil, clientBinary, "box", "status", "fake-vps")
+	if status.err != nil {
+		t.Fatalf("stale helper status failed: %v\nstdout:\n%s\nstderr:\n%s", status.err, status.stdout, status.stderr)
+	}
+	assertContains(t, status.stdout, "helper: "+oldVersion)
+	assertContains(t, status.stdout, "last client: "+currentVersion)
+	assertContains(t, status.stdout, "next: ship box update fake-vps")
+	doctor := e.runCommand(t, e.repoRoot, clientEnv, nil, clientBinary, "box", "doctor", "fake-vps", "--json")
+	if doctor.err == nil {
+		t.Fatal("doctor should degrade for stale helper")
+	}
+	assertHelperVersionCheck(t, doctor.stdout, "degraded")
+
+	updated := e.runCommand(t, e.repoRoot, clientEnv, nil, clientBinary, "box", "update", "fake-vps")
+	if updated.err != nil {
+		t.Fatalf("box update failed: %v\nstdout:\n%s\nstderr:\n%s", updated.err, updated.stdout, updated.stderr)
+	}
+	assertContains(t, updated.stdout, "box updated: "+currentVersion)
+	clean := e.runCommand(t, e.repoRoot, clientEnv, nil, clientBinary, "box", "status", "fake-vps", "--json")
+	if clean.err != nil {
+		t.Fatalf("clean status failed: %v\nstdout:\n%s\nstderr:\n%s", clean.err, clean.stdout, clean.stderr)
+	}
+	assertContains(t, clean.stdout, `"helper_version": "`+currentVersion+`"`)
+	assertContains(t, clean.stdout, `"update_available": false`)
+	// Assert the helper_version CHECK recovered — not whole-box green:
+	// in the shared smoke container earlier subtests leave unrelated
+	// degraded checks (uncertified example.com routes), so doctor's
+	// exit code is order-dependent here.
+	doctor = e.runCommand(t, e.repoRoot, clientEnv, nil, clientBinary, "box", "doctor", "fake-vps", "--json")
+	assertHelperVersionCheck(t, doctor.stdout, "ok")
+	assertContains(t, e.dockerExec(t, "cat /etc/ship/updates-journal.jsonl"), `"version":"`+currentVersion+`"`)
+
+	noOp := e.runCommand(t, e.repoRoot, clientEnv, nil, clientBinary, "box", "update", "fake-vps")
+	if noOp.err != nil {
+		t.Fatalf("second box update failed: %v\nstdout:\n%s\nstderr:\n%s", noOp.err, noOp.stdout, noOp.stderr)
+	}
+	if noOp.stdout != "box update: already current\n" {
+		t.Fatalf("second update = %q, want exact no-op", noOp.stdout)
+	}
+
+	e.mustRun(t, e.repoRoot, nil, "docker", "cp", newerHelper, e.container+":/usr/local/bin/ship")
+	behindEnv := append([]string{"SHIP_ERROR_JSON=1"}, clientEnv...)
+	behind := e.runCommand(t, e.repoRoot, behindEnv, nil, clientBinary, "box", "update", "fake-vps")
+	if behind.err == nil {
+		t.Fatal("older client must not downgrade newer helper")
+	}
+	assertContains(t, behind.stdout+behind.stderr, "client_behind_helper")
+}
+
+func (e *smokeEnv) buildStampedShip(t *testing.T, name, goos, stampedVersion string) string {
+	t.Helper()
+	path := filepath.Join(e.tmp, name)
+	// Caches are isolated per-run inside t.TempDir; -modcacherw keeps the
+	// module cache writable so TempDir cleanup can remove it.
+	env := []string{"CGO_ENABLED=0", "GOFLAGS=-modcacherw",
+		"GOCACHE=" + filepath.Join(e.tmp, "go-cache"),
+		"GOMODCACHE=" + filepath.Join(e.tmp, "go-mod-cache")}
+	if goos != "" {
+		// The container runs the host's architecture (Docker Desktop);
+		// a hardcoded amd64 binary lands under qemu emulation on arm64
+		// hosts, which corrupts Go runtime behavior in impossible ways.
+		env = append(env, "GOOS="+goos, "GOARCH="+runtime.GOARCH)
+	}
+	e.mustRun(t, e.repoRoot, env, "go", "build", "-ldflags", "-X github.com/fprl/ship/internal/version.Version="+stampedVersion, "-o", path, ".")
+	return path
 }
 
 func (e *smokeEnv) assertShipSudoersMatchesRealHelperShape(t *testing.T) {
@@ -116,6 +205,7 @@ func (e *smokeEnv) ensureSmokeHostSeed(t *testing.T) {
 	t.Helper()
 	e.dockerExec(t, "cat > /etc/ship/host.json <<'EOF'\n"+h.SeedHostJSON()+"EOF")
 	e.dockerExec(t, "mkdir -p /etc/caddy/conf.d /var/lib/caddy /etc/systemd/system")
+	e.dockerExec(t, "mkdir -p /etc/ship/secrets && chmod 0700 /etc/ship/secrets && chown root:root /etc/ship/secrets")
 	e.dockerExec(t, "mkdir -p /tmp/ship-deploy && chmod 1777 /tmp/ship-deploy")
 	e.dockerExec(t, `cat > /etc/caddy/Caddyfile <<'EOF'
 import conf.d/*.caddy
@@ -154,7 +244,7 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 
 	secondApp := filepath.Join(e.tmp, "notify-second-api")
 	mustMkdir(t, secondApp)
-	writeRoleApprovalFixture(t, secondApp, sink.URL("/app-two"))
+	writeNotifySecondFixture(t, secondApp, sink.URL("/app-two"))
 	e.commitFixture(t, secondApp)
 	e.mustRun(t, secondApp, nil, "git", "checkout", "-B", "main")
 	e.ship(t, secondApp, nil)
@@ -210,7 +300,13 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	assertNotifySmokeNested(t, reaped, "why.branch", "feature/notify")
 	assertNotifySmokeNested(t, reaped, "remediation.command", "git checkout feature/notify && ship")
 
+	// Establish a doctor baseline, then drop the events it fired: the
+	// first-ever record has no prior state, so every already-degraded
+	// check (e.g. tls_certs for internal-cert routes) counts as newly
+	// degraded. Clearing the sink isolates the reaper_timer transition
+	// we actually induce next.
 	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
+	e.dockerExec(t, "rm -f "+sink.eventsPath)
 	e.dockerExec(t, "systemctl stop ship-preview-reaper.timer")
 	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
 	doctor := sink.waitForEvent(t, notifyEventDoctorDegraded)
@@ -1139,6 +1235,14 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	assertContains(t, listing, "ID MEMBER REQUEST EXPIRES")
 	assertContains(t, listing, secondID+" agent-role app=roleapi env=prod class=production release="+prodRelease+" ")
 
+	setAgent()
+	updateDenied := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "update", "fake-vps")
+	if updateDenied.err == nil {
+		t.Fatal("agent box update should require approval")
+	}
+	assertContains(t, updateDenied.stdout+updateDenied.stderr, "approval required for box update")
+
+	setOwner()
 	journal := e.ssh(t, "cat "+identity.DeployJournalFile("roleapi", productionEnv))
 	assertContains(t, journal, `"name":"agent-role"`)
 	assertContains(t, journal, `"role":"agent"`)
@@ -2365,6 +2469,40 @@ web = { port = 3000, resources = { memory = "512m", cpus = 0.5 } }
 	`)
 }
 
+func assertHelperVersionCheck(t *testing.T, doctorJSON string, wantStatus string) {
+	t.Helper()
+	var checks []struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(doctorJSON)), &checks); err != nil {
+		t.Fatalf("doctor output is not a JSON check list: %v\noutput:\n%s", err, doctorJSON)
+	}
+	for _, check := range checks {
+		if check.ID == "helper_version" {
+			if check.Status != wantStatus {
+				t.Fatalf("helper_version status = %q, want %q\noutput:\n%s", check.Status, wantStatus, doctorJSON)
+			}
+			return
+		}
+	}
+	t.Fatalf("no helper_version check in doctor output:\n%s", doctorJSON)
+}
+
+func writeBoxVersionFixture(t *testing.T, app string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "versionapi"
+box = "fake-vps"
+probe = "/health"
+
+[processes]
+web = { port = 3000 }
+`)
+}
+
 func writeBranchFixture(t *testing.T, app string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
@@ -2456,8 +2594,8 @@ API_TOKEN = "@secret:api_token"
 [processes]
 web = { port = 3000 }
 
-[routes."notify.example.com"]
-process = "web"
+[routes]
+"notify.example.com" = "web"
 `)
 }
 
@@ -2477,6 +2615,29 @@ web = { port = 3000 }
 
 [routes]
 "role.example.com" = "web"
+`)
+}
+
+// writeNotifySecondFixture is the notify test's own second app: it exists
+// only to prove box events fire once across two apps on one box. It must
+// NOT reuse another subtest's app name (e.g. roleapi) — a leftover prod
+// deploy would poison that subtest's own first ship.
+func writeNotifySecondFixture(t *testing.T, app string, notifyURL string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "notifysecond"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+notify = "`+notifyURL+`"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"notify-second.example.com" = "web"
 `)
 }
 

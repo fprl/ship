@@ -24,6 +24,7 @@ import (
 	"github.com/fprl/ship/internal/secrets"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
+	"github.com/fprl/ship/internal/version"
 )
 
 const (
@@ -39,13 +40,14 @@ const (
 	doctorCheckTLSCerts       = "tls_certs"
 	doctorCheckReaperTimer    = "reaper_timer"
 	doctorCheckDeployJournals = "deploy_journals"
+	doctorCheckHelperVersion  = "helper_version"
 
 	reaperTimerUnit = "ship-preview-reaper.timer"
 )
 
 var (
 	BroadSudoRe  = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\((?:ALL|ALL:ALL)\)\s+NOPASSWD:\s*ALL$`)
-	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/ship\s+server\s+app\s+\*,\s*/usr/local/bin/ship\s+server\s+doctor,\s*/usr/local/bin/ship\s+server\s+doctor\s+\*,\s*/usr/local/bin/ship\s+server\s+key\s+\*,\s*/usr/local/bin/ship\s+server\s+approval\s+\*,\s*/usr/local/bin/ship\s+server\s+notify\s+\*$`)
+	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/ship\s+server\s+app\s+\*,\s*/usr/local/bin/ship\s+server\s+doctor,\s*/usr/local/bin/ship\s+server\s+doctor\s+\*,\s*/usr/local/bin/ship\s+server\s+key\s+\*,\s*/usr/local/bin/ship\s+server\s+approval\s+\*,\s*/usr/local/bin/ship\s+server\s+notify\s+\*,\s*/usr/local/bin/ship\s+server\s+version,\s*/usr/local/bin/ship\s+server\s+version\s+\*,\s*/usr/local/bin/ship\s+server\s+update\s+\*$`)
 )
 
 type doctorCmd struct {
@@ -319,7 +321,26 @@ func doctorChecksFor(opts doctorOptions) []store.DoctorCheck {
 		doctorTLSCertsCheck(opts.TLSStatuses, opts.Now(), opts.BoxTarget),
 		doctorReaperTimerCheck(opts.Timer, opts.BoxTarget),
 		doctorDeployJournalsCheck(opts.AppEnvs, opts.BoxTarget),
+		doctorHelperVersionCheck(opts.StateStore, opts.BoxTarget),
 	}
+}
+
+func doctorHelperVersionCheck(stateStore store.Store, boxTarget string) store.DoctorCheck {
+	hostFile, err := stateStore.ReadHost()
+	if err != nil {
+		return doctorCheck(doctorCheckHelperVersion, doctorStatusOK, "last client version unavailable", doctorRerunCommand(boxTarget))
+	}
+	seen := strings.TrimSpace(hostFile.Meta.LastClientVersion)
+	if seen == "" {
+		seen = strings.TrimSpace(hostFile.Meta.ShipVersion)
+	}
+	if seen == "" {
+		return doctorCheck(doctorCheckHelperVersion, doctorStatusOK, "last client version unavailable", doctorRerunCommand(boxTarget))
+	}
+	if compareShipVersions(version.Version, seen) >= 0 {
+		return doctorCheck(doctorCheckHelperVersion, doctorStatusOK, "helper="+version.Version+" last_client="+seen, doctorRerunCommand(boxTarget))
+	}
+	return doctorCheck(doctorCheckHelperVersion, doctorStatusDegraded, "helper="+version.Version+" last_client="+seen, doctorBoxUpdateCommand(boxTarget))
 }
 
 func doctorChecksOK(checks []store.DoctorCheck) bool {
@@ -773,6 +794,13 @@ func doctorBoxSetupCommand(target string) string {
 		return "ship box setup <ssh-target>"
 	}
 	return "ship box setup " + utils.ShellEscape(target)
+}
+
+func doctorBoxUpdateCommand(target string) string {
+	if target == "" {
+		return "ship box update <box>"
+	}
+	return "ship box update " + utils.ShellEscape(target)
 }
 
 func doctorSSHCommand(target, command string) string {

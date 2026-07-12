@@ -59,6 +59,60 @@ type InstallSummary struct {
 	DeployKeyResults  []memberkeys.AddResult
 }
 
+// VersionConvergeOptions contains the narrow, version-owned portion of host
+// provisioning used by `ship box update`. It intentionally excludes day-zero
+// concerns such as packages, users, network policy, and provider setup.
+type VersionConvergeOptions struct {
+	StateRoot        string
+	HelperBinaryPath string
+	Now              func() time.Time
+}
+
+// RunVersionConverge installs the current helper and reapplies the generated
+// helper sudoers, forced agent-shell keys, and ship-owned timer units.
+func RunVersionConverge(ctx context.Context, runner host.Runner, opts VersionConvergeOptions) (InstallSummary, error) {
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	stateStore := store.Store{Root: opts.StateRoot}
+	hostFile, err := stateStore.ReadHost()
+	if err != nil {
+		return InstallSummary{}, err
+	}
+	apply := host.Apply{Context: ctx, Runner: runner, State: &host.RunState{}}
+	startedAt := opts.Now().UTC()
+	summary := InstallSummary{ApplyID: startedAt.Format("20060102T150405Z")}
+	var ops []operation
+	installOpts := InstallOptions{HelperBinaryPath: opts.HelperBinaryPath}
+	addHelper(&ops, installOpts)
+	addDeployMembersStore(&ops, stateStore, defaultDeployUser, &summary)
+	addPreviewReaper(&ops)
+	addDoctorTimer(&ops)
+
+	for _, op := range ops {
+		changed, err := op.run(apply)
+		if err != nil {
+			return summary, fmt.Errorf("%s: %w", op.name, err)
+		}
+		if changed {
+			summary.OperationsChanged++
+		}
+	}
+	meta := hostFile.Meta
+	meta.ShipVersion = version.Version
+	meta.LastApply = &store.ApplyMeta{
+		ID:                summary.ApplyID,
+		StartedAt:         startedAt.Format(time.RFC3339),
+		FinishedAt:        opts.Now().UTC().Format(time.RFC3339),
+		Status:            "ok",
+		OperationsChanged: summary.OperationsChanged,
+	}
+	if err := stateStore.WriteHostState(hostFile.Observed, meta); err != nil {
+		return summary, err
+	}
+	return summary, nil
+}
+
 type operation struct {
 	name string
 	run  func(host.Apply) (bool, error)
@@ -408,7 +462,7 @@ func addHelper(ops *[]operation, opts InstallOptions) {
 		return host.EnsureFile(apply, host.File{Path: "/usr/local/bin/ship", Content: data, Owner: "root", Group: "root", Mode: 0755})
 	}})
 	*ops = append(*ops, operation{name: "ship sudoers", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureSudoersFile(apply, "ship", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server notify *\n", defaultDeployUser)))
+		return host.EnsureSudoersFile(apply, "ship", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *\n", defaultDeployUser)))
 	}})
 }
 

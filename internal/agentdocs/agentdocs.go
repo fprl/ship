@@ -857,6 +857,32 @@ var verbs = []Verb{
 		Notes:     []string{"Bare `ship approve` lists pending requests and prunes expired entries. `ship approve <id>` can be run only by owner or shipper and grants one retry by the original member."},
 	},
 	{
+		Verb:    "box status",
+		Purpose: "Show helper version, disk use, apps, and pending approvals for one box.",
+		Usage:   "ship box status [<box>] [--json]",
+		Flags: []Flag{
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
+			{Name: "--json", Purpose: "Emit {helper_version,client_version,last_client_version,update_available,helper_ahead,disk:{status,evidence},apps:[{app,env_count}],pending_approvals}."},
+		},
+		JSONSchema: schema(
+			`{"helper_version":"v0.4.0","client_version":"v0.4.1","last_client_version":"v0.4.1","update_available":true,"helper_ahead":false,"disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"pending_approvals":1}`,
+		),
+		ExitCodes: normalExit,
+		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
+		Notes:     []string{"Any member may read. When the helper is behind, text output includes `next: ship box update <box>`."},
+	},
+	{
+		Verb:    "box update",
+		Purpose: "Converge a box to this client helper version.",
+		Usage:   "ship box update [<box>]",
+		Flags: []Flag{
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
+		},
+		ExitCodes: normalExit,
+		Errors:    []string{"approval_required", "client_behind_helper", "box_target_required", "invalid_box_target", "host_key_changed", "operation_failed"},
+		Notes:     []string{"Only owners may update directly; other roles use the normal one-shot approval flow. `box update: already current` is the exact no-op output."},
+	},
+	{
 		Verb:    "box doctor",
 		Purpose: "Run box diagnostics.",
 		Usage:   "ship box doctor [<box>] [--json]",

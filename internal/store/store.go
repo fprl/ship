@@ -65,6 +65,10 @@ func (s Store) ApprovalsJournalPath() string {
 	return filepath.Join(s.root(), "approvals-journal.jsonl")
 }
 
+func (s Store) UpdatesJournalPath() string {
+	return filepath.Join(s.root(), "updates-journal.jsonl")
+}
+
 func (s Store) HostInstalled() (bool, error) {
 	if _, err := os.Stat(s.HostPath()); err != nil {
 		if os.IsNotExist(err) {

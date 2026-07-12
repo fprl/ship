@@ -1,13 +1,16 @@
 package client
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"github.com/fprl/ship/cmd/hostinstall"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/knownhosts"
 	"github.com/fprl/ship/internal/names"
 	"github.com/fprl/ship/internal/utils"
+	"github.com/fprl/ship/internal/version"
 	"io"
 	"net/http"
 	"os"
@@ -37,6 +40,234 @@ func CmdBoxLs(server string, jsonFlag bool) {
 
 	out := runSSHChecked(runner, server, serverAppListCommand(jsonFlag), "app list failed")
 	fmt.Print(out)
+}
+
+type boxVersionPayload struct {
+	Version               string `json:"version"`
+	RecordedClientVersion string `json:"recorded_client_version"`
+	LastClientVersion     string `json:"last_client_version"`
+	Architecture          string `json:"architecture"`
+}
+
+type boxStatusPayload struct {
+	HelperVersion     string `json:"helper_version"`
+	ClientVersion     string `json:"client_version"`
+	LastClientVersion string `json:"last_client_version"`
+	UpdateAvailable   bool   `json:"update_available"`
+	HelperAhead       bool   `json:"helper_ahead"`
+	Disk              struct {
+		Status   string `json:"status"`
+		Evidence string `json:"evidence"`
+	} `json:"disk"`
+	Apps             []boxStatusApp `json:"apps"`
+	PendingApprovals int            `json:"pending_approvals"`
+}
+
+type boxStatusApp struct {
+	App      string `json:"app"`
+	EnvCount int    `json:"env_count"`
+}
+
+func CmdBoxStatus(server string, jsonFlag bool) {
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box status"), 2)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer runner.Close()
+	payload, err := readBoxStatus(runner, server)
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	if jsonFlag {
+		data, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			utils.DieError(err, 1)
+		}
+		fmt.Println(string(data))
+		return
+	}
+	fmt.Printf("helper: %s\nclient: %s\n", payload.HelperVersion, payload.ClientVersion)
+	if payload.LastClientVersion != "" {
+		fmt.Printf("last client: %s\n", payload.LastClientVersion)
+	}
+	if payload.UpdateAvailable {
+		fmt.Printf("helper is behind\nnext: ship box update %s\n", server)
+	} else if payload.HelperAhead {
+		fmt.Println("client is behind helper")
+	}
+	fmt.Printf("disk: %s\n", payload.Disk.Evidence)
+	if len(payload.Apps) == 0 {
+		fmt.Println("apps: 0")
+	} else {
+		fmt.Println("apps:")
+		for _, app := range payload.Apps {
+			fmt.Printf("  %s: %d envs\n", app.App, app.EnvCount)
+		}
+	}
+	fmt.Printf("pending approvals: %d\n", payload.PendingApprovals)
+}
+
+func readBoxStatus(runner *CommandRunner, server string) (boxStatusPayload, error) {
+	var payload boxStatusPayload
+	versionPayload, err := readBoxVersion(runner, server)
+	if err != nil {
+		return payload, err
+	}
+	payload.HelperVersion = versionPayload.Version
+	payload.ClientVersion = version.Version
+	payload.LastClientVersion = versionPayload.LastClientVersion
+	cmp := compareShipVersions(versionPayload.Version, version.Version)
+	payload.UpdateAvailable = cmp < 0
+	payload.HelperAhead = cmp > 0 || (cmp == 0 && versionPayload.Version != version.Version)
+
+	appsOut, err := runSSHDetail(runner, server, serverAppListCommand(true))
+	if err != nil {
+		return payload, err
+	}
+	var apps appListJSON
+	if err := json.Unmarshal([]byte(appsOut), &apps); err != nil {
+		return payload, operationError(fmt.Sprintf("box status failed: invalid app list JSON: %v", err), "ship box status "+server)
+	}
+	payload.Apps = make([]boxStatusApp, 0, len(apps.Apps))
+	for _, app := range apps.Apps {
+		payload.Apps = append(payload.Apps, boxStatusApp{App: app.App, EnvCount: len(app.Envs)})
+	}
+
+	payload.PendingApprovals, err = fetchPendingApprovalCount(runner, server)
+	if err != nil {
+		return payload, err
+	}
+	doctorOut, err := runBoxDoctorJSON(runner, server)
+	if err != nil {
+		return payload, err
+	}
+	var checks []struct {
+		ID       string `json:"id"`
+		Status   string `json:"status"`
+		Evidence string `json:"evidence"`
+	}
+	if err := json.Unmarshal([]byte(doctorOut), &checks); err != nil {
+		return payload, operationError(fmt.Sprintf("box status failed: invalid doctor JSON: %v", err), "ship box status "+server)
+	}
+	for _, check := range checks {
+		if check.ID == "disk_space" {
+			payload.Disk.Status = check.Status
+			payload.Disk.Evidence = check.Evidence
+			break
+		}
+	}
+	return payload, nil
+}
+
+func readBoxVersion(runner *CommandRunner, server string) (boxVersionPayload, error) {
+	out, err := runSSHDetail(runner, server, serverVersionCommand(true))
+	if err != nil {
+		return boxVersionPayload{}, err
+	}
+	var payload boxVersionPayload
+	if err := json.Unmarshal([]byte(out), &payload); err != nil || payload.Version == "" {
+		return boxVersionPayload{}, operationError("box status failed: invalid helper version JSON", "ship box status "+server)
+	}
+	return payload, nil
+}
+
+// Doctor intentionally exits non-zero when degraded. Status still consumes its
+// JSON because disk evidence remains useful while a version mismatch exists.
+func runBoxDoctorJSON(runner *CommandRunner, server string) (string, error) {
+	stdout, stderr, code, err := runner.RunSSH(server, serverDoctorCommand(server, true))
+	if json.Valid([]byte(stdout)) {
+		return stdout, nil
+	}
+	if err != nil || code != 0 {
+		remote := extractRemoteError(stdout, stderr, "box doctor failed")
+		if remote.Coded != nil {
+			return "", remote.Coded
+		}
+		return "", operationError(remote.Detail, "ship box status "+server)
+	}
+	return stdout, nil
+}
+
+func CmdBoxUpdate(server string) {
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box update"), 2)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer runner.Close()
+	remote, err := readBoxVersion(runner, server)
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	cmp := compareShipVersions(remote.Version, version.Version)
+	if cmp > 0 || (cmp == 0 && remote.Version != version.Version) {
+		utils.DieError(errcat.New(errcat.CodeClientBehindHelper, errcat.Fields{"helper_version": remote.Version, "client_version": version.Version}), 1)
+	}
+	if cmp == 0 && remote.RecordedClientVersion == version.Version {
+		fmt.Println("box update: already current")
+		return
+	}
+	arch, err := helperArchitecture(remote.Architecture)
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	installer := hostinstall.NewInstaller()
+	installer.Stdout = io.Discard
+	installer.Stderr = io.Discard
+	helper, cleanup, err := installer.PrepareHelperBinaryForArch(server, arch)
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer cleanup()
+	remoteDir, err := newBoxUpdateRemoteDir()
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	if _, err := runSSHRequired(runner, server, "mkdir -p "+utils.ShellEscape(remoteDir)+" && chmod 0700 "+utils.ShellEscape(remoteDir), "box update staging failed"); err != nil {
+		utils.DieError(err, 1)
+	}
+	defer runner.RunSSH(server, "rm -rf "+utils.ShellEscape(remoteDir))
+	remoteHelper := remoteDir + "/helper"
+	if err := runner.Upload(helper, remoteHelper, server); err != nil {
+		utils.DieError(operationError(fmt.Sprintf("box update upload failed: %v", err), "ship box update "+server), 1)
+	}
+	stdout, stderr, code, err := runner.RunSSH(server, serverUpdateCommand(remoteHelper))
+	if err != nil || code != 0 {
+		if coded, ok := errcat.As(err); ok {
+			utils.DieError(coded, 1)
+		}
+		remoteErr := extractRemoteError(stdout, stderr, "box update failed")
+		if remoteErr.Coded != nil {
+			writeRemoteStderr(stderr)
+			utils.DieError(remoteErr.Coded, 1)
+		}
+		utils.DieError(operationError(remoteErr.Detail, "ship box update "+server), 1)
+	}
+	fmt.Print(stdout)
+}
+
+func helperArchitecture(raw string) (string, error) {
+	switch strings.TrimSpace(raw) {
+	case "x86_64", "amd64":
+		return "amd64", nil
+	case "aarch64", "arm64":
+		return "arm64", nil
+	default:
+		return "", errcat.New(errcat.CodeUnsupportedTargetArchitecture, errcat.Fields{"architecture": strings.TrimSpace(raw)})
+	}
+}
+
+func newBoxUpdateRemoteDir() (string, error) {
+	var token [8]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s/box-update-%x", RemoteDeployTmpDir, token), nil
 }
 
 func CmdMemberAdd(server, source string, role string) {

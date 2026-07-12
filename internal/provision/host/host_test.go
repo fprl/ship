@@ -410,7 +410,7 @@ func TestEnsureSudoersFileRejectsUnsafeName(t *testing.T) {
 }
 
 func testDeploySudoers() []byte {
-	return []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server notify *")
+	return []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *")
 }
 
 func TestEnsureDirectoryRejectsExistingNonDirectory(t *testing.T) {
