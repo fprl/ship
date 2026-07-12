@@ -110,8 +110,6 @@ func ConfigureSSH(t *testing.T, ctx context.Context, repoRoot, tmp, container, u
   IdentityFile %s
   IdentitiesOnly yes
   BatchMode yes
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null
   LogLevel ERROR
 `, port, user, keyPath)
 	if err := os.WriteFile(filepath.Join(homeSSH, "config"), []byte(config), 0600); err != nil {
@@ -127,7 +125,27 @@ func ConfigureSSH(t *testing.T, ctx context.Context, repoRoot, tmp, container, u
 		if err != nil {
 			t.Fatal(err)
 		}
-		wrapper := fmt.Sprintf("#!/usr/bin/env bash\nexec %q -F %q \"$@\"\n", hostBin, filepath.Join(homeSSH, "config"))
+		wrapper := fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+
+known_hosts=0
+strict_host_key_checking=0
+for arg in "$@"; do
+  case "$arg" in
+    UserKnownHostsFile=*) known_hosts=1 ;;
+    StrictHostKeyChecking=*) strict_host_key_checking=1 ;;
+  esac
+done
+
+args=(-F %q)
+if (( ! known_hosts )); then
+  args+=(-o UserKnownHostsFile=/dev/null)
+fi
+if (( ! strict_host_key_checking )); then
+  args+=(-o StrictHostKeyChecking=no)
+fi
+exec %q "${args[@]}" "$@"
+`, filepath.Join(homeSSH, "config"), hostBin)
 		if err := os.WriteFile(filepath.Join(binDir, name), []byte(wrapper), 0755); err != nil {
 			t.Fatal(err)
 		}

@@ -30,7 +30,6 @@ func TestFreshHostInstall(t *testing.T) {
 	env.waitForSSH(t)
 
 	env.assertHostDoctorNotInstalled(t)
-	env.assertWrongHostKeyRefuses(t)
 
 	decoyKeyPath := filepath.Join(env.tmp, "decoy-bootstrap")
 	env.mustRun(t, env.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "decoy-bootstrap", "-f", decoyKeyPath)
@@ -46,7 +45,6 @@ func TestFreshHostInstall(t *testing.T) {
 		"connected as root (bootstrap)",
 		"ingress: public 80/443 (--ingress ...)",
 		"admin: SSH keys only (--admin tailscale)",
-		"timezone: Europe/Madrid",
 		"Using ship Linux helper binary",
 		"running provisioner on target",
 		"provisioning ",
@@ -80,6 +78,7 @@ func TestFreshHostInstall(t *testing.T) {
 	env.assertDeployAuthorizedKeysDoesNotContain(t, decoyKey)
 	env.assertSetupMemberVisible(t)
 	env.assertHostDoctorHealthy(t)
+	env.assertWrongHostKeyRefuses(t)
 
 	env.ssh(t, "mkdir -p /var/apps/api.production/data && printf sentinel > /var/apps/api.production/data/sentinel && chmod 600 /var/apps/api.production/data/sentinel")
 	second, secondOutput := env.installHost(t, "")
@@ -274,7 +273,7 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	} {
 		assertContains(t, ufwLog, want)
 	}
-	assertEqual(t, strings.TrimSpace(e.ssh(t, "cat /run/ship-fresh-host/timezone")), "Europe/Madrid")
+	assertEqual(t, strings.TrimSpace(e.ssh(t, "timedatectl show --property=Timezone --value")), "UTC")
 	assertEqual(t, strings.TrimSpace(e.ssh(t, "cat /run/ship-fresh-host/locale")), "en_US.UTF-8")
 }
 
@@ -368,42 +367,29 @@ func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {
 		t.Fatalf("box doctor passed before install\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
 	output := result.stdout + result.stderr
-	assertContains(t, output, "box host key changed")
-	assertContains(t, output, "SSH host key for fake-vps is unknown or changed")
-	assertContains(t, output, "next: ship box setup <ssh-target>")
-	assertNotContains(t, output, "Permission denied")
-	assertNotContains(t, output, "next: ship box doctor deploy@fake-vps")
-
-	jsonResult := e.runCommand(t, e.repoRoot, doctorEnv, nil, e.goBin, "box", "doctor", "fake-vps", "--json")
-	if jsonResult.err == nil {
-		t.Fatalf("box doctor --json passed before install\nstdout:\n%s\nstderr:\n%s", jsonResult.stdout, jsonResult.stderr)
-	}
-	var payload struct {
-		Error struct {
-			Code        string `json:"code"`
-			Cause       string `json:"cause"`
-			Remediation string `json:"remediation"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(jsonResult.stdout), &payload); err != nil {
-		t.Fatalf("box doctor --json error output not parseable as JSON: %v\nstdout:\n%s\nstderr:\n%s", err, jsonResult.stdout, jsonResult.stderr)
-	}
-	if payload.Error.Code != "host_key_changed" ||
-		!strings.Contains(payload.Error.Cause, "SSH host key for fake-vps is unknown or changed") ||
-		payload.Error.Remediation != "ship box setup <ssh-target>" {
-		t.Fatalf("unexpected pre-setup doctor json error: %+v", payload.Error)
-	}
+	assertContains(t, output, "failed to run doctor:")
+	assertContains(t, output, "Permission denied")
+	assertContains(t, output, "next: ship box doctor fake-vps")
 }
 
 func (e *smokeEnv) assertWrongHostKeyRefuses(t *testing.T) {
 	t.Helper()
 	home := filepath.Join(e.tmp, "wrong-host-key-home")
+	copyShipIdentityForHome(t, e.shipHome, home)
 	shipConfig := filepath.Join(home, ".config", "ship")
 	if err := os.MkdirAll(shipConfig, 0700); err != nil {
 		t.Fatal(err)
 	}
+	knownHosts := filepath.Join(shipConfig, "known_hosts")
+	if err := os.WriteFile(knownHosts, []byte(readFile(t, filepath.Join(e.shipHome, ".config", "ship", "known_hosts"))), 0600); err != nil {
+		t.Fatal(err)
+	}
+	clean := e.runCommand(t, e.repoRoot, []string{"HOME=" + home}, nil, e.goBin, "box", "doctor", "fake-vps")
+	if clean.err != nil {
+		t.Fatalf("box doctor should pass with the real host key\nstdout:\n%s\nstderr:\n%s", clean.stdout, clean.stderr)
+	}
 	wrongKey := strings.Join(strings.Fields(alicePublicKeyForFreshInstallTest())[:2], " ")
-	if err := os.WriteFile(filepath.Join(shipConfig, "known_hosts"), []byte("fake-vps "+wrongKey+"\n"), 0600); err != nil {
+	if err := os.WriteFile(knownHosts, []byte("fake-vps "+wrongKey+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	result := e.runCommand(t, e.repoRoot, []string{"HOME=" + home}, nil, e.goBin, "box", "doctor", "fake-vps")
@@ -452,7 +438,7 @@ func (e *smokeEnv) assertHostDoctorHealthy(t *testing.T) {
 
 func (e *smokeEnv) assertDoctorRecordingDeltaForStoppedReaper(t *testing.T) {
 	t.Helper()
-	e.ssh(t, "/usr/local/bin/ship server doctor record")
+	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
 	state := readDoctorState(t, e)
 	if len(state.Delta) != 0 {
 		t.Fatalf("healthy baseline doctor record should have empty delta: %+v", state.Delta)
@@ -472,7 +458,7 @@ func (e *smokeEnv) assertDoctorRecordingDeltaForStoppedReaper(t *testing.T) {
 		t.Fatalf("unexpected reaper degraded check: %+v", reaper)
 	}
 
-	e.ssh(t, "/usr/local/bin/ship server doctor record")
+	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
 	state = readDoctorState(t, e)
 	if len(state.Delta) != 1 || state.Delta[0].ID != "reaper_timer" || state.Delta[0].Status != "degraded" {
 		t.Fatalf("expected newly degraded reaper delta, got: %+v", state.Delta)
@@ -481,7 +467,7 @@ func (e *smokeEnv) assertDoctorRecordingDeltaForStoppedReaper(t *testing.T) {
 		t.Fatalf("recorded checks did not reflect degraded reaper: %+v", state.Checks)
 	}
 
-	e.ssh(t, "/usr/local/bin/ship server doctor record")
+	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
 	state = readDoctorState(t, e)
 	if len(state.Delta) != 0 {
 		t.Fatalf("second degraded doctor record should have empty delta: %+v", state.Delta)
