@@ -73,6 +73,7 @@ func TestContainerSmoke(t *testing.T) {
 
 	t.Run("notify webhook events", env.testNotifyWebhooks)
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
+	t.Run("real Caddy validation rejects malformed fragments", env.testCaddyValidationRejectsMalformedFragment)
 	t.Run("daily verbs pin unknown host and refuse changed host", env.testDailyVerbHostKeyTOFU)
 	t.Run("phase 1 acceptance init ship branch and sslip", env.testPhase1AcceptanceAndZeroDNS)
 	t.Run("member add ls rm manages deploy access", env.testMemberAccess)
@@ -100,6 +101,17 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("box status and update converge helper version", env.testBoxStatusAndUpdate)
 	t.Run("box rm destroys an app and its environments", env.testBoxRm)
 	t.Run("rm tears down one app environment", env.testDestroy)
+}
+
+func (e *smokeEnv) testCaddyValidationRejectsMalformedFragment(t *testing.T) {
+	const fragment = "/etc/caddy/conf.d/malformed.caddy"
+	e.dockerExec(t, "cat > "+fragment+" <<'EOF'\n\"malformed.example.com\" {\n\t@ship_share query ship_share \"tok\"\n}\nEOF")
+	t.Cleanup(func() { e.dockerExec(t, "rm -f "+fragment) })
+
+	result := e.run(t, e.repoRoot, nil, "docker", "exec", e.container, "podman", "exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile")
+	if result.err == nil {
+		t.Fatalf("malformed Caddy fragment passed validation:\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	}
 }
 
 func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
@@ -1040,6 +1052,15 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 		t.Fatalf("bypass after password rotation status = %s, want 200", got)
 	}
 
+	protectedEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "guardapi", "feature/protected")
+	shareTokenFile := "/etc/ship/secrets/guardapi/" + protectedEnv + "/share-token"
+	e.dockerExec(t, "touch /run/fake-podman/fail-caddy-reload")
+	mintFailure := e.runShip(t, app, nil, "share")
+	if mintFailure.err == nil {
+		t.Fatal("share with failing Caddy reload should fail")
+	}
+	e.dockerExec(t, "rm -f /run/fake-podman/fail-caddy-reload")
+
 	shareURL := assertOnlyURL(t, e.ship(t, app, nil, "share"))
 	shareParsed, err := url.Parse(shareURL)
 	if err != nil {
@@ -1064,6 +1085,17 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 	if again := assertOnlyURL(t, e.ship(t, app, nil, "share")); again != shareURL {
 		t.Fatalf("repeated share URL = %q, want %q", again, shareURL)
 	}
+	e.dockerExec(t, "test -f "+shareTokenFile)
+	e.dockerExec(t, "touch /run/fake-podman/fail-caddy-reload")
+	revokeFailure := e.runShip(t, app, nil, "share", "--rm")
+	if revokeFailure.err == nil {
+		t.Fatal("share revoke with failing Caddy reload should fail")
+	}
+	e.dockerExec(t, "test -f "+shareTokenFile)
+	if got := strings.TrimSpace(e.ssh(t, "curl -sS -o /dev/null -w '%{http_code}' -H 'Host: "+host+"' -H 'Cookie: ship_share="+shareToken+"' http://127.0.0.1"+cleanPath)); got != "200" {
+		t.Fatalf("share cookie after failed revoke status = %s, want 200", got)
+	}
+	e.dockerExec(t, "rm -f /run/fake-podman/fail-caddy-reload")
 	e.ship(t, app, nil, "share", "--rm")
 	if got := strings.TrimSpace(e.ssh(t, "curl -sS -o /dev/null -w '%{http_code}' -H 'Host: "+host+"' -H 'Cookie: ship_share="+shareToken+"' http://127.0.0.1"+cleanPath)); got != "401" {
 		t.Fatalf("old share cookie status = %s, want 401", got)
@@ -1109,7 +1141,6 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 
 	// App-wide credentials survive preview churn: reap the protected
 	// preview, redeploy the branch, and the bypass token is unchanged.
-	protectedEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "guardapi", "feature/protected")
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "guardapi", protectedEnv)
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("guardapi", protectedEnv))
@@ -2688,6 +2719,9 @@ probe = "/health"
 
 [processes]
 web = { port = 3000 }
+
+[routes]
+"version.example.com" = "web"
 `)
 }
 

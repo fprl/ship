@@ -223,8 +223,8 @@ func CmdBoxUpdate(server string) {
 		utils.DieError(err, 1)
 	}
 	cmp := compareShipVersions(remote.Version, version.Version)
-	if cmp > 0 || (cmp == 0 && remote.Version != version.Version) {
-		utils.DieError(errcat.New(errcat.CodeClientBehindHelper, errcat.Fields{"helper_version": remote.Version, "client_version": version.Version}), 1)
+	if err := classifyBoxUpdate(remote.Version, version.Version, server); err != nil {
+		utils.DieError(err, 1)
 	}
 	if cmp == 0 && remote.RecordedClientVersion == version.Version {
 		fmt.Println("box update: already current")
@@ -267,6 +267,17 @@ func CmdBoxUpdate(server string) {
 		utils.DieError(operationError(remoteErr.Detail, "ship box update "+server), 1)
 	}
 	fmt.Print(stdout)
+}
+
+func classifyBoxUpdate(helperVersion, clientVersion, server string) error {
+	cmp := compareShipVersions(helperVersion, clientVersion)
+	if cmp > 0 {
+		return errcat.New(errcat.CodeClientBehindHelper, errcat.Fields{"helper_version": helperVersion, "client_version": clientVersion})
+	}
+	if cmp == 0 && helperVersion != clientVersion {
+		return errcat.New(errcat.CodeBoxVersionAmbiguous, errcat.Fields{"helper_version": helperVersion, "client_version": clientVersion, "server": server})
+	}
+	return nil
 }
 
 func helperArchitecture(raw string) (string, error) {

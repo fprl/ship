@@ -314,8 +314,9 @@ PY
   exec)
     # `podman exec <container> <cmd...>` — the helper uses this to
     # reload Caddy: `podman exec caddy caddy reload --config ...` and
-    # to validate config. Both can be no-ops here because the fake
-    # Caddy proxy re-reads conf.d/ fragments on every request.
+    # to validate config. Reload is a no-op because the fake Caddy
+    # proxy re-reads conf.d/ fragments on every request; validation
+    # uses the real Caddy binary against the full Caddyfile.
     container="${1:-}"
     shift || true
     if [[ ! -f "$state_dir/containers/$container.labels" ]]; then
@@ -325,6 +326,9 @@ PY
     if [[ "$container" == "caddy" && "${1:-}" == "caddy" && "${2:-}" == "validate" && -f "$state_dir/fail-caddy-validate" ]]; then
       echo "fake caddy validate failed" >&2
       exit 42
+    fi
+    if [[ "$container" == "caddy" && "${1:-}" == "caddy" && "${2:-}" == "validate" ]]; then
+      exec /usr/local/bin/caddy-real "${@:2}"
     fi
     if [[ "$container" == "caddy" && "${1:-}" == "caddy" && "${2:-}" == "reload" && -f "$state_dir/fail-caddy-reload" ]]; then
       echo "fake caddy reload failed" >&2
@@ -371,10 +375,8 @@ print("ok")
 PY
       exit $?
     fi
-    # If the request is `caddy validate` or `caddy reload`, exit 0.
-    # Real validation runs inside the Caddy container against the full
-    # Caddyfile; the fake accepts whatever fragment is written unless a
-    # test drops one of the failure marker files above.
+    # Caddy reload is intentionally a no-op; fake-podman.caddy.py
+    # re-reads fragments for every request.
     exit 0
     ;;
 

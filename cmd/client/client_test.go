@@ -1722,3 +1722,24 @@ func TestReadBoxVersionMapsPreUpdateBoxesToSetupRequired(t *testing.T) {
 		t.Fatalf("healthy probe failed: payload=%+v err=%v", payload, err)
 	}
 }
+
+func TestClassifyBoxUpdateVersionSkew(t *testing.T) {
+	t.Run("newer helper requires client upgrade", func(t *testing.T) {
+		err := classifyBoxUpdate("v0.4.1", "v0.4.0", "203.0.113.7")
+		coded, ok := errcat.As(err)
+		if !ok || coded.Code() != errcat.CodeClientBehindHelper {
+			t.Fatalf("newer helper should map to client_behind_helper, got %v", err)
+		}
+	})
+
+	t.Run("different dev builds require box setup", func(t *testing.T) {
+		err := classifyBoxUpdate("v0.3.0-17-gabc", "v0.3.0-18-gdef", "203.0.113.7")
+		coded, ok := errcat.As(err)
+		if !ok || coded.Code() != errcat.CodeBoxVersionAmbiguous {
+			t.Fatalf("ambiguous builds should map to box_version_ambiguous, got %v", err)
+		}
+		if got := coded.Remediation(); got != "ship box setup 203.0.113.7" {
+			t.Fatalf("remediation = %q", got)
+		}
+	})
+}

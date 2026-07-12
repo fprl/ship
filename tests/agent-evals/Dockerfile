@@ -24,6 +24,7 @@ RUN useradd -m -s /bin/bash -g operator operator \
   && chmod 700 /home/deploy/.ssh
 
 COPY tests/agent-evals/.fake-vps-bin/ship-linux-amd64 /usr/local/bin/ship
+COPY --from=docker.io/library/caddy:2-alpine /usr/bin/caddy /usr/local/bin/caddy-real
 COPY tests/fake-vps/fake-systemctl /usr/local/bin/systemctl
 COPY tests/fake-vps/fake-caddy /usr/local/bin/caddy
 COPY tests/fake-vps/fake-podman /usr/local/bin/podman

@@ -83,6 +83,7 @@ const (
 	CodeHostInstallApplyFailed            Code = "host_install_apply_failed"
 	CodeBackupDataMissing                 Code = "backup_data_missing"
 	CodeClientBehindHelper                Code = "client_behind_helper"
+	CodeBoxVersionAmbiguous               Code = "box_version_ambiguous"
 	CodeBoxSetupRequired                  Code = "box_setup_required"
 )
 
@@ -539,6 +540,12 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "client is behind the box helper",
 		CauseTemplate:       "helper version {helper_version} is newer than client version {client_version}",
 		RemediationTemplate: "curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | bash",
+	},
+	CodeBoxVersionAmbiguous: {
+		Code:                CodeBoxVersionAmbiguous,
+		MessageTemplate:     "box update cannot order these builds",
+		CauseTemplate:       "helper {helper_version} and client {client_version} are different builds of the same release",
+		RemediationTemplate: "ship box setup {server}",
 	},
 	CodeBoxSetupRequired: {
 		Code:                CodeBoxSetupRequired,
