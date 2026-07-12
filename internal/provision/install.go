@@ -24,7 +24,6 @@ const (
 	litestreamVersion           = "0.5.8"
 	litestreamSHA256X8664       = "854ed88ce4c30da887e7c099ffb2941bae2f7108db89886e7ec5ee80c81356b7"
 	litestreamSHA256ARM64       = "bc92d95bc8203a41afe9b5df552aafe1bc0781c6b4341d52970e3f1cd7220c8d"
-	caddyAptKeyFingerprint      = "65760C51EDEA2017CEA2CA15155B6D79CA56EA34"
 	tailscaleAptKeyFingerprint  = "2596A99EAAB33821893C0A79458CA832957F5868"
 	cloudflareAptKeyFingerprint = "CC94B39C77AE7342A68B89628A682D308D4E5E73"
 	defaultOperatorUser         = "operator"
@@ -374,7 +373,7 @@ func addSecurity(ops *[]operation, opts InstallOptions) {
 		if err != nil {
 			return false, err
 		}
-		return true, commandOK(result, "ufw", []string{"--force", "enable"})
+		return true, host.RequireZero(result, "ufw", []string{"--force", "enable"})
 	}})
 	*ops = append(*ops, operation{name: "fail2ban service", run: func(apply host.Apply) (bool, error) {
 		return host.EnsureSystemdUnit(apply, host.SystemdUnit{Name: "fail2ban.service", Action: host.Started})
@@ -447,7 +446,7 @@ func ensureSystemdUnitEnabled(apply host.Apply, unit string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return true, commandOK(enable, "systemctl", []string{"enable", unit})
+	return true, host.RequireZero(enable, "systemctl", []string{"enable", unit})
 }
 
 func previewReaperServiceUnit() string {
@@ -577,7 +576,7 @@ func ensureDeployTmpDir(apply host.Apply) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return true, commandOK(res, "install", args)
+	return true, host.RequireZero(res, "install", args)
 }
 
 // addPodmanHostBaseline writes the host config that makes Podman bridge
@@ -768,7 +767,7 @@ func ensureIngressNetwork(apply host.Apply) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if err := commandOK(create, "podman", []string{"network", "create", "ingress"}); err != nil {
+	if err := host.RequireZero(create, "podman", []string{"network", "create", "ingress"}); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -910,7 +909,7 @@ func addLitestream(ops *[]operation) {
 		if err != nil {
 			return false, err
 		}
-		if err := commandOK(result, "curl", []string{"-fsSL", url, "-o", deb}); err != nil {
+		if err := host.RequireZero(result, "curl", []string{"-fsSL", url, "-o", deb}); err != nil {
 			return false, err
 		}
 		if err := requireFileSHA256(apply, "litestream", deb, expectedSHA256); err != nil {
@@ -920,7 +919,7 @@ func addLitestream(ops *[]operation) {
 		if err != nil {
 			return false, err
 		}
-		return true, commandOK(result, "apt-get", []string{"install", "-y", deb})
+		return true, host.RequireZero(result, "apt-get", []string{"install", "-y", deb})
 	}})
 }
 
@@ -941,7 +940,7 @@ func createLitestreamTempDir(apply host.Apply) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := commandOK(result, "mktemp", args); err != nil {
+	if err := host.RequireZero(result, "mktemp", args); err != nil {
 		return "", err
 	}
 	path := strings.TrimSpace(string(result.Stdout))
@@ -961,7 +960,7 @@ func requireFileSHA256(apply host.Apply, label string, path string, expected str
 	if err != nil {
 		return err
 	}
-	if err := commandOK(result, "sha256sum", args); err != nil {
+	if err := host.RequireZero(result, "sha256sum", args); err != nil {
 		return err
 	}
 	fields := strings.Fields(string(result.Stdout))
@@ -1112,7 +1111,7 @@ func ensureCloudflaredService(apply host.Apply, unitContent []byte, restartOnCha
 		if err != nil {
 			return false, err
 		}
-		return true, commandOK(result, "systemctl", []string{"restart", "cloudflared.service"})
+		return true, host.RequireZero(result, "systemctl", []string{"restart", "cloudflared.service"})
 	}
 	active, err := systemdServiceActive(apply, "cloudflared.service")
 	if err != nil {
@@ -1128,7 +1127,7 @@ func ensureCloudflaredService(apply host.Apply, unitContent []byte, restartOnCha
 	if err != nil {
 		return false, err
 	}
-	return true, commandOK(result, "systemctl", []string{"start", "cloudflared.service"})
+	return true, host.RequireZero(result, "systemctl", []string{"start", "cloudflared.service"})
 }
 
 func systemdServiceActive(apply host.Apply, name string) (bool, error) {
@@ -1171,15 +1170,8 @@ func runCommand(program string, args ...string) func(host.Apply) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		return true, commandOK(result, program, args)
+		return true, host.RequireZero(result, program, args)
 	}
-}
-
-func commandOK(result host.CommandResult, program string, args []string) error {
-	if result.ExitCode == 0 {
-		return nil
-	}
-	return fmt.Errorf("command failed: %s %v: exit %d: %s", program, args, result.ExitCode, strings.TrimSpace(string(result.Stderr)))
 }
 
 func desiredHost(opts InstallOptions) store.HostDesired {
@@ -1191,7 +1183,6 @@ func desiredHost(opts InstallOptions) store.HostDesired {
 		ingress = store.HostIngressDesired{Expose: store.ExposePrivate, Tunnel: store.TunnelNone}
 	}
 	packages := map[string]store.DesiredPackage{
-		"caddy":   {Source: "caddy-apt", Track: "stable"},
 		"podman":  {Source: "ubuntu", Track: "noble"},
 		"sqlite3": {Source: "ubuntu", Track: "noble"},
 	}

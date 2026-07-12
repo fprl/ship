@@ -17,11 +17,11 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 	desired.Features.Litestream = true
 	desired.Packages = map[string]DesiredPackage{
 		"litestream": {Source: "github-release", Version: "0.5.8"},
-		"caddy":      {Source: "caddy-apt", Track: "stable"},
+		"podman":     {Source: "ubuntu", Track: "noble"},
 	}
 	observed := HostObserved{
 		Packages: map[string]ObservedPackage{
-			"caddy": {Version: "2.8.4"},
+			"podman": {Version: "5.0.3"},
 		},
 	}
 
@@ -240,7 +240,7 @@ func TestWriteHostStatePreservesDesired(t *testing.T) {
       "features": {"litestream":true, "docker":false},
       "packages": {
         "litestream": {"version":"0.5.8", "source":"github-release"},
-        "caddy": {"track":"stable", "source":"caddy-apt"}
+        "podman": {"track":"noble", "source":"ubuntu"}
       }
   },
   "observed": {

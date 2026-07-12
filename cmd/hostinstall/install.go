@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -47,6 +48,7 @@ type Options struct {
 	InstallLitestream        bool
 	CheckMode                bool
 	NarrateSetup             bool
+	SetupSecretsFile         string
 }
 
 type Plan struct {
@@ -85,10 +87,22 @@ type Installer struct {
 	geteuid   func() int
 	look      func(file string) (string, error)
 	remoteOut func(plan Plan, command string) (string, error)
+	remoteRun func(plan Plan, command string, stdin []byte) error
 	sleep     func(time.Duration)
 }
 
 const passwordProvisionedDetail = "provider gave a password; this installs your ship key using it once; hardening then disables password login permanently"
+
+const (
+	remoteSetupSecretsPattern = "/tmp/ship-setup-secrets.XXXXXX"
+	remoteSetupSecretsExample = "/tmp/ship-setup-secrets.example"
+)
+
+type setupSecrets struct {
+	TailscaleAuthKey      string `json:"tailscale_auth_key,omitempty"`
+	CloudflareAPIToken    string `json:"cloudflare_api_token,omitempty"`
+	CloudflareTunnelToken string `json:"cloudflare_tunnel_token,omitempty"`
+}
 
 func NewInstaller() *Installer {
 	return &Installer{
@@ -105,6 +119,9 @@ func NewInstaller() *Installer {
 }
 
 func (i *Installer) RunOptions(opts Options) error {
+	if err := applySetupSecretsFile(&opts); err != nil {
+		return err
+	}
 	plan, err := BuildPlan(opts, i.geteuid() == 0, fileExists("/etc/os-release"))
 	if err != nil {
 		return err
@@ -422,8 +439,16 @@ func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) (provision.InstallSumm
 		return provision.InstallSummary{}, err
 	}
 	defer cleanupKeys()
+	setupSecretsFile, cleanupSecrets, err := i.writeRemoteSetupSecrets(plan)
+	if err != nil {
+		return provision.InstallSummary{}, err
+	}
+	defer cleanupSecrets()
 
-	cmd := remoteLocalInstallCommand(remoteHelper, plan, operatorKeyFile, deployKeyFile)
+	cmd := remoteLocalInstallCommand(remoteHelper, plan, operatorKeyFile, deployKeyFile, setupSecretsFile)
+	if setupSecretsFile != "" {
+		cmd = cleanupRemoteSetupSecretsCommand(cmd, setupSecretsFile)
+	}
 	i.step("running provisioner on target")
 	if plan.BootstrapUser == "root" {
 		if err := i.remoteCommand(plan, cmd); err != nil {
@@ -519,7 +544,11 @@ func (i *Installer) dumpInstallPlan(plan Plan) error {
 	fmt.Fprintf(i.Stdout, "plan.deploy_key=%s\n", presentOrMissingKeys(keyPlan.Deploy, "present", "missing"))
 	if plan.Mode == "remote" {
 		fmt.Fprintln(i.Stdout, "--- remote-local-command ---")
-		fmt.Fprintln(i.Stdout, remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/ship-operator.pub", "/tmp/ship-deploy.pub"))
+		setupSecretsFile := ""
+		if hasSetupSecrets(plan) {
+			setupSecretsFile = remoteSetupSecretsExample
+		}
+		fmt.Fprintln(i.Stdout, remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/ship-operator.pub", "/tmp/ship-deploy.pub", setupSecretsFile))
 	}
 	return nil
 }
@@ -704,7 +733,14 @@ func (i *Installer) remoteOutput(plan Plan, command string) (string, error) {
 }
 
 func (i *Installer) remoteCommand(plan Plan, command string) error {
-	stdout, stderr, err := runCaptured("ssh", sshArgs(plan, command), "")
+	return i.remoteCommandInput(plan, command, nil)
+}
+
+func (i *Installer) remoteCommandInput(plan Plan, command string, stdin []byte) error {
+	if i.remoteRun != nil {
+		return i.remoteRun(plan, command, stdin)
+	}
+	stdout, stderr, err := runCapturedInput("ssh", sshArgs(plan, command), "", stdin)
 	if err != nil {
 		return err
 	}
@@ -766,6 +802,56 @@ func (i *Installer) writeRemoteKeyFiles(plan Plan, keys keyPlan) (string, string
 	return operatorPath, deployPath, cleanup, nil
 }
 
+func (i *Installer) writeRemoteSetupSecrets(plan Plan) (string, func(), error) {
+	secrets := setupSecrets{
+		TailscaleAuthKey:      plan.TailscaleAuthKey,
+		CloudflareAPIToken:    plan.CloudflareAPIToken,
+		CloudflareTunnelToken: plan.CloudflareTunnelToken,
+	}
+	if !hasSetupSecrets(plan) {
+		return "", func() {}, nil
+	}
+	payload, err := json.Marshal(secrets)
+	if err != nil {
+		return "", func() {}, err
+	}
+	createCommand := "umask 077; mktemp " + utils.ShellEscape(remoteSetupSecretsPattern)
+	if plan.BootstrapUser != "root" {
+		createCommand = "sudo -n sh -c " + utils.ShellEscape(createCommand)
+	}
+	path, err := i.remoteOutput(plan, createCommand)
+	if err != nil {
+		return "", func() {}, remoteInstallCommandError(plan, "create setup secrets file on target", createCommand, err)
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", func() {}, fmt.Errorf("create setup secrets file on target: empty path")
+	}
+	writeCommand := "cat > " + utils.ShellEscape(path) + " && chmod 0600 " + utils.ShellEscape(path)
+	if plan.BootstrapUser != "root" {
+		writeCommand = "sudo -n sh -c " + utils.ShellEscape(writeCommand)
+	}
+	if err := i.remoteCommandInput(plan, writeCommand, payload); err != nil {
+		return "", func() {}, remoteInstallCommandError(plan, "write setup secrets on target", writeCommand, err)
+	}
+	cleanup := func() {
+		command := "rm -f " + utils.ShellEscape(path)
+		if plan.BootstrapUser != "root" {
+			command = "sudo -n " + command
+		}
+		_ = i.remoteCommand(plan, command)
+	}
+	return path, cleanup, nil
+}
+
+func hasSetupSecrets(plan Plan) bool {
+	return plan.TailscaleAuthKey != "" || plan.CloudflareAPIToken != "" || plan.CloudflareTunnelToken != ""
+}
+
+func cleanupRemoteSetupSecretsCommand(command string, path string) string {
+	return "sh -c " + utils.ShellEscape(command+"; status=$?; rm -f "+utils.ShellEscape(path)+"; exit $status")
+}
+
 func sshArgs(plan Plan, command string) []string {
 	args := []string{
 		"-o", "BatchMode=yes",
@@ -789,7 +875,7 @@ func setupKnownHostOptions(plan Plan, strict string) []string {
 	return knownhosts.SSHOptions(path, strict)
 }
 
-func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string, deployKeyFile string) string {
+func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string, deployKeyFile string, setupSecretsFile string) string {
 	args := []string{
 		binary,
 		"box",
@@ -806,10 +892,10 @@ func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string,
 	if deployKeyFile != "" {
 		args = append(args, "--deploy-ssh-public-key-file", deployKeyFile)
 	}
+	if setupSecretsFile != "" {
+		args = append(args, "--setup-secrets-file", setupSecretsFile)
+	}
 	if plan.Tailscale {
-		if plan.TailscaleAuthKey != "" {
-			args = append(args, "--tailscale-auth-key", plan.TailscaleAuthKey)
-		}
 		if plan.TailscaleHostname != "" {
 			args = append(args, "--tailscale-hostname", plan.TailscaleHostname)
 		}
@@ -817,14 +903,8 @@ func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string,
 		args = append(args, "--no-tailscale")
 	}
 	if plan.CloudflareTunnel {
-		if plan.CloudflareAPIToken != "" {
-			args = append(args, "--cloudflare-api-token", plan.CloudflareAPIToken)
-		}
 		if plan.CloudflareAccountID != "" {
 			args = append(args, "--cloudflare-account-id", plan.CloudflareAccountID)
-		}
-		if plan.CloudflareTunnelToken != "" {
-			args = append(args, "--cloudflare-tunnel-token", plan.CloudflareTunnelToken)
 		}
 		if plan.CloudflareTunnelConfig != "" {
 			args = append(args, "--cloudflare-tunnel-config", plan.CloudflareTunnelConfig)
@@ -846,6 +926,37 @@ func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string,
 		escaped = append(escaped, utils.ShellEscape(arg))
 	}
 	return strings.Join(escaped, " ")
+}
+
+func applySetupSecretsFile(opts *Options) error {
+	if opts.SetupSecretsFile == "" {
+		return nil
+	}
+	info, err := os.Stat(opts.SetupSecretsFile)
+	if err != nil {
+		return fmt.Errorf("read setup secrets file: %w", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		return fmt.Errorf("setup secrets file must have mode 0600")
+	}
+	data, err := os.ReadFile(opts.SetupSecretsFile)
+	if err != nil {
+		return fmt.Errorf("read setup secrets file: %w", err)
+	}
+	var secrets setupSecrets
+	if err := json.Unmarshal(data, &secrets); err != nil {
+		return fmt.Errorf("decode setup secrets file: %w", err)
+	}
+	if secrets.TailscaleAuthKey != "" {
+		opts.TailscaleAuthKey = secrets.TailscaleAuthKey
+	}
+	if secrets.CloudflareAPIToken != "" {
+		opts.CloudflareAPIToken = secrets.CloudflareAPIToken
+	}
+	if secrets.CloudflareTunnelToken != "" {
+		opts.CloudflareTunnelToken = secrets.CloudflareTunnelToken
+	}
+	return nil
 }
 
 type keyPlan struct {
@@ -1127,11 +1238,16 @@ func presentOrMissingKeys(value []plannedKey, present string, missing string) st
 }
 
 func runCaptured(name string, args []string, cwd string) (string, string, error) {
+	return runCapturedInput(name, args, cwd, nil)
+}
+
+func runCapturedInput(name string, args []string, cwd string, stdin []byte) (string, string, error) {
 	cmd := exec.Command(name, args...)
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
 	var stdout, stderr bytes.Buffer
+	cmd.Stdin = bytes.NewReader(stdin)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

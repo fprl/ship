@@ -58,7 +58,7 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 		t.Fatalf("unexpected cloudflare mode: %s", plan.CloudflareServiceMode)
 	}
 
-	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub")
+	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub", remoteSetupSecretsExample)
 	for _, want := range []string{
 		`/tmp/ship-host-install box setup localhost --mode local`,
 		`--ingress cloudflare`,
@@ -66,15 +66,99 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 		`--suppress-setup-narration`,
 		`--operator-ssh-public-key-file /tmp/operator.pub`,
 		`--deploy-ssh-public-key-file /tmp/deploy.pub`,
-		`--tailscale-auth-key tskey-auth-test`,
-		`--cloudflare-api-token cf-token-test`,
 		`--cloudflare-account-id account-test`,
+		`--setup-secrets-file /tmp/ship-setup-secrets.example`,
 		`--no-litestream`,
 		`--check`,
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("expected command to contain %q:\n%s", want, command)
 		}
+	}
+	for _, secret := range []string{"tskey-auth-test", "cf-token-test"} {
+		if strings.Contains(command, secret) {
+			t.Fatalf("remote command leaked secret %q:\n%s", secret, command)
+		}
+	}
+}
+
+func TestRemoteSetupSecretsArePipedAndCleanedUp(t *testing.T) {
+	plan := Plan{
+		BootstrapUser:         "root",
+		TailscaleAuthKey:      "tskey-auth-test",
+		CloudflareAPIToken:    "cf-token-test",
+		CloudflareTunnelToken: "cf-tunnel-token-test",
+	}
+	var calls []struct {
+		command string
+		stdin   string
+	}
+	installer := NewInstaller()
+	var createCommand string
+	installer.remoteOut = func(_ Plan, command string) (string, error) {
+		createCommand = command
+		return "/tmp/ship-setup-secrets.ABCDEF\n", nil
+	}
+	installer.remoteRun = func(_ Plan, command string, stdin []byte) error {
+		calls = append(calls, struct {
+			command string
+			stdin   string
+		}{command: command, stdin: string(stdin)})
+		return nil
+	}
+
+	path, cleanup, err := installer.writeRemoteSetupSecrets(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/tmp/ship-setup-secrets.ABCDEF" {
+		t.Fatalf("path = %q, want generated root-only path", path)
+	}
+	if createCommand != "umask 077; mktemp /tmp/ship-setup-secrets.XXXXXX" {
+		t.Fatalf("secret transport must create a root-only temp file, command:\n%s", createCommand)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("write calls = %d, want 1", len(calls))
+	}
+	if !strings.Contains(calls[0].command, "cat > /tmp/ship-setup-secrets.ABCDEF && chmod 0600 /tmp/ship-setup-secrets.ABCDEF") {
+		t.Fatalf("secret transport must create a 0600 file, command:\n%s", calls[0].command)
+	}
+	for _, secret := range []string{"tskey-auth-test", "cf-token-test", "cf-tunnel-token-test"} {
+		if strings.Contains(calls[0].command, secret) {
+			t.Fatalf("secret leaked into write argv %q:\n%s", secret, calls[0].command)
+		}
+		if !strings.Contains(calls[0].stdin, secret) {
+			t.Fatalf("secret missing from transport payload %q:\n%s", secret, calls[0].stdin)
+		}
+	}
+
+	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub", path)
+	for _, secret := range []string{"tskey-auth-test", "cf-token-test", "cf-tunnel-token-test"} {
+		if strings.Contains(command, secret) {
+			t.Fatalf("remote helper argv leaked secret %q:\n%s", secret, command)
+		}
+	}
+	if !strings.Contains(command, "--setup-secrets-file /tmp/ship-setup-secrets.ABCDEF") {
+		t.Fatalf("remote helper did not receive transport path:\n%s", command)
+	}
+
+	cleanup()
+	if len(calls) != 2 || calls[1].command != "rm -f /tmp/ship-setup-secrets.ABCDEF" {
+		t.Fatalf("cleanup call = %+v, want root-only transport removal", calls)
+	}
+}
+
+func TestApplySetupSecretsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "setup-secrets.json")
+	if err := os.WriteFile(path, []byte(`{"tailscale_auth_key":"tskey-auth-test","cloudflare_api_token":"cf-token-test","cloudflare_tunnel_token":"cf-tunnel-token-test"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{SetupSecretsFile: path}
+	if err := applySetupSecretsFile(&opts); err != nil {
+		t.Fatal(err)
+	}
+	if opts.TailscaleAuthKey != "tskey-auth-test" || opts.CloudflareAPIToken != "cf-token-test" || opts.CloudflareTunnelToken != "cf-tunnel-token-test" {
+		t.Fatalf("setup secrets were not loaded: %+v", opts)
 	}
 }
 
@@ -352,7 +436,7 @@ func TestRemoteLocalInstallCommandEnablesLitestreamExplicitly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub")
+	command := remoteLocalInstallCommand("/tmp/ship-host-install", plan, "/tmp/operator.pub", "/tmp/deploy.pub", "")
 	if !strings.Contains(command, "--litestream") {
 		t.Fatalf("expected command to explicitly enable litestream:\n%s", command)
 	}

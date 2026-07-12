@@ -595,6 +595,9 @@ func TestRunInstallInstallsPodmanFromUbuntuUniverse(t *testing.T) {
 	if got, ok := loaded.Desired.Packages["sqlite3"]; !ok || got.Source != "ubuntu" {
 		t.Fatalf("expected sqlite3 in desired packages, got %+v", loaded.Desired.Packages)
 	}
+	if _, ok := loaded.Desired.Packages["caddy"]; ok {
+		t.Fatalf("caddy is a podman service, not a desired package: %+v", loaded.Desired.Packages)
+	}
 }
 
 func TestRunInstallCreatesIngressNetworkWhenAbsent(t *testing.T) {
@@ -686,17 +689,6 @@ func TestRunInstallWritesCaddyContainerSystemdUnit(t *testing.T) {
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("caddy.service missing %q\nunit:\n%s", want, content)
-		}
-	}
-	// Post-cutover: Caddy is no longer an apt package. Make sure the
-	// provisioner didn't accidentally re-add either the third-party
-	// Caddy apt repo or `apt install caddy`.
-	if runner.ranCommand("apt-get", "install -y caddy") {
-		t.Fatal("apt install caddy ran; provisioner should manage Caddy via podman")
-	}
-	for _, cmd := range runner.commands {
-		if cmd.Program == "curl" && strings.Contains(strings.Join(cmd.Args, " "), "caddy") {
-			t.Fatalf("Caddy apt-repo key fetch ran; provisioner should manage Caddy via podman: %+v", cmd)
 		}
 	}
 }
@@ -1191,8 +1183,6 @@ func (r *installFakeRunner) runGPG(command host.Command) (host.CommandResult, er
 	}
 	path := command.Args[len(command.Args)-1]
 	switch {
-	case strings.Contains(path, "caddy"):
-		return host.CommandResult{Stdout: []byte(gpgFingerprintOutput(caddyAptKeyFingerprint))}, nil
 	case strings.Contains(path, "tailscale"):
 		return host.CommandResult{Stdout: []byte(gpgFingerprintOutput(tailscaleAptKeyFingerprint))}, nil
 	case strings.Contains(path, "cloudflare"):

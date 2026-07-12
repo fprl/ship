@@ -269,7 +269,7 @@ func runSystemctl(apply Apply, args ...string) error {
 	if err != nil {
 		return err
 	}
-	return requireZero(result, "systemctl", args)
+	return RequireZero(result, "systemctl", args)
 }
 
 func (apply Apply) ContextOrBackground() context.Context {
@@ -296,7 +296,7 @@ func withTrailingNewline(content []byte) []byte {
 	return out
 }
 
-func requireZero(result CommandResult, program string, args []string) error {
+func RequireZero(result CommandResult, program string, args []string) error {
 	if result.ExitCode == 0 {
 		return nil
 	}

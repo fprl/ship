@@ -90,7 +90,7 @@ func EnsureDirectory(apply Apply, dir Directory) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return true, requireZero(result, "install", args)
+	return true, RequireZero(result, "install", args)
 }
 
 func EnsurePackage(apply Apply, name string) (bool, error) {
@@ -116,7 +116,7 @@ func EnsurePackage(apply Apply, name string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return true, requireZero(result, "apt-get", []string{"install", "-y", name})
+	return true, RequireZero(result, "apt-get", []string{"install", "-y", name})
 }
 
 func EnsureAptRepo(apply Apply, repo AptRepo) (bool, error) {
@@ -290,7 +290,7 @@ func downloadTrustedAptKey(apply Apply, repo AptRepo, expected string) error {
 	if err != nil {
 		return err
 	}
-	if err := requireZero(result, "curl", []string{"-fsSL", repo.KeyURL, "-o", keyPath}); err != nil {
+	if err := RequireZero(result, "curl", []string{"-fsSL", repo.KeyURL, "-o", keyPath}); err != nil {
 		return err
 	}
 	if err := requireAptKeyFingerprint(apply, repo, keyPath, expected); err != nil {
@@ -302,7 +302,7 @@ func downloadTrustedAptKey(apply Apply, repo AptRepo, expected string) error {
 		if err != nil {
 			return err
 		}
-		if err := requireZero(result, "gpg", args); err != nil {
+		if err := RequireZero(result, "gpg", args); err != nil {
 			return err
 		}
 		if err := requireAptKeyFingerprint(apply, repo, installPath, expected); err != nil {
@@ -314,7 +314,7 @@ func downloadTrustedAptKey(apply Apply, repo AptRepo, expected string) error {
 	if err != nil {
 		return err
 	}
-	return requireZero(result, "install", args)
+	return RequireZero(result, "install", args)
 }
 
 func createAptRepoTempDir(apply Apply, name string) (string, error) {
@@ -323,7 +323,7 @@ func createAptRepoTempDir(apply Apply, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := requireZero(result, "mktemp", args); err != nil {
+	if err := RequireZero(result, "mktemp", args); err != nil {
 		return "", err
 	}
 	path := strings.TrimSpace(string(result.Stdout))
@@ -388,7 +388,7 @@ func EnsureUser(apply Apply, user User) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if err := requireZero(result, "groupadd", args); err != nil {
+		if err := RequireZero(result, "groupadd", args); err != nil {
 			return false, err
 		}
 	}
@@ -410,7 +410,7 @@ func EnsureUser(apply Apply, user User) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if err := requireZero(result, "useradd", args); err != nil {
+		if err := RequireZero(result, "useradd", args); err != nil {
 			return false, err
 		}
 		return changed, nil
@@ -432,7 +432,7 @@ func EnsureUser(apply Apply, user User) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if err := requireZero(result, "usermod", args); err != nil {
+		if err := RequireZero(result, "usermod", args); err != nil {
 			return false, err
 		}
 	}
@@ -480,7 +480,7 @@ func EnsureGroupMembership(apply Apply, user string, group string) (bool, error)
 		return false, err
 	}
 	if result.ExitCode != 0 {
-		return false, requireZero(result, "id", []string{"-nG", user})
+		return false, RequireZero(result, "id", []string{"-nG", user})
 	}
 	for _, existing := range strings.Fields(string(result.Stdout)) {
 		if existing == group {
@@ -495,7 +495,7 @@ func EnsureGroupMembership(apply Apply, user string, group string) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	return true, requireZero(result, "usermod", args)
+	return true, RequireZero(result, "usermod", args)
 }
 
 func EnsureLineInFile(apply Apply, change LineInFile) (bool, error) {
@@ -565,7 +565,7 @@ func EnsureUfwRule(apply Apply, rule UfwRule) (bool, error) {
 		return false, err
 	}
 	if result.ExitCode != 0 && !strings.Contains(string(result.Stderr), "Could not delete non-existent rule") {
-		return false, requireZero(result, "ufw", args)
+		return false, RequireZero(result, "ufw", args)
 	}
 	if result.ExitCode != 0 || strings.Contains(string(result.Stdout), "Skipping adding existing rule") {
 		return false, nil
@@ -635,7 +635,7 @@ func EnsureTimezone(apply Apply, timezone string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return true, requireZero(result, "timedatectl", []string{"set-timezone", timezone})
+	return true, RequireZero(result, "timedatectl", []string{"set-timezone", timezone})
 }
 
 func EnsureLocale(apply Apply, locale string) (bool, error) {
@@ -657,7 +657,7 @@ func EnsureLocale(apply Apply, locale string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return true, requireZero(result, "localectl", []string{"set-locale", "LANG=" + locale})
+	return true, RequireZero(result, "localectl", []string{"set-locale", "LANG=" + locale})
 }
 
 func ensureAptUpdated(apply Apply) error {
@@ -668,7 +668,7 @@ func ensureAptUpdated(apply Apply) error {
 	if err != nil {
 		return err
 	}
-	if err := requireZero(result, "apt-get", []string{"update", "-y"}); err != nil {
+	if err := RequireZero(result, "apt-get", []string{"update", "-y"}); err != nil {
 		return err
 	}
 	if apply.State != nil {

@@ -553,6 +553,7 @@ type boxSetupCmd struct {
 	InstallLitestream        *bool  `name:"litestream" negatable:"" help:"Install Litestream."`
 	CheckMode                bool   `name:"check" help:"Plan changes without writing files or running mutating commands."`
 	SuppressSetupNarration   bool   `name:"suppress-setup-narration" hidden:""`
+	SetupSecretsFile         string `name:"setup-secrets-file" hidden:""`
 }
 
 func (c boxSetupCmd) Run() error {
@@ -609,6 +610,7 @@ func (c boxSetupCmd) Run() error {
 	}
 	opts.CheckMode = c.CheckMode
 	opts.NarrateSetup = !c.SuppressSetupNarration
+	opts.SetupSecretsFile = c.SetupSecretsFile
 	if !internalLocalBoxSetupWithProvidedKeys(c) {
 		identity, err := shipidentity.EnsureShipIdentity(shipidentity.Options{Output: os.Stderr})
 		if err != nil {
