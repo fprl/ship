@@ -66,8 +66,10 @@ func (c appApplyCmd) Run() error {
 	if err := c.recordClientVersion(); err != nil {
 		utils.DieError(err, 1)
 	}
-	withAppEnvLock(c.App, c.Env, func() {
-		c.runLocked()
+	withAppNamedLock(c.App, "preview-protection", func() {
+		withAppEnvLock(c.App, c.Env, func() {
+			c.runLocked()
+		})
 	})
 	return nil
 }
@@ -138,6 +140,9 @@ func (c appApplyCmd) runLockedE() (err error) {
 
 	app, err = c.loadApplyContext(ctxDir)
 	if err != nil {
+		return err
+	}
+	if err := attachPreviewProtection(c.App, c.Env, app); err != nil {
 		return err
 	}
 	applyRouteTLS(app, c.TLS)

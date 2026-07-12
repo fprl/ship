@@ -81,6 +81,17 @@ func TestApprovalFlowIsOneShotAndJournaled(t *testing.T) {
 	assertApprovalJournalEvent(t, events, "consumed", "alice", "agent")
 }
 
+func TestPreviewPasswordRequiresApprovalForAgents(t *testing.T) {
+	setupAuthTest(t, map[string]store.MemberRecord{
+		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
+	})
+	setServerMemberClaims(aliceFingerprint, "")
+	_, err := authorizeHelper(helperVerbPreviewPassword, authTargetForPreviewBranch("api", "feat/protected", "preview-password"))
+	if !errcat.Is(err, errcat.CodeApprovalRequired) {
+		t.Fatalf("agent preview password err = %v, want approval_required", err)
+	}
+}
+
 func TestExpiredApprovedRequestFailsConsumptionWithFreshRetryRemediation(t *testing.T) {
 	setupAuthTest(t, map[string]store.MemberRecord{
 		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},

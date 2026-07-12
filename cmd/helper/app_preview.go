@@ -34,6 +34,7 @@ type appPreviewCmd struct {
 	Resolve         appPreviewResolveCmd         `cmd:"resolve" help:"Resolve an existing preview mapping for a raw branch."`
 	Pin             appPreviewPinCmd             `cmd:"pin" help:"Pin a preview mapping."`
 	Unpin           appPreviewUnpinCmd           `cmd:"unpin" help:"Unpin a preview mapping."`
+	Password        appPreviewPasswordCmd        `cmd:"password" help:"Print or rotate preview protection credentials."`
 }
 
 type appPreviewResolveOrCreateCmd struct {

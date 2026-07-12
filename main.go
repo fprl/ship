@@ -32,6 +32,7 @@ type cli struct {
 	Data       dataCmd          `cmd:"" group:"project" help:"Manage Preview data forks."`
 	Pin        pinCmd           `cmd:"" group:"project" help:"Pin a preview environment so the reaper leaves it running."`
 	Unpin      unpinCmd         `cmd:"" group:"project" help:"Unpin a preview environment so normal expiry applies."`
+	Preview    previewCmd       `cmd:"" group:"project" help:"Manage preview protection."`
 	Save       saveCmd          `cmd:"" group:"project" help:"Create a backup for the current branch environment."`
 	Restore    restoreCmd       `cmd:"" group:"project" help:"Restore the current branch environment from a backup."`
 	SSH        sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the box."`
@@ -240,6 +241,24 @@ func (c pinCmd) Run() error {
 type unpinCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Branch string `arg:"" help:"Branch name to unpin."`
+}
+
+type previewCmd struct {
+	Password previewPasswordCmd `cmd:"" help:"Print or rotate this app's Preview password and bypass token."`
+}
+
+type previewPasswordCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	Rotate bool   `name:"rotate" help:"Generate a new team password; the bypass token stays unchanged."`
+}
+
+func (c previewPasswordCmd) Run() error {
+	root, err := projectAppRoot(c.Config)
+	if err != nil {
+		return err
+	}
+	client.CmdPreviewPassword(root, c.Rotate)
+	return nil
 }
 
 func (c unpinCmd) Run() error {

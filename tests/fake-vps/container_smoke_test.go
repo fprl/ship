@@ -83,6 +83,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("caddy switch failure restores runtime state", env.testCaddySwitchFailureRollback)
 	t.Run("branch env resolution and production guards", env.testBranchEnvironmentGuards)
 	t.Run("preview lifecycle mapping pin and reap", env.testPreviewLifecycle)
+	t.Run("preview protection uses basic auth and a stable bypass token", env.testPreviewProtection)
 	t.Run("container rollback runs an older image release", env.testRollback)
 	t.Run("proactive release image pruning", env.testImagePruning)
 	t.Run("backup and restore round-trip app state", env.testBackupRestore)
@@ -980,6 +981,117 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("previewapi", previewEnv))
 	e.dockerExec(t, "test ! -e /etc/ship/secrets/previewapi/"+previewEnv)
 	e.dockerExec(t, "test -e "+identity.EnvRoot("previewapi", "prod"))
+}
+
+func (e *smokeEnv) testPreviewProtection(t *testing.T) {
+	app := filepath.Join(e.tmp, "preview-protection")
+	mustMkdir(t, app)
+	writePreviewProtectionFixture(t, app)
+	e.commitFixture(t, app)
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
+	e.ship(t, app, nil)
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: guard.example.com' http://127.0.0.1/health", "ok")
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/protected")
+	mustWrite(t, filepath.Join(app, "README.md"), "protected preview\n")
+	e.mustRun(t, app, nil, "git", "add", ".")
+	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "protected preview")
+	previewURL := assertOnlyURL(t, e.ship(t, app, nil))
+	parsed, err := url.Parse(previewURL)
+	if err != nil || parsed.Hostname() == "" {
+		t.Fatalf("preview URL = %q, parse err = %v", previewURL, err)
+	}
+	host := parsed.Hostname()
+	status := func(auth, bypass string) string {
+		args := "curl -sS -o /dev/null -w '%{http_code}' -H 'Host: " + host + "'"
+		if auth != "" {
+			args += " -u 'team:" + auth + "'"
+		}
+		if bypass != "" {
+			args += " -H 'x-ship-bypass: " + bypass + "'"
+		}
+		return strings.TrimSpace(e.ssh(t, args+" http://127.0.0.1/health"))
+	}
+	if got := status("", ""); got != "401" {
+		t.Fatalf("anonymous protected preview status = %s, want 401", got)
+	}
+	credentials := parsePreviewCredentials(t, e.ship(t, app, nil, "preview", "password"))
+	if got := status(credentials.Password, ""); got != "200" {
+		t.Fatalf("team password protected preview status = %s, want 200", got)
+	}
+	if got := status("", credentials.BypassToken); got != "200" {
+		t.Fatalf("bypass protected preview status = %s, want 200", got)
+	}
+	// The successful deploy above proves the direct process-port probe was not
+	// routed through basic_auth. Production remains public after protection.
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: guard.example.com' http://127.0.0.1/health", "ok")
+
+	rotated := parsePreviewCredentials(t, e.ship(t, app, nil, "preview", "password", "--rotate"))
+	if rotated.BypassToken != credentials.BypassToken {
+		t.Fatalf("password rotation changed bypass token: old=%q new=%q", credentials.BypassToken, rotated.BypassToken)
+	}
+	if got := status(credentials.Password, ""); got != "401" {
+		t.Fatalf("old password after rotation status = %s, want 401", got)
+	}
+	if got := status(rotated.Password, ""); got != "200" {
+		t.Fatalf("new password after rotation status = %s, want 200", got)
+	}
+	if got := status("", credentials.BypassToken); got != "200" {
+		t.Fatalf("bypass after password rotation status = %s, want 200", got)
+	}
+
+	agentKeyPath := filepath.Join(e.tmp, "preview-protection-agent")
+	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "preview-protection-agent", "-f", agentKeyPath)
+	e.ship(t, app, nil, "member", "add", agentKeyPath+".pub", "--role", "agent")
+	agentKey, err := os.ReadFile(agentKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerPrefix := e.pathPrefix
+	e.pathPrefix = e.configureSSHWithKey(t, agentKeyPath)
+	t.Cleanup(func() { e.pathPrefix = ownerPrefix })
+	agent := e.runCommand(t, app, []string{"SHIP_SSH_KEY=" + string(agentKey), "SHIP_ERROR_JSON=1"}, nil, e.goBin, "preview", "password")
+	if agent.err == nil {
+		t.Fatal("agent preview password should require approval")
+	}
+	assertContains(t, agent.stdout+agent.stderr, "approval_required")
+	e.pathPrefix = ownerPrefix
+
+	open := filepath.Join(e.tmp, "preview-unlocked")
+	mustMkdir(t, open)
+	writeUnprotectedPreviewFixture(t, open)
+	e.commitFixture(t, open)
+	e.mustRun(t, open, nil, "git", "checkout", "-B", "main")
+	e.ship(t, open, nil)
+	e.mustRun(t, open, nil, "git", "checkout", "-B", "feature/open")
+	e.ship(t, open, nil)
+	notProtected := e.runCommand(t, open, []string{"SHIP_ERROR_JSON=1"}, nil, e.goBin, "preview", "password")
+	if notProtected.err == nil {
+		t.Fatal("unprotected preview password should fail")
+	}
+	assertContains(t, notProtected.stdout+notProtected.stderr, "previews_not_protected")
+}
+
+type previewCredentials struct {
+	Password    string
+	BypassToken string
+}
+
+func parsePreviewCredentials(t *testing.T, output string) previewCredentials {
+	t.Helper()
+	var credentials previewCredentials
+	for _, line := range strings.Split(output, "\n") {
+		if value, ok := strings.CutPrefix(line, "team password: "); ok {
+			credentials.Password = value
+		}
+		if value, ok := strings.CutPrefix(line, "bypass token: "); ok {
+			credentials.BypassToken = value
+		}
+	}
+	if credentials.Password == "" || credentials.BypassToken == "" {
+		t.Fatalf("invalid preview credential output: %q", output)
+	}
+	return credentials
 }
 
 func (e *smokeEnv) testMemberAccess(t *testing.T) {
@@ -2536,6 +2648,45 @@ web = { port = 3000 }
 
 [routes]
 "preview.example.com" = "web"
+`)
+}
+
+func writePreviewProtectionFixture(t *testing.T, app string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "guardapi"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+
+[previews]
+protected = true
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"guard.example.com" = "web"
+`)
+}
+
+func writeUnprotectedPreviewFixture(t *testing.T, app string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "unlockedapi"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"unlocked.example.com" = "web"
 `)
 }
 

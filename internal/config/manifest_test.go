@@ -172,6 +172,48 @@ web = { port = 3000 }
 	}
 }
 
+func TestLoadAppContextParsesPreviewProtectionSeparatelyFromEnvOverlay(t *testing.T) {
+	root := t.TempDir()
+	writeDockerfile(t, root, "FROM alpine\n")
+	writeManifest(t, root, `name = "api"
+box = "example.com"
+
+[previews]
+protected = true
+
+[env.preview]
+LOG_LEVEL = "debug"
+
+[processes]
+web = { port = 3000 }
+`)
+	preview, err := LoadAppContext(root, "feat-x-ab12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preview.PreviewProtected || preview.Vars["LOG_LEVEL"] != "debug" {
+		t.Fatalf("preview protection and env overlay should be independent: %+v", preview)
+	}
+	prod, err := LoadAppContext(root, ProductionEnvName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !prod.PreviewProtected {
+		t.Fatal("preview behaviour should remain available to helper context")
+	}
+
+	writeManifest(t, root, `name = "api"
+box = "example.com"
+[previews]
+unknown = true
+[processes]
+web = { port = 3000 }
+`)
+	if _, err := ReadManifest(root); err == nil || !strings.Contains(err.Error(), "previews.unknown") {
+		t.Fatalf("unknown previews key should fail strict parsing, got %v", err)
+	}
+}
+
 func TestReadManifestRejectsLegacyProcessRouteTable(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")

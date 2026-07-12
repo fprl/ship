@@ -66,6 +66,64 @@ func EnvDir(app, env string) string {
 	return filepath.Join(root(), app, env)
 }
 
+// AppDir is a root-only app-wide secret namespace. It is separate from
+// per-environment values so generated service credentials can apply across
+// every preview without colliding with user-managed env variables.
+func AppDir(app, namespace string) string {
+	return filepath.Join(root(), app, namespace)
+}
+
+// PutApp and GetApp mirror Put/Get for app-wide generated credentials.
+// Namespace is intentionally supplied by helper code, never by a client.
+func PutApp(app, namespace, key string, value []byte) error {
+	if err := ValidateKey(key); err != nil {
+		return err
+	}
+	if err := validateValue(value); err != nil {
+		return err
+	}
+	dir := AppDir(app, namespace)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create app secret dir %s: %w", dir, err)
+	}
+	target := filepath.Join(dir, key)
+	tmp, err := os.CreateTemp(dir, ".secret-")
+	if err != nil {
+		return fmt.Errorf("create secret tempfile: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod secret tempfile: %w", err)
+	}
+	if _, err := tmp.Write(value); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write secret tempfile: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close secret tempfile: %w", err)
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return fmt.Errorf("rename secret into place: %w", err)
+	}
+	return nil
+}
+
+func GetApp(app, namespace, key string) ([]byte, error) {
+	if err := ValidateKey(key); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(filepath.Join(AppDir(app, namespace), key))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return data, nil
+}
+
 // ValidateKey rejects anything that wouldn't be a safe filename or a
 // valid env-var name. Callers should run this before Put/Get/Rm.
 func ValidateKey(key string) error {

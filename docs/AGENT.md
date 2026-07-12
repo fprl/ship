@@ -182,6 +182,14 @@ Secret scoping:
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `production_branch_not_preview`, `unmappable_branch_name`, `unknown_preview_branch`, `operation_failed`
 
+### `preview password`
+- Purpose: Print the current app's Preview team password and automation bypass token.
+- Usage: `ship preview password [--rotate] [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--rotate`: Generate a new team password and rerender all live protected Preview fragments. The bypass token stays unchanged.
+- Notes: Requires a current Preview environment and [previews] protected = true. Owners and shippers may read or rotate; agent-role keys receive approval_required. The credentials are generated and stored root-only on the box. Password rotation never changes the bypass token.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `no_preview_env`, `previews_not_protected`, `approval_required`, `host_key_changed`, `operation_failed`
+
 ### `save`
 - Purpose: Create a backup for the current branch environment.
 - Usage: `ship save [--to <path>] [--config <path>]`
@@ -444,6 +452,7 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 - `not_a_git_repo`: git worktree required; cause: current directory is not inside a Git worktree; remediation: `git init && git add . && git commit -m "initial ship app"`.
 - `operation_failed`: operation failed; cause: {detail}; remediation: `{command}`; defaults: `command="ship status"`.
 - `operator_key_missing`: operator SSH key is missing; cause: no SSH public key source found for operator user; remediation: `{command}`.
+- `previews_not_protected`: preview protection is not enabled; cause: this app does not set [previews] protected = true; remediation: `set [previews] protected = true and ship`.
 - `probe_failed`: probe failed; cause: {detail}; remediation: `ship why`.
 - `production_branch_not_preview`: preview command failed; cause: branch {branch} maps to Production; remediation: `{command}`; defaults: `command="ship pin <preview-branch>"`.
 - `release_command_failed`: release command failed; cause: {detail}; remediation: `ship why`.

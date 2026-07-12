@@ -97,6 +97,9 @@ func (c appRollbackCmd) rollbackRelease(currentApp *config.AppContext) (rollback
 		return rollbackPayload{}, err
 	}
 	defer cleanup()
+	if err := attachPreviewProtection(c.App, c.Env, app); err != nil {
+		return rollbackPayload{}, err
+	}
 	if err := verifyReleaseArtifacts(c.App, c.Env, target.Release, app); err != nil {
 		return rollbackPayload{}, err
 	}

@@ -215,6 +215,15 @@ func serverAppPreviewUnpinCommand(appName, branch string) string {
 	return serverCommand("app", "preview", "unpin", appName, branch)
 }
 
+func serverAppPreviewPasswordCommand(appName, envName string, rotate bool) string {
+	args := []string{"app", "preview", "password"}
+	if rotate {
+		args = append(args, "--rotate")
+	}
+	args = append(args, appName, envName)
+	return serverCommand(args...)
+}
+
 func serverAppDataForkCommand(appName, prodEnv, previewEnv string) string {
 	return serverCommand("app", "data", "fork", appName, prodEnv, previewEnv)
 }

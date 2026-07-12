@@ -268,6 +268,9 @@ func restoreBackupWithOptions(app, env, from, dir string, dryRun bool, opts rest
 		return backupMetadata{}, err
 	}
 	defer cleanup()
+	if err := attachPreviewProtection(app, env, appCtx); err != nil {
+		return backupMetadata{}, err
+	}
 
 	existing, err := podmanPSContainers(app, env)
 	if err != nil {

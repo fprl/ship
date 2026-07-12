@@ -12,6 +12,7 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/secrets"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestResolveEnvMergesLiteralsAndSecrets(t *testing.T) {
@@ -415,6 +416,45 @@ func TestRenderAppCaddyfileProcessRouteUsesVersionedContainerDNS(t *testing.T) {
 	}
 }
 
+func TestRenderAppCaddyfileProtectsPreviewButNeverProduction(t *testing.T) {
+	port := 3000
+	base := &config.AppContext{
+		PreviewProtected:   true,
+		PreviewPassword:    "team-password",
+		PreviewBypassToken: "bypass-token",
+		Processes:          map[string]config.Process{"web": {Port: &port}},
+		Routes:             map[string]config.Route{"app": {Host: "api.example.com", Process: "web"}},
+	}
+	preview, err := renderAppCaddyfileWithProcessNames("api", "feat-x-ab12", base, "abc123", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(preview, "basic_auth @ship_auth") || !strings.Contains(preview, "not header x-ship-bypass \"bypass-token\"") {
+		t.Fatalf("protected preview fragment missing auth+bypass directives:\n%s", preview)
+	}
+	foundHash := false
+	for _, field := range strings.Fields(preview) {
+		if strings.HasPrefix(field, "\"$2") {
+			hash := strings.Trim(field, "\"")
+			if bcrypt.CompareHashAndPassword([]byte(hash), []byte("team-password")) != nil {
+				t.Fatalf("basic_auth hash does not match password: %q", hash)
+			}
+			foundHash = true
+			break
+		}
+	}
+	if !foundHash {
+		t.Fatalf("protected preview basic_auth hash missing:\n%s", preview)
+	}
+	prod, err := renderAppCaddyfileWithProcessNames("api", productionEnvName, base, "abc123", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(prod, "basic_auth") || strings.Contains(prod, "ship_auth") {
+		t.Fatalf("production fragment must never be protected:\n%s", prod)
+	}
+}
+
 func TestRenderAppCaddyfileCanUseSpecificProcessContainerName(t *testing.T) {
 	port := 3000
 	ctx := &config.AppContext{
@@ -588,6 +628,32 @@ func TestSnapshotAndRestoreCaddyFragmentRoundTrips(t *testing.T) {
 	}
 	if string(got) != string(original) {
 		t.Fatalf("restore mismatch:\nwant: %q\n got: %q", original, got)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0644 {
+		t.Fatalf("restored plain Caddy fragment mode = %o, want 0644", info.Mode().Perm())
+	}
+}
+
+func TestRestoreCaddyFragmentKeepsProtectedFragmentRootOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "frag.caddy")
+	protected := []byte("\"pv.example.com\" {\n\t@ship_auth {\n\t\tnot header x-ship-bypass \"tok\"\n\t}\n\tbasic_auth @ship_auth {\n\t\tteam \"hash\"\n\t}\n\treverse_proxy http://x:3000\n}\n")
+	if err := os.WriteFile(path, []byte("garbage"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := restoreCaddyFragment(path, protected, true); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("restored protected Caddy fragment mode = %o, want 0600", info.Mode().Perm())
 	}
 }
 

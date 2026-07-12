@@ -26,6 +26,7 @@ const (
 	CodeProductionBranchNotPreview        Code = "production_branch_not_preview"
 	CodeDataForkOnProduction              Code = "data_fork_on_production"
 	CodeNoPreviewEnv                      Code = "no_preview_env"
+	CodePreviewsNotProtected              Code = "previews_not_protected"
 	CodeMultiProcessNoWebRoute            Code = "multi_process_no_web_route"
 	CodeSecretMissing                     Code = "secret_missing"
 	CodeUnknownPreviewBranch              Code = "unknown_preview_branch"
@@ -182,6 +183,12 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "preview environment lookup failed",
 		CauseTemplate:       "no Preview environment exists for branch {branch}",
 		RemediationTemplate: "ship",
+	},
+	CodePreviewsNotProtected: {
+		Code:                CodePreviewsNotProtected,
+		MessageTemplate:     "preview protection is not enabled",
+		CauseTemplate:       "this app does not set [previews] protected = true",
+		RemediationTemplate: "set [previews] protected = true and ship",
 	},
 	CodeMultiProcessNoWebRoute: {
 		Code:                CodeMultiProcessNoWebRoute,

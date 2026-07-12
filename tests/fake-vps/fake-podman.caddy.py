@@ -21,6 +21,8 @@ as a no-op.
 """
 
 import http.client
+import base64
+import crypt
 import os
 import re
 import sys
@@ -31,6 +33,8 @@ SITE_RE = re.compile(r'^\s*"(?P<host>[^"]+)"\s*\{\s*$')
 PROXY_RE = re.compile(r'^\s*reverse_proxy\s+http://(?P<upstream>[A-Za-z0-9_.-]+):(?P<port>\d+)\s*$')
 REDIR_RE = re.compile(r'^\s*redir\s+"(?P<to>[^"]+)"\s+permanent\s*$')
 ROOT_RE = re.compile(r'^\s*root\s+\*\s+"(?P<root>[^"]+)"\s*$')
+BYPASS_RE = re.compile(r'^\s*not\s+header\s+x-ship-bypass\s+"(?P<token>[^"]+)"\s*$')
+TEAM_HASH_RE = re.compile(r'^\s*team\s+"(?P<hash>\$2[^"]+)"\s*$')
 
 CONF_DIR = "/etc/caddy/conf.d"
 
@@ -58,6 +62,7 @@ def load_routes():
         current_host = None
         current_route = None
         direct_route = None
+        skip_depth = 0
         for raw in lines:
             line = raw.rstrip("\n")
             stripped = line.strip()
@@ -69,6 +74,12 @@ def load_routes():
                     current_host = m.group("host")
                     routes.setdefault(current_host, [])
                     direct_route = None
+                continue
+            if skip_depth > 0:
+                if stripped.endswith("{"):
+                    skip_depth += 1
+                elif stripped == "}":
+                    skip_depth -= 1
                 continue
             if current_route is not None and stripped == "}":
                 routes[current_host].append(current_route)
@@ -93,6 +104,11 @@ def load_routes():
                     match = "exact"
                 current_route = {"match": match, "path": path}
                 continue
+            if current_route is None and stripped.endswith("{"):
+                # Site-level block that is not a handle (the @ship_auth
+                # matcher or basic_auth stanza) — routes never live inside.
+                skip_depth = 1
+                continue
             target_route = current_route
             if target_route is None:
                 if direct_route is None:
@@ -115,6 +131,46 @@ def load_routes():
                 target_route["rewrite_root"] = True
                 continue
     return routes
+
+
+def load_protections():
+    """Read the generated basic_auth stanza emitted for protected previews."""
+    protections = {}
+    if not os.path.isdir(CONF_DIR):
+        return protections
+    for name in sorted(os.listdir(CONF_DIR)):
+        if not name.endswith(".caddy"):
+            continue
+        try:
+            with open(os.path.join(CONF_DIR, name)) as f:
+                lines = f.readlines()
+        except OSError:
+            continue
+        host = None
+        token = None
+        hash_value = None
+        for raw in lines:
+            line = raw.rstrip("\n")
+            m = SITE_RE.match(line)
+            if m:
+                host = m.group("host")
+                token = None
+                hash_value = None
+                continue
+            if host is None:
+                continue
+            m = BYPASS_RE.match(line)
+            if m:
+                token = m.group("token")
+                continue
+            m = TEAM_HASH_RE.match(line)
+            if m:
+                hash_value = m.group("hash")
+                continue
+            if line.strip() == "}" and token and hash_value:
+                protections[host] = (token, hash_value)
+                host = None
+    return protections
 
 
 def container_port(state_dir, name):
@@ -228,6 +284,13 @@ class Handler(BaseHTTPRequestHandler):
     def serve(self):
         routes = load_routes()
         host = self.host_header()
+        protection = load_protections().get(host)
+        if protection and not self.authorized(*protection):
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="ship preview"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         route = self.match_route(routes.get(host, []))
         if route is None:
             self.not_found()
@@ -242,6 +305,19 @@ class Handler(BaseHTTPRequestHandler):
             self.static(route["static"], route.get("request_path"))
             return
         self.not_found()
+
+    def authorized(self, bypass_token, password_hash):
+        if self.headers.get("x-ship-bypass", "") == bypass_token:
+            return True
+        raw = self.headers.get("Authorization", "")
+        if not raw.startswith("Basic "):
+            return False
+        try:
+            user_password = base64.b64decode(raw[6:]).decode("utf-8")
+            user, password = user_password.split(":", 1)
+        except Exception:
+            return False
+        return user == "team" and crypt.crypt(password, password_hash) == password_hash
 
     def match_route(self, routes):
         path = self.path.split("?", 1)[0].split("#", 1)[0]

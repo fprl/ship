@@ -694,6 +694,21 @@ var verbs = []Verb{
 		Errors:    []string{"production_branch_not_preview", "unmappable_branch_name", "unknown_preview_branch", "operation_failed"},
 	},
 	{
+		Verb:    "preview password",
+		Purpose: "Print the current app's Preview team password and automation bypass token.",
+		Usage:   "ship preview password [--rotate] [--config <path>]",
+		Flags: []Flag{
+			configFlag,
+			{Name: "--rotate", Purpose: "Generate a new team password and rerender all live protected Preview fragments. The bypass token stays unchanged."},
+		},
+		ExitCodes: normalExit,
+		Errors:    []string{"no_preview_env", "previews_not_protected", "approval_required", "host_key_changed", "operation_failed"},
+		Notes: []string{
+			"Requires a current Preview environment and [previews] protected = true. Owners and shippers may read or rotate; agent-role keys receive approval_required.",
+			"The credentials are generated and stored root-only on the box. Password rotation never changes the bypass token.",
+		},
+	},
+	{
 		Verb:      "save",
 		Purpose:   "Create a backup for the current branch environment.",
 		Usage:     "ship save [--to <path>] [--config <path>]",

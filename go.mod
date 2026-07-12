@@ -5,4 +5,5 @@ go 1.22
 require (
 	github.com/alecthomas/kong v1.15.0
 	github.com/pelletier/go-toml/v2 v2.3.1
+	golang.org/x/crypto v0.31.0
 )
