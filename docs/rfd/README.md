@@ -15,3 +15,8 @@ section with acceptance criteria, the same bar ship-spec sets.
   diagnoses, and fixes within role bounds.
 - [RFD-0003](0003-members-and-roles.md) — members: humans and agents as
   identities with preset roles.
+- [RFD-0004](0004-agent-era-notes.md) — agent-era notes: the
+  laptop-closed loop, feature catalog, cloud-agent findings, July 12
+  triage (v0.4.0–v0.6.0 sequencing).
+- [RFD-0005](0005-sleeping-previews.md) — sleeping previews: socket
+  activation scales previews to zero; requires preview protection.
