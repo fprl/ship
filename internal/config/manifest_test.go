@@ -214,7 +214,7 @@ web = { port = 3000 }
 	}
 }
 
-func TestReadManifestRejectsLegacyProcessRouteTable(t *testing.T) {
+func TestReadManifestRejectsUnknownRouteTargetField(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
 	writeManifest(t, root, `name = "api"
@@ -224,12 +224,12 @@ box = "example.com"
 web = { port = 3000 }
 
 [routes]
-"api.example.com" = { process = "web" }
+"api.example.com" = { foo = "bar" }
 `)
 
 	_, err := ReadManifest(root)
-	if err == nil || !strings.Contains(err.Error(), `unknown route target field "process"`) {
-		t.Fatalf("expected legacy process table rejection, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), `unknown route target field "foo"`) {
+		t.Fatalf("unknown route target field should fail strict parsing, got %v", err)
 	}
 }
 
@@ -462,27 +462,6 @@ healthcheck = "/health"
 		if !strings.Contains(msg, field) {
 			t.Fatalf("expected error to mention %q, got %v", field, err)
 		}
-	}
-}
-
-func TestReadManifestRejectsLegacyProcessRouteTableWithOtherTargets(t *testing.T) {
-	root := t.TempDir()
-	writeDockerfile(t, root, "FROM alpine\n")
-	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	writeManifest(t, root, `name = "api"
-box = "example.com"
-
-[processes]
-web = { port = 3000 }
-
-[routes]
-"api.example.com" = { process = "web", static = "dist" }
-`)
-	_, err := ReadManifest(root)
-	if err == nil || !strings.Contains(err.Error(), `unknown route target field "process"`) {
-		t.Fatalf("expected legacy process table rejection, got %v", err)
 	}
 }
 
