@@ -1,7 +1,8 @@
 # Agent eval harness
 
-`tests/agent-evals` runs the six v1 agent-operability scenarios from
-`docs/ship-spec.md` section 9 against a Docker-backed fake VPS.
+`tests/agent-evals` runs the seven v1 agent-operability scenarios from
+`docs/ship-spec.md` section 9, including `approval-recovery`, against a
+Docker-backed fake VPS.
 
 Each scenario:
 

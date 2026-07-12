@@ -148,17 +148,17 @@ git commit -q -m "fixture"
 ```sh
 printf 'smoke-secret-value' | \
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/ship secret set smoke_key
+  /path/to/ship/dist/ship secret set smoke_key
 ```
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/ship secret ls --json
+  /path/to/ship/dist/ship secret ls --json
 ```
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/ship --tls internal
+  /path/to/ship/dist/ship --tls internal
 ```
 
 Expected stderr shape:
@@ -210,12 +210,12 @@ Inspect the public read surfaces:
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/ship status --json
+  /path/to/ship/dist/ship status --json
 ```
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/ship logs web --tail 20
+  /path/to/ship/dist/ship logs web --tail 20
 ```
 
 ## 5. Failure checks
@@ -226,7 +226,7 @@ probe failure.
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/ship why
+  /path/to/ship/dist/ship why
 ```
 
 Expected output includes:
@@ -245,12 +245,12 @@ For a reused box, remove the app and all of its environments:
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/ship box rm hello <IP> --confirm hello
+  /path/to/ship/dist/ship box rm hello <IP> --confirm hello
 ```
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/simple-vps/dist/ship box ls <IP> --json
+  /path/to/ship/dist/ship box ls <IP> --json
 ```
 
 ## 7. Example matrix

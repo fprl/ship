@@ -84,7 +84,7 @@ they already exist. Target shape:
 
 ```toml
 name = "taskflow"
-box  = "deploy@203.0.113.7"        # existing server field, renamed
+box  = "203.0.113.7"                # existing server field, host only
 production_branch = "main"          # optional; default: main, else master
 
 [processes]
@@ -195,8 +195,9 @@ the env identity file (extend the existing identity storage).
 ship                      deploy current branch; stdout = URL (see §5)
                           flags: --tls internal (§8), --rebuild,
                           --include-dotenv, --branch (detached HEAD only,
-                          §3), --json (§5)
+                          §3), --json (§5), --config <path>
 ship init                 scaffold ship.toml + Dockerfile (stack detection)
+                          flags: --config <path>
 ship help [verb] [--json] per-verb usage from the ship docs source (§9)
 ship status [--json]      all live envs for this app: branch, url, release,
                           who shipped, health, age, expires/pinned, dirty hint

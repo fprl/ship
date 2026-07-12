@@ -142,7 +142,7 @@ Future doctor hardening checks should cover:
 - Tailscale, cloudflared, Caddy, fail2ban, and unattended upgrades state in
   more detail than simple active/inactive reporting.
 - The deploy sudoers grant is limited to `server app *`, `server doctor`,
-  `server doctor *`, and `server key *`.
+  `server doctor *`, `server key *`, and `server approval *`.
 - The operator/deploy split is healthy.
 - Generated Caddy config validates.
 

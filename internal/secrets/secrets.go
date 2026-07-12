@@ -15,8 +15,8 @@
 // What this package deliberately does NOT do:
 //
 //   - No rotation / versioning. Future ADR territory.
-//   - No bulk import / dotenv push. Old `env push` was a deploy-state
-//     hazard and is intentionally not coming back.
+//   - No implicit dotenv push. Per-key set reads from stdin; explicit
+//     `ship secret set --from` imports dotenv KEY=VALUE pairs from a file.
 //   - No printing of values in client surfaces. List returns names
 //     only; Get is helper-internal (called by `app apply`).
 //
