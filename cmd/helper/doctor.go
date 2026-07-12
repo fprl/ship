@@ -39,10 +39,12 @@ const (
 	doctorCheckDiskSpace      = "disk_space"
 	doctorCheckTLSCerts       = "tls_certs"
 	doctorCheckReaperTimer    = "reaper_timer"
+	doctorCheckDoctorTimer    = "doctor_timer"
 	doctorCheckDeployJournals = "deploy_journals"
 	doctorCheckHelperVersion  = "helper_version"
 
 	reaperTimerUnit = "ship-preview-reaper.timer"
+	doctorTimerUnit = "ship-doctor.timer"
 )
 
 var (
@@ -320,6 +322,7 @@ func doctorChecksFor(opts doctorOptions) []store.DoctorCheck {
 		doctorDiskSpaceCheck(opts.Disk, opts.BoxTarget),
 		doctorTLSCertsCheck(opts.TLSStatuses, opts.Now(), opts.BoxTarget),
 		doctorReaperTimerCheck(opts.Timer, opts.BoxTarget),
+		doctorDoctorTimerCheck(opts.Timer, opts.BoxTarget),
 		doctorDeployJournalsCheck(opts.AppEnvs, opts.BoxTarget),
 		doctorHelperVersionCheck(opts.StateStore, opts.BoxTarget),
 	}
@@ -652,6 +655,19 @@ func doctorReaperTimerCheck(timerState func(string) systemdUnitState, boxTarget 
 		return doctorCheck(doctorCheckReaperTimer, doctorStatusDegraded, fmt.Sprintf("%s present, active=%s, enabled=%s", state.Name, state.Active, state.Enabled), remediation)
 	}
 	return doctorCheck(doctorCheckReaperTimer, doctorStatusOK, fmt.Sprintf("%s present, active, enabled", state.Name), doctorRerunCommand(boxTarget))
+}
+
+func doctorDoctorTimerCheck(timerState func(string) systemdUnitState, boxTarget string) store.DoctorCheck {
+	state := timerState(doctorTimerUnit)
+	remediation := doctorTimerStartCommand(boxTarget, doctorTimerUnit)
+	const selfCheckNote = "; self-check is observed when doctor runs (timer, manual doctor, or box status)"
+	if !state.Present {
+		return doctorCheck(doctorCheckDoctorTimer, doctorStatusFailed, fmt.Sprintf("%s missing at %s%s", state.Name, state.Path, selfCheckNote), remediation)
+	}
+	if state.Active != "active" || state.Enabled != "enabled" {
+		return doctorCheck(doctorCheckDoctorTimer, doctorStatusDegraded, fmt.Sprintf("%s present, active=%s, enabled=%s%s", state.Name, state.Active, state.Enabled, selfCheckNote), remediation)
+	}
+	return doctorCheck(doctorCheckDoctorTimer, doctorStatusOK, fmt.Sprintf("%s present, active, enabled%s", state.Name, selfCheckNote), doctorRerunCommand(boxTarget))
 }
 
 func systemdTimerState(name string) systemdUnitState {

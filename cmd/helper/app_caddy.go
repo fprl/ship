@@ -110,6 +110,7 @@ func renderPreviewProtection(env string, ctx *config.AppContext) (string, error)
 	}
 	share := ""
 	shareAuthCondition := ""
+	shareCredentialStrip := ""
 	if ctx.PreviewShareToken != "" {
 		// Caddy's one-line query matcher takes a single param=val token.
 		quotedShareQuery, err := caddy.CaddyQuote("ship_share=" + ctx.PreviewShareToken)
@@ -120,16 +121,27 @@ func renderPreviewProtection(env string, ctx *config.AppContext) (string, error)
 		if err != nil {
 			return "", err
 		}
+		quotedShareCookieStripRegex, err := caddy.CaddyQuote("(^)ship_share=" + ctx.PreviewShareToken + "(?:;[ \\t]*|$)|(;[ \\t]*)ship_share=" + ctx.PreviewShareToken + ";[ \\t]*|;[ \\t]*ship_share=" + ctx.PreviewShareToken + "$")
+		if err != nil {
+			return "", err
+		}
+		quotedShareCookieStripReplacement, err := caddy.CaddyQuote("$1$2")
+		if err != nil {
+			return "", err
+		}
 		quotedSetCookie, err := caddy.CaddyQuote("ship_share=" + ctx.PreviewShareToken + "; Path=/; HttpOnly; Secure")
 		if err != nil {
 			return "", err
 		}
 		share = fmt.Sprintf("\t@ship_share query %s\n\thandle @ship_share {\n\t\theader Set-Cookie %s\n\t\tredir {path} temporary\n\t}\n", quotedShareQuery, quotedSetCookie)
 		shareAuthCondition = fmt.Sprintf("\t\tnot header Cookie %s\n\t\tnot query %s\n", quotedShareCookie, quotedShareQuery)
+		shareCredentialStrip = fmt.Sprintf("\trequest_header Cookie %s %s\n", quotedShareCookieStripRegex, quotedShareCookieStripReplacement)
 	}
 	// The basic_auth matcher is negated, so a request carrying the exact
-	// bypass header or share cookie skips auth entirely.
-	return fmt.Sprintf("%s\t@ship_auth {\n\t\tnot header x-ship-bypass %s\n%s\t}\n\tbasic_auth @ship_auth {\n\t\tteam %s\n\t}\n", share, quotedToken, shareAuthCondition, quotedHash), nil
+	// bypass header or share cookie skips auth entirely. Strip Authorization
+	// while @ship_auth can still identify password-authenticated requests;
+	// the later mutations remove the bypass/share evidence that matcher needs.
+	return fmt.Sprintf("%s\t@ship_auth {\n\t\tnot header x-ship-bypass %s\n%s\t}\n\tbasic_auth @ship_auth {\n\t\tteam %s\n\t}\n\trequest_header @ship_auth -Authorization\n\trequest_header -x-ship-bypass\n%s", share, quotedToken, shareAuthCondition, quotedHash, shareCredentialStrip), nil
 }
 
 func renderRouteBody(app, env string, ctx *config.AppContext, routeName string, release string, processNames map[string]string, wrap bool) (string, error) {

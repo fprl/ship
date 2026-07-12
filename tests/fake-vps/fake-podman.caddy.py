@@ -190,6 +190,17 @@ def container_port(state_dir, name):
         return None
 
 
+def strip_share_cookie(raw, share_token):
+    if not raw or not share_token:
+        return raw
+    token = re.escape(share_token)
+    return re.sub(
+        r'(^)ship_share=' + token + r'(?:;[ \t]*|$)|(;[ \t]*)ship_share=' + token + r';[ \t]*|;[ \t]*ship_share=' + token + r'$',
+        r'\1\2',
+        raw,
+    )
+
+
 class Handler(BaseHTTPRequestHandler):
     state_dir = ""  # set in main()
 
@@ -208,7 +219,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(msg)
 
-    def proxy(self, upstream_name, _upstream_port):
+    def proxy(self, upstream_name, _upstream_port, strip_credentials=False, share_token=None, strip_authorization=False):
         # The Caddy fragment names an in-container port. In the fake we
         # don't actually run on that port; the app container's
         # fake-podman.app.py listener bound an OS-assigned local port
@@ -225,6 +236,14 @@ class Handler(BaseHTTPRequestHandler):
         forward_headers = {}
         for name, value in self.headers.items():
             if name.lower() in ("host", "content-length", "connection"):
+                continue
+            if strip_credentials and name.lower() == "x-ship-bypass":
+                continue
+            if strip_credentials and name.lower() == "cookie":
+                value = strip_share_cookie(value, share_token)
+                if value == "":
+                    continue
+            if strip_authorization and name.lower() == "authorization":
                 continue
             forward_headers[name] = value
         try:
@@ -295,18 +314,21 @@ class Handler(BaseHTTPRequestHandler):
         protection = load_protections().get(host)
         if protection and self.share_redirect(protection[2]):
             return
-        if protection and not self.authorized(*protection):
-            self.send_response(401)
-            self.send_header("WWW-Authenticate", 'Basic realm="ship preview"')
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-            return
+        basic_authenticated = False
+        if protection:
+            authorized, basic_authenticated = self.authorized(*protection)
+            if not authorized:
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="ship preview"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
         route = self.match_route(routes.get(host, []))
         if route is None:
             self.not_found()
             return
         if "proxy" in route:
-            self.proxy(*route["proxy"])
+            self.proxy(*route["proxy"], strip_credentials=protection is not None, share_token=protection[2] if protection else None, strip_authorization=basic_authenticated)
             return
         if "redir" in route:
             self.redir(route["redir"])
@@ -331,18 +353,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def authorized(self, bypass_token, password_hash, share_token):
         if self.headers.get("x-ship-bypass", "") == bypass_token:
-            return True
+            return True, False
         if share_token and any(cookie.strip() == "ship_share=" + share_token for cookie in self.headers.get("Cookie", "").split(";")):
-            return True
+            return True, False
         raw = self.headers.get("Authorization", "")
         if not raw.startswith("Basic "):
-            return False
+            return False, False
         try:
             user_password = base64.b64decode(raw[6:]).decode("utf-8")
             user, password = user_password.split(":", 1)
         except Exception:
-            return False
-        return user == "team" and crypt.crypt(password, password_hash) == password_hash
+            return False, False
+        return (user == "team" and crypt.crypt(password, password_hash) == password_hash), True
 
     def match_route(self, routes):
         path = self.path.split("?", 1)[0].split("#", 1)[0]

@@ -1082,6 +1082,33 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 	if sharedStatus != "200" {
 		t.Fatalf("shared preview status = %s, want 200", sharedStatus)
 	}
+	passwordHeaders := e.ssh(t, "curl -fsS -H 'Host: "+host+"' -u 'team:"+rotated.Password+"' -H 'Cookie: first=one; last=two' http://127.0.0.1/request-headers")
+	assertContains(t, passwordHeaders, "authorization=\n")
+	assertContains(t, passwordHeaders, "x-ship-bypass=\n")
+	assertContains(t, passwordHeaders, "cookie=first=one; last=two\n")
+	for _, request := range []struct {
+		name string
+		args string
+	}{
+		{
+			name: "bypass header",
+			args: "-H 'x-ship-bypass: " + credentials.BypassToken + "' -H 'Authorization: Bearer app-token' -H 'Cookie: first=one; ship_share=" + shareToken + "; last=two'",
+		},
+		{
+			name: "share cookie",
+			args: "-H 'Authorization: Bearer app-token' -H 'Cookie: first=one; ship_share=" + shareToken + "; last=two'",
+		},
+	} {
+		t.Run(request.name, func(t *testing.T) {
+			headers := e.ssh(t, "curl -fsS -H 'Host: "+host+"' "+request.args+" http://127.0.0.1/request-headers")
+			assertContains(t, headers, "authorization=Bearer app-token\n")
+			assertContains(t, headers, "x-ship-bypass=\n")
+			assertContains(t, headers, "cookie=first=one; last=two\n")
+			if strings.Contains(headers, credentials.BypassToken) || strings.Contains(headers, shareToken) {
+				t.Fatalf("protected preview app received a bypass credential:\n%s", headers)
+			}
+		})
+	}
 	if again := assertOnlyURL(t, e.ship(t, app, nil, "share")); again != shareURL {
 		t.Fatalf("repeated share URL = %q, want %q", again, shareURL)
 	}

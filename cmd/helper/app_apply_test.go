@@ -432,6 +432,17 @@ func TestRenderAppCaddyfileProtectsPreviewButNeverProduction(t *testing.T) {
 	if !strings.Contains(preview, "basic_auth @ship_auth") || !strings.Contains(preview, "not header x-ship-bypass \"bypass-token\"") {
 		t.Fatalf("protected preview fragment missing auth+bypass directives:\n%s", preview)
 	}
+	authStrip := "\trequest_header @ship_auth -Authorization\n"
+	bypassStrip := "\trequest_header -x-ship-bypass\n"
+	if !strings.Contains(preview, authStrip) {
+		t.Fatalf("protected preview fragment does not strip password Authorization before proxying:\n%s", preview)
+	}
+	if !strings.Contains(preview, bypassStrip) {
+		t.Fatalf("protected preview fragment does not strip bypass header before proxying:\n%s", preview)
+	}
+	if strings.Index(preview, authStrip) > strings.Index(preview, bypassStrip) {
+		t.Fatalf("Authorization must be stripped before bypass evidence:\n%s", preview)
+	}
 	foundHash := false
 	for _, field := range strings.Fields(preview) {
 		if strings.HasPrefix(field, "\"$2") {
@@ -472,6 +483,16 @@ func TestRenderAppCaddyfileIncludesShareLinkStanza(t *testing.T) {
 	want := "\t@ship_share query \"ship_share=share-token\"\n\thandle @ship_share {\n\t\theader Set-Cookie \"ship_share=share-token; Path=/; HttpOnly; Secure\"\n\t\tredir {path} temporary\n\t}\n\t@ship_auth {\n\t\tnot header x-ship-bypass \"bypass-token\"\n\t\tnot header Cookie \"*ship_share=share-token*\"\n\t\tnot query \"ship_share=share-token\"\n"
 	if !strings.Contains(got, want) {
 		t.Fatalf("share stanza mismatch:\nwant contained:\n%s\ngot:\n%s", want, got)
+	}
+	authStrip := "\trequest_header @ship_auth -Authorization\n"
+	bypassStrip := "\trequest_header -x-ship-bypass\n"
+	cookieStrip := "\trequest_header Cookie " + `"(^)ship_share=share-token(?:;[ \\t]*|$)|(;[ \\t]*)ship_share=share-token;[ \\t]*|;[ \\t]*ship_share=share-token$"` + " \"$1$2\"\n"
+	strip := authStrip + bypassStrip + cookieStrip
+	if !strings.Contains(got, strip) {
+		t.Fatalf("protected preview credentials are not stripped in the required order:\nwant contained:\n%s\ngot:\n%s", strip, got)
+	}
+	if strings.Index(got, strip) > strings.Index(got, "reverse_proxy") {
+		t.Fatalf("credential stripping must precede reverse_proxy:\n%s", got)
 	}
 	if mode := caddyFragmentMode([]byte(got)); mode != 0600 {
 		t.Fatalf("share-bearing fragment mode = %o, want 0600", mode)

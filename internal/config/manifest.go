@@ -869,14 +869,21 @@ func validateNotify(raw string, errors *[]string) {
 	if raw == "" {
 		return
 	}
+	if err := ValidateNotifyURL(raw); err != nil {
+		*errors = append(*errors, err.Error())
+	}
+}
+
+// ValidateNotifyURL validates a notification webhook URL for all callers.
+func ValidateNotifyURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		*errors = append(*errors, "notify must be a valid URL")
-		return
+		return errors.New("notify must be a valid URL")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		*errors = append(*errors, "notify must use http or https")
+		return errors.New("notify must use http or https")
 	}
+	return nil
 }
 
 func validateProcesses(processes map[string]Process, errors *[]string) {

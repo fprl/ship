@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
@@ -49,7 +50,10 @@ type notifySetCmd struct {
 }
 
 func (c notifySetCmd) Run() error {
-	url := strings.TrimSpace(c.URL)
+	url, err := validateBoxNotifyURL(c.URL)
+	if err != nil {
+		return err
+	}
 	if _, err := authorizeHelper(helperVerbBoxMutation, authTargetForBox("box notify set", boxNotifyTargetArg(url))); err != nil {
 		utils.DieError(err, 1)
 	}
@@ -58,6 +62,17 @@ func (c notifySetCmd) Run() error {
 	}
 	fmt.Println("box notify set")
 	return nil
+}
+
+func validateBoxNotifyURL(raw string) (string, error) {
+	url := strings.TrimSpace(raw)
+	if url == "" {
+		return "", fmt.Errorf("notify must be a valid URL")
+	}
+	if err := config.ValidateNotifyURL(url); err != nil {
+		return "", err
+	}
+	return url, nil
 }
 
 func boxNotifyTargetArg(url string) string {

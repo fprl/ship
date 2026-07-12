@@ -276,6 +276,30 @@ func TestDoctorReaperTimerCheckRequiresPresentActiveEnabledTimer(t *testing.T) {
 	}
 }
 
+func TestDoctorChecksIncludeDoctorTimerAndReportItDegraded(t *testing.T) {
+	checks := doctorChecksFor(doctorOptions{
+		StateStore: store.Default(),
+		Timer: func(name string) systemdUnitState {
+			if name == doctorTimerUnit {
+				return systemdUnitState{Name: name, Path: "/etc/systemd/system/" + name, Present: true, Active: "inactive", Enabled: "enabled"}
+			}
+			return systemdUnitState{Name: name, Path: "/etc/systemd/system/" + name, Present: true, Active: "active", Enabled: "enabled"}
+		},
+	})
+	for _, check := range checks {
+		if check.ID == doctorCheckDoctorTimer {
+			if check.Status != doctorStatusDegraded {
+				t.Fatalf("doctor timer status = %s, want %s (%+v)", check.Status, doctorStatusDegraded, check)
+			}
+			if !strings.Contains(check.Evidence, "self-check") {
+				t.Fatalf("doctor timer evidence should explain the self-check window: %+v", check)
+			}
+			return
+		}
+	}
+	t.Fatalf("doctor checks did not include %q: %+v", doctorCheckDoctorTimer, checks)
+}
+
 func TestDoctorDeployJournalCheckReadsEachAppEnv(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
@@ -334,7 +358,15 @@ func TestRecordDoctorRunPersistsChecksAndDelta(t *testing.T) {
 		},
 		TLSStatuses: func(time.Time) ([]tlsCertStatus, error) { return nil, nil },
 		AppEnvs:     func() ([]appEnvStatus, error) { return nil, nil },
-		Timer:       func(string) systemdUnitState { return timer },
+		Timer: func(name string) systemdUnitState {
+			state := timer
+			state.Name = name
+			state.Path = "/etc/systemd/system/" + name
+			if name == doctorTimerUnit {
+				state.Active = "active"
+			}
+			return state
+		},
 	}
 
 	first, err := recordDoctorRun(opts)
