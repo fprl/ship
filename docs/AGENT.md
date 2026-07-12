@@ -190,6 +190,14 @@ Secret scoping:
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `no_preview_env`, `previews_not_protected`, `approval_required`, `host_key_changed`, `operation_failed`
 
+### `share`
+- Purpose: Mint or revoke this Preview's share link.
+- Usage: `ship share [--rm] [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--rm`: Revoke this preview's share link.
+- Notes: Requires a current Preview environment and [previews] protected = true. Owners and shippers may mint or revoke; agent-role keys receive approval_required. Without --rm, stdout is exactly the share URL. A share link is one active capability per Preview and dies when that Preview is reaped.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `no_preview_env`, `share_on_production`, `previews_not_protected`, `approval_required`, `host_key_changed`, `operation_failed`
+
 ### `save`
 - Purpose: Create a backup for the current branch environment.
 - Usage: `ship save [--to <path>] [--config <path>]`
@@ -465,6 +473,7 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 - `secret_missing`: deploy is missing a required secret; cause: missing secret {secret} for {scope}; remediation: `{command}`.
 - `secret_read_error`: secret preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `secret_scope_conflict`: secret scope is invalid; cause: --preview and --branch cannot be combined; remediation: `{command}`; defaults: `command="ship secret set KEY --preview"`.
+- `share_on_production`: share command refused on Production; cause: branch {branch} maps to Production; share links are for Preview branches only; remediation: `git checkout <preview-branch>`.
 - `ssh_private_key_missing`: SSH private key is missing; cause: SSH private key file not found: {path}; remediation: `{command}`.
 - `ssh_public_key_file_empty`: SSH public key file is empty; cause: SSH public key file is empty: {path}; remediation: `{command}`.
 - `ssh_public_key_file_missing`: SSH public key file is missing; cause: SSH public key file not found: {path}; remediation: `{command}`.

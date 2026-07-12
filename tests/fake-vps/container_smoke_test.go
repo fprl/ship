@@ -1040,6 +1040,51 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 		t.Fatalf("bypass after password rotation status = %s, want 200", got)
 	}
 
+	shareURL := assertOnlyURL(t, e.ship(t, app, nil, "share"))
+	shareParsed, err := url.Parse(shareURL)
+	if err != nil {
+		t.Fatalf("share URL = %q, parse err = %v", shareURL, err)
+	}
+	shareToken := shareParsed.Query().Get("ship_share")
+	if shareToken == "" {
+		t.Fatalf("share URL missing token: %q", shareURL)
+	}
+	cleanPath := shareParsed.EscapedPath()
+	if cleanPath == "" {
+		cleanPath = "/"
+	}
+	shareHeaders := e.ssh(t, "curl -sS -D - -o /dev/null -H 'Host: "+host+"' "+h.ShellQuote("http://127.0.0.1"+shareParsed.RequestURI()))
+	assertContains(t, shareHeaders, "302 Found")
+	assertContains(t, shareHeaders, "Set-Cookie: ship_share="+shareToken+"; Path=/; HttpOnly; Secure")
+	assertContains(t, shareHeaders, "Location: "+cleanPath)
+	sharedStatus := strings.TrimSpace(e.ssh(t, "curl -sS -o /dev/null -w '%{http_code}' -H 'Host: "+host+"' -H 'Cookie: ship_share="+shareToken+"' http://127.0.0.1"+cleanPath))
+	if sharedStatus != "200" {
+		t.Fatalf("shared preview status = %s, want 200", sharedStatus)
+	}
+	if again := assertOnlyURL(t, e.ship(t, app, nil, "share")); again != shareURL {
+		t.Fatalf("repeated share URL = %q, want %q", again, shareURL)
+	}
+	e.ship(t, app, nil, "share", "--rm")
+	if got := strings.TrimSpace(e.ssh(t, "curl -sS -o /dev/null -w '%{http_code}' -H 'Host: "+host+"' -H 'Cookie: ship_share="+shareToken+"' http://127.0.0.1"+cleanPath)); got != "401" {
+		t.Fatalf("old share cookie status = %s, want 401", got)
+	}
+	oldShareHeaders := e.ssh(t, "curl -sS -D - -o /dev/null -H 'Host: "+host+"' "+h.ShellQuote("http://127.0.0.1"+shareParsed.RequestURI()))
+	assertContains(t, oldShareHeaders, "401 Unauthorized")
+	if strings.Contains(oldShareHeaders, "Set-Cookie") {
+		t.Fatalf("revoked share token still set a cookie:\n%s", oldShareHeaders)
+	}
+	if renewed := assertOnlyURL(t, e.ship(t, app, nil, "share")); renewed == shareURL {
+		t.Fatalf("share after revoke reused URL %q", renewed)
+	}
+
+	e.mustRun(t, app, nil, "git", "checkout", "main")
+	prodShare := e.runCommand(t, app, []string{"SHIP_ERROR_JSON=1"}, nil, e.goBin, "share")
+	if prodShare.err == nil {
+		t.Fatal("production share should fail")
+	}
+	assertContains(t, prodShare.stdout+prodShare.stderr, "share_on_production")
+	e.mustRun(t, app, nil, "git", "checkout", "feature/protected")
+
 	agentKeyPath := filepath.Join(e.tmp, "preview-protection-agent")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "preview-protection-agent", "-f", agentKeyPath)
 	e.ship(t, app, nil, "member", "add", agentKeyPath+".pub", "--role", "agent")
@@ -1055,6 +1100,11 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 		t.Fatal("agent preview password should require approval")
 	}
 	assertContains(t, agent.stdout+agent.stderr, "approval_required")
+	agentShare := e.runCommand(t, app, []string{"SHIP_SSH_KEY=" + string(agentKey), "SHIP_ERROR_JSON=1"}, nil, e.goBin, "share")
+	if agentShare.err == nil {
+		t.Fatal("agent share should require approval")
+	}
+	assertContains(t, agentShare.stdout+agentShare.stderr, "approval_required")
 	e.pathPrefix = ownerPrefix
 
 	// App-wide credentials survive preview churn: reap the protected
@@ -1063,6 +1113,7 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "guardapi", protectedEnv)
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("guardapi", protectedEnv))
+	e.dockerExec(t, "test ! -e /etc/ship/secrets/guardapi/"+protectedEnv+"/share-token")
 	e.dockerExec(t, "test -f /etc/ship/secrets/guardapi/_preview-protection/BYPASS_TOKEN")
 	e.ship(t, app, nil)
 	churned := parsePreviewCredentials(t, e.ship(t, app, nil, "preview", "password"))
@@ -1083,6 +1134,11 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 		t.Fatal("unprotected preview password should fail")
 	}
 	assertContains(t, notProtected.stdout+notProtected.stderr, "previews_not_protected")
+	notProtectedShare := e.runCommand(t, open, []string{"SHIP_ERROR_JSON=1"}, nil, e.goBin, "share")
+	if notProtectedShare.err == nil {
+		t.Fatal("unprotected share should fail")
+	}
+	assertContains(t, notProtectedShare.stdout+notProtectedShare.stderr, "previews_not_protected")
 }
 
 type previewCredentials struct {

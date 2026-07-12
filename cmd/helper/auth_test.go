@@ -92,6 +92,22 @@ func TestPreviewPasswordRequiresApprovalForAgents(t *testing.T) {
 	}
 }
 
+func TestShareAllowsShippersAndRequiresApprovalForAgents(t *testing.T) {
+	setupAuthTest(t, map[string]store.MemberRecord{
+		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
+		bobFingerprint:   {Name: "bob", Role: store.MemberRoleShipper},
+	})
+	target := authTargetForPreviewBranch("api", "feat/protected", "share")
+	setServerMemberClaims(bobFingerprint, "")
+	if _, err := authorizeHelper(helperVerbShare, target); err != nil {
+		t.Fatalf("shipper share authorization: %v", err)
+	}
+	setServerMemberClaims(aliceFingerprint, "")
+	if _, err := authorizeHelper(helperVerbShare, target); !errcat.Is(err, errcat.CodeApprovalRequired) {
+		t.Fatalf("agent share err = %v, want approval_required", err)
+	}
+}
+
 func TestExpiredApprovedRequestFailsConsumptionWithFreshRetryRemediation(t *testing.T) {
 	setupAuthTest(t, map[string]store.MemberRecord{
 		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},

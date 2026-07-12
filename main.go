@@ -33,6 +33,7 @@ type cli struct {
 	Pin        pinCmd           `cmd:"" group:"project" help:"Pin a preview environment so the reaper leaves it running."`
 	Unpin      unpinCmd         `cmd:"" group:"project" help:"Unpin a preview environment so normal expiry applies."`
 	Preview    previewCmd       `cmd:"" group:"project" help:"Manage preview protection."`
+	Share      shareCmd         `cmd:"" group:"project" help:"Mint or revoke a protected Preview share link."`
 	Save       saveCmd          `cmd:"" group:"project" help:"Create a backup for the current branch environment."`
 	Restore    restoreCmd       `cmd:"" group:"project" help:"Restore the current branch environment from a backup."`
 	SSH        sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the box."`
@@ -250,6 +251,20 @@ type previewCmd struct {
 type previewPasswordCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Rotate bool   `name:"rotate" help:"Generate a new team password; the bypass token stays unchanged."`
+}
+
+type shareCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	Rm     bool   `name:"rm" help:"Revoke this preview's share link."`
+}
+
+func (c shareCmd) Run() error {
+	root, err := projectAppRoot(c.Config)
+	if err != nil {
+		return err
+	}
+	client.CmdShare(root, c.Rm)
+	return nil
 }
 
 func (c previewPasswordCmd) Run() error {

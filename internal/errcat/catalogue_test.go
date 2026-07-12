@@ -57,6 +57,13 @@ func TestCatalogueCompleteness(t *testing.T) {
 	}
 }
 
+func TestShareOnProductionRender(t *testing.T) {
+	err := New(CodeShareOnProduction, Fields{"branch": `"main"`})
+	if err.Message() != "share command refused on Production" || err.Cause() != "branch \"main\" maps to Production; share links are for Preview branches only" || err.Remediation() != "git checkout <preview-branch>" {
+		t.Fatalf("share_on_production render = %+v", err)
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)

@@ -455,6 +455,29 @@ func TestRenderAppCaddyfileProtectsPreviewButNeverProduction(t *testing.T) {
 	}
 }
 
+func TestRenderAppCaddyfileIncludesShareLinkStanza(t *testing.T) {
+	port := 3000
+	ctx := &config.AppContext{
+		PreviewProtected:   true,
+		PreviewPassword:    "team-password",
+		PreviewBypassToken: "bypass-token",
+		PreviewShareToken:  "share-token",
+		Processes:          map[string]config.Process{"web": {Port: &port}},
+		Routes:             map[string]config.Route{"app": {Host: "api.example.com", Process: "web"}},
+	}
+	got, err := renderAppCaddyfileWithProcessNames("api", "feat-x-ab12", ctx, "abc123", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "\t@ship_share query \"ship_share=share-token\"\n\thandle @ship_share {\n\t\theader Set-Cookie \"ship_share=share-token; Path=/; HttpOnly; Secure\"\n\t\tredir {path} temporary\n\t}\n\t@ship_auth {\n\t\tnot header x-ship-bypass \"bypass-token\"\n\t\tnot header Cookie \"*ship_share=share-token*\"\n\t\tnot query \"ship_share=share-token\"\n"
+	if !strings.Contains(got, want) {
+		t.Fatalf("share stanza mismatch:\nwant contained:\n%s\ngot:\n%s", want, got)
+	}
+	if mode := caddyFragmentMode([]byte(got)); mode != 0600 {
+		t.Fatalf("share-bearing fragment mode = %o, want 0600", mode)
+	}
+}
+
 func TestRenderAppCaddyfileCanUseSpecificProcessContainerName(t *testing.T) {
 	port := 3000
 	ctx := &config.AppContext{

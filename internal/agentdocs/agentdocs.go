@@ -709,6 +709,21 @@ var verbs = []Verb{
 		},
 	},
 	{
+		Verb:    "share",
+		Purpose: "Mint or revoke this Preview's share link.",
+		Usage:   "ship share [--rm] [--config <path>]",
+		Flags: []Flag{
+			configFlag,
+			{Name: "--rm", Purpose: "Revoke this preview's share link."},
+		},
+		ExitCodes: normalExit,
+		Errors:    []string{"no_preview_env", "share_on_production", "previews_not_protected", "approval_required", "host_key_changed", "operation_failed"},
+		Notes: []string{
+			"Requires a current Preview environment and [previews] protected = true. Owners and shippers may mint or revoke; agent-role keys receive approval_required.",
+			"Without --rm, stdout is exactly the share URL. A share link is one active capability per Preview and dies when that Preview is reaped.",
+		},
+	},
+	{
 		Verb:      "save",
 		Purpose:   "Create a backup for the current branch environment.",
 		Usage:     "ship save [--to <path>] [--config <path>]",

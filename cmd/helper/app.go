@@ -19,6 +19,7 @@ type appCmd struct {
 	Logs              appLogsCmd       `cmd:"logs" help:"Tail logs for one process via podman logs."`
 	Secret            appSecretCmd     `cmd:"secret" help:"Manage the per-(app, env, key) secret store."`
 	Preview           appPreviewCmd    `cmd:"preview" help:"Manage preview branch mappings."`
+	Share             appShareCmd      `cmd:"" help:"Mint or revoke a protected preview share link."`
 	Data              appDataCmd       `cmd:"data" help:"Manage preview data forks."`
 }
 

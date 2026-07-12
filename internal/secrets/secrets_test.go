@@ -60,6 +60,28 @@ func TestPutWritesSecretFileWith0600(t *testing.T) {
 	}
 }
 
+func TestShareTokenUsesReservedRootOnlyEnvFile(t *testing.T) {
+	root := withRoot(t)
+	if err := PutShareToken("api", "feat-x-abcd", []byte("token")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := GetShareToken("api", "feat-x-abcd")
+	if err != nil || string(got) != "token" {
+		t.Fatalf("GetShareToken = %q, %v", got, err)
+	}
+	path := filepath.Join(root, "api", "feat-x-abcd", "share-token")
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("share token mode = %v, %v; want 0600", info.Mode(), err)
+	}
+	if err := RmShareToken("api", "feat-x-abcd"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GetShareToken("api", "feat-x-abcd"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetShareToken after revoke = %v, want ErrNotFound", err)
+	}
+}
+
 func TestPutPreservesValueBytesExactly(t *testing.T) {
 	withRoot(t)
 	// No trimming, no encoding, no munging. What the caller wrote is

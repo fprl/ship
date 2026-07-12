@@ -125,10 +125,11 @@ type AppContext struct {
 	// PreviewProtected is behaviour for preview vhosts, distinct from the
 	// [env.preview] variable overlay.
 	PreviewProtected bool
-	// PreviewPassword and PreviewBypassToken are helper-only runtime state.
+	// PreviewPassword, PreviewBypassToken, and PreviewShareToken are helper-only runtime state.
 	// They are never parsed from or persisted into ship.toml.
 	PreviewPassword    string
 	PreviewBypassToken string
+	PreviewShareToken  string
 }
 
 type ManifestError struct {

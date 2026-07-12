@@ -224,6 +224,15 @@ func serverAppPreviewPasswordCommand(appName, envName string, rotate bool) strin
 	return serverCommand(args...)
 }
 
+func serverAppShareCommand(appName, envName string, rm bool) string {
+	args := []string{"app", "share"}
+	if rm {
+		args = append(args, "--rm")
+	}
+	args = append(args, appName, envName)
+	return serverCommand(args...)
+}
+
 func serverAppDataForkCommand(appName, prodEnv, previewEnv string) string {
 	return serverCommand("app", "data", "fork", appName, prodEnv, previewEnv)
 }

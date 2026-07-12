@@ -27,6 +27,7 @@ const (
 	CodeDataForkOnProduction              Code = "data_fork_on_production"
 	CodeNoPreviewEnv                      Code = "no_preview_env"
 	CodePreviewsNotProtected              Code = "previews_not_protected"
+	CodeShareOnProduction                 Code = "share_on_production"
 	CodeMultiProcessNoWebRoute            Code = "multi_process_no_web_route"
 	CodeSecretMissing                     Code = "secret_missing"
 	CodeUnknownPreviewBranch              Code = "unknown_preview_branch"
@@ -190,6 +191,12 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "preview protection is not enabled",
 		CauseTemplate:       "this app does not set [previews] protected = true",
 		RemediationTemplate: "set [previews] protected = true and ship",
+	},
+	CodeShareOnProduction: {
+		Code:                CodeShareOnProduction,
+		MessageTemplate:     "share command refused on Production",
+		CauseTemplate:       "branch {branch} maps to Production; share links are for Preview branches only",
+		RemediationTemplate: "git checkout <preview-branch>",
 	},
 	CodeMultiProcessNoWebRoute: {
 		Code:                CodeMultiProcessNoWebRoute,

@@ -190,6 +190,38 @@ func Get(app, env, key string) ([]byte, error) {
 	return data, nil
 }
 
+// PutShareToken atomically writes the internal preview-share capability. Its
+// dashed filename deliberately cannot collide with a user-managed env key.
+func PutShareToken(app, env string, value []byte) error {
+	if err := validateValue(value); err != nil {
+		return err
+	}
+	return putInternalEnvFile(app, env, "share-token", value)
+}
+
+// GetShareToken returns the internal preview-share capability for one env.
+func GetShareToken(app, env string) ([]byte, error) {
+	data, err := os.ReadFile(filepath.Join(EnvDir(app, env), "share-token"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return data, nil
+}
+
+// RmShareToken revokes the internal preview-share capability for one env.
+func RmShareToken(app, env string) error {
+	if err := os.Remove(filepath.Join(EnvDir(app, env), "share-token")); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
 // Rm removes the secret for (app, env, key). Returns ErrNotFound if
 // it wasn't there to begin with — callers can treat that as success
 // or report a "wasn't set" message.
@@ -246,6 +278,35 @@ func validateValue(value []byte) error {
 		if b == 0 {
 			return errors.New("secret value cannot contain NUL bytes")
 		}
+	}
+	return nil
+}
+
+func putInternalEnvFile(app, env, name string, value []byte) error {
+	dir := EnvDir(app, env)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create secret dir %s: %w", dir, err)
+	}
+	target := filepath.Join(dir, name)
+	tmp, err := os.CreateTemp(dir, ".secret-")
+	if err != nil {
+		return fmt.Errorf("create secret tempfile: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod secret tempfile: %w", err)
+	}
+	if _, err := tmp.Write(value); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write secret tempfile: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close secret tempfile: %w", err)
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return fmt.Errorf("rename secret into place: %w", err)
 	}
 	return nil
 }

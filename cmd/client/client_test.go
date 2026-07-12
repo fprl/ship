@@ -1023,6 +1023,8 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "preview unpin", command: serverAppPreviewUnpinCommand("api", "feat/x")},
 		{name: "preview password", command: serverAppPreviewPasswordCommand("api", "feat-x-abcd", false)},
 		{name: "preview password rotate", command: serverAppPreviewPasswordCommand("api", "feat-x-abcd", true)},
+		{name: "share", command: serverAppShareCommand("api", "feat-x-abcd", false)},
+		{name: "share rm", command: serverAppShareCommand("api", "feat-x-abcd", true)},
 		{name: "data fork", command: serverAppDataForkCommand("api", "prod", "feat-x-abcd")},
 		{name: "data rm", command: serverAppDataRmCommand("api", "feat-x-abcd")},
 		{name: "secret set", command: serverAppSecretSetCommand("api", "production", "DATABASE_URL")},
@@ -1398,6 +1400,16 @@ func TestServerAppPreviewCommands(t *testing.T) {
 			name: "password rotate",
 			got:  serverAppPreviewPasswordCommand("api", "feat-x-abcd", true),
 			want: "sudo -n /usr/local/bin/ship server app preview password --rotate api feat-x-abcd",
+		},
+		{
+			name: "share",
+			got:  serverAppShareCommand("api", "feat-x-abcd", false),
+			want: "sudo -n /usr/local/bin/ship server app share api feat-x-abcd",
+		},
+		{
+			name: "share rm",
+			got:  serverAppShareCommand("api", "feat-x-abcd", true),
+			want: "sudo -n /usr/local/bin/ship server app share --rm api feat-x-abcd",
 		},
 	}
 	for _, tt := range tests {

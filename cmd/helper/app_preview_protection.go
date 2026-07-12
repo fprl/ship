@@ -5,9 +5,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/secrets"
 	"github.com/fprl/ship/internal/utils"
 )
@@ -84,7 +87,23 @@ func attachPreviewProtection(appName, env string, app *config.AppContext) error 
 	}
 	app.PreviewPassword = credentials.Password
 	app.PreviewBypassToken = credentials.BypassToken
+	shareToken, err := previewShareToken(appName, env)
+	if err != nil {
+		return err
+	}
+	app.PreviewShareToken = shareToken
 	return nil
+}
+
+func previewShareToken(app, env string) (string, error) {
+	value, err := secrets.GetShareToken(app, env)
+	if errors.Is(err, secrets.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return string(value), nil
 }
 
 func ensurePreviewProtectionCredentials(app string) (previewProtectionCredentials, error) {
@@ -129,28 +148,41 @@ func generatePreviewCredential(bytes int) (string, error) {
 }
 
 // rerenderProtectedPreviews updates every live protected preview after a
-// password rotation. The bypass token is reused, so CI callers keep working.
+// password rotation; the bypass token is reused, so CI callers keep
+// working. It keeps going past individual failures:
+// stopping at the first error would strand the remaining previews on
+// the old password. A preview reaped between listing and locking is
+// gone, not broken — skip it.
 func rerenderProtectedPreviews(appName string, credentials previewProtectionCredentials) error {
 	envs, err := identityAppEnvs()
 	if err != nil {
 		return err
 	}
+	var failures []string
 	for _, item := range envs {
 		if item.App != appName || item.Preview == nil {
 			continue
 		}
 		lock, err := acquireAppEnvLock(item.App, item.Env)
 		if err != nil {
-			return err
+			failures = append(failures, fmt.Sprintf("%s: %v", item.Env, err))
+			continue
 		}
 		err = rerenderProtectedPreviewLocked(item.App, item.Env, credentials)
 		unlockErr := lock.Release()
 		if err != nil {
-			return err
+			if _, statErr := os.Stat(identity.EnvRoot(item.App, item.Env)); os.IsNotExist(statErr) {
+				continue
+			}
+			failures = append(failures, fmt.Sprintf("%s: %v", item.Env, err))
+			continue
 		}
 		if unlockErr != nil {
-			return unlockErr
+			failures = append(failures, fmt.Sprintf("%s: %v", item.Env, unlockErr))
 		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("rerender protected previews (rerun to converge): %s", strings.Join(failures, "; "))
 	}
 	return nil
 }
@@ -180,6 +212,10 @@ func rerenderProtectedPreviewLocked(appName, env string, credentials previewProt
 	}
 	app.PreviewPassword = credentials.Password
 	app.PreviewBypassToken = credentials.BypassToken
+	app.PreviewShareToken, err = previewShareToken(appName, env)
+	if err != nil {
+		return err
+	}
 	path := caddyfilePath(appName, env)
 	previous, existed, err := snapshotCaddyFragment(path)
 	if err != nil {

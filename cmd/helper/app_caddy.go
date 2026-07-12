@@ -108,9 +108,28 @@ func renderPreviewProtection(env string, ctx *config.AppContext) (string, error)
 	if err != nil {
 		return "", err
 	}
+	share := ""
+	shareAuthCondition := ""
+	if ctx.PreviewShareToken != "" {
+		// Caddy's one-line query matcher takes a single param=val token.
+		quotedShareQuery, err := caddy.CaddyQuote("ship_share=" + ctx.PreviewShareToken)
+		if err != nil {
+			return "", err
+		}
+		quotedShareCookie, err := caddy.CaddyQuote("*ship_share=" + ctx.PreviewShareToken + "*")
+		if err != nil {
+			return "", err
+		}
+		quotedSetCookie, err := caddy.CaddyQuote("ship_share=" + ctx.PreviewShareToken + "; Path=/; HttpOnly; Secure")
+		if err != nil {
+			return "", err
+		}
+		share = fmt.Sprintf("\t@ship_share query %s\n\thandle @ship_share {\n\t\theader Set-Cookie %s\n\t\tredir {path} temporary\n\t}\n", quotedShareQuery, quotedSetCookie)
+		shareAuthCondition = fmt.Sprintf("\t\tnot header Cookie %s\n\t\tnot query %s\n", quotedShareCookie, quotedShareQuery)
+	}
 	// The basic_auth matcher is negated, so a request carrying the exact
-	// bypass header skips auth entirely.
-	return fmt.Sprintf("\t@ship_auth {\n\t\tnot header x-ship-bypass %s\n\t}\n\tbasic_auth @ship_auth {\n\t\tteam %s\n\t}\n", quotedToken, quotedHash), nil
+	// bypass header or share cookie skips auth entirely.
+	return fmt.Sprintf("%s\t@ship_auth {\n\t\tnot header x-ship-bypass %s\n%s\t}\n\tbasic_auth @ship_auth {\n\t\tteam %s\n\t}\n", share, quotedToken, shareAuthCondition, quotedHash), nil
 }
 
 func renderRouteBody(app, env string, ctx *config.AppContext, routeName string, release string, processNames map[string]string, wrap bool) (string, error) {
@@ -229,11 +248,9 @@ func snapshotCaddyFragment(path string) ([]byte, bool, error) {
 // reloads don't trip on it.
 func restoreCaddyFragment(path string, prev []byte, existed bool) error {
 	if existed {
-		mode := caddyFragmentMode(prev)
-		if err := os.WriteFile(path, prev, mode); err != nil {
-			return err
-		}
-		return os.Chmod(path, mode)
+		// Atomic like the normal write path: a concurrent full-config
+		// parse must never observe a half-restored fragment.
+		return store.AtomicWrite(path, prev, caddyFragmentMode(prev))
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
@@ -258,7 +275,19 @@ func (e caddyReloadStageError) Unwrap() error {
 	return e.Err
 }
 
+// reloadCaddyOrRestore serializes on a box-wide lock: validate and
+// reload parse the FULL Caddyfile, so two concurrent reloads could
+// otherwise apply a config parsed before another actor's fragment
+// write — resurrecting a revoked share link or a reaped preview's
+// route. Fragment writes are atomic renames, every writer reloads
+// after writing, and reloads are serial: the last reload always
+// carries the newest state of every fragment.
 func reloadCaddyOrRestore(caddyPath string, prevFragment []byte, prevExisted bool) error {
+	reloadLock, err := acquireLockFile(filepath.Join(appEnvLockDir(), "caddy-reload.lock"))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = reloadLock.Release() }()
 	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}, ""); err != nil {
 		if restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted); restoreErr != nil {
 			return caddyReloadStageError{Stage: "validate", Err: err, RestoreErr: restoreErr}

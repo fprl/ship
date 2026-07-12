@@ -26,6 +26,7 @@ import crypt
 import os
 import re
 import sys
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -35,6 +36,7 @@ REDIR_RE = re.compile(r'^\s*redir\s+"(?P<to>[^"]+)"\s+permanent\s*$')
 ROOT_RE = re.compile(r'^\s*root\s+\*\s+"(?P<root>[^"]+)"\s*$')
 BYPASS_RE = re.compile(r'^\s*not\s+header\s+x-ship-bypass\s+"(?P<token>[^"]+)"\s*$')
 TEAM_HASH_RE = re.compile(r'^\s*team\s+"(?P<hash>\$2[^"]+)"\s*$')
+SHARE_QUERY_RE = re.compile(r'^\s*@ship_share\s+query\s+"ship_share=(?P<token>[^"]+)"\s*$')
 
 CONF_DIR = "/etc/caddy/conf.d"
 
@@ -134,7 +136,7 @@ def load_routes():
 
 
 def load_protections():
-    """Read the generated basic_auth stanza emitted for protected previews."""
+    """Read generated preview basic_auth, bypass, and share stanzas."""
     protections = {}
     if not os.path.isdir(CONF_DIR):
         return protections
@@ -149,6 +151,7 @@ def load_protections():
         host = None
         token = None
         hash_value = None
+        share_token = None
         for raw in lines:
             line = raw.rstrip("\n")
             m = SITE_RE.match(line)
@@ -156,6 +159,7 @@ def load_protections():
                 host = m.group("host")
                 token = None
                 hash_value = None
+                share_token = None
                 continue
             if host is None:
                 continue
@@ -167,8 +171,12 @@ def load_protections():
             if m:
                 hash_value = m.group("hash")
                 continue
+            m = SHARE_QUERY_RE.match(line)
+            if m:
+                share_token = m.group("token")
+                continue
             if line.strip() == "}" and token and hash_value:
-                protections[host] = (token, hash_value)
+                protections[host] = (token, hash_value, share_token)
                 host = None
     return protections
 
@@ -285,6 +293,8 @@ class Handler(BaseHTTPRequestHandler):
         routes = load_routes()
         host = self.host_header()
         protection = load_protections().get(host)
+        if protection and self.share_redirect(protection[2]):
+            return
         if protection and not self.authorized(*protection):
             self.send_response(401)
             self.send_header("WWW-Authenticate", 'Basic realm="ship preview"')
@@ -306,8 +316,23 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.not_found()
 
-    def authorized(self, bypass_token, password_hash):
+    def share_redirect(self, share_token):
+        if not share_token:
+            return False
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        if query.get("ship_share") != [share_token]:
+            return False
+        self.send_response(302)
+        self.send_header("Set-Cookie", "ship_share=" + share_token + "; Path=/; HttpOnly; Secure")
+        self.send_header("Location", self.path.split("?", 1)[0])
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return True
+
+    def authorized(self, bypass_token, password_hash, share_token):
         if self.headers.get("x-ship-bypass", "") == bypass_token:
+            return True
+        if share_token and any(cookie.strip() == "ship_share=" + share_token for cookie in self.headers.get("Cookie", "").split(";")):
             return True
         raw = self.headers.get("Authorization", "")
         if not raw.startswith("Basic "):
