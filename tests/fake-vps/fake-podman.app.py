@@ -64,7 +64,7 @@ class Handler(BaseHTTPRequestHandler):
     def _request_headers(self):
         body = (
             f"authorization={self.headers.get('Authorization', '')}\n"
-            f"x-ship-bypass={self.headers.get('x-ship-bypass', '')}\n"
+            f"x-ship-capability={self.headers.get('x-ship-capability', '')}\n"
             f"cookie={self.headers.get('Cookie', '')}\n"
         ).encode()
         self.send_response(200)

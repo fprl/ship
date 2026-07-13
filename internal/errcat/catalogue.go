@@ -26,7 +26,6 @@ const (
 	CodeProductionBranchNotPreview        Code = "production_branch_not_preview"
 	CodeDataForkOnProduction              Code = "data_fork_on_production"
 	CodeNoPreviewEnv                      Code = "no_preview_env"
-	CodePreviewsNotProtected              Code = "previews_not_protected"
 	CodeShareOnProduction                 Code = "share_on_production"
 	CodeMultiProcessNoWebRoute            Code = "multi_process_no_web_route"
 	CodeSecretMissing                     Code = "secret_missing"
@@ -173,7 +172,7 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "preview command failed",
 		CauseTemplate:       "branch {branch} maps to Production",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "ship pin <preview-branch>"},
+		Defaults:            Fields{"command": "ship preview pin <preview-branch>"},
 	},
 	CodeDataForkOnProduction: {
 		Code:                CodeDataForkOnProduction,
@@ -186,12 +185,6 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "preview environment lookup failed",
 		CauseTemplate:       "no Preview environment exists for branch {branch}",
 		RemediationTemplate: "ship",
-	},
-	CodePreviewsNotProtected: {
-		Code:                CodePreviewsNotProtected,
-		MessageTemplate:     "preview protection is not enabled",
-		CauseTemplate:       "this app does not set [previews] protected = true",
-		RemediationTemplate: "set [previews] protected = true and ship",
 	},
 	CodeShareOnProduction: {
 		Code:                CodeShareOnProduction,
@@ -233,7 +226,7 @@ var catalogue = map[Code]Entry{
 	CodeHostKeyChanged: {
 		Code:                CodeHostKeyChanged,
 		MessageTemplate:     "box host key changed",
-		CauseTemplate:       "SSH host key for {box} is unknown or changed; if the box was rebuilt, re-establish the pin; if not, investigate before trusting this host",
+		CauseTemplate:       "SSH host key for {box} is unknown or changed; if the box was rebuilt, re-establish the pin (ship box forget {box} clears it); if not, investigate before trusting this host",
 		RemediationTemplate: "ship box setup <ssh-target>",
 	},
 	CodeBoxNotInitialized: {
@@ -296,14 +289,14 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "target a box",
 		CauseTemplate:       "{known_boxes}",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "ship box ls <box>", "known_boxes": "known boxes (~/.config/ship/known_hosts):\n  none known yet"},
+		Defaults:            Fields{"command": "ship box apps <box>", "known_boxes": "known boxes (~/.config/ship/known_hosts):\n  none known yet"},
 	},
 	CodeInvalidBoxTarget: {
 		Code:                CodeInvalidBoxTarget,
 		MessageTemplate:     "box target is invalid",
 		CauseTemplate:       "box target must be a host like 203.0.113.7; remove any user@ prefix",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "ship box ls 203.0.113.7"},
+		Defaults:            Fields{"command": "ship box apps 203.0.113.7"},
 	},
 	CodeRmConfirmationRequired: {
 		Code:                CodeRmConfirmationRequired,

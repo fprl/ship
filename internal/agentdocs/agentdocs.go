@@ -675,49 +675,34 @@ var verbs = []Verb{
 		},
 	},
 	{
-		Verb:      "pin",
+		Verb:      "preview pin",
 		Purpose:   "Pin a Preview environment so the reaper leaves it running.",
-		Usage:     "ship pin <branch> [--config <path>]",
+		Usage:     "ship preview pin <branch> [--config <path>]",
 		Flags:     []Flag{configFlag, {Name: "branch", Purpose: "Preview branch to pin."}},
 		ExitCodes: normalExit,
 		Errors:    []string{"production_branch_not_preview", "unmappable_branch_name", "unknown_preview_branch", "operation_failed"},
 	},
 	{
-		Verb:      "unpin",
+		Verb:      "preview unpin",
 		Purpose:   "Unpin a Preview environment so normal expiry applies.",
-		Usage:     "ship unpin <branch> [--config <path>]",
+		Usage:     "ship preview unpin <branch> [--config <path>]",
 		Flags:     []Flag{configFlag, {Name: "branch", Purpose: "Preview branch to unpin."}},
 		ExitCodes: normalExit,
 		Errors:    []string{"production_branch_not_preview", "unmappable_branch_name", "unknown_preview_branch", "operation_failed"},
 	},
 	{
-		Verb:    "preview password",
-		Purpose: "Print the current app's Preview team password and automation bypass token.",
-		Usage:   "ship preview password [--rotate] [--config <path>]",
+		Verb:    "preview share",
+		Purpose: "Print or rotate this Preview's capability URL.",
+		Usage:   "ship preview share [--rotate] [--config <path>]",
 		Flags: []Flag{
 			configFlag,
-			{Name: "--rotate", Purpose: "Generate a new team password and rerender all live protected Preview fragments. The bypass token stays unchanged."},
+			{Name: "--rotate", Purpose: "Generate a new Preview capability and rerender its routes."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"no_preview_env", "previews_not_protected", "approval_required", "host_key_changed", "operation_failed"},
+		Errors:    []string{"no_preview_env", "share_on_production", "approval_required", "host_key_changed", "operation_failed"},
 		Notes: []string{
-			"Requires a current Preview environment and [previews] protected = true. Owners and shippers may read or rotate; agent-role keys receive approval_required.",
-			"The credentials are generated and stored root-only on the box. Password rotation never changes the bypass token.",
-		},
-	},
-	{
-		Verb:    "share",
-		Purpose: "Mint or revoke this Preview's share link.",
-		Usage:   "ship share [--rm] [--config <path>]",
-		Flags: []Flag{
-			configFlag,
-			{Name: "--rm", Purpose: "Revoke this preview's share link."},
-		},
-		ExitCodes: normalExit,
-		Errors:    []string{"no_preview_env", "share_on_production", "previews_not_protected", "approval_required", "host_key_changed", "operation_failed"},
-		Notes: []string{
-			"Requires a current Preview environment and [previews] protected = true. Owners and shippers may mint or revoke; agent-role keys receive approval_required.",
-			"Without --rm, stdout is exactly the share URL. A share link is one active capability per Preview and dies when that Preview is reaped.",
+			"Requires a current Preview environment. Any member may read; owners and shippers may rotate; agent-role keys receive approval_required for rotation.",
+			"Stdout is exactly the capability URL. Every Preview is protected and its capability dies when that Preview is reaped.",
 		},
 	},
 	{
@@ -760,6 +745,7 @@ var verbs = []Verb{
 		Errors:    []string{"usage_error", "invalid_secret_key", "dotenv_malformed", "secret_scope_conflict", "unknown_preview_branch", "host_key_changed", "operation_failed"},
 		Notes: []string{
 			"Single-value mode reads the value from stdin. Bulk mode reads values from the file path; values are never echoed, placed in argv, or written into the repo.",
+			"Without --preview or --branch, the current branch selects the secret scope: Production on the production branch, otherwise that branch's Preview.",
 			"Bulk dotenv rules: blank lines and full-line # comments are ignored; an `export ` prefix is accepted; unquoted values are trimmed; matching single or double quotes around the whole value are stripped; inline # is treated as value text.",
 			"Bulk merge is the default. `--replace` removes scope keys absent from the file and reports removed key names on stderr. Bulk stdout is empty.",
 		},
@@ -779,6 +765,7 @@ var verbs = []Verb{
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"secret_scope_conflict", "unknown_preview_branch", "host_key_changed", "operation_failed"},
+		Notes:     []string{"Without --preview or --branch, lists the current branch's scope: Production on the production branch, otherwise that branch's Preview."},
 	},
 	{
 		Verb:    "secret rm",
@@ -792,6 +779,7 @@ var verbs = []Verb{
 		},
 		ExitCodes: normalExit,
 		Errors:    []string{"invalid_secret_key", "secret_scope_conflict", "unknown_preview_branch", "host_key_changed", "operation_failed"},
+		Notes:     []string{"Without --preview or --branch, removes from the current branch's scope: Production on the production branch, otherwise that branch's Preview."},
 	},
 	{
 		Verb:    "box setup",
@@ -928,9 +916,9 @@ var verbs = []Verb{
 		},
 	},
 	{
-		Verb:    "box ls",
-		Purpose: "List app environments visible on a box.",
-		Usage:   "ship box ls [<box>] [--json]",
+		Verb:    "box apps",
+		Purpose: "Show the box's app table.",
+		Usage:   "ship box apps [<box>] [--json]",
 		Flags: []Flag{
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 			{Name: "--json", Purpose: "Emit the box app/environment list as JSON."},
@@ -952,14 +940,6 @@ var verbs = []Verb{
 		},
 		ExitCodes: normalExit,
 		Errors:    []string{"box_rm_confirmation_required", "box_target_required", "invalid_box_target", "host_key_changed", "operation_failed"},
-	},
-	{
-		Verb:      "box forget",
-		Purpose:   "Drop a box host-key pin.",
-		Usage:     "ship box forget <box>",
-		Flags:     []Flag{{Name: "box", Purpose: "Box host to forget from ~/.config/ship/known_hosts."}},
-		ExitCodes: normalExit,
-		Errors:    []string{"invalid_box_target", "operation_failed"},
 	},
 	{
 		Verb:      "docs",
@@ -1039,7 +1019,7 @@ Preview lifecycle:
 
 - First deploy creates the preview mapping and URL.
 - The default TTL is 72 hours from the last ship.
-- ` + "`ship pin <branch>`" + ` clears expiry; ` + "`ship unpin <branch>`" + ` restores it.
+- ` + "`ship preview pin <branch>`" + ` clears expiry; ` + "`ship preview unpin <branch>`" + ` restores it.
 - The box reaper destroys expired previews and purges their secrets.
 - Production is never reaped. ` + "`ship rm`" + ` on Production requires ` + "`--confirm <app>`" + `.
 - Preview URLs are the preview env host, usually a synthesized sslip.io host
@@ -1084,7 +1064,7 @@ Manifest env:
 
 Secret scoping:
 
-- ` + "`ship secret set KEY`" + ` stores the Production value.
+- ` + "`ship secret set KEY`" + ` stores a value for the current branch: Production on the production branch, otherwise that branch Preview.
 - ` + "`ship secret set KEY --preview`" + ` stores one shared Preview value.
 - ` + "`ship secret set KEY --branch <name>`" + ` stores a value for that branch Preview env.
 - Production resolves Production values only.

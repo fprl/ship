@@ -45,12 +45,6 @@ type Resources struct {
 	CPUs   *float64 `toml:"cpus"`
 }
 
-// Previews controls preview behaviour. It is deliberately separate from
-// [env.preview], which only overlays runtime environment variables.
-type Previews struct {
-	Protected bool `toml:"protected"`
-}
-
 type Process struct {
 	Command   string    `toml:"cmd"`
 	Port      *int      `toml:"port"`
@@ -82,7 +76,6 @@ type Manifest struct {
 	Routes           map[string]Route   `toml:"routes"`
 	Env              map[string]any     `toml:"env"`
 	EnvPreview       map[string]any     `toml:"-"`
-	Previews         Previews           `toml:"previews"`
 	envSubtables     []string
 	Release          string `toml:"release"`
 	Probe            string `toml:"probe"`
@@ -96,7 +89,6 @@ type rawManifest struct {
 	Processes        map[string]any `toml:"processes"`
 	Routes           map[string]any `toml:"routes"`
 	Env              map[string]any `toml:"env"`
-	Previews         Previews       `toml:"previews"`
 	Release          string         `toml:"release"`
 	Probe            string         `toml:"probe"`
 	Notify           string         `toml:"notify"`
@@ -121,14 +113,9 @@ type AppContext struct {
 	// SecretRefs maps env-var key -> secret key name. The helper resolves
 	// these against the per-(app, env, key) secret store before deploy.
 	SecretRefs map[string]string
-	// PreviewProtected is behaviour for preview vhosts, distinct from the
-	// [env.preview] variable overlay.
-	PreviewProtected bool
-	// PreviewPassword, PreviewBypassToken, and PreviewShareToken are helper-only runtime state.
+	// PreviewCapabilityToken is helper-only runtime state.
 	// They are never parsed from or persisted into ship.toml.
-	PreviewPassword    string
-	PreviewBypassToken string
-	PreviewShareToken  string
+	PreviewCapabilityToken string
 }
 
 type ManifestError struct {
@@ -389,7 +376,6 @@ func ReadManifest(root string) (*Manifest, error) {
 		Routes:           hydrateRouteKeys(routes),
 		Env:              env,
 		EnvPreview:       envPreview,
-		Previews:         raw.Previews,
 		envSubtables:     envSubtables,
 		Release:          raw.Release,
 		Probe:            raw.Probe,
@@ -729,7 +715,6 @@ func LoadAppContextFromManifest(root string, envName string, manifest *Manifest)
 		Notify:           manifest.Notify,
 		Vars:             vars,
 		SecretRefs:       secretRefs,
-		PreviewProtected: manifest.Previews.Protected,
 	}, nil
 }
 

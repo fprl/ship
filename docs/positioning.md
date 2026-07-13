@@ -146,7 +146,7 @@ Concretely:
 State is in files (ADR-0002). CLI is the API. Machine-facing surfaces
 expose stable JSON where agents need it: `ship --json`, `ship status
 --json`, `ship logs --json`, `ship why --json`, `ship secret ls --json`,
-`ship box ls --json`, and `ship box doctor --json`. Someone — the user later,
+`ship box apps --json`, and `ship box doctor --json`. Someone — the user later,
 the community, a paid
 SaaS — can build a dashboard, scheduler, or multi-host coordinator on
 top of ship without changing ship.

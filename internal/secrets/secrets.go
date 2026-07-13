@@ -190,18 +190,18 @@ func Get(app, env, key string) ([]byte, error) {
 	return data, nil
 }
 
-// PutShareToken atomically writes the internal preview-share capability. Its
+// PutPreviewCapability atomically writes the internal preview capability. Its
 // dashed filename deliberately cannot collide with a user-managed env key.
-func PutShareToken(app, env string, value []byte) error {
+func PutPreviewCapability(app, env string, value []byte) error {
 	if err := validateValue(value); err != nil {
 		return err
 	}
-	return putInternalEnvFile(app, env, "share-token", value)
+	return putInternalEnvFile(app, env, "capability-token", value)
 }
 
-// GetShareToken returns the internal preview-share capability for one env.
-func GetShareToken(app, env string) ([]byte, error) {
-	data, err := os.ReadFile(filepath.Join(EnvDir(app, env), "share-token"))
+// GetPreviewCapability returns the internal preview capability for one env.
+func GetPreviewCapability(app, env string) ([]byte, error) {
+	data, err := os.ReadFile(filepath.Join(EnvDir(app, env), "capability-token"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, ErrNotFound
@@ -211,9 +211,9 @@ func GetShareToken(app, env string) ([]byte, error) {
 	return data, nil
 }
 
-// RmShareToken revokes the internal preview-share capability for one env.
-func RmShareToken(app, env string) error {
-	if err := os.Remove(filepath.Join(EnvDir(app, env), "share-token")); err != nil {
+// RmPreviewCapability removes the internal preview capability for one env.
+func RmPreviewCapability(app, env string) error {
+	if err := os.Remove(filepath.Join(EnvDir(app, env), "capability-token")); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrNotFound
 		}

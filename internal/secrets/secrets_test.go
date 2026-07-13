@@ -60,25 +60,25 @@ func TestPutWritesSecretFileWith0600(t *testing.T) {
 	}
 }
 
-func TestShareTokenUsesReservedRootOnlyEnvFile(t *testing.T) {
+func TestPreviewCapabilityUsesReservedRootOnlyEnvFile(t *testing.T) {
 	root := withRoot(t)
-	if err := PutShareToken("api", "feat-x-abcd", []byte("token")); err != nil {
+	if err := PutPreviewCapability("api", "feat-x-abcd", []byte("token")); err != nil {
 		t.Fatal(err)
 	}
-	got, err := GetShareToken("api", "feat-x-abcd")
+	got, err := GetPreviewCapability("api", "feat-x-abcd")
 	if err != nil || string(got) != "token" {
-		t.Fatalf("GetShareToken = %q, %v", got, err)
+		t.Fatalf("GetPreviewCapability = %q, %v", got, err)
 	}
-	path := filepath.Join(root, "api", "feat-x-abcd", "share-token")
+	path := filepath.Join(root, "api", "feat-x-abcd", "capability-token")
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("share token mode = %v, %v; want 0600", info.Mode(), err)
 	}
-	if err := RmShareToken("api", "feat-x-abcd"); err != nil {
+	if err := RmPreviewCapability("api", "feat-x-abcd"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := GetShareToken("api", "feat-x-abcd"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("GetShareToken after revoke = %v, want ErrNotFound", err)
+	if _, err := GetPreviewCapability("api", "feat-x-abcd"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("GetPreviewCapability after remove = %v, want ErrNotFound", err)
 	}
 }
 

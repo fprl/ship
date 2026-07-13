@@ -58,7 +58,7 @@ SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  ./dist/ship box ls <IP> --json
+  ./dist/ship box apps <IP> --json
 ```
 
 Useful host checks over root SSH:
@@ -244,7 +244,7 @@ SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/ship/dist/ship box ls <IP> --json
+  /path/to/ship/dist/ship box apps <IP> --json
 ```
 
 ## 7. Example matrix

@@ -32,7 +32,7 @@ Preview lifecycle:
 
 - First deploy creates the preview mapping and URL.
 - The default TTL is 72 hours from the last ship.
-- `ship pin <branch>` clears expiry; `ship unpin <branch>` restores it.
+- `ship preview pin <branch>` clears expiry; `ship preview unpin <branch>` restores it.
 - The box reaper destroys expired previews and purges their secrets.
 - Production is never reaped. `ship rm` on Production requires `--confirm <app>`.
 - Preview URLs are the preview env host, usually a synthesized sslip.io host
@@ -77,7 +77,7 @@ Manifest env:
 
 Secret scoping:
 
-- `ship secret set KEY` stores the Production value.
+- `ship secret set KEY` stores a value for the current branch: Production on the production branch, otherwise that branch Preview.
 - `ship secret set KEY --preview` stores one shared Preview value.
 - `ship secret set KEY --branch <name>` stores a value for that branch Preview env.
 - Production resolves Production values only.
@@ -167,35 +167,27 @@ Secret scoping:
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `data_fork_on_production`, `no_preview_env`, `approval_required`, `host_key_changed`, `operation_failed`
 
-### `pin`
+### `preview pin`
 - Purpose: Pin a Preview environment so the reaper leaves it running.
-- Usage: `ship pin <branch> [--config <path>]`
+- Usage: `ship preview pin <branch> [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `branch`: Preview branch to pin.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `production_branch_not_preview`, `unmappable_branch_name`, `unknown_preview_branch`, `operation_failed`
 
-### `unpin`
+### `preview unpin`
 - Purpose: Unpin a Preview environment so normal expiry applies.
-- Usage: `ship unpin <branch> [--config <path>]`
+- Usage: `ship preview unpin <branch> [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `branch`: Preview branch to unpin.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `production_branch_not_preview`, `unmappable_branch_name`, `unknown_preview_branch`, `operation_failed`
 
-### `preview password`
-- Purpose: Print the current app's Preview team password and automation bypass token.
-- Usage: `ship preview password [--rotate] [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--rotate`: Generate a new team password and rerender all live protected Preview fragments. The bypass token stays unchanged.
-- Notes: Requires a current Preview environment and [previews] protected = true. Owners and shippers may read or rotate; agent-role keys receive approval_required. The credentials are generated and stored root-only on the box. Password rotation never changes the bypass token.
+### `preview share`
+- Purpose: Print or rotate this Preview's capability URL.
+- Usage: `ship preview share [--rotate] [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--rotate`: Generate a new Preview capability and rerender its routes.
+- Notes: Requires a current Preview environment. Any member may read; owners and shippers may rotate; agent-role keys receive approval_required for rotation. Stdout is exactly the capability URL. Every Preview is protected and its capability dies when that Preview is reaped.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `no_preview_env`, `previews_not_protected`, `approval_required`, `host_key_changed`, `operation_failed`
-
-### `share`
-- Purpose: Mint or revoke this Preview's share link.
-- Usage: `ship share [--rm] [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--rm`: Revoke this preview's share link.
-- Notes: Requires a current Preview environment and [previews] protected = true. Owners and shippers may mint or revoke; agent-role keys receive approval_required. Without --rm, stdout is exactly the share URL. A share link is one active capability per Preview and dies when that Preview is reaped.
-- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `no_preview_env`, `share_on_production`, `previews_not_protected`, `approval_required`, `host_key_changed`, `operation_failed`
+- Common error codes: `no_preview_env`, `share_on_production`, `approval_required`, `host_key_changed`, `operation_failed`
 
 ### `save`
 - Purpose: Create a backup for the current branch environment.
@@ -222,7 +214,7 @@ Secret scoping:
 - Purpose: Read one secret value from stdin or bulk-import dotenv KEY=VALUE pairs.
 - Usage: `ship secret set (<KEY>|--from <path> [--replace]) [--preview|--branch <name>] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `KEY`: Environment variable name, matching ^[A-Za-z_][A-Za-z0-9_]*$; `--preview`: Store the shared Preview value; `--branch <name>`: Store the value for one branch Preview environment; `--from <path>`: Bulk import dotenv KEY=VALUE pairs from a file. Cannot be combined with KEY; `--replace`: With --from, make the file authoritative for the selected scope and remove omitted keys.
-- Notes: Single-value mode reads the value from stdin. Bulk mode reads values from the file path; values are never echoed, placed in argv, or written into the repo. Bulk dotenv rules: blank lines and full-line # comments are ignored; an `export ` prefix is accepted; unquoted values are trimmed; matching single or double quotes around the whole value are stripped; inline # is treated as value text. Bulk merge is the default. `--replace` removes scope keys absent from the file and reports removed key names on stderr. Bulk stdout is empty.
+- Notes: Single-value mode reads the value from stdin. Bulk mode reads values from the file path; values are never echoed, placed in argv, or written into the repo. Without --preview or --branch, the current branch selects the secret scope: Production on the production branch, otherwise that branch's Preview. Bulk dotenv rules: blank lines and full-line # comments are ignored; an `export ` prefix is accepted; unquoted values are trimmed; matching single or double quotes around the whole value are stripped; inline # is treated as value text. Bulk merge is the default. `--replace` removes scope keys absent from the file and reports removed key names on stderr. Bulk stdout is empty.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `usage_error`, `invalid_secret_key`, `dotenv_malformed`, `secret_scope_conflict`, `unknown_preview_branch`, `host_key_changed`, `operation_failed`
 
@@ -231,6 +223,7 @@ Secret scoping:
 - Usage: `ship secret ls [--preview|--branch <name>] [--json] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--preview`: List the shared Preview scope; `--branch <name>`: List one branch Preview scope; `--json`: Emit structured JSON.
 - `--json` stdout schema: `{"app":"api","env":"prod","keys":["DATABASE_URL"]}`
+- Notes: Without --preview or --branch, lists the current branch's scope: Production on the production branch, otherwise that branch's Preview.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `secret_scope_conflict`, `unknown_preview_branch`, `host_key_changed`, `operation_failed`
 
@@ -238,6 +231,7 @@ Secret scoping:
 - Purpose: Remove a secret key from a scope.
 - Usage: `ship secret rm <KEY> [--preview|--branch <name>] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `KEY`: Environment variable name to remove; `--preview`: Remove from the shared Preview scope; `--branch <name>`: Remove from one branch Preview scope.
+- Notes: Without --preview or --branch, removes from the current branch's scope: Production on the production branch, otherwise that branch's Preview.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `invalid_secret_key`, `secret_scope_conflict`, `unknown_preview_branch`, `host_key_changed`, `operation_failed`
 
@@ -314,9 +308,9 @@ Secret scoping:
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `usage_error`, `box_target_required`, `invalid_box_target`, `approval_required`, `host_key_changed`, `operation_failed`
 
-### `box ls`
-- Purpose: List app environments visible on a box.
-- Usage: `ship box ls [<box>] [--json]`
+### `box apps`
+- Purpose: Show the box's app table.
+- Usage: `ship box apps [<box>] [--json]`
 - Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit the box app/environment list as JSON.
 - `--json` stdout schema: `{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"prod","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
@@ -328,13 +322,6 @@ Secret scoping:
 - Arguments and flags: `app`: App name to destroy; `box`: Box host. Defaults to ship.toml box when run in an app directory; `--confirm <app>`: Required app-name confirmation.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_rm_confirmation_required`, `box_target_required`, `invalid_box_target`, `host_key_changed`, `operation_failed`
-
-### `box forget`
-- Purpose: Drop a box host-key pin.
-- Usage: `ship box forget <box>`
-- Arguments and flags: `box`: Box host to forget from ~/.config/ship/known_hosts.
-- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `invalid_box_target`, `operation_failed`
 
 ### `docs`
 - Purpose: Print this complete agent contract.
@@ -418,7 +405,7 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 - `box_not_initialized`: box preflight failed; cause: ship server API is missing at /usr/local/bin/ship on {target}; remediation: `ship box setup {target}`.
 - `box_rm_confirmation_required`: box rm confirmation failed; cause: box rm requires --confirm {app}; remediation: `ship box rm {app} --confirm {app}`.
 - `box_setup_required`: box predates one-command update; cause: this box's helper and sudo rules are older than ship box update; remediation: `ship box setup {server}`.
-- `box_target_required`: target a box; cause: {known_boxes}; remediation: `{command}`; defaults: `command="ship box ls <box>", known_boxes="known boxes (~/.config/ship/known_hosts):\n  none known yet"`.
+- `box_target_required`: target a box; cause: {known_boxes}; remediation: `{command}`; defaults: `command="ship box apps <box>", known_boxes="known boxes (~/.config/ship/known_hosts):\n  none known yet"`.
 - `box_version_ambiguous`: box update cannot order these builds; cause: helper {helper_version} and client {client_version} are different builds of the same release; remediation: `ship box setup {server}`.
 - `branch_flag_requires_detached_head`: branch resolution failed; cause: --branch is only accepted on ship when HEAD is detached; remediation: `ship`.
 - `client_behind_helper`: client is behind the box helper; cause: helper version {helper_version} is newer than client version {client_version}; remediation: `curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | bash`.
@@ -444,10 +431,10 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 - `host_install_ssh_failed`: host install SSH failed; cause: {detail}; remediation: `{command}`.
 - `host_install_unsupported_os`: host OS is unsupported; cause: host install requires Ubuntu/Debian apt tooling; missing {tool}; remediation: `ship box setup <ubuntu-24.04-ssh-target>`.
 - `host_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.
-- `host_key_changed`: box host key changed; cause: SSH host key for {box} is unknown or changed; if the box was rebuilt, re-establish the pin; if not, investigate before trusting this host; remediation: `ship box setup <ssh-target>`.
+- `host_key_changed`: box host key changed; cause: SSH host key for {box} is unknown or changed; if the box was rebuilt, re-establish the pin (ship box forget {box} clears it); if not, investigate before trusting this host; remediation: `ship box setup <ssh-target>`.
 - `host_not_installed`: host preflight failed; cause: host is not installed; remediation: `ship box setup <ssh-target>`.
 - `ingress_invalid`: ingress preflight failed; cause: {detail}; remediation: `ship box doctor`.
-- `invalid_box_target`: box target is invalid; cause: box target must be a host like 203.0.113.7; remove any user@ prefix; remediation: `{command}`; defaults: `command="ship box ls 203.0.113.7"`.
+- `invalid_box_target`: box target is invalid; cause: box target must be a host like 203.0.113.7; remove any user@ prefix; remediation: `{command}`; defaults: `command="ship box apps 203.0.113.7"`.
 - `invalid_secret_key`: secret key is invalid; cause: secret key {key} must match ^[A-Za-z_][A-Za-z0-9_]*$; remediation: `ship secret set KEY`.
 - `logs_follow_json_conflict`: logs command is invalid; cause: logs --json cannot be combined with --follow; remediation: `ship logs`.
 - `manifest_invalid`: ship.toml validation failed; cause: {details}; remediation: `{command}`; defaults: `command="fix ship.toml"`.
@@ -461,9 +448,8 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 - `not_a_git_repo`: git worktree required; cause: current directory is not inside a Git worktree; remediation: `git init && git add . && git commit -m "initial ship app"`.
 - `operation_failed`: operation failed; cause: {detail}; remediation: `{command}`; defaults: `command="ship status"`.
 - `operator_key_missing`: operator SSH key is missing; cause: no SSH public key source found for operator user; remediation: `{command}`.
-- `previews_not_protected`: preview protection is not enabled; cause: this app does not set [previews] protected = true; remediation: `set [previews] protected = true and ship`.
 - `probe_failed`: probe failed; cause: {detail}; remediation: `ship why`.
-- `production_branch_not_preview`: preview command failed; cause: branch {branch} maps to Production; remediation: `{command}`; defaults: `command="ship pin <preview-branch>"`.
+- `production_branch_not_preview`: preview command failed; cause: branch {branch} maps to Production; remediation: `{command}`; defaults: `command="ship preview pin <preview-branch>"`.
 - `release_command_failed`: release command failed; cause: {detail}; remediation: `ship why`.
 - `remote_preflight_after_prepare_failed`: deploy preflight failed after preparing the app environment; cause: {detail}; remediation: `ship box doctor`.
 - `remote_preflight_failed`: deploy preflight failed before upload/build/mutation; cause: {detail}; remediation: `ship box doctor`.

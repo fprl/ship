@@ -56,6 +56,16 @@ func currentSecretContext(root, command string, preview bool, branch string, cre
 	if err != nil {
 		return secretContext{}, err
 	}
+	if !preview && branch == "" {
+		state, err := currentGitState(root)
+		if err != nil {
+			return secretContext{}, err
+		}
+		if state.Detached {
+			return secretContext{}, errcat.New(errcat.CodeDetachedHeadRequiresBranch, errcat.Fields{"command": "git checkout <branch>"})
+		}
+		branch = state.Branch
+	}
 	runner, err := NewCommandRunner()
 	if err != nil {
 		return secretContext{}, err

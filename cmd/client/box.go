@@ -29,9 +29,9 @@ func BoxTarget(root string) (string, error) {
 	return ctx.Server, nil
 }
 
-func CmdBoxLs(server string, jsonFlag bool) {
+func CmdBoxApps(server string, jsonFlag bool) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(invalidBoxTargetError(server, "ship box ls"), 2)
+		utils.DieError(invalidBoxTargetError(server, "ship box apps"), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -39,7 +39,7 @@ func CmdBoxLs(server string, jsonFlag bool) {
 	}
 	defer runner.Close()
 
-	out := runSSHChecked(runner, server, serverAppListCommand(jsonFlag), "app list failed", "ship box ls "+server)
+	out := runSSHChecked(runner, server, serverAppListCommand(jsonFlag), "app list failed", "ship box apps "+server)
 	fmt.Print(out)
 }
 
@@ -48,6 +48,12 @@ type boxVersionPayload struct {
 	RecordedClientVersion string `json:"recorded_client_version"`
 	LastClientVersion     string `json:"last_client_version"`
 	Architecture          string `json:"architecture"`
+	Disk                  struct {
+		Status   string `json:"status"`
+		Evidence string `json:"evidence"`
+	} `json:"disk"`
+	Apps             []boxStatusApp `json:"apps"`
+	PendingApprovals int            `json:"pending_approvals"`
 }
 
 type boxStatusPayload struct {
@@ -111,9 +117,9 @@ func CmdBoxStatus(server string, jsonFlag bool) {
 	fmt.Printf("pending approvals: %d\n", payload.PendingApprovals)
 }
 
-func readBoxStatus(runner *CommandRunner, server string) (boxStatusPayload, error) {
+func readBoxStatus(runner sshRunner, server string) (boxStatusPayload, error) {
 	var payload boxStatusPayload
-	versionPayload, err := readBoxVersion(runner, server)
+	versionPayload, err := readBoxStatusSummary(runner, server)
 	if err != nil {
 		return payload, err
 	}
@@ -124,42 +130,9 @@ func readBoxStatus(runner *CommandRunner, server string) (boxStatusPayload, erro
 	payload.UpdateAvailable = ok && cmp < 0
 	payload.HelperAhead = (ok && cmp > 0) || ((!ok || cmp == 0) && versionPayload.Version != version.Version)
 
-	appsOut, err := runSSHDetail(runner, server, serverAppListCommand(true))
-	if err != nil {
-		return payload, err
-	}
-	var apps appListJSON
-	if err := json.Unmarshal([]byte(appsOut), &apps); err != nil {
-		return payload, operationError(fmt.Sprintf("box status failed: invalid app list JSON: %v", err), "ship box status "+server)
-	}
-	payload.Apps = make([]boxStatusApp, 0, len(apps.Apps))
-	for _, app := range apps.Apps {
-		payload.Apps = append(payload.Apps, boxStatusApp{App: app.App, EnvCount: len(app.Envs)})
-	}
-
-	payload.PendingApprovals, err = fetchPendingApprovalCount(runner, server)
-	if err != nil {
-		return payload, err
-	}
-	doctorOut, err := runBoxDoctorJSON(runner, server)
-	if err != nil {
-		return payload, err
-	}
-	var checks []struct {
-		ID       string `json:"id"`
-		Status   string `json:"status"`
-		Evidence string `json:"evidence"`
-	}
-	if err := json.Unmarshal([]byte(doctorOut), &checks); err != nil {
-		return payload, operationError(fmt.Sprintf("box status failed: invalid doctor JSON: %v", err), "ship box status "+server)
-	}
-	for _, check := range checks {
-		if check.ID == "disk_space" {
-			payload.Disk.Status = check.Status
-			payload.Disk.Evidence = check.Evidence
-			break
-		}
-	}
+	payload.Disk = versionPayload.Disk
+	payload.Apps = versionPayload.Apps
+	payload.PendingApprovals = versionPayload.PendingApprovals
 	return payload, nil
 }
 
@@ -168,7 +141,15 @@ func readBoxStatus(runner *CommandRunner, server string) (boxStatusPayload, erro
 // the verb, or an old helper rejects it as usage — and both mean the same
 // thing: converge once with `ship box setup`, the day-0 and recovery path.
 func readBoxVersion(runner sshRunner, server string) (boxVersionPayload, error) {
-	stdout, stderr, code, err := runner.RunSSH(server, serverVersionCommand(true))
+	return readBoxVersionCommand(runner, server, serverVersionCommand(true))
+}
+
+func readBoxStatusSummary(runner sshRunner, server string) (boxVersionPayload, error) {
+	return readBoxVersionCommand(runner, server, serverBoxStatusCommand())
+}
+
+func readBoxVersionCommand(runner sshRunner, server, command string) (boxVersionPayload, error) {
+	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
 		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "box version probe failed")
 		if outcome.TransportCoded != nil {
@@ -191,26 +172,6 @@ func readBoxVersion(runner sshRunner, server string) (boxVersionPayload, error) 
 		return boxVersionPayload{}, operationError("box status failed: invalid helper version JSON", "ship box status "+server)
 	}
 	return payload, nil
-}
-
-// Doctor intentionally exits non-zero when degraded. Status still consumes its
-// JSON because disk evidence remains useful while a version mismatch exists.
-func runBoxDoctorJSON(runner *CommandRunner, server string) (string, error) {
-	stdout, stderr, code, err := runner.RunSSH(server, serverDoctorCommand(server, true))
-	if json.Valid([]byte(stdout)) {
-		return stdout, nil
-	}
-	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "box doctor failed")
-		if outcome.TransportCoded != nil {
-			return "", outcome.TransportCoded
-		}
-		if outcome.RemoteCoded != nil {
-			return "", outcome.RemoteCoded
-		}
-		return "", operationError(outcome.Detail, "ship box status "+server)
-	}
-	return stdout, nil
 }
 
 func CmdBoxUpdate(server string) {

@@ -30,10 +30,7 @@ type cli struct {
 	Rollback   rollbackCmd      `cmd:"" group:"project" help:"Roll back the current branch environment."`
 	Rm         rmCmd            `cmd:"rm" group:"project" help:"Remove an environment by branch name."`
 	Data       dataCmd          `cmd:"" group:"project" help:"Manage Preview data forks."`
-	Pin        pinCmd           `cmd:"" group:"project" help:"Pin a preview environment so the reaper leaves it running."`
-	Unpin      unpinCmd         `cmd:"" group:"project" help:"Unpin a preview environment so normal expiry applies."`
-	Preview    previewCmd       `cmd:"" group:"project" help:"Manage preview protection."`
-	Share      shareCmd         `cmd:"" group:"project" help:"Mint or revoke a protected Preview share link."`
+	Preview    previewCmd       `cmd:"" group:"project" help:"Manage the current Preview."`
 	Save       saveCmd          `cmd:"" group:"project" help:"Create a backup for the current branch environment."`
 	Restore    restoreCmd       `cmd:"" group:"project" help:"Restore the current branch environment from a backup."`
 	SSH        sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the box."`
@@ -228,12 +225,12 @@ func (c whyCmd) Run() error {
 	return nil
 }
 
-type pinCmd struct {
+type previewPinCmd struct {
 	projectArgs
 	Branch string `arg:"" help:"Branch name to pin."`
 }
 
-func (c pinCmd) Run() error {
+func (c previewPinCmd) Run() error {
 	root, err := c.projectRoot()
 	if err != nil {
 		return err
@@ -242,44 +239,32 @@ func (c pinCmd) Run() error {
 	return nil
 }
 
-type unpinCmd struct {
+type previewUnpinCmd struct {
 	projectArgs
 	Branch string `arg:"" help:"Branch name to unpin."`
 }
 
 type previewCmd struct {
-	Password previewPasswordCmd `cmd:"" help:"Print or rotate this app's Preview password and bypass token."`
+	Pin   previewPinCmd   `cmd:"" help:"Pin a preview environment so the reaper leaves it running."`
+	Unpin previewUnpinCmd `cmd:"" help:"Unpin a preview environment so normal expiry applies."`
+	Share previewShareCmd `cmd:"" help:"Print or rotate this Preview's capability URL."`
 }
 
-type previewPasswordCmd struct {
+type previewShareCmd struct {
 	projectArgs
-	Rotate bool `name:"rotate" help:"Generate a new team password; the bypass token stays unchanged."`
+	Rotate bool `name:"rotate" help:"Generate a new preview capability."`
 }
 
-type shareCmd struct {
-	projectArgs
-	Rm bool `name:"rm" help:"Revoke this preview's share link."`
-}
-
-func (c shareCmd) Run() error {
+func (c previewShareCmd) Run() error {
 	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
-	client.CmdShare(root, c.Rm)
+	client.CmdPreviewShare(root, c.Rotate)
 	return nil
 }
 
-func (c previewPasswordCmd) Run() error {
-	root, err := c.projectRoot()
-	if err != nil {
-		return err
-	}
-	client.CmdPreviewPassword(root, c.Rotate)
-	return nil
-}
-
-func (c unpinCmd) Run() error {
+func (c previewUnpinCmd) Run() error {
 	root, err := c.projectRoot()
 	if err != nil {
 		return err
@@ -442,11 +427,12 @@ type boxCmd struct {
 	Setup  boxSetupCmd  `cmd:"" help:"Install or converge a box."`
 	Doctor boxDoctorCmd `cmd:"" help:"Run box diagnostics."`
 	Notify boxNotifyCmd `cmd:"" help:"Read or set the box notification webhook."`
-	Ls     boxLsCmd     `cmd:"ls" help:"List app environments visible on a box."`
+	Apps   boxAppsCmd   `cmd:"" help:"Show the box's app table."`
+	Ls     boxLsCmd     `cmd:"" hidden:""`
 	Rm     boxRmCmd     `cmd:"rm" help:"Destroy an app and all its environments on a box."`
 	Status boxStatusCmd `cmd:"" help:"Show helper version, disk, apps, and approvals for one box."`
 	Update boxUpdateCmd `cmd:"" help:"Update a box helper and version-owned artifacts."`
-	Forget boxForgetCmd `cmd:"" help:"Drop a box host-key pin."`
+	Forget boxForgetCmd `cmd:"" hidden:"" help:"Drop a box host-key pin."`
 }
 
 type boxStatusCmd struct {
@@ -566,19 +552,29 @@ func memberTarget(configPath string) (string, error) {
 	return client.BoxTarget(root)
 }
 
-type boxLsCmd struct {
+type boxAppsCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
 	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
 }
 
-func (c boxLsCmd) Run() error {
-	target, err := boxTargetFor(c.Config, c.Target, "ship box ls <box>")
+func (c boxAppsCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box apps <box>")
 	if err != nil {
 		return err
 	}
-	client.CmdBoxLs(target, c.JSON)
+	client.CmdBoxApps(target, c.JSON)
 	return nil
+}
+
+// boxLsCmd reserves ls for future box listing while making the rename actionable.
+type boxLsCmd struct{}
+
+func (boxLsCmd) Run() error {
+	return errcat.New(errcat.CodeUsageError, errcat.Fields{
+		"detail":  "ship box ls was renamed to ship box apps",
+		"command": "ship box apps",
+	})
 }
 
 type boxDoctorCmd struct {

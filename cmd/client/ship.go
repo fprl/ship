@@ -106,7 +106,11 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, progr
 	if state.Address.ProductionBranch && state.RoutePlan.NoConfiguredDomain {
 		progress.line(prodNoDomainNextLine(state.BoxIP))
 	}
-	return shipOutputPhase(state), nil
+	result, err := shipOutputPhase(state)
+	if err != nil {
+		return ShipResult{}, err
+	}
+	return result, nil
 }
 
 type shipRunState struct {
@@ -262,13 +266,24 @@ func shipApplyPhase(state *shipRunState, rebuild bool, tlsMode string) error {
 	return err
 }
 
-func shipOutputPhase(state shipRunState) ShipResult {
+func shipOutputPhase(state shipRunState) (ShipResult, error) {
+	url := deploymentURLForBoxIP(state.Context, state.Address.EnvName, state.BoxIP)
+	if state.Address.PreviewBranch != "" {
+		liveURL, err := liveEnvURL(state.Runner, state.Context.Server, state.Context.AppName, state.Address.EnvName)
+		if err != nil {
+			return ShipResult{}, err
+		}
+		if liveURL == "" {
+			return ShipResult{}, operationError("deployed, but the preview capability URL could not be read", "ship status")
+		}
+		url = liveURL
+	}
 	return ShipResult{
-		URL:       deploymentURLForBoxIP(state.Context, state.Address.EnvName, state.BoxIP),
+		URL:       url,
 		Env:       state.Address.EnvName,
 		Release:   state.Plan.Release,
 		Processes: processNames(state.Plan.Context.Processes),
-	}
+	}, nil
 }
 
 func failDeployAfterRemoteDir(cleanup func(), err error) (ShipResult, error) {

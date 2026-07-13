@@ -55,8 +55,10 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"rollback", "abc1234"},
 		{"rm", "feat/x"},
 		{"rm", "main", "--confirm", "api"},
-		{"pin", "feat/x"},
-		{"unpin", "feat/x"},
+		{"preview", "pin", "feat/x"},
+		{"preview", "unpin", "feat/x"},
+		{"preview", "share"},
+		{"preview", "share", "--rotate"},
 		{"save"},
 		{"save", "--to", "/tmp/backups"},
 		{"restore", "--from", "backup-id"},
@@ -80,8 +82,8 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"box", "notify", "example.com"},
 		{"box", "notify", "example.com", "https://ntfy.example/ship"},
 		{"box", "notify", "example.com", "--rm"},
-		{"box", "ls", "example.com"},
-		{"box", "ls", "example.com", "--json"},
+		{"box", "apps", "example.com"},
+		{"box", "apps", "example.com", "--json"},
 		{"box", "rm", "api", "--confirm", "api"},
 		{"box", "rm", "api", "example.com", "--confirm", "api"},
 		{"box", "forget", "example.com"},
@@ -194,6 +196,10 @@ func TestPublicCLIRejectsRemovedCompatibilityForms(t *testing.T) {
 		{"restart"},
 		{"restart", "production", "web"},
 		{"destroy", "--env", "production"},
+		{"pin", "feat/x"},
+		{"unpin", "feat/x"},
+		{"share"},
+		{"preview", "password"},
 		{"app", "list"},
 		{"host", "status"},
 		{"box", "add-key", "alice"},
@@ -230,7 +236,7 @@ func TestBoxWithoutSubcommandShowsSubcommandHelp(t *testing.T) {
 	if strings.Contains(text, "--server") {
 		t.Fatalf("box without subcommand should not mention removed --server: %v", err)
 	}
-	for _, want := range []string{"setup", "doctor", "notify", "ls", "rm"} {
+	for _, want := range []string{"setup", "doctor", "notify", "apps", "rm"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("box parse error should mention %q subcommand, got: %v", want, err)
 		}
@@ -316,9 +322,8 @@ func TestBoxVerbHelpUsesBoxPlaceholder(t *testing.T) {
 	for _, args := range [][]string{
 		{"box", "doctor", "--help"},
 		{"box", "notify", "--help"},
-		{"box", "ls", "--help"},
+		{"box", "apps", "--help"},
 		{"box", "rm", "--help"},
-		{"box", "forget", "--help"},
 	} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -345,6 +350,29 @@ func TestBoxVerbHelpUsesBoxPlaceholder(t *testing.T) {
 	}
 }
 
+func TestBoxLsRedirectsToApps(t *testing.T) {
+	ctx, err := newTestParser(t).Parse([]string{"box", "ls"})
+	if err != nil {
+		t.Fatalf("parse box ls: %v", err)
+	}
+	err = ctx.Run()
+	if !errcat.Is(err, errcat.CodeUsageError) || !strings.Contains(err.Error(), "ship box apps") {
+		t.Fatalf("box ls error = %v, want usage remediation for box apps", err)
+	}
+}
+
+func TestBoxHelpHidesForget(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	parser, err := kong.New(&cli{}, kong.Name("ship"), kong.ConfigureHelp(kong.HelpOptions{NoExpandSubcommands: true}), kong.Exit(func(int) {}), kong.Writers(&stdout, &stderr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = parser.Parse([]string{"box", "--help"})
+	if strings.Contains(stdout.String()+stderr.String(), "forget") {
+		t.Fatalf("box help exposed hidden forget command:\n%s%s", stdout.String(), stderr.String())
+	}
+}
+
 func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	parser, err := kong.New(
@@ -362,7 +390,7 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	}
 	_, _ = parser.Parse([]string{"--help"})
 	text := stdout.String() + stderr.String()
-	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "pin", "unpin", "save", "restore", "ssh", "secret <command>", "box <command>", "member <command>", "approve", "docs", "help", "version"} {
+	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "preview <command>", "save", "restore", "ssh", "secret <command>", "box <command>", "member <command>", "approve", "docs", "help", "version"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("top-level help should mention %q, got:\n%s", want, text)
 		}

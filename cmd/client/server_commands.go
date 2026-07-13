@@ -31,6 +31,10 @@ func serverVersionCommand(jsonFlag bool) string {
 	return serverCommand("version")
 }
 
+func serverBoxStatusCommand() string {
+	return serverCommand("version", "--json", "--summary")
+}
+
 func serverUpdateCommand(version string) string {
 	return serverCommand("update", "--version", version)
 }
@@ -215,19 +219,10 @@ func serverAppPreviewUnpinCommand(appName, branch string) string {
 	return serverCommand("app", "preview", "unpin", appName, branch)
 }
 
-func serverAppPreviewPasswordCommand(appName, envName string, rotate bool) string {
-	args := []string{"app", "preview", "password"}
+func serverAppPreviewShareCommand(appName, envName string, rotate bool) string {
+	args := []string{"app", "preview", "share"}
 	if rotate {
 		args = append(args, "--rotate")
-	}
-	args = append(args, appName, envName)
-	return serverCommand(args...)
-}
-
-func serverAppShareCommand(appName, envName string, rm bool) string {
-	args := []string{"app", "share"}
-	if rm {
-		args = append(args, "--rm")
 	}
 	args = append(args, appName, envName)
 	return serverCommand(args...)

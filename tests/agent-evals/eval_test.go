@@ -444,7 +444,7 @@ func evalScenarios() []evalScenario {
 			SetupSummary:   "feature preview is deployed, forcibly expired, reaped, then referenced by pin",
 			Goal:           "recreate the expired preview",
 			CheckerSummary: "Preview feature/expired exists again and serves 200",
-			RetryCommand:   "ship pin feature/expired",
+			RetryCommand:   "ship preview pin feature/expired",
 			Setup:          setupExpiredPreviewReferenced,
 			Induce:         inducePinExpiredPreview,
 			Check:          checkExpiredPreviewRecreated,
@@ -601,7 +601,7 @@ func induceAgentShip(t *testing.T, e *evalCase, p *evalProject) commandResult {
 
 func inducePinExpiredPreview(t *testing.T, e *evalCase, p *evalProject) commandResult {
 	t.Helper()
-	return e.run(t, p.Dir, nil, nil, e.suite.shipBin, "pin", p.Branch)
+	return e.run(t, p.Dir, nil, nil, e.suite.shipBin, "preview", "pin", p.Branch)
 }
 
 func newProjectDir(t *testing.T, e *evalCase, name string) string {

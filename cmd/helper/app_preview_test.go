@@ -234,6 +234,7 @@ func setupPreviewHostTest(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	t.Setenv("SHIP_SECRETS_DIR", filepath.Join(root, "secrets"))
 	t.Setenv("SHIP_DEPLOY_TMP_DIR", filepath.Join(root, "deploy-tmp"))
 	t.Setenv("SHIP_LOCK_DIR", filepath.Join(root, "locks"))
 	bin := filepath.Join(root, "bin")

@@ -172,14 +172,11 @@ web = { port = 3000 }
 	}
 }
 
-func TestLoadAppContextParsesPreviewProtectionSeparatelyFromEnvOverlay(t *testing.T) {
+func TestLoadAppContextParsesPreviewOverlay(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
 	writeManifest(t, root, `name = "api"
 box = "example.com"
-
-[previews]
-protected = true
 
 [env.preview]
 LOG_LEVEL = "debug"
@@ -191,26 +188,21 @@ web = { port = 3000 }
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !preview.PreviewProtected || preview.Vars["LOG_LEVEL"] != "debug" {
-		t.Fatalf("preview protection and env overlay should be independent: %+v", preview)
+	if preview.Vars["LOG_LEVEL"] != "debug" {
+		t.Fatalf("preview env overlay should apply: %+v", preview)
 	}
-	prod, err := LoadAppContext(root, ProductionEnvName)
-	if err != nil {
+	if _, err := LoadAppContext(root, ProductionEnvName); err != nil {
 		t.Fatal(err)
 	}
-	if !prod.PreviewProtected {
-		t.Fatal("preview behaviour should remain available to helper context")
-	}
-
 	writeManifest(t, root, `name = "api"
 box = "example.com"
 [previews]
-unknown = true
+protected = true
 [processes]
 web = { port = 3000 }
 `)
-	if _, err := ReadManifest(root); err == nil || !strings.Contains(err.Error(), "previews.unknown") {
-		t.Fatalf("unknown previews key should fail strict parsing, got %v", err)
+	if _, err := ReadManifest(root); err == nil || !strings.Contains(err.Error(), "previews") {
+		t.Fatalf("previews table should fail strict parsing, got %v", err)
 	}
 }
 

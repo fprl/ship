@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -32,6 +33,7 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"doctor", "--json"},
 		{"doctor", "--box-target", "example.com", "--json"},
 		{"doctor", "record"},
+		{"version", "--json", "--summary"},
 		{"app", "setup-env", "api", "production"},
 		{"app", "--member-fingerprint", aliceFingerprint, "status", "--json", "api", "production"},
 		{"app", "preflight", "--secret", "DATABASE_URL", "--json", "api", "production"},
@@ -43,9 +45,8 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "preview", "resolve", "api", "feat/x"},
 		{"app", "preview", "pin", "api", "feat/x"},
 		{"app", "preview", "unpin", "api", "feat/x"},
-		{"app", "preview", "password", "--rotate", "api", "feat-x-abcd"},
-		{"app", "share", "api", "feat-x-abcd"},
-		{"app", "share", "--rm", "api", "feat-x-abcd"},
+		{"app", "preview", "share", "api", "feat-x-abcd"},
+		{"app", "preview", "share", "--rotate", "api", "feat-x-abcd"},
 		{"app", "data", "fork", "api", "prod", "feat-x-abcd"},
 		{"app", "data", "rm", "api", "feat-x-abcd"},
 		{"app", "secret", "set", "api", "production", "DATABASE_URL"},
@@ -101,6 +102,17 @@ func TestAppLogsPodmanArgsIncludesTailInFollowMode(t *testing.T) {
 	}
 }
 
+func TestWriteBufferedLogsDoesNotAppendFallbackAfterStderr(t *testing.T) {
+	var stdout, stderr, gotStdout, gotStderr bytes.Buffer
+	stderr.WriteString("app wrote to stderr\n")
+
+	writeBufferedLogs(&stdout, &stderr, &gotStdout, &gotStderr)
+
+	if gotStdout.Len() != 0 || gotStderr.String() != "app wrote to stderr\n" {
+		t.Fatalf("stderr-only logs = stdout %q stderr %q", gotStdout.String(), gotStderr.String())
+	}
+}
+
 func TestServerCLIAppliesMemberFingerprintFlag(t *testing.T) {
 	setServerMemberFingerprint("")
 	t.Cleanup(func() { setServerMemberFingerprint("") })
@@ -114,6 +126,8 @@ func TestServerCLIRejectsRemovedCompatibilityCommands(t *testing.T) {
 	tests := [][]string{
 		{"status"},
 		{"app", "restart", "api", "production"},
+		{"app", "preview", "password", "api", "feat-x-abcd"},
+		{"app", "share", "api", "feat-x-abcd"},
 		{"app", "rollback", "--json", "api", "production"},
 		{"app", "backup", "api", "production"},
 		{"app", "backup", "--json", "api", "production"},

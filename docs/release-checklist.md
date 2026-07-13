@@ -61,7 +61,7 @@ pointing at the box.
 Confirm the box app list before teardown:
 
 ```bash
-./dist/ship box ls <IP> --json
+./dist/ship box apps <IP> --json
 ```
 
 Clean up each example app from the box:

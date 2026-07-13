@@ -134,9 +134,9 @@ func CmdPreviewPin(root string, branch string, pinned bool) {
 		utils.DieError(err, 1)
 	}
 	if branch == ctx.ProductionBranch {
-		command := "ship pin <preview-branch>"
+		command := "ship preview pin <preview-branch>"
 		if !pinned {
-			command = "ship unpin <preview-branch>"
+			command = "ship preview unpin <preview-branch>"
 		}
 		utils.DieError(errcat.New(errcat.CodeProductionBranchNotPreview, errcat.Fields{
 			"branch":  fmt.Sprintf("%q", branch),

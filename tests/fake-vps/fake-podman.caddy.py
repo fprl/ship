@@ -21,8 +21,6 @@ as a no-op.
 """
 
 import http.client
-import base64
-import crypt
 import os
 import re
 import sys
@@ -34,9 +32,8 @@ SITE_RE = re.compile(r'^\s*"(?P<host>[^"]+)"\s*\{\s*$')
 PROXY_RE = re.compile(r'^\s*reverse_proxy\s+http://(?P<upstream>[A-Za-z0-9_.-]+):(?P<port>\d+)\s*$')
 REDIR_RE = re.compile(r'^\s*redir\s+"(?P<to>[^"]+)"\s+permanent\s*$')
 ROOT_RE = re.compile(r'^\s*root\s+\*\s+"(?P<root>[^"]+)"\s*$')
-BYPASS_RE = re.compile(r'^\s*not\s+header\s+x-ship-bypass\s+"(?P<token>[^"]+)"\s*$')
-TEAM_HASH_RE = re.compile(r'^\s*team\s+"(?P<hash>\$2[^"]+)"\s*$')
-SHARE_QUERY_RE = re.compile(r'^\s*@ship_share\s+query\s+"ship_share=(?P<token>[^"]+)"\s*$')
+CAPABILITY_HEADER_RE = re.compile(r'^\s*not\s+header\s+x-ship-capability\s+"(?P<token>[^"]+)"\s*$')
+CAPABILITY_QUERY_RE = re.compile(r'^\s*@ship_capability_query\s+query\s+"ship=(?P<token>[^"]+)"\s*$')
 
 CONF_DIR = "/etc/caddy/conf.d"
 
@@ -136,7 +133,7 @@ def load_routes():
 
 
 def load_protections():
-    """Read generated preview basic_auth, bypass, and share stanzas."""
+    """Read generated preview capability stanzas."""
     protections = {}
     if not os.path.isdir(CONF_DIR):
         return protections
@@ -150,33 +147,26 @@ def load_protections():
             continue
         host = None
         token = None
-        hash_value = None
-        share_token = None
         for raw in lines:
             line = raw.rstrip("\n")
             m = SITE_RE.match(line)
             if m:
                 host = m.group("host")
                 token = None
-                hash_value = None
-                share_token = None
                 continue
             if host is None:
                 continue
-            m = BYPASS_RE.match(line)
+            m = CAPABILITY_HEADER_RE.match(line)
             if m:
                 token = m.group("token")
                 continue
-            m = TEAM_HASH_RE.match(line)
+            m = CAPABILITY_QUERY_RE.match(line)
             if m:
-                hash_value = m.group("hash")
+                if token is None:
+                    token = m.group("token")
                 continue
-            m = SHARE_QUERY_RE.match(line)
-            if m:
-                share_token = m.group("token")
-                continue
-            if line.strip() == "}" and token and hash_value:
-                protections[host] = (token, hash_value, share_token)
+            if line.strip() == "}" and token:
+                protections[host] = token
                 host = None
     return protections
 
@@ -190,12 +180,12 @@ def container_port(state_dir, name):
         return None
 
 
-def strip_share_cookie(raw, share_token):
-    if not raw or not share_token:
+def strip_capability_cookie(raw, token):
+    if not raw or not token:
         return raw
-    token = re.escape(share_token)
+    token = re.escape(token)
     return re.sub(
-        r'(^)ship_share=' + token + r'(?:;[ \t]*|$)|(;[ \t]*)ship_share=' + token + r';[ \t]*|;[ \t]*ship_share=' + token + r'$',
+        r'(^)ship=' + token + r'(?:;[ \t]*|$)|(;[ \t]*)ship=' + token + r';[ \t]*|;[ \t]*ship=' + token + r'$',
         r'\1\2',
         raw,
     )
@@ -219,7 +209,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(msg)
 
-    def proxy(self, upstream_name, _upstream_port, strip_credentials=False, share_token=None, strip_authorization=False):
+    def proxy(self, upstream_name, _upstream_port, capability_token=None):
         # The Caddy fragment names an in-container port. In the fake we
         # don't actually run on that port; the app container's
         # fake-podman.app.py listener bound an OS-assigned local port
@@ -237,14 +227,12 @@ class Handler(BaseHTTPRequestHandler):
         for name, value in self.headers.items():
             if name.lower() in ("host", "content-length", "connection"):
                 continue
-            if strip_credentials and name.lower() == "x-ship-bypass":
+            if capability_token and name.lower() == "x-ship-capability":
                 continue
-            if strip_credentials and name.lower() == "cookie":
-                value = strip_share_cookie(value, share_token)
+            if capability_token and name.lower() == "cookie":
+                value = strip_capability_cookie(value, capability_token)
                 if value == "":
                     continue
-            if strip_authorization and name.lower() == "authorization":
-                continue
             forward_headers[name] = value
         try:
             forward.request(self.command, self.path, body=body, headers=forward_headers)
@@ -312,14 +300,11 @@ class Handler(BaseHTTPRequestHandler):
         routes = load_routes()
         host = self.host_header()
         protection = load_protections().get(host)
-        if protection and self.share_redirect(protection[2]):
+        if protection and self.capability_redirect(protection):
             return
-        basic_authenticated = False
         if protection:
-            authorized, basic_authenticated = self.authorized(*protection)
-            if not authorized:
+            if not self.authorized(protection):
                 self.send_response(401)
-                self.send_header("WWW-Authenticate", 'Basic realm="ship preview"')
                 self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
@@ -328,7 +313,7 @@ class Handler(BaseHTTPRequestHandler):
             self.not_found()
             return
         if "proxy" in route:
-            self.proxy(*route["proxy"], strip_credentials=protection is not None, share_token=protection[2] if protection else None, strip_authorization=basic_authenticated)
+            self.proxy(*route["proxy"], capability_token=protection)
             return
         if "redir" in route:
             self.redir(route["redir"])
@@ -338,33 +323,23 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.not_found()
 
-    def share_redirect(self, share_token):
-        if not share_token:
+    def capability_redirect(self, token):
+        if not token:
             return False
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-        if query.get("ship_share") != [share_token]:
+        if query.get("ship") != [token]:
             return False
         self.send_response(302)
-        self.send_header("Set-Cookie", "ship_share=" + share_token + "; Path=/; HttpOnly; Secure")
+        self.send_header("Set-Cookie", "ship=" + token + "; Path=/; HttpOnly; Secure")
         self.send_header("Location", self.path.split("?", 1)[0])
         self.send_header("Content-Length", "0")
         self.end_headers()
         return True
 
-    def authorized(self, bypass_token, password_hash, share_token):
-        if self.headers.get("x-ship-bypass", "") == bypass_token:
-            return True, False
-        if share_token and any(cookie.strip() == "ship_share=" + share_token for cookie in self.headers.get("Cookie", "").split(";")):
-            return True, False
-        raw = self.headers.get("Authorization", "")
-        if not raw.startswith("Basic "):
-            return False, False
-        try:
-            user_password = base64.b64decode(raw[6:]).decode("utf-8")
-            user, password = user_password.split(":", 1)
-        except Exception:
-            return False, False
-        return (user == "team" and crypt.crypt(password, password_hash) == password_hash), True
+    def authorized(self, token):
+        if self.headers.get("x-ship-capability", "") == token:
+            return True
+        return any(cookie.strip() == "ship=" + token for cookie in self.headers.get("Cookie", "").split(";"))
 
     def match_route(self, routes):
         path = self.path.split("?", 1)[0].split("#", 1)[0]

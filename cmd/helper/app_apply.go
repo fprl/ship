@@ -67,10 +67,8 @@ func (c appApplyCmd) Run() error {
 	if err := c.recordClientVersion(); err != nil {
 		utils.DieError(err, 1)
 	}
-	withAppNamedLock(c.App, "preview-protection", func() {
-		withAppEnvLock(c.App, c.Env, func() {
-			c.runLocked()
-		})
+	withAppEnvLock(c.App, c.Env, func() {
+		c.runLocked()
 	})
 	return nil
 }

@@ -674,7 +674,7 @@ func TestSSHHostKeyFailureMapsToErrcat(t *testing.T) {
 	if !errcat.Is(err, errcat.CodeHostKeyChanged) {
 		t.Fatalf("error = %v, want %s", err, errcat.CodeHostKeyChanged)
 	}
-	want := "box host key changed\nSSH host key for 203.0.113.7 is unknown or changed; if the box was rebuilt, re-establish the pin; if not, investigate before trusting this host\nnext: ship box setup <ssh-target>"
+	want := "box host key changed\nSSH host key for 203.0.113.7 is unknown or changed; if the box was rebuilt, re-establish the pin (ship box forget 203.0.113.7 clears it); if not, investigate before trusting this host\nnext: ship box setup <ssh-target>"
 	if err.Error() != want {
 		t.Fatalf("host key error mismatch\nwant:\n%s\ngot:\n%s", want, err)
 	}
@@ -693,7 +693,7 @@ func TestSSHHostKeyFailureDoesNotScanStdout(t *testing.T) {
 	}
 }
 
-func TestRunBoxDoctorJSONPreservesTransportCodedError(t *testing.T) {
+func TestReadBoxVersionPreservesTransportCodedError(t *testing.T) {
 	bin := t.TempDir()
 	ssh := filepath.Join(bin, "ssh")
 	if err := os.WriteFile(ssh, []byte("#!/bin/sh\necho 'Host key verification failed.' >&2\nexit 255\n"), 0755); err != nil {
@@ -701,7 +701,7 @@ func TestRunBoxDoctorJSONPreservesTransportCodedError(t *testing.T) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	_, err := runBoxDoctorJSON(&CommandRunner{}, "203.0.113.7")
+	_, err := readBoxVersion(&CommandRunner{}, "203.0.113.7")
 	if !errcat.Is(err, errcat.CodeHostKeyChanged) {
 		t.Fatalf("error = %v, want %s", err, errcat.CodeHostKeyChanged)
 	}
@@ -1166,10 +1166,8 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "preview resolve", command: serverAppPreviewResolveCommand("api", "feat/x")},
 		{name: "preview pin", command: serverAppPreviewPinCommand("api", "feat/x")},
 		{name: "preview unpin", command: serverAppPreviewUnpinCommand("api", "feat/x")},
-		{name: "preview password", command: serverAppPreviewPasswordCommand("api", "feat-x-abcd", false)},
-		{name: "preview password rotate", command: serverAppPreviewPasswordCommand("api", "feat-x-abcd", true)},
-		{name: "share", command: serverAppShareCommand("api", "feat-x-abcd", false)},
-		{name: "share rm", command: serverAppShareCommand("api", "feat-x-abcd", true)},
+		{name: "preview share", command: serverAppPreviewShareCommand("api", "feat-x-abcd", false)},
+		{name: "preview share rotate", command: serverAppPreviewShareCommand("api", "feat-x-abcd", true)},
 		{name: "data fork", command: serverAppDataForkCommand("api", "prod", "feat-x-abcd")},
 		{name: "data rm", command: serverAppDataRmCommand("api", "feat-x-abcd")},
 		{name: "secret set", command: serverAppSecretSetCommand("api", "production", "DATABASE_URL")},
@@ -1304,6 +1302,14 @@ func TestServerAppListCommandSupportsJSON(t *testing.T) {
 	want = "sudo -n /usr/local/bin/ship server app list --json"
 	if got != want {
 		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestServerBoxStatusCommandUsesCompactVersionSummary(t *testing.T) {
+	got := serverBoxStatusCommand()
+	want := "sudo -n /usr/local/bin/ship server version --json --summary"
+	if got != want {
+		t.Fatalf("unexpected box status command:\nwant: %s\n got: %s", want, got)
 	}
 }
 
@@ -1537,24 +1543,14 @@ func TestServerAppPreviewCommands(t *testing.T) {
 			want: "sudo -n /usr/local/bin/ship server app preview unpin api feat/x",
 		},
 		{
-			name: "password",
-			got:  serverAppPreviewPasswordCommand("api", "feat-x-abcd", false),
-			want: "sudo -n /usr/local/bin/ship server app preview password api feat-x-abcd",
+			name: "preview share",
+			got:  serverAppPreviewShareCommand("api", "feat-x-abcd", false),
+			want: "sudo -n /usr/local/bin/ship server app preview share api feat-x-abcd",
 		},
 		{
-			name: "password rotate",
-			got:  serverAppPreviewPasswordCommand("api", "feat-x-abcd", true),
-			want: "sudo -n /usr/local/bin/ship server app preview password --rotate api feat-x-abcd",
-		},
-		{
-			name: "share",
-			got:  serverAppShareCommand("api", "feat-x-abcd", false),
-			want: "sudo -n /usr/local/bin/ship server app share api feat-x-abcd",
-		},
-		{
-			name: "share rm",
-			got:  serverAppShareCommand("api", "feat-x-abcd", true),
-			want: "sudo -n /usr/local/bin/ship server app share --rm api feat-x-abcd",
+			name: "preview share rotate",
+			got:  serverAppPreviewShareCommand("api", "feat-x-abcd", true),
+			want: "sudo -n /usr/local/bin/ship server app preview share --rotate api feat-x-abcd",
 		},
 	}
 	for _, tt := range tests {
@@ -1961,6 +1957,24 @@ func TestReadBoxVersionMapsPreUpdateBoxesToSetupRequired(t *testing.T) {
 	payload, err := readBoxVersion(healthy, "203.0.113.7")
 	if err != nil || payload.Version != "v0.4.0" {
 		t.Fatalf("healthy probe failed: payload=%+v err=%v", payload, err)
+	}
+}
+
+func TestReadBoxStatusUsesVersionSummaryOnly(t *testing.T) {
+	command := serverBoxStatusCommand()
+	runner := &fakeSSHRunner{responses: map[string]string{
+		command: `{"version":"v0.4.1","disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"pending_approvals":1}`,
+	}}
+
+	payload, err := readBoxStatus(runner, "203.0.113.7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.Disk.Evidence != "/: used=10.0%" || len(payload.Apps) != 1 || payload.Apps[0] != (boxStatusApp{App: "api", EnvCount: 2}) || payload.PendingApprovals != 1 {
+		t.Fatalf("summary = %+v", payload)
+	}
+	if len(runner.commands) != 1 || runner.commands[0] != command {
+		t.Fatalf("box status commands = %v, want only %q", runner.commands, command)
 	}
 }
 

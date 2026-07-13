@@ -147,6 +147,9 @@ func liveEnvURL(runner sshRunner, server, app, env string) (string, error) {
 		}
 		for _, envItem := range item.Envs {
 			if envItem.Env == env {
+				if envItem.CapabilityURL != "" {
+					return envItem.CapabilityURL, nil
+				}
 				return envItem.URL, nil
 			}
 		}

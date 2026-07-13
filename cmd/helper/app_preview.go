@@ -2,6 +2,7 @@ package helper
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/names"
+	"github.com/fprl/ship/internal/secrets"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -34,7 +36,7 @@ type appPreviewCmd struct {
 	Resolve         appPreviewResolveCmd         `cmd:"resolve" help:"Resolve an existing preview mapping for a raw branch."`
 	Pin             appPreviewPinCmd             `cmd:"pin" help:"Pin a preview mapping."`
 	Unpin           appPreviewUnpinCmd           `cmd:"unpin" help:"Unpin a preview mapping."`
-	Password        appPreviewPasswordCmd        `cmd:"password" help:"Print or rotate preview protection credentials."`
+	Share           appPreviewShareCmd           `cmd:"share" help:"Print or rotate this preview's capability URL."`
 }
 
 type appPreviewResolveOrCreateCmd struct {
@@ -148,6 +150,9 @@ func resolveOrCreatePreview(app, branch string, now time.Time) (string, error) {
 	if file, ok, err := findPreviewByBranch(app, branch); err != nil {
 		return "", err
 	} else if ok {
+		if _, err := ensurePreviewCapability(app, file.Env); err != nil {
+			return "", err
+		}
 		return file.Env, nil
 	}
 
@@ -186,12 +191,34 @@ func resolveOrCreatePreview(app, branch string, now time.Time) (string, error) {
 			_ = lock.Release()
 			return "", err
 		}
+		if _, err := ensurePreviewCapability(app, env); err != nil {
+			_ = lock.Release()
+			return "", err
+		}
 		if err := lock.Release(); err != nil {
 			return "", fmt.Errorf("release lock for %s (%s): %v", app, env, err)
 		}
 		return env, nil
 	}
 	return "", fmt.Errorf("could not allocate a unique preview suffix for branch %s", branch)
+}
+
+func ensurePreviewCapability(app, env string) (string, error) {
+	value, err := secrets.GetPreviewCapability(app, env)
+	if err == nil {
+		return string(value), nil
+	}
+	if !errors.Is(err, secrets.ErrNotFound) {
+		return "", err
+	}
+	valueString, err := generatePreviewCredential(32)
+	if err != nil {
+		return "", err
+	}
+	if err := secrets.PutPreviewCapability(app, env, []byte(valueString)); err != nil {
+		return "", err
+	}
+	return valueString, nil
 }
 
 func previewEnvExists(app, env string) bool {

@@ -20,22 +20,21 @@ import (
 const (
 	approvalTTL = 15 * time.Minute
 
-	helperVerbShip            helperVerb = "ship"
-	helperVerbRollback        helperVerb = "rollback"
-	helperVerbExec            helperVerb = "exec"
-	helperVerbRead            helperVerb = "read"
-	helperVerbSecretSet       helperVerb = "secret_set"
-	helperVerbSecretRead      helperVerb = "secret_read"
-	helperVerbSecretRemove    helperVerb = "secret_remove"
-	helperVerbPreviewPin      helperVerb = "preview_pin"
-	helperVerbPreviewPassword helperVerb = "preview_password"
-	helperVerbShare           helperVerb = "share"
-	helperVerbData            helperVerb = "data"
-	helperVerbRemoveEnv       helperVerb = "rm"
-	helperVerbMember          helperVerb = "member"
-	helperVerbBackupCreate    helperVerb = "save"
-	helperVerbBackupRestore   helperVerb = "restore"
-	helperVerbBoxMutation     helperVerb = "box_mutation"
+	helperVerbShip          helperVerb = "ship"
+	helperVerbRollback      helperVerb = "rollback"
+	helperVerbExec          helperVerb = "exec"
+	helperVerbRead          helperVerb = "read"
+	helperVerbSecretSet     helperVerb = "secret_set"
+	helperVerbSecretRead    helperVerb = "secret_read"
+	helperVerbSecretRemove  helperVerb = "secret_remove"
+	helperVerbPreviewPin    helperVerb = "preview_pin"
+	helperVerbShare         helperVerb = "share"
+	helperVerbData          helperVerb = "data"
+	helperVerbRemoveEnv     helperVerb = "rm"
+	helperVerbMember        helperVerb = "member"
+	helperVerbBackupCreate  helperVerb = "save"
+	helperVerbBackupRestore helperVerb = "restore"
+	helperVerbBoxMutation   helperVerb = "box_mutation"
 
 	roleScopeAny     roleScope = "any"
 	roleScopePreview roleScope = "preview"
@@ -69,9 +68,6 @@ var helperRoleMatrix = map[helperVerb]map[store.MemberRole]roleScope{
 	helperVerbPreviewPin: {
 		store.MemberRoleShipper: roleScopeAny,
 		store.MemberRoleAgent:   roleScopePreview,
-	},
-	helperVerbPreviewPassword: {
-		store.MemberRoleShipper: roleScopeAny,
 	},
 	helperVerbShare: {
 		store.MemberRoleShipper: roleScopeAny,

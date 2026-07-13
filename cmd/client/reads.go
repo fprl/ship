@@ -25,6 +25,7 @@ type appListEnvJSON struct {
 	Class          string              `json:"class"`
 	Branch         string              `json:"branch"`
 	URL            string              `json:"url"`
+	CapabilityURL  string              `json:"capability_url,omitempty"`
 	Env            string              `json:"env"`
 	CurrentRelease string              `json:"current_release"`
 	Health         string              `json:"health"`
@@ -63,18 +64,19 @@ type statusPayload struct {
 }
 
 type statusEnvJSON struct {
-	Class      string              `json:"class"`
-	Branch     string              `json:"branch"`
-	URL        string              `json:"url"`
-	Env        string              `json:"env"`
-	Release    string              `json:"release,omitempty"`
-	Health     string              `json:"health"`
-	AgeSeconds int64               `json:"ageSeconds,omitempty"`
-	ExpiresAt  string              `json:"expiresAt,omitempty"`
-	Pinned     bool                `json:"pinned,omitempty"`
-	Dirty      bool                `json:"dirty,omitempty"`
-	ShippedBy  *deployIdentityJSON `json:"shipped_by,omitempty"`
-	Processes  []processJSON       `json:"processes"`
+	Class         string              `json:"class"`
+	Branch        string              `json:"branch"`
+	URL           string              `json:"url"`
+	CapabilityURL string              `json:"capability_url,omitempty"`
+	Env           string              `json:"env"`
+	Release       string              `json:"release,omitempty"`
+	Health        string              `json:"health"`
+	AgeSeconds    int64               `json:"ageSeconds,omitempty"`
+	ExpiresAt     string              `json:"expiresAt,omitempty"`
+	Pinned        bool                `json:"pinned,omitempty"`
+	Dirty         bool                `json:"dirty,omitempty"`
+	ShippedBy     *deployIdentityJSON `json:"shipped_by,omitempty"`
+	Processes     []processJSON       `json:"processes"`
 }
 
 func CmdStatus(root string, jsonFlag bool) {
@@ -279,22 +281,26 @@ func statusEnvFromAppListItem(ctx *config.AppContext, item appListEnvJSON) statu
 		branch = ctx.ProductionBranch
 	}
 	url := item.URL
+	if item.Class == "preview" && item.CapabilityURL != "" {
+		url = item.CapabilityURL
+	}
 	if url == "" {
 		url = deploymentURL(ctx, item.Env)
 	}
 	return statusEnvJSON{
-		Class:      class,
-		Branch:     branch,
-		URL:        url,
-		Env:        item.Env,
-		Release:    item.CurrentRelease,
-		Health:     item.Health,
-		AgeSeconds: item.AgeSeconds,
-		ExpiresAt:  item.ExpiresAt,
-		Pinned:     item.Pinned,
-		Dirty:      item.Dirty,
-		ShippedBy:  item.ShippedBy,
-		Processes:  item.Processes,
+		Class:         class,
+		Branch:        branch,
+		URL:           url,
+		CapabilityURL: item.CapabilityURL,
+		Env:           item.Env,
+		Release:       item.CurrentRelease,
+		Health:        item.Health,
+		AgeSeconds:    item.AgeSeconds,
+		ExpiresAt:     item.ExpiresAt,
+		Pinned:        item.Pinned,
+		Dirty:         item.Dirty,
+		ShippedBy:     item.ShippedBy,
+		Processes:     item.Processes,
 	}
 }
 

@@ -141,12 +141,7 @@ record.
 
 ## 7. Protect a Preview
 
-Add Preview protection to `ship.toml`:
-
-```toml
-[previews]
-protected = true
-```
+Previews are always protected. No `ship.toml` setting is required.
 
 Create and deploy a Preview branch:
 
@@ -155,22 +150,18 @@ git switch -c feature/billing
 ship
 ```
 
-Print the generated team password and automation bypass token:
+`ship` prints the Preview capability URL. CI and agents send its token as
+`x-ship-capability: <token>`.
+
+Reprint the URL or rotate its token:
 
 ```bash
-ship preview password
+ship preview share
+ship preview share --rotate
 ```
 
-CI and agents send the token as `x-ship-bypass: <token>`.
-
-To send one outsider access without sharing the password, print a share link:
-
-```bash
-ship share
-```
-
-Opening the link grants that browser access to the clean Preview URL. Production
-never gets Preview protection.
+Opening the URL grants that browser access to the clean Preview URL. Production
+stays public.
 
 ## 8. Test a risky data change
 

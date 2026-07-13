@@ -13,7 +13,6 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/secrets"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func TestResolveEnvMergesLiteralsAndSecrets(t *testing.T) {
@@ -451,14 +450,14 @@ func TestRenderAppCaddyfileProcessRouteUsesVersionedContainerDNS(t *testing.T) {
 			"app": {Host: "api.example.com", Process: "web"},
 		},
 	}
-	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil)
+	got, err := renderAppCaddyfileWithProcessNames("api", productionEnvName, ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(got, `"api.example.com" {`) {
 		t.Fatalf("expected quoted host block, got:\n%s", got)
 	}
-	want := "reverse_proxy http://" + identity.ContainerName("api", "production", "web", "abc123") + ":3000"
+	want := "reverse_proxy http://" + identity.ContainerName("api", productionEnvName, "web", "abc123") + ":3000"
 	if !strings.Contains(got, want) {
 		t.Fatalf("expected versioned container reverse_proxy %q, got:\n%s", want, got)
 	}
@@ -467,80 +466,53 @@ func TestRenderAppCaddyfileProcessRouteUsesVersionedContainerDNS(t *testing.T) {
 func TestRenderAppCaddyfileProtectsPreviewButNeverProduction(t *testing.T) {
 	port := 3000
 	base := &config.AppContext{
-		PreviewProtected:   true,
-		PreviewPassword:    "team-password",
-		PreviewBypassToken: "bypass-token",
-		Processes:          map[string]config.Process{"web": {Port: &port}},
-		Routes:             map[string]config.Route{"app": {Host: "api.example.com", Process: "web"}},
+		PreviewCapabilityToken: "capability-token",
+		Processes:              map[string]config.Process{"web": {Port: &port}},
+		Routes:                 map[string]config.Route{"app": {Host: "api.example.com", Process: "web"}},
 	}
 	preview, err := renderAppCaddyfileWithProcessNames("api", "feat-x-ab12", base, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(preview, "basic_auth @ship_auth") || !strings.Contains(preview, "not header x-ship-bypass \"bypass-token\"") {
-		t.Fatalf("protected preview fragment missing auth+bypass directives:\n%s", preview)
-	}
-	authStrip := "\trequest_header @ship_auth -Authorization\n"
-	bypassStrip := "\trequest_header -x-ship-bypass\n"
-	if !strings.Contains(preview, authStrip) {
-		t.Fatalf("protected preview fragment does not strip password Authorization before proxying:\n%s", preview)
-	}
-	if !strings.Contains(preview, bypassStrip) {
-		t.Fatalf("protected preview fragment does not strip bypass header before proxying:\n%s", preview)
-	}
-	if strings.Index(preview, authStrip) > strings.Index(preview, bypassStrip) {
-		t.Fatalf("Authorization must be stripped before bypass evidence:\n%s", preview)
-	}
-	foundHash := false
-	for _, field := range strings.Fields(preview) {
-		if strings.HasPrefix(field, "\"$2") {
-			hash := strings.Trim(field, "\"")
-			if bcrypt.CompareHashAndPassword([]byte(hash), []byte("team-password")) != nil {
-				t.Fatalf("basic_auth hash does not match password: %q", hash)
-			}
-			foundHash = true
-			break
-		}
-	}
-	if !foundHash {
-		t.Fatalf("protected preview basic_auth hash missing:\n%s", preview)
+	if !strings.Contains(preview, "@ship_capability_query query \"ship=capability-token\"") || !strings.Contains(preview, "not header x-ship-capability \"capability-token\"") {
+		t.Fatalf("preview fragment missing capability directives:\n%s", preview)
 	}
 	prod, err := renderAppCaddyfileWithProcessNames("api", productionEnvName, base, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(prod, "basic_auth") || strings.Contains(prod, "ship_auth") {
+	if strings.Contains(prod, "ship_capability") || strings.Contains(prod, "x-ship-capability") {
 		t.Fatalf("production fragment must never be protected:\n%s", prod)
 	}
 }
 
-func TestRenderAppCaddyfileIncludesShareLinkStanza(t *testing.T) {
+func TestRenderAppCaddyfileIncludesCapabilityStanza(t *testing.T) {
 	port := 3000
 	ctx := &config.AppContext{
-		PreviewProtected:   true,
-		PreviewPassword:    "team-password",
-		PreviewBypassToken: "bypass-token",
-		PreviewShareToken:  "share-token",
-		Processes:          map[string]config.Process{"web": {Port: &port}},
-		Routes:             map[string]config.Route{"app": {Host: "api.example.com", Process: "web"}},
+		PreviewCapabilityToken: "capability-token",
+		Processes:              map[string]config.Process{"web": {Port: &port}},
+		Routes:                 map[string]config.Route{"app": {Host: "api.example.com", Process: "web"}},
 	}
 	got, err := renderAppCaddyfileWithProcessNames("api", "feat-x-ab12", ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "\t@ship_share query \"ship_share=share-token\"\n\thandle @ship_share {\n\t\theader Set-Cookie \"ship_share=share-token; Path=/; HttpOnly; Secure\"\n\t\tredir {path} temporary\n\t}\n\t@ship_auth {\n\t\tnot header x-ship-bypass \"bypass-token\"\n\t\tnot header Cookie \"*ship_share=share-token*\"\n\t\tnot query \"ship_share=share-token\"\n"
+	want := "\troute {\n\t\t@ship_capability_query query \"ship=capability-token\"\n\t\thandle @ship_capability_query {\n\t\t\theader Set-Cookie \"ship=capability-token; Path=/; HttpOnly; Secure\"\n\t\t\tredir {path} temporary\n\t\t}\n\t\t@ship_capability_denied {\n\t\t\tnot header x-ship-capability \"capability-token\"\n\t\t\tnot header Cookie \"*ship=capability-token*\"\n\t\t}\n\t\trespond @ship_capability_denied 401\n"
 	if !strings.Contains(got, want) {
-		t.Fatalf("share stanza mismatch:\nwant contained:\n%s\ngot:\n%s", want, got)
+		t.Fatalf("capability stanza mismatch:\nwant contained:\n%s\ngot:\n%s", want, got)
 	}
-	authStrip := "\trequest_header @ship_auth -Authorization\n"
-	bypassStrip := "\trequest_header -x-ship-bypass\n"
-	cookieStrip := "\trequest_header Cookie " + `"(^)ship_share=share-token(?:;[ \\t]*|$)|(;[ \\t]*)ship_share=share-token;[ \\t]*|;[ \\t]*ship_share=share-token$"` + " \"$1$2\"\n"
-	strip := authStrip + bypassStrip + cookieStrip
+	strip := "\t\trequest_header -x-ship-capability\n\t\trequest_header Cookie " + `"(^)ship=capability-token(?:;[ \\t]*|$)|(;[ \\t]*)ship=capability-token;[ \\t]*|;[ \\t]*ship=capability-token$"` + " \"$1$2\"\n"
 	if !strings.Contains(got, strip) {
-		t.Fatalf("protected preview credentials are not stripped in the required order:\nwant contained:\n%s\ngot:\n%s", strip, got)
+		t.Fatalf("preview capabilities are not stripped before proxying:\nwant contained:\n%s\ngot:\n%s", strip, got)
 	}
 	if strings.Index(got, strip) > strings.Index(got, "reverse_proxy") {
 		t.Fatalf("credential stripping must precede reverse_proxy:\n%s", got)
+	}
+	// The 401 gate must sit inside a route block: at Caddy's default
+	// directive order the strips would otherwise run first and deny
+	// every request.
+	if strings.Index(got, "\troute {") > strings.Index(got, "@ship_capability_denied") {
+		t.Fatalf("capability gate is not wrapped in a route block:\n%s", got)
 	}
 	if mode := caddyFragmentMode([]byte(got)); mode != 0600 {
 		t.Fatalf("share-bearing fragment mode = %o, want 0600", mode)
@@ -556,7 +528,7 @@ func TestRenderAppCaddyfileCanUseSpecificProcessContainerName(t *testing.T) {
 		},
 	}
 	upstream := identity.ContainerInstanceName("api", "production", "web", "abc123", "20260530t143012000000000z")
-	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", map[string]string{"web": upstream})
+	got, err := renderAppCaddyfileWithProcessNames("api", productionEnvName, ctx, "abc123", map[string]string{"web": upstream})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,14 +543,14 @@ func TestRenderAppCaddyfileStaticPathUsesHandlePath(t *testing.T) {
 			"docs": {Host: "example.com", Path: "/docs", Serve: "docs-dist"},
 		},
 	}
-	got, err := renderAppCaddyfileWithProcessNames("site", "production", ctx, "abc123", nil)
+	got, err := renderAppCaddyfileWithProcessNames("site", productionEnvName, ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(got, "handle_path /docs/*") {
 		t.Fatalf("expected handle_path for static prefix, got:\n%s", got)
 	}
-	if !strings.Contains(got, `root * "/var/apps/site.production/static/releases/abc123/docs"`) {
+	if !strings.Contains(got, `root * "/var/apps/site.prod/static/releases/abc123/docs"`) {
 		t.Fatalf("expected static route root, got:\n%s", got)
 	}
 	if !strings.Contains(got, "file_server") {
@@ -596,7 +568,7 @@ func TestRenderAppCaddyfileOrdersLongestPathFirst(t *testing.T) {
 			"api":  {Host: "example.com", Path: "/docs/api", Process: "web"},
 		},
 	}
-	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil)
+	got, err := renderAppCaddyfileWithProcessNames("api", productionEnvName, ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,14 +592,14 @@ func TestRenderAppCaddyfileMixedRoutesUseOneRelease(t *testing.T) {
 			"docs": {Host: "example.com", Path: "/docs", Serve: "docs-dist"},
 		},
 	}
-	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil)
+	got, err := renderAppCaddyfileWithProcessNames("api", productionEnvName, ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got, "reverse_proxy http://"+identity.ContainerName("api", "production", "web", "abc123")+":3000") {
+	if !strings.Contains(got, "reverse_proxy http://"+identity.ContainerName("api", productionEnvName, "web", "abc123")+":3000") {
 		t.Fatalf("expected process route to use release container:\n%s", got)
 	}
-	if !strings.Contains(got, `root * "/var/apps/api.production/static/releases/abc123/docs"`) {
+	if !strings.Contains(got, `root * "/var/apps/api.prod/static/releases/abc123/docs"`) {
 		t.Fatalf("expected static route to use release-pinned root:\n%s", got)
 	}
 }
@@ -641,7 +613,7 @@ func TestRenderAppCaddyfileGroupsEmptyTLSWithAuto(t *testing.T) {
 			"docs": {Host: "example.com", Path: "/docs", Serve: "docs-dist", TLS: "auto"},
 		},
 	}
-	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil)
+	got, err := renderAppCaddyfileWithProcessNames("api", productionEnvName, ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -658,7 +630,7 @@ func TestRenderAppCaddyfileEmitsInternalTLS(t *testing.T) {
 			"app": {Host: "example.com", Process: "web", TLS: "internal"},
 		},
 	}
-	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil)
+	got, err := renderAppCaddyfileWithProcessNames("api", productionEnvName, ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -673,7 +645,7 @@ func TestRenderAppCaddyfileRedirectRouteQuotesTarget(t *testing.T) {
 			"r": {Host: "old.example.com", Redirect: "new.example.com"},
 		},
 	}
-	got, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil)
+	got, err := renderAppCaddyfileWithProcessNames("api", productionEnvName, ctx, "abc123", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -689,7 +661,7 @@ func TestRenderAppCaddyfileRejectsProcessWithoutPort(t *testing.T) {
 			"r": {Host: "x.example.com", Process: "worker"},
 		},
 	}
-	if _, err := renderAppCaddyfileWithProcessNames("api", "production", ctx, "abc123", nil); err == nil {
+	if _, err := renderAppCaddyfileWithProcessNames("api", productionEnvName, ctx, "abc123", nil); err == nil {
 		t.Fatal("expected error for process route pointing at portless process")
 	}
 }
@@ -733,7 +705,7 @@ func TestSnapshotAndRestoreCaddyFragmentRoundTrips(t *testing.T) {
 func TestRestoreCaddyFragmentKeepsProtectedFragmentRootOnly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "frag.caddy")
-	protected := []byte("\"pv.example.com\" {\n\t@ship_auth {\n\t\tnot header x-ship-bypass \"tok\"\n\t}\n\tbasic_auth @ship_auth {\n\t\tteam \"hash\"\n\t}\n\treverse_proxy http://x:3000\n}\n")
+	protected := []byte("\"pv.example.com\" {\n\t@ship_capability_denied {\n\t\tnot header x-ship-capability \"tok\"\n\t}\n\treverse_proxy http://x:3000\n}\n")
 	if err := os.WriteFile(path, []byte("garbage"), 0644); err != nil {
 		t.Fatal(err)
 	}

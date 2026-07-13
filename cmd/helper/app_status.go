@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,16 +68,8 @@ type appListCmd struct {
 
 func (c appListCmd) Run() error {
 	authorizeOrDie(helperVerbRead, authTargetForBox("status"))
-	out, err := podmanPSAllContainers()
+	apps, err := appListStatuses()
 	if err != nil {
-		utils.DieError(err, 1)
-	}
-	identityApps, err := identityAppEnvs()
-	if err != nil {
-		utils.DieError(err, 1)
-	}
-	apps := mergeAppEnvs(identityApps, containersToAppEnvs(out))
-	if err := attachAppListRuntimeMetadata(apps); err != nil {
 		utils.DieError(err, 1)
 	}
 	appList := appListFromStatuses(apps, time.Now().UTC())
@@ -89,6 +83,22 @@ func (c appListCmd) Run() error {
 	}
 	fmt.Print(renderAppListText(appList))
 	return nil
+}
+
+func appListStatuses() ([]appEnvStatus, error) {
+	out, err := podmanPSAllContainers()
+	if err != nil {
+		return nil, err
+	}
+	identityApps, err := identityAppEnvs()
+	if err != nil {
+		return nil, err
+	}
+	apps := mergeAppEnvs(identityApps, containersToAppEnvs(out))
+	if err := attachAppListRuntimeMetadata(apps); err != nil {
+		return nil, err
+	}
+	return apps, nil
 }
 
 // appLogsCmd shells `podman logs` for the requested process's
@@ -138,15 +148,19 @@ func (c appLogsCmd) Run() error {
 		}
 		utils.Die(fmt.Sprintf("podman logs %s: %s", containerName, detail), 1)
 	}
-	if stderr.Len() > 0 {
-		_, _ = os.Stderr.Write(stderr.Bytes())
-	}
-	if stdout.Len() == 0 {
-		fmt.Fprintln(os.Stderr, "no log lines yet")
-		return nil
-	}
-	_, _ = os.Stdout.Write(stdout.Bytes())
+	writeBufferedLogs(&stdout, &stderr, os.Stdout, os.Stderr)
 	return nil
+}
+
+func writeBufferedLogs(stdout, stderr *bytes.Buffer, stdoutWriter, stderrWriter io.Writer) {
+	if stderr.Len() > 0 {
+		_, _ = stderrWriter.Write(stderr.Bytes())
+	}
+	if stdout.Len() == 0 && stderr.Len() == 0 {
+		_, _ = fmt.Fprintln(stderrWriter, "no log lines yet")
+		return
+	}
+	_, _ = stdoutWriter.Write(stdout.Bytes())
 }
 
 func appLogsPodmanArgs(follow bool, tail int, containerName string) []string {
@@ -181,6 +195,7 @@ type appListEnvStatus struct {
 	Class          string          `json:"class"`
 	Branch         string          `json:"branch"`
 	URL            string          `json:"url"`
+	CapabilityURL  string          `json:"capability_url,omitempty"`
 	Env            string          `json:"env"`
 	CurrentRelease string          `json:"current_release"`
 	Health         string          `json:"health"`
@@ -501,9 +516,21 @@ func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 		branch = item.Env
 	}
 	url := ""
+	capabilityURL := ""
 	if ctx, cleanup, err := loadAppliedAppContext(item.App, item.Env); err == nil {
 		defer cleanup()
 		url = execDeploymentURL(ctx)
+		if class == "preview" && url != "" {
+			if token, tokenErr := previewCapability(item.App, item.Env); tokenErr == nil {
+				parsed, parseErr := neturl.Parse(url)
+				if parseErr == nil {
+					query := parsed.Query()
+					query.Set("ship", token)
+					parsed.RawQuery = query.Encode()
+					capabilityURL = parsed.String()
+				}
+			}
+		}
 		if item.Preview == nil && item.Env == productionEnvName {
 			branch = ctx.ProductionBranch
 		}
@@ -524,6 +551,7 @@ func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 		Class:          class,
 		Branch:         branch,
 		URL:            url,
+		CapabilityURL:  capabilityURL,
 		Env:            item.Env,
 		CurrentRelease: currentRelease,
 		Health:         appListHealth(item),

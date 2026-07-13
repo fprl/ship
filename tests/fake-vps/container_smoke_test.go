@@ -84,7 +84,7 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("caddy switch failure restores runtime state", env.testCaddySwitchFailureRollback)
 	t.Run("branch env resolution and production guards", env.testBranchEnvironmentGuards)
 	t.Run("preview lifecycle mapping pin and reap", env.testPreviewLifecycle)
-	t.Run("preview protection uses basic auth and a stable bypass token", env.testPreviewProtection)
+	t.Run("preview protection uses one capability", env.testPreviewProtection)
 	t.Run("container rollback runs an older image release", env.testRollback)
 	t.Run("proactive release image pruning", env.testImagePruning)
 	t.Run("backup and restore round-trip app state", env.testBackupRestore)
@@ -105,7 +105,7 @@ func TestContainerSmoke(t *testing.T) {
 
 func (e *smokeEnv) testCaddyValidationRejectsMalformedFragment(t *testing.T) {
 	const fragment = "/etc/caddy/conf.d/malformed.caddy"
-	e.dockerExec(t, "cat > "+fragment+" <<'EOF'\n\"malformed.example.com\" {\n\t@ship_share query ship_share \"tok\"\n}\nEOF")
+	e.dockerExec(t, "cat > "+fragment+" <<'EOF'\n\"malformed.example.com\" {\n\troute {\n\t\t@ship_capability_query query \"ship=tok\"\n\t}\nEOF")
 	t.Cleanup(func() { e.dockerExec(t, "rm -f "+fragment) })
 
 	result := e.run(t, e.repoRoot, nil, "docker", "exec", e.container, "podman", "exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile")
@@ -999,7 +999,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	e.ship(t, app, nil)
 	e.ssh(t, "test -f "+identity.IdentityFile("previewapi", "prod"))
 
-	unknown := e.runShip(t, app, nil, "pin", "ghost/branch")
+	unknown := e.runShip(t, app, nil, "preview", "pin", "ghost/branch")
 	if unknown.err == nil {
 		t.Fatal("pin for an unmapped preview branch should fail")
 	}
@@ -1035,7 +1035,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 		t.Fatalf("expiry should refresh on re-ship: before=%s after=%s", firstExpiry, refreshedExpiry)
 	}
 
-	e.ship(t, app, nil, "pin", "feature/lifecycle")
+	e.ship(t, app, nil, "preview", "pin", "feature/lifecycle")
 	pinned := readPreviewIdentity(t, e, "previewapi", previewEnv)
 	if pinned.Preview == nil || !pinned.Preview.Pinned || pinned.Preview.ExpiresAt != nil {
 		t.Fatalf("pin should clear expiry: %+v", pinned.Preview)
@@ -1043,7 +1043,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")
 	e.dockerExec(t, "test -d "+identity.EnvRoot("previewapi", previewEnv))
 
-	e.ship(t, app, nil, "unpin", "feature/lifecycle")
+	e.ship(t, app, nil, "preview", "unpin", "feature/lifecycle")
 	unpinned := readPreviewIdentity(t, e, "previewapi", previewEnv)
 	if unpinned.Preview == nil || unpinned.Preview.Pinned || unpinned.Preview.ExpiresAt == nil {
 		t.Fatalf("unpin should restore expiry: %+v", unpinned.Preview)
@@ -1079,139 +1079,90 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 	e.mustRun(t, app, nil, "git", "add", ".")
 	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "protected preview")
 	previewURL := assertOnlyURL(t, e.ship(t, app, nil))
-	parsed, err := url.Parse(previewURL)
-	if err != nil || parsed.Hostname() == "" {
+	previewParsed, err := url.Parse(previewURL)
+	if err != nil || previewParsed.Hostname() == "" {
 		t.Fatalf("preview URL = %q, parse err = %v", previewURL, err)
 	}
-	host := parsed.Hostname()
-	status := func(auth, bypass string) string {
-		args := "curl -sS -o /dev/null -w '%{http_code}' -H 'Host: " + host + "'"
-		if auth != "" {
-			args += " -u 'team:" + auth + "'"
-		}
-		if bypass != "" {
-			args += " -H 'x-ship-bypass: " + bypass + "'"
-		}
-		return strings.TrimSpace(e.ssh(t, args+" http://127.0.0.1/health"))
+	host := previewParsed.Hostname()
+	token := previewParsed.Query().Get("ship")
+	if token == "" {
+		t.Fatalf("preview URL missing capability token: %q", previewURL)
 	}
-	if got := status("", ""); got != "401" {
-		t.Fatalf("anonymous protected preview status = %s, want 401", got)
-	}
-	credentials := parsePreviewCredentials(t, e.ship(t, app, nil, "preview", "password"))
-	if got := status(credentials.Password, ""); got != "200" {
-		t.Fatalf("team password protected preview status = %s, want 200", got)
-	}
-	if got := status("", credentials.BypassToken); got != "200" {
-		t.Fatalf("bypass protected preview status = %s, want 200", got)
-	}
-	// The successful deploy above proves the direct process-port probe was not
-	// routed through basic_auth. Production remains public after protection.
-	e.assertRemoteBody(t, "curl -fsS -H 'Host: guard.example.com' http://127.0.0.1/health", "ok")
-
-	rotated := parsePreviewCredentials(t, e.ship(t, app, nil, "preview", "password", "--rotate"))
-	if rotated.BypassToken != credentials.BypassToken {
-		t.Fatalf("password rotation changed bypass token: old=%q new=%q", credentials.BypassToken, rotated.BypassToken)
-	}
-	if got := status(credentials.Password, ""); got != "401" {
-		t.Fatalf("old password after rotation status = %s, want 401", got)
-	}
-	if got := status(rotated.Password, ""); got != "200" {
-		t.Fatalf("new password after rotation status = %s, want 200", got)
-	}
-	if got := status("", credentials.BypassToken); got != "200" {
-		t.Fatalf("bypass after password rotation status = %s, want 200", got)
-	}
-
-	protectedEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "guardapi", "feature/protected")
-	shareTokenFile := "/etc/ship/secrets/guardapi/" + protectedEnv + "/share-token"
-	e.dockerExec(t, "touch /run/fake-podman/fail-caddy-reload")
-	mintFailure := e.runShip(t, app, nil, "share")
-	if mintFailure.err == nil {
-		t.Fatal("share with failing Caddy reload should fail")
-	}
-	e.dockerExec(t, "rm -f /run/fake-podman/fail-caddy-reload")
-
-	shareURL := assertOnlyURL(t, e.ship(t, app, nil, "share"))
-	shareParsed, err := url.Parse(shareURL)
-	if err != nil {
-		t.Fatalf("share URL = %q, parse err = %v", shareURL, err)
-	}
-	shareToken := shareParsed.Query().Get("ship_share")
-	if shareToken == "" {
-		t.Fatalf("share URL missing token: %q", shareURL)
-	}
-	cleanPath := shareParsed.EscapedPath()
+	cleanPath := previewParsed.EscapedPath()
 	if cleanPath == "" {
 		cleanPath = "/"
 	}
-	shareHeaders := e.ssh(t, "curl -sS -D - -o /dev/null -H 'Host: "+host+"' "+h.ShellQuote("http://127.0.0.1"+shareParsed.RequestURI()))
-	assertContains(t, shareHeaders, "302 Found")
-	assertContains(t, shareHeaders, "Set-Cookie: ship_share="+shareToken+"; Path=/; HttpOnly; Secure")
-	assertContains(t, shareHeaders, "Location: "+cleanPath)
-	sharedStatus := strings.TrimSpace(e.ssh(t, "curl -sS -o /dev/null -w '%{http_code}' -H 'Host: "+host+"' -H 'Cookie: ship_share="+shareToken+"' http://127.0.0.1"+cleanPath))
-	if sharedStatus != "200" {
-		t.Fatalf("shared preview status = %s, want 200", sharedStatus)
+	status := func(args string) string {
+		return strings.TrimSpace(e.ssh(t, "curl -sS -o /dev/null -w '%{http_code}' -H 'Host: "+host+"' "+args+" http://127.0.0.1"+cleanPath))
 	}
-	passwordHeaders := e.ssh(t, "curl -fsS -H 'Host: "+host+"' -u 'team:"+rotated.Password+"' -H 'Cookie: first=one; last=two' http://127.0.0.1/request-headers")
-	assertContains(t, passwordHeaders, "authorization=\n")
-	assertContains(t, passwordHeaders, "x-ship-bypass=\n")
-	assertContains(t, passwordHeaders, "cookie=first=one; last=two\n")
-	for _, request := range []struct {
-		name string
-		args string
-	}{
-		{
-			name: "bypass header",
-			args: "-H 'x-ship-bypass: " + credentials.BypassToken + "' -H 'Authorization: Bearer app-token' -H 'Cookie: first=one; ship_share=" + shareToken + "; last=two'",
-		},
-		{
-			name: "share cookie",
-			args: "-H 'Authorization: Bearer app-token' -H 'Cookie: first=one; ship_share=" + shareToken + "; last=two'",
-		},
-	} {
-		t.Run(request.name, func(t *testing.T) {
-			headers := e.ssh(t, "curl -fsS -H 'Host: "+host+"' "+request.args+" http://127.0.0.1/request-headers")
-			assertContains(t, headers, "authorization=Bearer app-token\n")
-			assertContains(t, headers, "x-ship-bypass=\n")
-			assertContains(t, headers, "cookie=first=one; last=two\n")
-			if strings.Contains(headers, credentials.BypassToken) || strings.Contains(headers, shareToken) {
-				t.Fatalf("protected preview app received a bypass credential:\n%s", headers)
-			}
-		})
-	}
-	if again := assertOnlyURL(t, e.ship(t, app, nil, "share")); again != shareURL {
-		t.Fatalf("repeated share URL = %q, want %q", again, shareURL)
-	}
-	e.dockerExec(t, "test -f "+shareTokenFile)
-	e.dockerExec(t, "touch /run/fake-podman/fail-caddy-reload")
-	revokeFailure := e.runShip(t, app, nil, "share", "--rm")
-	if revokeFailure.err == nil {
-		t.Fatal("share revoke with failing Caddy reload should fail")
-	}
-	e.dockerExec(t, "test -f "+shareTokenFile)
-	if got := strings.TrimSpace(e.ssh(t, "curl -sS -o /dev/null -w '%{http_code}' -H 'Host: "+host+"' -H 'Cookie: ship_share="+shareToken+"' http://127.0.0.1"+cleanPath)); got != "200" {
-		t.Fatalf("share cookie after failed revoke status = %s, want 200", got)
-	}
-	e.dockerExec(t, "rm -f /run/fake-podman/fail-caddy-reload")
-	e.ship(t, app, nil, "share", "--rm")
-	if got := strings.TrimSpace(e.ssh(t, "curl -sS -o /dev/null -w '%{http_code}' -H 'Host: "+host+"' -H 'Cookie: ship_share="+shareToken+"' http://127.0.0.1"+cleanPath)); got != "401" {
-		t.Fatalf("old share cookie status = %s, want 401", got)
-	}
-	oldShareHeaders := e.ssh(t, "curl -sS -D - -o /dev/null -H 'Host: "+host+"' "+h.ShellQuote("http://127.0.0.1"+shareParsed.RequestURI()))
-	assertContains(t, oldShareHeaders, "401 Unauthorized")
-	if strings.Contains(oldShareHeaders, "Set-Cookie") {
-		t.Fatalf("revoked share token still set a cookie:\n%s", oldShareHeaders)
-	}
-	if renewed := assertOnlyURL(t, e.ship(t, app, nil, "share")); renewed == shareURL {
-		t.Fatalf("share after revoke reused URL %q", renewed)
+	if got := status(""); got != "401" {
+		t.Fatalf("anonymous protected preview status = %s, want 401", got)
 	}
 
-	e.mustRun(t, app, nil, "git", "checkout", "main")
-	prodShare := e.runCommand(t, app, []string{"SHIP_ERROR_JSON=1"}, nil, e.goBin, "share")
-	if prodShare.err == nil {
-		t.Fatal("production share should fail")
+	capabilityHeaders := e.ssh(t, "curl -sS -D - -o /dev/null -H 'Host: "+host+"' "+h.ShellQuote("http://127.0.0.1"+previewParsed.RequestURI()))
+	assertContains(t, capabilityHeaders, "302 Found")
+	assertContains(t, capabilityHeaders, "Set-Cookie: ship="+token+"; Path=/; HttpOnly; Secure")
+	assertContains(t, capabilityHeaders, "Location: "+cleanPath)
+	if got := status("-H 'Cookie: ship=" + token + "'"); got != "200" {
+		t.Fatalf("capability URL cookie redirect status = %s, want 200", got)
 	}
-	assertContains(t, prodShare.stdout+prodShare.stderr, "share_on_production")
+	if got := status("-H 'x-ship-capability: " + token + "'"); got != "200" {
+		t.Fatalf("capability header status = %s, want 200", got)
+	}
+	headers := e.ssh(t, "curl -fsS -H 'Host: "+host+"' -H 'x-ship-capability: "+token+"' -H 'Authorization: Bearer app-token' -H 'Cookie: first=one; ship="+token+"; last=two' http://127.0.0.1/request-headers")
+	assertContains(t, headers, "authorization=Bearer app-token\n")
+	assertContains(t, headers, "x-ship-capability=\n")
+	assertContains(t, headers, "cookie=first=one; last=two\n")
+	if strings.Contains(headers, token) {
+		t.Fatalf("protected preview app received its capability token:\n%s", headers)
+	}
+
+	if again := assertOnlyURL(t, e.ship(t, app, nil, "preview", "share")); again != previewURL {
+		t.Fatalf("preview share URL = %q, want %q", again, previewURL)
+	}
+	previewStatus := statusEnvByBranch(t, e, app, "feature/protected")
+	if previewStatus.CapabilityURL != previewURL {
+		t.Fatalf("status capability_url = %q, want %q", previewStatus.CapabilityURL, previewURL)
+	}
+
+	rotatedURL := assertOnlyURL(t, e.ship(t, app, nil, "preview", "share", "--rotate"))
+	rotatedParsed, err := url.Parse(rotatedURL)
+	if err != nil {
+		t.Fatalf("rotated preview URL = %q, parse err = %v", rotatedURL, err)
+	}
+	rotatedToken := rotatedParsed.Query().Get("ship")
+	if rotatedToken == "" || rotatedToken == token {
+		t.Fatalf("rotated capability token = %q, old=%q", rotatedToken, token)
+	}
+	if got := strings.TrimSpace(e.ssh(t, "curl -sS -o /dev/null -w '%{http_code}' -H 'Host: "+host+"' "+h.ShellQuote("http://127.0.0.1"+previewParsed.RequestURI()))); got != "401" {
+		t.Fatalf("old capability URL after rotation status = %s, want 401", got)
+	}
+	if got := status("-H 'x-ship-capability: " + token + "'"); got != "401" {
+		t.Fatalf("old capability header after rotation status = %s, want 401", got)
+	}
+	if got := status("-H 'Cookie: ship=" + token + "'"); got != "401" {
+		t.Fatalf("old capability cookie after rotation status = %s, want 401", got)
+	}
+	rotatedHeaders := e.ssh(t, "curl -sS -D - -o /dev/null -H 'Host: "+host+"' "+h.ShellQuote("http://127.0.0.1"+rotatedParsed.RequestURI()))
+	assertContains(t, rotatedHeaders, "302 Found")
+	if got := status("-H 'Cookie: ship=" + rotatedToken + "'"); got != "200" {
+		t.Fatalf("new capability URL cookie redirect status = %s, want 200", got)
+	}
+	if previewStatus = statusEnvByBranch(t, e, app, "feature/protected"); previewStatus.CapabilityURL != rotatedURL {
+		t.Fatalf("rotated status capability_url = %q, want %q", previewStatus.CapabilityURL, rotatedURL)
+	}
+	// The successful protected deploy proves its process-port probe bypassed
+	// Caddy. Production remains public after capability issuance and rotation.
+	e.assertRemoteBody(t, "curl -fsS -H 'Host: guard.example.com' http://127.0.0.1/health", "ok")
+
+	e.mustRun(t, app, nil, "git", "checkout", "main")
+	for _, args := range [][]string{{"preview", "share"}, {"preview", "share", "--rotate"}} {
+		result := e.runCommand(t, app, []string{"SHIP_ERROR_JSON=1"}, nil, e.goBin, args...)
+		if result.err == nil {
+			t.Fatalf("production %s unexpectedly succeeded", strings.Join(args, " "))
+		}
+		assertContains(t, result.stdout+result.stderr, "share_on_production")
+	}
 	e.mustRun(t, app, nil, "git", "checkout", "feature/protected")
 
 	agentKeyPath := filepath.Join(e.tmp, "preview-protection-agent")
@@ -1222,73 +1173,51 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 		t.Fatal(err)
 	}
 	ownerPrefix := e.pathPrefix
-	e.pathPrefix = e.configureSSHWithKey(t, agentKeyPath)
+	agentPrefix := e.configureSSHWithKey(t, agentKeyPath)
 	t.Cleanup(func() { e.pathPrefix = ownerPrefix })
-	agent := e.runCommand(t, app, []string{"SHIP_SSH_KEY=" + string(agentKey), "SHIP_ERROR_JSON=1"}, nil, e.goBin, "preview", "password")
-	if agent.err == nil {
-		t.Fatal("agent preview password should require approval")
+	e.pathPrefix = agentPrefix
+	agentRotate := e.runCommand(t, app, []string{"SHIP_SSH_KEY=" + string(agentKey), "SHIP_ERROR_JSON=1"}, nil, e.goBin, "preview", "share", "--rotate")
+	if agentRotate.err == nil {
+		t.Fatal("agent preview share rotation should require approval")
 	}
-	assertContains(t, agent.stdout+agent.stderr, "approval_required")
-	agentShare := e.runCommand(t, app, []string{"SHIP_SSH_KEY=" + string(agentKey), "SHIP_ERROR_JSON=1"}, nil, e.goBin, "share")
-	if agentShare.err == nil {
-		t.Fatal("agent share should require approval")
+	agentRotateText := agentRotate.stdout + agentRotate.stderr
+	assertContains(t, agentRotateText, "approval_required")
+	approvalID := approvalIDFromOutput(t, agentRotateText)
+	e.pathPrefix = ownerPrefix
+	e.ship(t, app, nil, "approve", approvalID)
+	e.pathPrefix = agentPrefix
+	agentRetry := e.runCommand(t, app, []string{"SHIP_SSH_KEY=" + string(agentKey)}, nil, e.goBin, "preview", "share", "--rotate")
+	if agentRetry.err != nil {
+		t.Fatalf("approved agent preview share rotation should succeed: %v\nstdout:\n%s\nstderr:\n%s", agentRetry.err, agentRetry.stdout, agentRetry.stderr)
 	}
-	assertContains(t, agentShare.stdout+agentShare.stderr, "approval_required")
+	agentURL := assertOnlyURL(t, agentRetry.stdout)
+	if agentURL == rotatedURL {
+		t.Fatalf("approved agent rotation reused capability URL %q", agentURL)
+	}
 	e.pathPrefix = ownerPrefix
 
-	// App-wide credentials survive preview churn: reap the protected
-	// preview, redeploy the branch, and the bypass token is unchanged.
+	protectedEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "guardapi", "feature/protected")
+	capabilityFile := "/etc/ship/secrets/guardapi/" + protectedEnv + "/capability-token"
+	agentParsed, err := url.Parse(agentURL)
+	if err != nil {
+		t.Fatalf("agent preview URL = %q, parse err = %v", agentURL, err)
+	}
+	agentToken := agentParsed.Query().Get("ship")
+	e.dockerExec(t, "test -f "+capabilityFile)
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "guardapi", protectedEnv)
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("guardapi", protectedEnv))
-	e.dockerExec(t, "test ! -e /etc/ship/secrets/guardapi/"+protectedEnv+"/share-token")
-	e.dockerExec(t, "test -f /etc/ship/secrets/guardapi/_preview-protection/BYPASS_TOKEN")
-	e.ship(t, app, nil)
-	churned := parsePreviewCredentials(t, e.ship(t, app, nil, "preview", "password"))
-	if churned.BypassToken != rotated.BypassToken {
-		t.Fatalf("preview churn changed bypass token: old=%q new=%q", rotated.BypassToken, churned.BypassToken)
+	e.dockerExec(t, "test ! -e "+capabilityFile)
+	// Recreate the branch to obtain a live protected vhost after reap; its
+	// new capability must reject the reaped preview's old token.
+	recreatedURL := assertOnlyURL(t, e.ship(t, app, nil))
+	recreatedParsed, err := url.Parse(recreatedURL)
+	if err != nil || recreatedParsed.Hostname() == "" {
+		t.Fatalf("recreated preview URL = %q, parse err = %v", recreatedURL, err)
 	}
-
-	open := filepath.Join(e.tmp, "preview-unlocked")
-	mustMkdir(t, open)
-	writeUnprotectedPreviewFixture(t, open)
-	e.commitFixture(t, open)
-	e.mustRun(t, open, nil, "git", "checkout", "-B", "main")
-	e.ship(t, open, nil)
-	e.mustRun(t, open, nil, "git", "checkout", "-B", "feature/open")
-	e.ship(t, open, nil)
-	notProtected := e.runCommand(t, open, []string{"SHIP_ERROR_JSON=1"}, nil, e.goBin, "preview", "password")
-	if notProtected.err == nil {
-		t.Fatal("unprotected preview password should fail")
+	if got := strings.TrimSpace(e.ssh(t, "curl -sS -o /dev/null -w '%{http_code}' -H 'Host: "+recreatedParsed.Hostname()+"' -H 'x-ship-capability: "+agentToken+"' http://127.0.0.1"+cleanPath)); got != "401" {
+		t.Fatalf("reaped capability status = %s, want 401", got)
 	}
-	assertContains(t, notProtected.stdout+notProtected.stderr, "previews_not_protected")
-	notProtectedShare := e.runCommand(t, open, []string{"SHIP_ERROR_JSON=1"}, nil, e.goBin, "share")
-	if notProtectedShare.err == nil {
-		t.Fatal("unprotected share should fail")
-	}
-	assertContains(t, notProtectedShare.stdout+notProtectedShare.stderr, "previews_not_protected")
-}
-
-type previewCredentials struct {
-	Password    string
-	BypassToken string
-}
-
-func parsePreviewCredentials(t *testing.T, output string) previewCredentials {
-	t.Helper()
-	var credentials previewCredentials
-	for _, line := range strings.Split(output, "\n") {
-		if value, ok := strings.CutPrefix(line, "team password: "); ok {
-			credentials.Password = value
-		}
-		if value, ok := strings.CutPrefix(line, "bypass token: "); ok {
-			credentials.BypassToken = value
-		}
-	}
-	if credentials.Password == "" || credentials.BypassToken == "" {
-		t.Fatalf("invalid preview credential output: %q", output)
-	}
-	return credentials
 }
 
 func (e *smokeEnv) testMemberAccess(t *testing.T) {
@@ -1704,9 +1633,6 @@ box = "fake-vps"
 production_branch = "main"
 probe = "/health"
 
-[previews]
-protected = true
-
 [processes]
 web = { port = 3000 }
 
@@ -1722,7 +1648,7 @@ web = { port = 3000 }
 	e.ship(t, app, []byte("preview-cleanup"), "secret", "set", "cleanup_key", "--branch", "feature/box-rm")
 	e.ship(t, app, nil)
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "boxrmapi", "feature/box-rm")
-	e.dockerExec(t, "test -f /etc/ship/secrets/boxrmapi/_preview-protection/BYPASS_TOKEN")
+	e.dockerExec(t, "test -f /etc/ship/secrets/boxrmapi/"+previewEnv+"/capability-token")
 
 	missingConfirm := e.runShip(t, e.repoRoot, nil, "box", "rm", "boxrmapi", "fake-vps")
 	if missingConfirm.err == nil {
@@ -1741,8 +1667,8 @@ web = { port = 3000 }
 		e.dockerExec(t, "test ! -e /etc/ship/secrets/boxrmapi/"+env)
 		e.dockerExec(t, "test ! -e "+identity.CaddyFragmentFile("boxrmapi", env))
 	}
-	// The app-wide _preview-protection namespace dies with the last env;
-	// box rm must not leave credentials behind.
+	// box rm must purge the Preview capability credential with its environment.
+	e.dockerExec(t, "test ! -e /etc/ship/secrets/boxrmapi/"+previewEnv+"/capability-token")
 	e.dockerExec(t, "test ! -e /etc/ship/secrets/boxrmapi")
 }
 
@@ -1993,7 +1919,7 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	assertContains(t, status, "release="+oldRelease)
 	assertContains(t, status, "health=healthy")
 
-	rawListJSON := e.ship(t, app, nil, "box", "ls", "--json")
+	rawListJSON := e.ship(t, app, nil, "box", "apps", "--json")
 	var listPayload struct {
 		Apps []struct {
 			App  string `json:"app"`
@@ -2282,12 +2208,24 @@ web = { port = 3000 }
 		t.Fatalf("preview env received Production secret value:\n%s", leaked)
 	}
 
+	prodEnvBeforeBranchSet := prodEnv
+	e.ship(t, app, []byte("branch-token"), "secret", "set", "API_TOKEN")
+	if prodEnvAfterBranchSet := e.dockerExec(t, "cat "+identity.EnvFile("scope", productionEnv)); prodEnvAfterBranchSet != prodEnvBeforeBranchSet {
+		t.Fatalf("bare secret set on a Preview branch changed Production:\nbefore:\n%s\nafter:\n%s", prodEnvBeforeBranchSet, prodEnvAfterBranchSet)
+	}
+	if branchList := e.ship(t, app, nil, "secret", "ls"); !strings.Contains(branchList, "API_TOKEN") {
+		t.Fatalf("bare secret ls should use the current Preview branch, got:\n%s", branchList)
+	}
+	e.ship(t, app, nil)
+	envFile := e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
+	assertContains(t, envFile, "API_TOKEN=branch-token\n")
+
 	e.ship(t, app, []byte("shared-preview-token"), "secret", "set", "API_TOKEN", "--preview")
 	previewList := e.ship(t, app, nil, "secret", "ls", "--preview")
 	assertContains(t, previewList, "API_TOKEN")
 	e.ship(t, app, nil)
-	envFile := e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
-	assertContains(t, envFile, "API_TOKEN=shared-preview-token\n")
+	envFile = e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
+	assertContains(t, envFile, "API_TOKEN=branch-token\n")
 	if strings.Contains(envFile, "prod-token") {
 		t.Fatalf("preview env leaked Production secret value:\n%s", envFile)
 	}
@@ -2312,7 +2250,7 @@ web = { port = 3000 }
 		t.Fatalf("branch secret should win over shared preview and prod:\n%s", envFile)
 	}
 
-	e.ship(t, app, nil, "secret", "rm", "API_TOKEN", "--branch", "feature/secrets")
+	e.ship(t, app, nil, "secret", "rm", "API_TOKEN")
 	e.ship(t, app, nil)
 	envFile = e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
 	assertContains(t, envFile, "API_TOKEN=shared-preview-token\n")
@@ -2608,7 +2546,11 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 
 	// Host-level app listing is sourced from Podman labels instead
 	// of the removed apps.json/routes.json registries.
-	rawListJSON := e.ship(t, app, nil, "box", "ls", "--json")
+	rawListJSON := e.ship(t, app, nil, "box", "apps", "--json")
+	legacyApps := e.runShip(t, app, nil, "box", "ls")
+	if legacyApps.err == nil || !strings.Contains(legacyApps.stderr+legacyApps.stdout, "ship box apps") {
+		t.Fatalf("box ls should fail with box apps remediation:\nstdout:\n%s\nstderr:\n%s", legacyApps.stdout, legacyApps.stderr)
+	}
 	var listPayload struct {
 		Apps []struct {
 			App  string `json:"app"`
@@ -2874,32 +2816,11 @@ box = "fake-vps"
 production_branch = "main"
 probe = "/health"
 
-[previews]
-protected = true
-
 [processes]
 web = { port = 3000 }
 
 [routes]
 "guard.example.com" = "web"
-`)
-}
-
-func writeUnprotectedPreviewFixture(t *testing.T, app string) {
-	t.Helper()
-	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
-CMD ["/bin/sh", "-c", "sleep 3600"]
-`)
-	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "unlockedapi"
-box = "fake-vps"
-production_branch = "main"
-probe = "/health"
-
-[processes]
-web = { port = 3000 }
-
-[routes]
-"unlocked.example.com" = "web"
 `)
 }
 
@@ -3314,16 +3235,17 @@ type smokeStatusPayload struct {
 }
 
 type smokeStatusEnv struct {
-	Class     string `json:"class"`
-	Branch    string `json:"branch"`
-	URL       string `json:"url"`
-	Env       string `json:"env"`
-	Release   string `json:"release"`
-	Health    string `json:"health"`
-	ExpiresAt string `json:"expiresAt"`
-	Pinned    bool   `json:"pinned"`
-	Dirty     bool   `json:"dirty"`
-	ShippedBy *struct {
+	Class         string `json:"class"`
+	Branch        string `json:"branch"`
+	URL           string `json:"url"`
+	CapabilityURL string `json:"capability_url"`
+	Env           string `json:"env"`
+	Release       string `json:"release"`
+	Health        string `json:"health"`
+	ExpiresAt     string `json:"expiresAt"`
+	Pinned        bool   `json:"pinned"`
+	Dirty         bool   `json:"dirty"`
+	ShippedBy     *struct {
 		SSHKeyComment string `json:"ssh_key_comment"`
 		GitAuthor     string `json:"git_author"`
 	} `json:"shipped_by"`
@@ -3422,10 +3344,10 @@ func statusEnvByBranch(t *testing.T, e *smokeEnv, app string, branch string) smo
 
 func appListPayloadForBox(t *testing.T, e *smokeEnv, app string) smokeAppListPayload {
 	t.Helper()
-	rawJSON := e.ship(t, app, nil, "box", "ls", "--json")
+	rawJSON := e.ship(t, app, nil, "box", "apps", "--json")
 	var payload smokeAppListPayload
 	if err := json.Unmarshal([]byte(rawJSON), &payload); err != nil {
-		t.Fatalf("box ls --json output not parseable as JSON: %v\nraw:\n%s", err, rawJSON)
+		t.Fatalf("box apps --json output not parseable as JSON: %v\nraw:\n%s", err, rawJSON)
 	}
 	return payload
 }
