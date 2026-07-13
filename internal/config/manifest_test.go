@@ -33,7 +33,7 @@ notify = "https://ntfy.sh/api"
 [env]
 LOG_LEVEL = "info"
 DATABASE_URL = "@secret"
-SMTP_URL = "@secret:MAIL_URL"
+SMTP_URL = "@secret"
 
 [processes]
 web = { cmd = "bun run src/server.ts", port = 3000, resources = { memory = "512m", cpus = 0.5 } }
@@ -90,7 +90,7 @@ func TestCheckManifestAcceptsContainerV2(t *testing.T) {
 	if ctx.Vars["LOG_LEVEL"] != "info" {
 		t.Fatalf("[env] literal not loaded: %+v", ctx.Vars)
 	}
-	if ctx.SecretRefs["DATABASE_URL"] != "DATABASE_URL" || ctx.SecretRefs["SMTP_URL"] != "MAIL_URL" {
+	if ctx.SecretRefs["DATABASE_URL"] != "DATABASE_URL" || ctx.SecretRefs["SMTP_URL"] != "SMTP_URL" {
 		t.Fatalf("@secret refs not loaded: %+v", ctx.SecretRefs)
 	}
 	if ctx.Release != "bun run migrate" || ctx.Probe != "/health" || ctx.Notify != "https://ntfy.sh/api" {
@@ -127,13 +127,13 @@ box = "example.com"
 [env]
 LOG_LEVEL = "info"
 BASE_ONLY = "kept"
-DATABASE_URL = "@secret:PROD_DB"
+DATABASE_URL = "@secret"
 
 [env.preview]
 LOG_LEVEL = "debug"
-DATABASE_URL = "@secret:PREVIEW_DB"
+DATABASE_URL = "@secret"
 API_TOKEN = "@secret"
-SMTP_URL = "@secret:MAIL_URL"
+SMTP_URL = "@secret"
 
 [processes]
 web = { port = 3000 }
@@ -146,7 +146,7 @@ web = { port = 3000 }
 	if prod.Vars["LOG_LEVEL"] != "info" || prod.Vars["BASE_ONLY"] != "kept" {
 		t.Fatalf("Production vars should use base [env] only: %+v", prod.Vars)
 	}
-	if prod.SecretRefs["DATABASE_URL"] != "PROD_DB" {
+	if prod.SecretRefs["DATABASE_URL"] != "DATABASE_URL" {
 		t.Fatalf("Production secret refs should ignore [env.preview]: %+v", prod.SecretRefs)
 	}
 	if _, ok := prod.SecretRefs["API_TOKEN"]; ok {
@@ -161,9 +161,9 @@ web = { port = 3000 }
 		t.Fatalf("Preview vars should merge base with overlay winning: %+v", preview.Vars)
 	}
 	wants := map[string]string{
-		"DATABASE_URL": "PREVIEW_DB",
+		"DATABASE_URL": "DATABASE_URL",
 		"API_TOKEN":    "API_TOKEN",
-		"SMTP_URL":     "MAIL_URL",
+		"SMTP_URL":     "SMTP_URL",
 	}
 	for envKey, secretKey := range wants {
 		if preview.SecretRefs[envKey] != secretKey {
@@ -626,7 +626,7 @@ web = { port = 3000 }
 		`probe must start with /`,
 		`notify must use http or https`,
 		`[env].DEBUG must be a string; if you want "true", write it as a quoted string`,
-		`[env].BAD_REF value starts with reserved prefix '@secret:', use a valid secret key`,
+		`[env].BAD_REF uses @secret:NAME aliasing, which was removed; name the secret after the variable and use "@secret"`,
 	}
 	for _, want := range wants {
 		if !slices.Contains(errors, want) {

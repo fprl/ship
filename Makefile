@@ -1,4 +1,4 @@
-.PHONY: test go-test go-build go-vet shell-test fake-vps-smoke fake-vps-install-smoke agent-evals agent-evals-oracle init-template-builds build build-linux build-darwin checksum build-release clean
+.PHONY: test go-test go-build go-vet shell-test fake-vps-smoke fake-vps-install-smoke agent-evals agent-evals-oracle build build-linux build-darwin checksum build-release clean
 
 GO ?= go
 DIST_DIR ?= dist
@@ -50,9 +50,6 @@ agent-evals:
 
 agent-evals-oracle:
 	SHIP_RUN_FAKE_VPS_SMOKE=1 SHIP_EVAL_RUNNER=oracle $(GO) test ./tests/agent-evals -run TestAgentEvalScenarios -count=1 -timeout 30m
-
-init-template-builds:
-	SHIP_TEST_INIT_BUILDS=1 $(GO) test ./cmd/client -run TestRunInitGeneratedContainerTemplatesBuildWhenRequested -count=1 -timeout 20m
 
 build:
 	mkdir -p $(DIST_DIR)

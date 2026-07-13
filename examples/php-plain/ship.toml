@@ -3,7 +3,7 @@ box = "example.com"
 probe = "/health"
 
 [env]
-APP_SECRET = "@secret:APP_SECRET"
+APP_SECRET = "@secret"
 DATABASE_PATH = "/data/app.sqlite"
 
 [processes]

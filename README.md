@@ -63,8 +63,7 @@ Inside a repo:
 ship init
 ```
 
-`ship init` writes `ship.toml`, a starter `Dockerfile`, and a tiny app when the
-chosen template needs one. It never overwrites existing files and ends with
+`ship init` writes only `ship.toml`. It never overwrites existing files and ends with
 `next: ship`. Set `box = "203.0.113.7"` in `ship.toml`; app manifests store a
 host only, never `user@host`. Commit the repo, then deploy:
 
@@ -391,8 +390,8 @@ worker = { cmd = "node build/worker.js", preview = false }
 
 [env]                               # renamed from [vars], no alias kept
 LOG_LEVEL    = "info"
-DATABASE_URL = "@secret"            # NEW shorthand: secret name = var name
-SMTP_URL     = "@secret:MAIL_URL"   # existing explicit form kept
+DATABASE_URL = "@secret"            # secret name = var name
+SMTP_URL     = "@secret"
 
 [env.preview]                       # optional; overlays [env] in previews only
 LOG_LEVEL    = "debug"

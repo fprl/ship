@@ -9,14 +9,6 @@ const (
 	ExposePrivate ExposeMode = "private"
 )
 
-type TunnelMode string
-
-const (
-	TunnelNone            TunnelMode = "none"
-	TunnelCloudflare      TunnelMode = "cloudflare"
-	TunnelTailscaleFunnel TunnelMode = "tailscale-funnel"
-)
-
 type HostFile struct {
 	Version  int          `json:"version"`
 	Desired  HostDesired  `json:"desired"`
@@ -38,12 +30,10 @@ type HostUsers struct {
 
 type HostIngressDesired struct {
 	Expose ExposeMode `json:"expose"`
-	Tunnel TunnelMode `json:"tunnel"`
 }
 
 type HostFeatures struct {
-	Docker     bool `json:"docker"`
-	Litestream bool `json:"litestream"`
+	Docker bool `json:"docker"`
 }
 
 type DesiredPackage struct {
@@ -62,8 +52,7 @@ type ObservedPackage struct {
 }
 
 type HostIngressObserved struct {
-	UFW80443Allowed          bool `json:"ufw_80_443_allowed"`
-	CloudflaredServiceActive bool `json:"cloudflared_service_active"`
+	UFW80443Allowed bool `json:"ufw_80_443_allowed"`
 }
 
 type HostMeta struct {
@@ -79,20 +68,6 @@ type ApplyMeta struct {
 	FinishedAt        string `json:"finished_at"`
 	Status            string `json:"status"`
 	OperationsChanged int    `json:"operations_changed"`
-}
-
-type CloudflareRoute struct {
-	App         string `json:"app"`
-	ZoneID      string `json:"zone_id"`
-	DNSRecordID string `json:"dns_record_id"`
-}
-
-type CloudflareFile struct {
-	Version    int                        `json:"version"`
-	AccountID  string                     `json:"account_id,omitempty"`
-	TunnelID   string                     `json:"tunnel_id,omitempty"`
-	TunnelName string                     `json:"tunnel_name,omitempty"`
-	Routes     map[string]CloudflareRoute `json:"routes"`
 }
 
 type DoctorCheck struct {

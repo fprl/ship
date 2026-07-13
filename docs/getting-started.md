@@ -41,10 +41,8 @@ changed key is refused. If you rebuild the VPS at the same address, rerun
 `ship box setup <ssh-target>` to re-establish the pin; no manual
 `ssh-keygen -R` is needed.
 
-Ingress modes are selected with `--ingress public|cloudflare|private`.
-`public` opens Caddy on 80/443, `cloudflare` runs Cloudflare Tunnel and keeps
-public 80/443 closed, and `private` keeps public HTTP closed. Admin access is
-selected with `--admin public-ssh|tailscale`.
+Box setup always opens Caddy on public 80/443 and hardens SSH to keys-only
+access. There are no topology flags.
 
 Check the box:
 

@@ -536,14 +536,13 @@ var verbs = []Verb{
 	{
 		Verb:    "ship",
 		Purpose: "Deploy the current branch and print the deployment URL.",
-		Usage:   "ship [--json] [--branch <name>] [--tls auto|internal] [--rebuild] [--include-dotenv] [--config <path>]",
+		Usage:   "ship [--json] [--branch <name>] [--tls auto|internal] [--rebuild] [--config <path>]",
 		Flags: []Flag{
 			configFlag,
 			{Name: "--json", Purpose: "Emit the mutation object instead of stdout-is-URL."},
 			{Name: "--branch", Value: "<name>", Purpose: "Detached HEAD only; supplies the branch used for branch=env resolution."},
 			{Name: "--tls", Value: "auto|internal", Default: "auto", Purpose: "Select automatic public TLS or internal TLS for synthesized routes."},
 			{Name: "--rebuild", Purpose: "Refresh base images and bypass the container build cache."},
-			{Name: "--include-dotenv", Purpose: "Allow .env-style files in the uploaded artifact."},
 		},
 		JSONSchema: schema(
 			`{"url":"https://...","env":"prod","release":"abc123","processes":["web"],"durationMs":1234}`,
@@ -563,15 +562,13 @@ var verbs = []Verb{
 	},
 	{
 		Verb:    "init",
-		Purpose: "Create local project files and a ship.toml manifest.",
-		Usage:   "ship init [--template container|static|php|hono] [--name <app>] [--box <box>] [--host <host>] [--port <port>] [--config <path>]",
+		Purpose: "Create a ship.toml manifest.",
+		Usage:   "ship init [--name <app>] [--box <box>] [--host <host>] [--config <path>]",
 		Flags: []Flag{
 			configFlag,
-			{Name: "--template", Value: "container|static|php|hono", Default: "container", Purpose: "Scaffold shape."},
 			{Name: "--name", Value: "<app>", Purpose: "App name. Defaults to package.json name or the directory name."},
 			{Name: "--box", Value: "<box>", Default: "203.0.113.7", Purpose: "Box host written to the manifest."},
 			{Name: "--host", Value: "<host>", Purpose: "Route host. Defaults to <app>.example.com."},
-			{Name: "--port", Value: "<port>", Purpose: "Internal process port for container templates."},
 		},
 		ExitCodes: normalExit,
 		Errors:    []string{"usage_error", "manifest_invalid"},
@@ -803,22 +800,10 @@ var verbs = []Verb{
 		Flags: []Flag{
 			{Name: "ssh-target", Purpose: "Bootstrap SSH target like root@example.com or example.com."},
 			{Name: "--mode", Value: "auto|local|remote", Default: "auto", Purpose: "Execution mode."},
-			{Name: "--host", Value: "<host>", Purpose: "Target VPS host for remote bootstrap."},
 			{Name: "--bootstrap-user", Value: "<user>", Purpose: "SSH user for remote bootstrap."},
 			{Name: "--ssh-key", Value: "<path>", Purpose: "SSH private key for remote mode."},
 			{Name: "--operator-ssh-public-key-file", Value: "<path>", Purpose: "SSH public key file for operator access."},
 			{Name: "--deploy-ssh-public-key-file", Value: "<path>", Purpose: "SSH public key file for deploy access. Default: your ship identity becomes the first member."},
-			{Name: "--ingress", Value: "public|cloudflare|private", Purpose: "Ingress mode."},
-			{Name: "--admin", Value: "public-ssh|tailscale", Purpose: "Admin access mode."},
-			{Name: "--tailscale / --no-tailscale", Purpose: "Install and configure Tailscale."},
-			{Name: "--tailscale-auth-key", Value: "<key>", Purpose: "Tailscale auth key."},
-			{Name: "--tailscale-hostname", Value: "<name>", Purpose: "Tailscale hostname."},
-			{Name: "--cloudflare-tunnel / --no-cloudflare-tunnel", Purpose: "Install and configure Cloudflare Tunnel."},
-			{Name: "--cloudflare-api-token", Value: "<token>", Purpose: "Cloudflare API token."},
-			{Name: "--cloudflare-account-id", Value: "<id>", Purpose: "Cloudflare account ID."},
-			{Name: "--cloudflare-tunnel-token", Value: "<token>", Purpose: "Cloudflare tunnel token."},
-			{Name: "--cloudflare-tunnel-config", Value: "<path>", Purpose: "Cloudflare tunnel config path."},
-			{Name: "--litestream / --no-litestream", Purpose: "Install Litestream."},
 			{Name: "--check", Purpose: "Plan changes without mutating the host."},
 		},
 		ExitCodes: normalExit,
@@ -1089,8 +1074,7 @@ Member identity and approvals:
 Manifest env:
 
 - ` + "`[env]`" + ` defines committed container environment variables for every deploy.
-- Values are strings. ` + "`\"@secret\"`" + ` means secret name equals the env key;
-  ` + "`\"@secret:NAME\"`" + ` points at a different secret key.
+- Values are strings. ` + "`\"@secret\"`" + ` is the only secret form and names the secret after the env key.
 - ` + "`[env.preview]`" + ` overlays ` + "`[env]`" + ` for Preview only. Keys merge, and the
   Preview value wins. Production ignores the overlay.
 - ` + "`[env.preview]`" + ` secrets resolve through Preview secret scoping: branch first,

@@ -188,21 +188,6 @@ func TestDoctorServiceFindingsAllowInactiveOptionalServices(t *testing.T) {
 	}
 }
 
-func TestDoctorServiceFindingsRequireConfiguredTunnelService(t *testing.T) {
-	desired := validDoctorHostDesired()
-	desired.Ingress.Tunnel = store.TunnelCloudflare
-	findings := doctorServiceFindingsFor(desired, func(service string) string {
-		if service == "caddy" {
-			return "active"
-		}
-		return "inactive"
-	})
-
-	if len(findings) != 1 || !strings.Contains(findings[0], "cloudflared service is inactive") {
-		t.Fatalf("unexpected service findings: %+v", findings)
-	}
-}
-
 func TestDoctorDiskSpaceThresholds(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -430,8 +415,8 @@ func writeValidHost(t *testing.T, path string) {
   "version": 1,
   "desired": {
     "users": {"operator": "operator", "deploy": "deploy"},
-    "ingress": {"expose": "private", "tunnel": "none"},
-    "features": {"docker": false, "litestream": false},
+    "ingress": {"expose": "private"},
+    "features": {"docker": false},
     "packages": {}
   },
   "observed": {"packages": {}, "ingress": {}},
@@ -447,7 +432,6 @@ func validDoctorHostDesired() store.HostDesired {
 		Users: store.HostUsers{Operator: "operator", Deploy: "deploy"},
 		Ingress: store.HostIngressDesired{
 			Expose: store.ExposePublic,
-			Tunnel: store.TunnelNone,
 		},
 		Features: store.HostFeatures{},
 		Packages: map[string]store.DesiredPackage{},

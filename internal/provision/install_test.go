@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -32,9 +31,6 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	summary, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
-		Tailscale:             false,
-		CloudflareTunnel:      false,
-		InstallLitestream:     false,
 		StateRoot:             root,
 		HelperBinaryPath:      helper,
 		ApplyID:               "apply-test",
@@ -107,9 +103,6 @@ func TestRunInstallDoesNotRestartSSHWhenConfigAlreadyConverged(t *testing.T) {
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
-		Tailscale:             false,
-		CloudflareTunnel:      false,
-		InstallLitestream:     false,
 		StateRoot:             root,
 		HelperBinaryPath:      helper,
 	})
@@ -149,9 +142,6 @@ func TestRunInstallEnrollsAuthorizedKeysWithoutReplacingExistingMembers(t *testi
 	opts := InstallOptions{
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
-		Tailscale:             false,
-		CloudflareTunnel:      false,
-		InstallLitestream:     false,
 		StateRoot:             root,
 		HelperBinaryPath:      helper,
 		ApplyID:               "enroll-test",
@@ -177,334 +167,6 @@ func TestRunInstallEnrollsAuthorizedKeysWithoutReplacingExistingMembers(t *testi
 	}
 	assertAuthorizedKeysLines(t, string(runner.files["/home/deploy/.ssh/authorized_keys"].Content), []string{existingDeploy, deployTestPublicKey})
 	assertAuthorizedKeysLines(t, string(runner.files["/home/operator/.ssh/authorized_keys"].Content), []string{existingOperator, operatorTestPublicKey})
-}
-
-func TestRunInstallSkipsPinnedLitestream(t *testing.T) {
-	root := t.TempDir()
-	helper := filepath.Join(root, "ship")
-	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	runner := &installFakeRunner{
-		files: map[string]host.FileState{},
-		commandResults: map[string]host.CommandResult{
-			"dpkg-query -W -f=${Version} litestream": {Stdout: []byte(litestreamVersion + "\n")},
-		},
-	}
-
-	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
-		DeploySSHPublicKeys:   []string{deployTestPublicKey},
-		Tailscale:             false,
-		CloudflareTunnel:      false,
-		InstallLitestream:     true,
-		StateRoot:             root,
-		HelperBinaryPath:      helper,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, command := range runner.commands {
-		joined := command.Program + " " + strings.Join(command.Args, " ")
-		if strings.Contains(joined, "litestream-"+litestreamVersion) && (command.Program == "curl" || command.Program == "apt-get") {
-			t.Fatalf("pinned Litestream should not be downloaded or reinstalled, command: %+v", command)
-		}
-	}
-}
-
-func TestRunInstallRejectsLitestreamChecksumMismatch(t *testing.T) {
-	root := t.TempDir()
-	helper := filepath.Join(root, "ship")
-	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	runner := &installFakeRunner{files: map[string]host.FileState{}}
-
-	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
-		DeploySSHPublicKeys:   []string{deployTestPublicKey},
-		Tailscale:             false,
-		CloudflareTunnel:      false,
-		InstallLitestream:     true,
-		StateRoot:             root,
-		HelperBinaryPath:      helper,
-	})
-	if err == nil {
-		t.Fatal("expected Litestream checksum mismatch to fail")
-	}
-	if !strings.Contains(err.Error(), "litestream checksum mismatch") {
-		t.Fatalf("expected checksum mismatch error, got: %v", err)
-	}
-	for _, command := range runner.commands {
-		joined := command.Program + " " + strings.Join(command.Args, " ")
-		if command.Program == "apt-get" && strings.Contains(joined, ".deb") {
-			t.Fatalf("mismatched Litestream artifact should not be installed, command: %+v", command)
-		}
-	}
-}
-
-func TestRunInstallInstallsLitestreamAfterChecksumMatch(t *testing.T) {
-	arch := litestreamArch(runtime.GOARCH)
-	if arch == "" {
-		t.Skipf("unsupported test architecture: %s", runtime.GOARCH)
-	}
-	root := t.TempDir()
-	helper := filepath.Join(root, "ship")
-	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	deb := fmt.Sprintf("/tmp/ship-litestream.TEST/litestream-%s-linux-%s.deb", litestreamVersion, arch)
-	runner := &installFakeRunner{
-		files: map[string]host.FileState{},
-		commandResults: map[string]host.CommandResult{
-			"sha256sum " + deb: {Stdout: []byte(litestreamSHA256(arch) + "  " + deb + "\n")},
-		},
-	}
-
-	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
-		DeploySSHPublicKeys:   []string{deployTestPublicKey},
-		Tailscale:             false,
-		CloudflareTunnel:      false,
-		InstallLitestream:     true,
-		StateRoot:             root,
-		HelperBinaryPath:      helper,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	checkIndex := -1
-	installIndex := -1
-	for i, command := range runner.commands {
-		joined := command.Program + " " + strings.Join(command.Args, " ")
-		if joined == "sha256sum "+deb {
-			checkIndex = i
-		}
-		if joined == "apt-get install -y "+deb {
-			installIndex = i
-		}
-	}
-	if checkIndex == -1 {
-		t.Fatalf("expected Litestream checksum verification, commands: %+v", runner.commands)
-	}
-	if installIndex == -1 {
-		t.Fatalf("expected Litestream deb install, commands: %+v", runner.commands)
-	}
-	if checkIndex > installIndex {
-		t.Fatalf("Litestream deb was installed before checksum verification, commands: %+v", runner.commands)
-	}
-}
-
-func TestRequireFileSHA256RejectsMalformedOutput(t *testing.T) {
-	runner := &installFakeRunner{
-		files: map[string]host.FileState{},
-		commandResults: map[string]host.CommandResult{
-			"sha256sum /tmp/artifact.deb": {Stdout: []byte("not-a-sha\n")},
-		},
-	}
-
-	err := requireFileSHA256(host.Apply{Context: context.Background(), Runner: runner}, "artifact", "/tmp/artifact.deb", strings.Repeat("a", 64))
-	if err == nil {
-		t.Fatal("expected malformed checksum output to fail")
-	}
-	if !strings.Contains(err.Error(), "checksum output malformed") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestCloudflareTunnelGuardReadsADRProviderState(t *testing.T) {
-	runner := &installFakeRunner{files: map[string]host.FileState{
-		"/etc/cloudflared/tunnel-token": {
-			Content: []byte("token-test\n"),
-			Owner:   "root",
-			Group:   "cloudflared",
-			Mode:    0640,
-		},
-		"/etc/ship/providers/cloudflare.json": {
-			Content: []byte(`{"version":1,"account_id":"account-test","tunnel_id":"tunnel-test","tunnel_name":"ship-test","routes":{}}`),
-			Owner:   "root",
-			Group:   "root",
-			Mode:    0600,
-		},
-	}}
-
-	ready, err := cloudflareTunnelAlreadyConfigured(host.Apply{
-		Context: context.Background(),
-		Runner:  runner,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ready {
-		t.Fatal("expected Cloudflare tunnel guard to read providers/cloudflare.json")
-	}
-}
-
-func TestRunInstallDoesNotRestartConvergedCloudflaredService(t *testing.T) {
-	root := t.TempDir()
-	helper := filepath.Join(root, "ship")
-	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	unit := cloudflaredUnit("/usr/bin/cloudflared tunnel --no-autoupdate run --token-file /etc/cloudflared/tunnel-token")
-	runner := &installFakeRunner{files: map[string]host.FileState{
-		"/etc/cloudflared/tunnel-token": {
-			Content: []byte("token-test\n"),
-			Owner:   "root",
-			Group:   "cloudflared",
-			Mode:    0640,
-		},
-		"/etc/systemd/system/cloudflared.service": {
-			Content: []byte(unit),
-			Owner:   "root",
-			Group:   "root",
-			Mode:    0644,
-		},
-	}}
-
-	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
-		DeploySSHPublicKeys:   []string{deployTestPublicKey},
-		Tailscale:             false,
-		CloudflareTunnel:      true,
-		CloudflareTunnelToken: "token-test",
-		InstallLitestream:     false,
-		StateRoot:             root,
-		HelperBinaryPath:      helper,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, command := range runner.commands {
-		if command.Program == "systemctl" && strings.Join(command.Args, " ") == "restart cloudflared.service" {
-			t.Fatalf("cloudflared restart should be gated on unit/token drift, commands: %+v", runner.commands)
-		}
-	}
-}
-
-func TestRunInstallRestartsCloudflaredWhenTokenChanges(t *testing.T) {
-	root := t.TempDir()
-	helper := filepath.Join(root, "ship")
-	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	unit := cloudflaredUnit("/usr/bin/cloudflared tunnel --no-autoupdate run --token-file /etc/cloudflared/tunnel-token")
-	runner := &installFakeRunner{files: map[string]host.FileState{
-		"/etc/cloudflared/tunnel-token": {
-			Content: []byte("old-token\n"),
-			Owner:   "root",
-			Group:   "cloudflared",
-			Mode:    0640,
-		},
-		"/etc/systemd/system/cloudflared.service": {
-			Content: []byte(unit),
-			Owner:   "root",
-			Group:   "root",
-			Mode:    0644,
-		},
-	}}
-
-	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
-		DeploySSHPublicKeys:   []string{deployTestPublicKey},
-		Tailscale:             false,
-		CloudflareTunnel:      true,
-		CloudflareTunnelToken: "new-token",
-		InstallLitestream:     false,
-		StateRoot:             root,
-		HelperBinaryPath:      helper,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !runner.ranCommand("systemctl", "restart cloudflared.service") {
-		t.Fatalf("expected cloudflared restart after token drift, commands: %+v", runner.commands)
-	}
-}
-
-func TestRunInstallStartsInactiveConvergedCloudflaredService(t *testing.T) {
-	root := t.TempDir()
-	helper := filepath.Join(root, "ship")
-	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	unit := cloudflaredUnit("/usr/bin/cloudflared tunnel --no-autoupdate run --token-file /etc/cloudflared/tunnel-token")
-	runner := &installFakeRunner{
-		files: map[string]host.FileState{
-			"/etc/cloudflared/tunnel-token": {
-				Content: []byte("token-test\n"),
-				Owner:   "root",
-				Group:   "cloudflared",
-				Mode:    0640,
-			},
-			"/etc/systemd/system/cloudflared.service": {
-				Content: []byte(unit),
-				Owner:   "root",
-				Group:   "root",
-				Mode:    0644,
-			},
-		},
-		commandResults: map[string]host.CommandResult{
-			"systemctl is-active --quiet cloudflared.service": {ExitCode: 3},
-		},
-	}
-
-	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
-		DeploySSHPublicKeys:   []string{deployTestPublicKey},
-		Tailscale:             false,
-		CloudflareTunnel:      true,
-		CloudflareTunnelToken: "token-test",
-		InstallLitestream:     false,
-		StateRoot:             root,
-		HelperBinaryPath:      helper,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runner.ranCommand("systemctl", "restart cloudflared.service") {
-		t.Fatalf("did not expect restart for inactive converged service, commands: %+v", runner.commands)
-	}
-	if !runner.ranCommand("systemctl", "start cloudflared.service") {
-		t.Fatalf("expected start for inactive converged service, commands: %+v", runner.commands)
-	}
-}
-
-func TestRunInstallUsesHostUbuntuCodenameForTailscaleRepo(t *testing.T) {
-	root := t.TempDir()
-	helper := filepath.Join(root, "ship")
-	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	runner := &installFakeRunner{files: map[string]host.FileState{
-		"/etc/os-release": {
-			Content: []byte("ID=ubuntu\nVERSION_CODENAME=jammy\n"),
-			Owner:   "root",
-			Group:   "root",
-			Mode:    0644,
-		},
-	}}
-
-	_, err := RunInstall(context.Background(), runner, InstallOptions{
-		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
-		DeploySSHPublicKeys:   []string{deployTestPublicKey},
-		Tailscale:             true,
-		CloudflareTunnel:      false,
-		InstallLitestream:     false,
-		StateRoot:             root,
-		HelperBinaryPath:      helper,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tailscaleSource := string(runner.files["/etc/apt/sources.list.d/tailscale.list"].Content)
-	if !strings.Contains(tailscaleSource, " jammy main") {
-		t.Fatalf("tailscale repo did not use host codename:\n%s", tailscaleSource)
-	}
-	if !runner.ranCommand("curl", "-fsSL https://pkgs.tailscale.com/stable/ubuntu/jammy.noarmor.gpg -o /tmp/ship-tailscale-apt.TEST/key") {
-		t.Fatalf("tailscale key URL did not use host codename, commands: %+v", runner.commands)
-	}
 }
 
 func TestOSReleaseValue(t *testing.T) {
@@ -748,48 +410,6 @@ func TestRunInstallWritesPreviewReaperAndDoctorTimers(t *testing.T) {
 	}
 }
 
-func TestEnsureSystemdUnitEnabledRunsEnableWhenDisabled(t *testing.T) {
-	runner := &installFakeRunner{
-		files: map[string]host.FileState{},
-		commandResults: map[string]host.CommandResult{
-			"systemctl is-enabled --quiet ship-preview-reaper.timer": {ExitCode: 1},
-		},
-	}
-	changed, err := ensureSystemdUnitEnabled(host.Apply{Context: context.Background(), Runner: runner}, "ship-preview-reaper.timer")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed {
-		t.Fatal("expected disabled timer to be enabled")
-	}
-	if !runner.ranCommand("systemctl", "enable ship-preview-reaper.timer") {
-		t.Fatalf("expected systemctl enable, commands: %+v", runner.commands)
-	}
-}
-
-func TestCaddyUnitIngressModes(t *testing.T) {
-	public := caddyUnit("public")
-	if !strings.Contains(public, "--publish 80:80") || !strings.Contains(public, "--publish 443:443") {
-		t.Fatalf("public ingress should publish 80/443:\n%s", public)
-	}
-
-	cloudflare := caddyUnit("cloudflare")
-	if !strings.Contains(cloudflare, "--publish 127.0.0.1:8080:80") {
-		t.Fatalf("cloudflare ingress should publish loopback 8080:\n%s", cloudflare)
-	}
-	if strings.Contains(cloudflare, "--publish 80:80") || strings.Contains(cloudflare, "--publish 443:443") {
-		t.Fatalf("cloudflare ingress should not publish public 80/443:\n%s", cloudflare)
-	}
-
-	private := caddyUnit("private")
-	if strings.Contains(private, "--publish ") {
-		t.Fatalf("private ingress should not publish host ports:\n%s", private)
-	}
-}
-
-// --- Podman host baseline: UFW podman+ rules + registries.conf.d ---
-// (real-box smoke findings 3 + 4)
-
 const ubuntuBeforeRules = `#
 # rules.before
 #
@@ -815,36 +435,22 @@ const ubuntuBeforeRules = `#
 COMMIT
 `
 
-func TestInjectPodmanUfwBlockFreshInsert(t *testing.T) {
-	next, changed, err := injectPodmanUfwBlock(ubuntuBeforeRules, podmanUfwBlock())
+func TestEnsureSystemdUnitEnabledRunsEnableWhenDisabled(t *testing.T) {
+	runner := &installFakeRunner{
+		files: map[string]host.FileState{},
+		commandResults: map[string]host.CommandResult{
+			"systemctl is-enabled --quiet ship-preview-reaper.timer": {ExitCode: 1},
+		},
+	}
+	changed, err := ensureSystemdUnitEnabled(host.Apply{Context: context.Background(), Runner: runner}, "ship-preview-reaper.timer")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !changed {
-		t.Fatal("expected change on fresh insert")
+		t.Fatal("expected disabled timer to be enabled")
 	}
-	if !strings.Contains(next, "# BEGIN ship podman bridges\n") {
-		t.Fatalf("missing BEGIN marker:\n%s", next)
-	}
-	if !strings.Contains(next, "\n# END ship podman bridges\n") {
-		t.Fatalf("missing END marker:\n%s", next)
-	}
-	if !strings.Contains(next, "-A ufw-before-input -i podman+ -j ACCEPT\n") {
-		t.Fatalf("missing input ACCEPT line:\n%s", next)
-	}
-	if !strings.Contains(next, "-A ufw-before-forward -i podman+ -j ACCEPT\n") {
-		t.Fatalf("missing forward-in ACCEPT line:\n%s", next)
-	}
-	if !strings.Contains(next, "-A ufw-before-forward -o podman+ -j ACCEPT\n") {
-		t.Fatalf("missing forward-out ACCEPT line:\n%s", next)
-	}
-	// Block must land AFTER the anchor (chain declarations) and
-	// BEFORE COMMIT, otherwise the rules don't take effect.
-	anchorIdx := strings.Index(next, "# End required lines")
-	beginIdx := strings.Index(next, "# BEGIN ship podman bridges")
-	commitIdx := strings.Index(next, "\nCOMMIT")
-	if !(anchorIdx < beginIdx && beginIdx < commitIdx) {
-		t.Fatalf("block in wrong position: anchor=%d begin=%d commit=%d\n%s", anchorIdx, beginIdx, commitIdx, next)
+	if !runner.ranCommand("systemctl", "enable ship-preview-reaper.timer") {
+		t.Fatalf("expected systemctl enable, commands: %+v", runner.commands)
 	}
 }
 
@@ -1180,13 +786,6 @@ func (r *installFakeRunner) runGPG(command host.Command) (host.CommandResult, er
 	}
 	if !strings.Contains(joined, "--show-keys") {
 		return host.CommandResult{ExitCode: 1, Stderr: []byte("unsupported fake gpg command")}, nil
-	}
-	path := command.Args[len(command.Args)-1]
-	switch {
-	case strings.Contains(path, "tailscale"):
-		return host.CommandResult{Stdout: []byte(gpgFingerprintOutput(tailscaleAptKeyFingerprint))}, nil
-	case strings.Contains(path, "cloudflare"):
-		return host.CommandResult{Stdout: []byte(gpgFingerprintOutput(cloudflareAptKeyFingerprint))}, nil
 	}
 	return host.CommandResult{ExitCode: 1, Stderr: []byte("unknown fake gpg key")}, nil
 }

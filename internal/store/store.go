@@ -41,10 +41,6 @@ func (s Store) HostPath() string {
 	return filepath.Join(s.root(), "host.json")
 }
 
-func (s Store) CloudflarePath() string {
-	return filepath.Join(s.root(), "providers", "cloudflare.json")
-}
-
 func (s Store) DoctorPath() string {
 	return filepath.Join(s.root(), "doctor.json")
 }
@@ -130,35 +126,6 @@ func (s Store) WriteHostState(observed HostObserved, meta HostMeta) error {
 
 	normalizeHostObserved(&observed)
 	return writeHostState(s.HostPath(), file.Desired, observed, meta)
-}
-
-func (s Store) ReadCloudflare() (*CloudflareFile, error) {
-	var file CloudflareFile
-	if err := readJSON(s.CloudflarePath(), &file); err != nil {
-		if os.IsNotExist(err) {
-			return &CloudflareFile{Version: CurrentVersion, Routes: map[string]CloudflareRoute{}}, nil
-		}
-		return nil, err
-	}
-	if err := validateVersion("providers/cloudflare.json", file.Version); err != nil {
-		return nil, err
-	}
-	file.Version = CurrentVersion
-	if file.Routes == nil {
-		file.Routes = map[string]CloudflareRoute{}
-	}
-	return &file, nil
-}
-
-func (s Store) WriteCloudflare(file CloudflareFile) error {
-	if err := validateVersion("providers/cloudflare.json", file.Version); err != nil {
-		return err
-	}
-	file.Version = CurrentVersion
-	if file.Routes == nil {
-		file.Routes = map[string]CloudflareRoute{}
-	}
-	return writeJSON(s.CloudflarePath(), file, 0600)
 }
 
 func (s Store) ReadDoctor() (*DoctorFile, error) {

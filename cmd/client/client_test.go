@@ -856,6 +856,26 @@ func TestBuildLocalDeployPlanAllowsIgnoredDotenvOutsideCleanArtifact(t *testing.
 	}
 }
 
+func TestBuildLocalDeployPlanRejectsTrackedDotenv(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, clientContainerManifest())
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("SECRET=local\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+
+	_, diags, err := buildLocalDeployPlan(root, "production", localDeployOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errors := diags.errorMessages(); len(errors) != 1 || !strings.Contains(errors[0], ".env") {
+		t.Fatalf("tracked dotenv must reject the deploy artifact, got %+v", diags)
+	}
+}
+
 func TestBuildLocalDeployPlanAllowsUntrackedServeDir(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
@@ -903,6 +923,22 @@ func TestBuildLocalDeployPlanRejectsDotenvInsideServeDir(t *testing.T) {
 	errors := diags.errorMessages()
 	if len(errors) != 1 || !strings.Contains(errors[0], "dist/.env") {
 		t.Fatalf("expected serve dotenv rejection, got %+v", diags)
+	}
+}
+
+func TestDeployDiagnosticsDockerfileMissingNamesBothPaths(t *testing.T) {
+	err := deployDiagnosticsError(diagnostics{{Kind: diagnosticKindDockerfileMissing, Level: diagnosticError}})
+	if !errcat.Is(err, errcat.CodeDockerfileMissing) {
+		t.Fatalf("error = %v, want %s", err, errcat.CodeDockerfileMissing)
+	}
+	for _, want := range []string{
+		"Dockerfile is missing",
+		"the declared processes need a Dockerfile to build",
+		"write a Dockerfile, or declare a [routes] static route in ship.toml",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error missing %q:\n%s", want, err)
+		}
 	}
 }
 

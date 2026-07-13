@@ -74,15 +74,6 @@ Clean up each example app from the box:
 ./dist/ship box rm mixed-app <IP> --confirm mixed-app
 ```
 
-## Init Template Coverage
-
-Run optional local container build coverage when Podman or Docker is available.
-Set `SHIP_TEST_INIT_BUILDER=docker` if Podman is installed but unavailable.
-
-```bash
-make init-template-builds
-```
-
 ## Real VPS Smoke
 
 Run [smoke-real-box.md](smoke-real-box.md) against a freshly rebuilt Ubuntu

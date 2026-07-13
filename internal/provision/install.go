@@ -8,11 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"time"
 
-	"github.com/fprl/ship/internal/cloudflare"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/provision/host"
@@ -21,36 +19,20 @@ import (
 )
 
 const (
-	litestreamVersion           = "0.5.8"
-	litestreamSHA256X8664       = "854ed88ce4c30da887e7c099ffb2941bae2f7108db89886e7ec5ee80c81356b7"
-	litestreamSHA256ARM64       = "bc92d95bc8203a41afe9b5df552aafe1bc0781c6b4341d52970e3f1cd7220c8d"
-	tailscaleAptKeyFingerprint  = "2596A99EAAB33821893C0A79458CA832957F5868"
-	cloudflareAptKeyFingerprint = "CC94B39C77AE7342A68B89628A682D308D4E5E73"
-	defaultOperatorUser         = "operator"
-	defaultDeployUser           = "deploy"
-	defaultTimezone             = "UTC"
-	defaultLocale               = "en_US.UTF-8"
+	defaultOperatorUser = "operator"
+	defaultDeployUser   = "deploy"
+	defaultTimezone     = "UTC"
+	defaultLocale       = "en_US.UTF-8"
 )
 
 type InstallOptions struct {
-	OperatorSSHPublicKeys  []string
-	DeploySSHPublicKeys    []string
-	Ingress                string
-	Admin                  string
-	Tailscale              bool
-	TailscaleAuthKey       string
-	TailscaleHostname      string
-	CloudflareTunnel       bool
-	CloudflareAPIToken     string
-	CloudflareAccountID    string
-	CloudflareTunnelToken  string
-	CloudflareTunnelConfig string
-	InstallLitestream      bool
-	CheckMode              bool
-	StateRoot              string
-	HelperBinaryPath       string
-	ApplyID                string
-	Now                    func() time.Time
+	OperatorSSHPublicKeys []string
+	DeploySSHPublicKeys   []string
+	CheckMode             bool
+	StateRoot             string
+	HelperBinaryPath      string
+	ApplyID               string
+	Now                   func() time.Time
 }
 
 type InstallSummary struct {
@@ -183,7 +165,6 @@ func installOperations(opts InstallOptions, stateStore store.Store, summary *Ins
 	for _, dir := range []host.Directory{
 		{Path: "/etc/ship", Owner: "root", Group: "root", Mode: 0755},
 		{Path: "/etc/ship/backups", Owner: "root", Group: "root", Mode: 0755},
-		{Path: "/etc/ship/providers", Owner: "root", Group: "root", Mode: 0755},
 		{Path: "/etc/ship/secrets", Owner: "root", Group: "root", Mode: 0700},
 	} {
 		dir := dir
@@ -232,16 +213,6 @@ func installOperations(opts InstallOptions, stateStore store.Store, summary *Ins
 	addPodmanHostBaseline(&ops)
 	addDeployTmpDir(&ops)
 	addCaddy(&ops, opts)
-	if opts.InstallLitestream {
-		addLitestream(&ops)
-	}
-	if opts.Tailscale {
-		addTailscale(&ops, opts)
-	}
-	if opts.CloudflareTunnel {
-		addCloudflare(&ops, opts)
-	}
-
 	return ops
 }
 
@@ -403,9 +374,8 @@ func addSecurity(ops *[]operation, opts InstallOptions) {
 		{Rule: "default deny incoming"},
 		{Rule: "default allow outgoing"},
 		{Rule: "allow 22/tcp"},
-		{Rule: "allow 41641/udp"},
-		{Rule: "allow 80/tcp", Delete: ingressMode(opts) != "public"},
-		{Rule: "allow 443/tcp", Delete: ingressMode(opts) != "public"},
+		{Rule: "allow 80/tcp"},
+		{Rule: "allow 443/tcp"},
 	} {
 		rule := rule
 		*ops = append(*ops, operation{name: "ufw " + rule.Rule, run: func(apply host.Apply) (bool, error) {
@@ -867,7 +837,7 @@ func addCaddy(ops *[]operation, opts InstallOptions) {
 	*ops = append(*ops, operation{name: "caddy service", run: func(apply host.Apply) (bool, error) {
 		return host.EnsureSystemdUnit(apply, host.SystemdUnit{
 			Name:    "caddy.service",
-			Content: []byte(caddyUnit(ingressMode(opts))),
+			Content: []byte(caddyUnit()),
 			Action:  host.Started,
 		})
 	}})
@@ -883,17 +853,9 @@ func caddyMainFile() string {
 }
 
 // caddyUnit returns the systemd unit content that runs Caddy as a
-// Podman container on the shared `ingress` network. Public ingress
-// publishes 80/443; Cloudflare ingress exposes Caddy only on loopback
-// for cloudflared; private ingress publishes no host port.
-func caddyUnit(mode string) string {
-	publish := ""
-	switch mode {
-	case "public":
-		publish = " --publish 80:80 --publish 443:443"
-	case "cloudflare":
-		publish = " --publish 127.0.0.1:8080:80"
-	}
+// Podman container on the shared `ingress` network. It publishes public
+// HTTP and HTTPS for every box.
+func caddyUnit() string {
 	return strings.Join([]string{
 		"[Unit]",
 		"Description=Caddy (ship managed, podman)",
@@ -907,7 +869,7 @@ func caddyUnit(mode string) string {
 		"ExecStartPre=-/usr/bin/podman rm caddy",
 		"ExecStart=/usr/bin/podman run --rm --name caddy" +
 			" --network ingress" +
-			publish +
+			" --publish 80:80 --publish 443:443" +
 			" -v /etc/caddy:/etc/caddy:Z" +
 			" -v /var/lib/caddy:/data:Z" +
 			" -v " + identity.AppsRoot() + ":/var/apps:ro,Z" +
@@ -921,334 +883,16 @@ func caddyUnit(mode string) string {
 	}, "\n")
 }
 
-func ingressMode(opts InstallOptions) string {
-	if opts.Ingress == "" {
-		if opts.CloudflareTunnel {
-			return "cloudflare"
-		}
-		return "public"
-	}
-	return opts.Ingress
-}
-
-func addLitestream(ops *[]operation) {
-	*ops = append(*ops, operation{name: "litestream deb", run: func(apply host.Apply) (bool, error) {
-		arch := litestreamArch(runtime.GOARCH)
-		if arch == "" {
-			return false, fmt.Errorf("unsupported Litestream architecture: %s", runtime.GOARCH)
-		}
-		expectedSHA256 := litestreamSHA256(arch)
-		if expectedSHA256 == "" {
-			return false, fmt.Errorf("missing Litestream checksum for architecture: %s", arch)
-		}
-		url := fmt.Sprintf("https://github.com/benbjohnson/litestream/releases/download/v%s/litestream-%s-linux-%s.deb", litestreamVersion, litestreamVersion, arch)
-		installed, err := litestreamInstalled(apply)
-		if err != nil {
-			return false, err
-		}
-		if installed {
-			return false, nil
-		}
-		if apply.CheckMode {
-			return true, nil
-		}
-		tempDir, err := createLitestreamTempDir(apply)
-		if err != nil {
-			return false, err
-		}
-		defer cleanupTempDir(apply, tempDir)
-
-		deb := fmt.Sprintf("%s/litestream-%s-linux-%s.deb", tempDir, litestreamVersion, arch)
-		result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "curl", Args: []string{"-fsSL", url, "-o", deb}})
-		if err != nil {
-			return false, err
-		}
-		if err := host.RequireZero(result, "curl", []string{"-fsSL", url, "-o", deb}); err != nil {
-			return false, err
-		}
-		if err := requireFileSHA256(apply, "litestream", deb, expectedSHA256); err != nil {
-			return false, err
-		}
-		result, err = apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "apt-get", Args: []string{"install", "-y", deb}})
-		if err != nil {
-			return false, err
-		}
-		return true, host.RequireZero(result, "apt-get", []string{"install", "-y", deb})
-	}})
-}
-
-func litestreamSHA256(arch string) string {
-	switch arch {
-	case "x86_64":
-		return litestreamSHA256X8664
-	case "arm64":
-		return litestreamSHA256ARM64
-	default:
-		return ""
-	}
-}
-
-func createLitestreamTempDir(apply host.Apply) (string, error) {
-	args := []string{"-d", "/tmp/ship-litestream.XXXXXX"}
-	result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "mktemp", Args: args})
-	if err != nil {
-		return "", err
-	}
-	if err := host.RequireZero(result, "mktemp", args); err != nil {
-		return "", err
-	}
-	path := strings.TrimSpace(string(result.Stdout))
-	if path == "" {
-		return "", errors.New("litestream temp dir creation returned empty path")
-	}
-	return path, nil
-}
-
-func cleanupTempDir(apply host.Apply, path string) {
-	_, _ = apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "rm", Args: []string{"-rf", "--", path}})
-}
-
-func requireFileSHA256(apply host.Apply, label string, path string, expected string) error {
-	args := []string{path}
-	result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "sha256sum", Args: args})
-	if err != nil {
-		return err
-	}
-	if err := host.RequireZero(result, "sha256sum", args); err != nil {
-		return err
-	}
-	fields := strings.Fields(string(result.Stdout))
-	if len(fields) < 2 || len(fields[0]) != 64 {
-		return fmt.Errorf("%s checksum output malformed for %s", label, path)
-	}
-	got := strings.ToLower(fields[0])
-	want := strings.ToLower(strings.TrimSpace(expected))
-	if got != want {
-		return fmt.Errorf("%s checksum mismatch for %s: expected %s, got %s", label, path, want, got)
-	}
-	return nil
-}
-
-func litestreamInstalled(apply host.Apply) (bool, error) {
-	result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "dpkg-query", Args: []string{"-W", "-f=${Version}", "litestream"}})
-	if err != nil {
-		return false, err
-	}
-	if result.ExitCode != 0 {
-		return false, nil
-	}
-	return strings.TrimSpace(string(result.Stdout)) == litestreamVersion, nil
-}
-
-func addTailscale(ops *[]operation, opts InstallOptions) {
-	*ops = append(*ops, operation{name: "tailscale repo", run: func(apply host.Apply) (bool, error) {
-		codename, err := ubuntuCodename(apply)
-		if err != nil {
-			return false, err
-		}
-		return host.EnsureAptRepo(apply, host.AptRepo{
-			Name:           "tailscale",
-			KeyURL:         "https://pkgs.tailscale.com/stable/ubuntu/" + codename + ".noarmor.gpg",
-			KeyPath:        "/usr/share/keyrings/tailscale-archive-keyring.gpg",
-			KeyFingerprint: tailscaleAptKeyFingerprint,
-			SourcePath:     "/etc/apt/sources.list.d/tailscale.list",
-			SourceLine:     "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu " + codename + " main",
-		})
-	}})
-	*ops = append(*ops, operation{name: "tailscale package", run: func(apply host.Apply) (bool, error) { return host.EnsurePackage(apply, "tailscale") }})
-	*ops = append(*ops, operation{name: "tailscaled service", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureSystemdUnit(apply, host.SystemdUnit{Name: "tailscaled.service", Action: host.Started})
-	}})
-	if opts.TailscaleAuthKey != "" {
-		args := []string{"up", "--auth-key=" + opts.TailscaleAuthKey}
-		if opts.TailscaleHostname != "" {
-			args = append(args, "--hostname="+opts.TailscaleHostname)
-		}
-		*ops = append(*ops, operation{name: "tailscale auth", run: func(apply host.Apply) (bool, error) {
-			active, err := tailscaleRunning(apply)
-			if err != nil {
-				return false, err
-			}
-			if active {
-				return false, nil
-			}
-			return runCommand("tailscale", args...)(apply)
-		}})
-	}
-}
-
-func tailscaleRunning(apply host.Apply) (bool, error) {
-	result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "tailscale", Args: []string{"status", "--json"}})
-	if err != nil {
-		return false, err
-	}
-	if result.ExitCode != 0 {
-		return false, nil
-	}
-	return strings.Contains(string(result.Stdout), `"BackendState":"Running"`), nil
-}
-
-func addCloudflare(ops *[]operation, opts InstallOptions) {
-	*ops = append(*ops, operation{name: "cloudflared repo", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureAptRepo(apply, host.AptRepo{
-			Name:           "cloudflared",
-			KeyURL:         "https://pkg.cloudflare.com/cloudflare-main.gpg",
-			KeyPath:        "/usr/share/keyrings/cloudflare-main.gpg",
-			KeyFingerprint: cloudflareAptKeyFingerprint,
-			SourcePath:     "/etc/apt/sources.list.d/cloudflared.list",
-			SourceLine:     "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main",
-		})
-	}})
-	*ops = append(*ops, operation{name: "cloudflared package", run: func(apply host.Apply) (bool, error) { return host.EnsurePackage(apply, "cloudflared") }})
-	*ops = append(*ops, operation{name: "cloudflared user", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureUser(apply, host.User{Name: "cloudflared", PrimaryGroup: "cloudflared", Shell: "/usr/sbin/nologin", Home: "/var/lib/cloudflared", System: true, CreateHome: true})
-	}})
-	*ops = append(*ops, operation{name: "cloudflared config dir", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureDirectory(apply, host.Directory{Path: "/etc/cloudflared", Owner: "root", Group: "cloudflared", Mode: 0750})
-	}})
-	// Token/setup ops intentionally precede the service op; this flag carries
-	// their drift forward so service convergence can restart only when needed.
-	cloudflaredRuntimeChanged := false
-	if opts.CloudflareTunnelToken != "" {
-		*ops = append(*ops, operation{name: "cloudflared token", run: func(apply host.Apply) (bool, error) {
-			changed, err := host.EnsureFile(apply, host.File{Path: cloudflare.CloudflaredTunnelTokenPath(), Content: []byte(strings.TrimSpace(opts.CloudflareTunnelToken) + "\n"), Owner: "root", Group: "cloudflared", Mode: 0640})
-			if changed {
-				cloudflaredRuntimeChanged = true
-			}
-			return changed, err
-		}})
-	}
-	if opts.CloudflareAPIToken != "" {
-		*ops = append(*ops, operation{name: "cloudflare api token", run: func(apply host.Apply) (bool, error) {
-			return host.EnsureFile(apply, host.File{Path: cloudflare.CloudflareApiTokenPath(), Content: []byte(strings.TrimSpace(opts.CloudflareAPIToken) + "\n"), Owner: "root", Group: "root", Mode: 0600})
-		}})
-		args := []string{"server", "cloudflare", "setup-tunnel", "--token-file", cloudflare.CloudflareApiTokenPath(), "--name", "ship-" + hostname()}
-		if opts.CloudflareAccountID != "" {
-			args = append(args, "--account-id", opts.CloudflareAccountID)
-		}
-		*ops = append(*ops, operation{name: "cloudflare setup tunnel", run: func(apply host.Apply) (bool, error) {
-			ready, err := cloudflareTunnelAlreadyConfigured(apply)
-			if err != nil {
-				return false, err
-			}
-			if ready {
-				return false, nil
-			}
-			changed, err := runCommand("ship", args...)(apply)
-			if changed {
-				cloudflaredRuntimeChanged = true
-			}
-			return changed, err
-		}})
-	}
-	if opts.CloudflareTunnelToken != "" || opts.CloudflareAPIToken != "" || opts.CloudflareTunnelConfig != "" {
-		*ops = append(*ops, operation{name: "cloudflared service", run: func(apply host.Apply) (bool, error) {
-			execStart := "/usr/bin/cloudflared tunnel --no-autoupdate run --token-file " + cloudflare.CloudflaredTunnelTokenPath()
-			if opts.CloudflareTunnelConfig != "" {
-				execStart = "/usr/bin/cloudflared --config " + opts.CloudflareTunnelConfig + " tunnel run"
-			}
-			return ensureCloudflaredService(apply, []byte(cloudflaredUnit(execStart)), cloudflaredRuntimeChanged)
-		}})
-	}
-}
-
-func ensureCloudflaredService(apply host.Apply, unitContent []byte, restartOnChange bool) (bool, error) {
-	unitChanged, err := host.EnsureSystemdUnit(apply, host.SystemdUnit{Name: "cloudflared.service", Content: unitContent})
-	if err != nil {
-		return false, err
-	}
-	if unitChanged || restartOnChange {
-		if apply.CheckMode {
-			return true, nil
-		}
-		result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "systemctl", Args: []string{"restart", "cloudflared.service"}})
-		if err != nil {
-			return false, err
-		}
-		return true, host.RequireZero(result, "systemctl", []string{"restart", "cloudflared.service"})
-	}
-	active, err := systemdServiceActive(apply, "cloudflared.service")
-	if err != nil {
-		return false, err
-	}
-	if active {
-		return false, nil
-	}
-	if apply.CheckMode {
-		return true, nil
-	}
-	result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "systemctl", Args: []string{"start", "cloudflared.service"}})
-	if err != nil {
-		return false, err
-	}
-	return true, host.RequireZero(result, "systemctl", []string{"start", "cloudflared.service"})
-}
-
-func systemdServiceActive(apply host.Apply, name string) (bool, error) {
-	result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "systemctl", Args: []string{"is-active", "--quiet", name}})
-	if err != nil {
-		return false, err
-	}
-	return result.ExitCode == 0, nil
-}
-
-func cloudflareTunnelAlreadyConfigured(apply host.Apply) (bool, error) {
-	if _, err := apply.Runner.ReadFile(apply.ContextOrBackground(), cloudflare.CloudflaredTunnelTokenPath()); err != nil {
-		if errors.Is(err, host.ErrNotExist) {
-			return false, nil
-		}
-		return false, err
-	}
-	stateStore := store.Default()
-	cloudflarePath := stateStore.CloudflarePath()
-	data, err := apply.Runner.ReadFile(apply.ContextOrBackground(), cloudflarePath)
-	if err != nil {
-		if errors.Is(err, host.ErrNotExist) {
-			return false, nil
-		}
-		return false, err
-	}
-	var file store.CloudflareFile
-	if err := json.Unmarshal(data.Content, &file); err != nil {
-		return false, fmt.Errorf("invalid %s: %w", cloudflarePath, err)
-	}
-	return file.TunnelID != "" && file.TunnelName != "", nil
-}
-
-func runCommand(program string, args ...string) func(host.Apply) (bool, error) {
-	return func(apply host.Apply) (bool, error) {
-		if apply.CheckMode {
-			return true, nil
-		}
-		result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: program, Args: args})
-		if err != nil {
-			return false, err
-		}
-		return true, host.RequireZero(result, program, args)
-	}
-}
-
-func desiredHost(opts InstallOptions) store.HostDesired {
-	ingress := store.HostIngressDesired{Expose: store.ExposePublic, Tunnel: store.TunnelNone}
-	switch ingressMode(opts) {
-	case "cloudflare":
-		ingress = store.HostIngressDesired{Expose: store.ExposePrivate, Tunnel: store.TunnelCloudflare}
-	case "private":
-		ingress = store.HostIngressDesired{Expose: store.ExposePrivate, Tunnel: store.TunnelNone}
-	}
+func desiredHost(InstallOptions) store.HostDesired {
 	packages := map[string]store.DesiredPackage{
 		"podman":  {Source: "ubuntu", Track: "noble"},
 		"sqlite3": {Source: "ubuntu", Track: "noble"},
 	}
-	if opts.InstallLitestream {
-		packages["litestream"] = store.DesiredPackage{Source: "github-release", Version: litestreamVersion}
-	}
 	return store.HostDesired{
 		Users:   store.HostUsers{Operator: defaultOperatorUser, Deploy: defaultDeployUser},
-		Ingress: ingress,
+		Ingress: store.HostIngressDesired{Expose: store.ExposePublic},
 		Features: store.HostFeatures{
-			Docker:     false,
-			Litestream: opts.InstallLitestream,
+			Docker: false,
 		},
 		Packages: packages,
 	}
@@ -1273,10 +917,10 @@ func hostDesiredChanged(stateStore store.Store, desired store.HostDesired) (bool
 	return string(currentData) != string(nextData), nil
 }
 
-func writeApplyState(stateStore store.Store, opts InstallOptions, applyID string, startedAt time.Time, finishedAt time.Time, status string, changed int) error {
+func writeApplyState(stateStore store.Store, _ InstallOptions, applyID string, startedAt time.Time, finishedAt time.Time, status string, changed int) error {
 	return stateStore.WriteHostState(store.HostObserved{
 		Packages: map[string]store.ObservedPackage{},
-		Ingress:  store.HostIngressObserved{CloudflaredServiceActive: opts.CloudflareTunnel},
+		Ingress:  store.HostIngressObserved{},
 	}, store.HostMeta{
 		ShipVersion: version.Version,
 		LastApply: &store.ApplyMeta{
@@ -1347,46 +991,4 @@ func osReleaseValue(content []byte, key string) string {
 		return strings.Trim(strings.TrimSpace(value), `"'`)
 	}
 	return ""
-}
-
-func litestreamArch(goarch string) string {
-	switch goarch {
-	case "amd64":
-		return "x86_64"
-	case "arm64":
-		return "arm64"
-	default:
-		return ""
-	}
-}
-
-func hostname() string {
-	name, err := os.Hostname()
-	if err != nil || name == "" {
-		return "host"
-	}
-	return name
-}
-
-func cloudflaredUnit(execStart string) string {
-	return `[Unit]
-Description=Cloudflare Tunnel
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=cloudflared
-Group=cloudflared
-ExecStart=` + execStart + `
-Restart=on-failure
-RestartSec=5s
-TimeoutStartSec=0
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=full
-
-[Install]
-WantedBy=multi-user.target
-`
 }

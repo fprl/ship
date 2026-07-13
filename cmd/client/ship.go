@@ -49,10 +49,10 @@ func formatPhaseDuration(d time.Duration) string {
 	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
-func CmdShip(root string, branchName string, tlsMode string, jsonFlag bool, rebuild bool, includeDotenv bool) {
+func CmdShip(root string, branchName string, tlsMode string, jsonFlag bool, rebuild bool) {
 	start := time.Now()
 	progress := newShipProgress()
-	result, err := runShip(root, branchName, tlsMode, rebuild, includeDotenv, &progress)
+	result, err := runShip(root, branchName, tlsMode, rebuild, &progress)
 	if err != nil {
 		utils.DieError(err, 1)
 	}
@@ -72,7 +72,7 @@ func writeShipResult(result ShipResult, jsonFlag bool) {
 	fmt.Println(result.URL)
 }
 
-func runShip(root string, branchName string, tlsMode string, rebuild bool, includeDotenv bool, progress *shipProgress) (ShipResult, error) {
+func runShip(root string, branchName string, tlsMode string, rebuild bool, progress *shipProgress) (ShipResult, error) {
 	state, err := shipAddressPhase(root, branchName)
 	if err != nil {
 		return ShipResult{}, err
@@ -82,7 +82,7 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, inclu
 		return ShipResult{}, err
 	}
 	progress.timed("preflight")
-	if err := shipPlanPhase(&state, includeDotenv); err != nil {
+	if err := shipPlanPhase(&state); err != nil {
 		return ShipResult{}, err
 	}
 	if err := shipRoutesPhase(&state, tlsMode); err != nil {
@@ -172,11 +172,10 @@ func shipPreflightPhase(state *shipRunState) error {
 	return nil
 }
 
-func shipPlanPhase(state *shipRunState, includeDotenv bool) error {
+func shipPlanPhase(state *shipRunState) error {
 	dirty := state.Address.Dirty
 	plan, diags, err := buildLocalDeployPlanForManifest(state.Root, state.Address.EnvName, state.Manifest, localDeployOptions{
-		IncludeDotenv: includeDotenv,
-		Dirty:         &dirty,
+		Dirty: &dirty,
 	})
 	if err != nil {
 		return err
@@ -314,7 +313,7 @@ func localDeployRemediation(items []diagnostic) string {
 		case diagnosticKindGitNoCommits:
 			return "git add . && git commit -m \"initial ship app\""
 		case diagnosticKindDotenv:
-			return "ship --include-dotenv"
+			return "ship secret set --from .env"
 		case diagnosticKindStaticHash:
 			return "<build command> && ship"
 		}

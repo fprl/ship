@@ -91,11 +91,6 @@ func validateHostDesired(desired HostDesired) error {
 	default:
 		return errors.New("ingress.expose must be public or private")
 	}
-	switch desired.Ingress.Tunnel {
-	case TunnelNone, TunnelCloudflare, TunnelTailscaleFunnel:
-	default:
-		return errors.New("ingress.tunnel must be none, cloudflare, or tailscale-funnel")
-	}
 	for name, pkg := range desired.Packages {
 		if strings.TrimSpace(name) == "" {
 			return errors.New("packages cannot contain empty names")

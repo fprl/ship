@@ -268,7 +268,7 @@ func SeedHostJSON() string {
 		Version: store.CurrentVersion,
 		Desired: store.HostDesired{
 			Users:    store.HostUsers{Operator: "operator", Deploy: "deploy"},
-			Ingress:  store.HostIngressDesired{Expose: store.ExposePublic, Tunnel: store.TunnelNone},
+			Ingress:  store.HostIngressDesired{Expose: store.ExposePublic},
 			Features: store.HostFeatures{},
 			Packages: map[string]store.DesiredPackage{
 				"podman": {Source: "apt"},

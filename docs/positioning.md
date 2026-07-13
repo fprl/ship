@@ -33,9 +33,7 @@ Not the audience:
 - **Manifest in your git repo** as the source of truth.
 - **Hardened by default**: firewall, deploy user, TLS via Caddy,
   locked-down systemd / Podman.
-- **Ingress modes, not a provider matrix**: public Caddy as the
-  direct VPS ownership path; Cloudflare Tunnel and Tailscale admin
-  access as supported hardening modes for teams that want them.
+- **One hardened box shape**: public Caddy on 80/443 and keys-only SSH.
 - **Composable primitive**: state in flat files (per ADR-0002), CLI is
   the API, `--json` output on every read. Dashboards, schedulers, and
   multi-host coordinators are someone else's product (or our future

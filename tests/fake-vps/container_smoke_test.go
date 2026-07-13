@@ -329,8 +329,8 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	e.mustRun(t, secondApp, nil, "git", "checkout", "-B", "main")
 	e.ship(t, secondApp, nil)
 
-	e.ship(t, app, []byte(secretValue), "secret", "set", "api_token")
-	e.ship(t, app, []byte(secretValue), "secret", "set", "api_token", "--preview")
+	e.ship(t, app, []byte(secretValue), "secret", "set", "API_TOKEN")
+	e.ship(t, app, []byte(secretValue), "secret", "set", "API_TOKEN", "--preview")
 	e.ship(t, app, nil)
 
 	manifestPath := filepath.Join(app, "ship.toml")
@@ -609,6 +609,9 @@ func (e *smokeEnv) testDailyVerbHostKeyTOFU(t *testing.T) {
 func (e *smokeEnv) testPhase1AcceptanceAndZeroDNS(t *testing.T) {
 	app := filepath.Join(e.tmp, "phase1-init")
 	mustMkdir(t, app)
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
 	e.ship(t, app, nil, "init", "--box", "fake-vps", "--name", "phaseone", "--host", "phaseone.example.com")
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
@@ -687,7 +690,7 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	assertContains(t, noWhy.stdout+noWhy.stderr, "next: ship")
 
 	secretValue := "releasefail-secret-token"
-	e.ship(t, app, []byte(secretValue), "secret", "set", "api_token")
+	e.ship(t, app, []byte(secretValue), "secret", "set", "API_TOKEN")
 	e.ship(t, app, nil)
 	e.dockerExec(t, "test -f "+identity.DataDir("releasefail", productionEnv)+"/release-ok")
 	stableEnv := e.dockerExec(t, "cat "+identity.EnvFile("releasefail", productionEnv))
@@ -763,7 +766,7 @@ func (e *smokeEnv) testProbeFailureWhy(t *testing.T) {
 	e.commitFixture(t, app)
 
 	secretValue := "probe-log-secret-token"
-	e.ship(t, app, []byte(secretValue), "secret", "set", "probe_log_secret")
+	e.ship(t, app, []byte(secretValue), "secret", "set", "LEAK_ON_PROBE_LOG")
 	e.ship(t, app, nil)
 	stableFragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("probefail", productionEnv))
 	stableContainer := currentWebContainer(t, e, app)
@@ -2122,13 +2125,13 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "ok")
 }
 
-// testSecretLifecycle covers the @secret:KEY resolution path end-to-end
+// testSecretLifecycle covers bare @secret resolution end-to-end
 // against the helper-side store under /etc/ship/secrets/:
 //
 //  1. setup the app/env baseline
 //  2. `ship secret set` over SSH-stdin (value never on argv)
 //  3. `ship secret ls` shows the key (NOT the value)
-//  4. deploy a manifest that references @secret:db_url
+//  4. deploy a manifest that references @secret
 //  5. the on-host env file contains the literal env values AND the
 //     resolved secret, with mode 0600 owned by the per-env user
 //  6. `ship secret rm` removes the key
@@ -2146,7 +2149,7 @@ probe = "/health"
 
 [env]
 LOG_LEVEL = "info"
-DATABASE_URL = "@secret:db_url"
+DATABASE_URL = "@secret"
 
 [processes]
 web = { port = 3000 }
@@ -2159,7 +2162,7 @@ web = { port = 3000 }
 	// 1. set: value over stdin, never argv. The fake-VPS harness uses
 	// docker exec ssh under the hood and the helper reads from its
 	// own stdin in `secret set`.
-	e.ship(t, app, []byte("postgres://verybadidea"), "secret", "set", "db_url")
+	e.ship(t, app, []byte("postgres://verybadidea"), "secret", "set", "DATABASE_URL")
 
 	// 2. file lands at the expected path, root-owned, mode 0600,
 	// containing the value verbatim (no trailing newline — the client
@@ -2167,21 +2170,21 @@ web = { port = 3000 }
 	// deploy user only has passwordless sudo for /usr/local/bin/ship.
 	secretDir := "/etc/ship/secrets/sec/" + productionEnv
 	listing := strings.TrimSpace(e.dockerExec(t, "ls -l "+secretDir))
-	if !strings.Contains(listing, " db_url") {
-		t.Fatalf("expected db_url in %s listing:\n%s", secretDir, listing)
+	if !strings.Contains(listing, " DATABASE_URL") {
+		t.Fatalf("expected DATABASE_URL in %s listing:\n%s", secretDir, listing)
 	}
 	if !strings.Contains(listing, "-rw-------") {
 		t.Fatalf("secret file is not mode 0600:\n%s", listing)
 	}
-	body := strings.TrimSuffix(e.dockerExec(t, "cat "+secretDir+"/db_url"), "\n")
+	body := strings.TrimSuffix(e.dockerExec(t, "cat "+secretDir+"/DATABASE_URL"), "\n")
 	if body != "postgres://verybadidea" {
 		t.Fatalf("secret value didn't round-trip:\nwant: postgres://verybadidea\n got: %q", body)
 	}
 
 	// 3. list shows the key — NEVER the value.
 	listing = e.ship(t, app, nil, "secret", "ls")
-	if !strings.Contains(listing, "db_url") {
-		t.Fatalf("secret list missing db_url:\n%s", listing)
+	if !strings.Contains(listing, "DATABASE_URL") {
+		t.Fatalf("secret list missing DATABASE_URL:\n%s", listing)
 	}
 	if strings.Contains(listing, "postgres://") {
 		t.Fatalf("secret list leaked the value:\n%s", listing)
@@ -2195,14 +2198,14 @@ web = { port = 3000 }
 	if err := json.Unmarshal([]byte(rawSecretJSON), &secretPayload); err != nil {
 		t.Fatalf("secret list --json output not parseable as JSON: %v\nraw:\n%s", err, rawSecretJSON)
 	}
-	if secretPayload.App != "sec" || secretPayload.Env != productionEnv || len(secretPayload.Keys) != 1 || secretPayload.Keys[0] != "db_url" {
+	if secretPayload.App != "sec" || secretPayload.Env != productionEnv || len(secretPayload.Keys) != 1 || secretPayload.Keys[0] != "DATABASE_URL" {
 		t.Fatalf("unexpected secret list --json payload: %+v", secretPayload)
 	}
 	if strings.Contains(rawSecretJSON, "postgres://") {
 		t.Fatalf("secret list --json leaked the value:\n%s", rawSecretJSON)
 	}
 
-	// 4. deploy: helper resolves @secret:db_url into the env file
+	// 4. deploy: helper resolves DATABASE_URL from bare @secret into the env file
 	// next to the literal LOG_LEVEL.
 	e.ship(t, app, nil)
 	envFile := e.dockerExec(t, "cat "+identity.EnvFile("sec", productionEnv))
@@ -2221,7 +2224,7 @@ web = { port = 3000 }
 	}
 
 	// 6. rm removes the key.
-	e.ship(t, app, nil, "secret", "rm", "db_url")
+	e.ship(t, app, nil, "secret", "rm", "DATABASE_URL")
 	if missing := strings.TrimSpace(e.dockerExec(t, "ls "+secretDir)); missing != "" {
 		t.Fatalf("expected empty secret dir after rm, got:\n%s", missing)
 	}
@@ -2231,8 +2234,8 @@ web = { port = 3000 }
 	if result.err == nil {
 		t.Fatal("expected deploy to fail with unresolved @secret reference")
 	}
-	if !strings.Contains(result.stderr+result.stdout, "missing secret db_url") ||
-		!strings.Contains(result.stderr+result.stdout, "ship secret set db_url") {
+	if !strings.Contains(result.stderr+result.stdout, "missing secret DATABASE_URL") ||
+		!strings.Contains(result.stderr+result.stdout, "ship secret set DATABASE_URL") {
 		t.Fatalf("preflight error must name the missing secret and set command, got:\nstdout: %s\nstderr: %s", result.stdout, result.stderr)
 	}
 }
@@ -2249,7 +2252,7 @@ production_branch = "main"
 probe = "/health"
 
 [env]
-API_TOKEN = "@secret:api_token"
+API_TOKEN = "@secret"
 
 [processes]
 web = { port = 3000 }
@@ -2260,7 +2263,7 @@ web = { port = 3000 }
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 
-	e.ship(t, app, []byte("prod-token"), "secret", "set", "api_token")
+	e.ship(t, app, []byte("prod-token"), "secret", "set", "API_TOKEN")
 	e.ship(t, app, nil)
 	prodEnv := e.dockerExec(t, "cat "+identity.EnvFile("scope", productionEnv))
 	assertContains(t, prodEnv, "API_TOKEN=prod-token\n")
@@ -2270,7 +2273,7 @@ web = { port = 3000 }
 	if failed.err == nil {
 		t.Fatal("preview deploy should fail when only the Production secret exists")
 	}
-	wantSecretJSON := "{\"error\":{\"code\":\"secret_missing\",\"message\":\"deploy is missing a required secret\",\"cause\":\"missing secret api_token for Preview branch \\\"feature/secrets\\\"\",\"remediation\":\"ship secret set api_token [--preview|--branch <name>]\"}}\n"
+	wantSecretJSON := "{\"error\":{\"code\":\"secret_missing\",\"message\":\"deploy is missing a required secret\",\"cause\":\"missing secret API_TOKEN for Preview branch \\\"feature/secrets\\\"\",\"remediation\":\"ship secret set API_TOKEN [--preview|--branch <name>]\"}}\n"
 	if failed.stdout != wantSecretJSON {
 		t.Fatalf("secret_missing json shape mismatch\nwant:\n%s\ngot:\n%s\nstderr:\n%s", wantSecretJSON, failed.stdout, failed.stderr)
 	}
@@ -2279,9 +2282,9 @@ web = { port = 3000 }
 		t.Fatalf("preview env received Production secret value:\n%s", leaked)
 	}
 
-	e.ship(t, app, []byte("shared-preview-token"), "secret", "set", "api_token", "--preview")
+	e.ship(t, app, []byte("shared-preview-token"), "secret", "set", "API_TOKEN", "--preview")
 	previewList := e.ship(t, app, nil, "secret", "ls", "--preview")
-	assertContains(t, previewList, "api_token")
+	assertContains(t, previewList, "API_TOKEN")
 	e.ship(t, app, nil)
 	envFile := e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
 	assertContains(t, envFile, "API_TOKEN=shared-preview-token\n")
@@ -2289,7 +2292,7 @@ web = { port = 3000 }
 		t.Fatalf("preview env leaked Production secret value:\n%s", envFile)
 	}
 
-	e.ship(t, app, []byte("branch-token"), "secret", "set", "api_token", "--branch", "feature/secrets")
+	e.ship(t, app, []byte("branch-token"), "secret", "set", "API_TOKEN", "--branch", "feature/secrets")
 	branchJSON := e.ship(t, app, nil, "secret", "ls", "--json", "--branch", "feature/secrets")
 	var branchPayload struct {
 		App  string   `json:"app"`
@@ -2299,7 +2302,7 @@ web = { port = 3000 }
 	if err := json.Unmarshal([]byte(branchJSON), &branchPayload); err != nil {
 		t.Fatalf("branch secret list JSON invalid: %v\n%s", err, branchJSON)
 	}
-	if branchPayload.App != "scope" || branchPayload.Env != previewEnv || len(branchPayload.Keys) != 1 || branchPayload.Keys[0] != "api_token" {
+	if branchPayload.App != "scope" || branchPayload.Env != previewEnv || len(branchPayload.Keys) != 1 || branchPayload.Keys[0] != "API_TOKEN" {
 		t.Fatalf("unexpected branch secret JSON: %+v", branchPayload)
 	}
 	e.ship(t, app, nil)
@@ -2309,7 +2312,7 @@ web = { port = 3000 }
 		t.Fatalf("branch secret should win over shared preview and prod:\n%s", envFile)
 	}
 
-	e.ship(t, app, nil, "secret", "rm", "api_token", "--branch", "feature/secrets")
+	e.ship(t, app, nil, "secret", "rm", "API_TOKEN", "--branch", "feature/secrets")
 	e.ship(t, app, nil)
 	envFile = e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
 	assertContains(t, envFile, "API_TOKEN=shared-preview-token\n")
@@ -2462,7 +2465,7 @@ probe = "/health"
 [env]
 LOG_LEVEL = "info"
 BASE_ONLY = "kept"
-API_TOKEN = "@secret:prod_token"
+PROD_TOKEN = "@secret"
 
 [env.preview]
 LOG_LEVEL = "debug"
@@ -2478,14 +2481,14 @@ web = { port = 3000 }
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 
-	e.ship(t, app, []byte("prod-base-token"), "secret", "set", "prod_token")
+	e.ship(t, app, []byte("prod-base-token"), "secret", "set", "PROD_TOKEN")
 	e.ship(t, app, []byte("prod-leak-token"), "secret", "set", "API_TOKEN")
 	e.ship(t, app, []byte("shared-preview-token"), "secret", "set", "API_TOKEN", "--preview")
 	e.ship(t, app, nil)
 	prodEnv := e.dockerExec(t, "cat "+identity.EnvFile("overlay", productionEnv))
 	assertContains(t, prodEnv, "LOG_LEVEL=info\n")
 	assertContains(t, prodEnv, "BASE_ONLY=kept\n")
-	assertContains(t, prodEnv, "API_TOKEN=prod-base-token\n")
+	assertContains(t, prodEnv, "PROD_TOKEN=prod-base-token\n")
 	if strings.Contains(prodEnv, "PREVIEW_ONLY=") || strings.Contains(prodEnv, "shared-preview-token") {
 		t.Fatalf("Production env should ignore [env.preview]:\n%s", prodEnv)
 	}
@@ -2516,7 +2519,7 @@ probe = "/health"
 
 [env]
 LOG_LEVEL = "info"
-DATABASE_URL = "@secret:db_url"
+DATABASE_URL = "@secret"
 
 [processes]
 web = { port = 3000 }
@@ -2535,7 +2538,7 @@ web = { port = 3000 }
 		t.Fatalf("exec no-release guard should be coded on stderr\nstdout:%s\nstderr:%s", noRelease.stdout, noRelease.stderr)
 	}
 
-	e.ship(t, app, []byte("postgres://exec-secret"), "secret", "set", "db_url")
+	e.ship(t, app, []byte("postgres://exec-secret"), "secret", "set", "DATABASE_URL")
 	e.ship(t, app, nil)
 	release := gitRelease(t, e, app)
 
@@ -2927,7 +2930,7 @@ probe = "/health"
 
 [env]
 MARKER = "stable"
-API_TOKEN = "@secret:api_token"
+API_TOKEN = "@secret"
 
 [processes]
 web = { port = 3000 }
@@ -2950,7 +2953,7 @@ probe = "/health"
 notify = "`+notifyURL+`"
 
 [env]
-API_TOKEN = "@secret:api_token"
+API_TOKEN = "@secret"
 
 [processes]
 web = { port = 3000 }
@@ -3030,7 +3033,7 @@ box = "fake-vps"
 probe = "/health"
 
 [env]
-LEAK_ON_PROBE_LOG = "@secret:probe_log_secret"
+LEAK_ON_PROBE_LOG = "@secret"
 
 [processes]
 web = { port = 3000, cmd = "ship-listen-port=3000 sleep 3600" }

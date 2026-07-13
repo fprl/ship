@@ -22,7 +22,7 @@ import (
 // truth comes from manifest snapshots, identity files, and Podman labels.
 type cli struct {
 	Ship       shipCmd          `cmd:"" default:"withargs" hidden:"" group:"project" help:"Deploy the current branch."`
-	Init       initCmd          `cmd:"" group:"project" help:"Create local project files and a ship.toml manifest."`
+	Init       initCmd          `cmd:"" group:"project" help:"Create a ship.toml manifest."`
 	Status     statusCmd        `cmd:"" group:"project" help:"Show all live environments for this app."`
 	Logs       logsCmd          `cmd:"" group:"project" help:"Tail logs for the current branch environment."`
 	Exec       execCmd          `cmd:"" group:"project" help:"Run a one-off command in the current branch environment."`
@@ -115,12 +115,10 @@ func (p projectArgs) projectRoot() (string, error) {
 }
 
 type initCmd struct {
-	Config   string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Template string `name:"template" enum:"container,static,php,hono" default:"container" help:"Scaffold template."`
-	Name     string `name:"name" help:"App name. Defaults to package.json name or directory name."`
-	Box      string `name:"box" help:"Box host."`
-	Host     string `name:"host" help:"Route host. Defaults to <app>.example.com."`
-	Port     int    `name:"port" help:"Internal process port for container templates."`
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	Name   string `name:"name" help:"App name. Defaults to package.json name or directory name."`
+	Box    string `name:"box" help:"Box host."`
+	Host   string `name:"host" help:"Route host. Defaults to <app>.example.com."`
 }
 
 func (c initCmd) Run() error {
@@ -129,22 +127,19 @@ func (c initCmd) Run() error {
 		return err
 	}
 	client.CmdInit(root, client.InitOptions{
-		Template: c.Template,
-		Name:     c.Name,
-		Server:   c.Box,
-		Host:     c.Host,
-		Port:     c.Port,
+		Name:   c.Name,
+		Server: c.Box,
+		Host:   c.Host,
 	})
 	return nil
 }
 
 type shipCmd struct {
 	projectArgs
-	Branch        string `name:"branch" hidden:"" help:"Branch name to use when HEAD is detached."`
-	TLS           string `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode for this deploy."`
-	JSON          bool   `name:"json" help:"Emit structured deployment JSON instead of the URL."`
-	Rebuild       bool   `name:"rebuild" hidden:"" help:"Refresh base images and bypass Podman's build cache."`
-	IncludeDotenv bool   `name:"include-dotenv" hidden:"" help:"Include .env-style files in the uploaded release artifact."`
+	Branch  string `name:"branch" hidden:"" help:"Branch name to use when HEAD is detached."`
+	TLS     string `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode for this deploy."`
+	JSON    bool   `name:"json" help:"Emit structured deployment JSON instead of the URL."`
+	Rebuild bool   `name:"rebuild" hidden:"" help:"Refresh base images and bypass Podman's build cache."`
 }
 
 func (c shipCmd) Run() error {
@@ -152,7 +147,7 @@ func (c shipCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdShip(root, c.Branch, c.TLS, c.JSON, c.Rebuild, c.IncludeDotenv)
+	client.CmdShip(root, c.Branch, c.TLS, c.JSON, c.Rebuild)
 	return nil
 }
 
@@ -633,20 +628,8 @@ type boxSetupCmd struct {
 	SSHKey                   string `name:"ssh-key" help:"SSH private key for remote mode."`
 	OperatorSSHPublicKeyFile string `help:"SSH public key file for operator access."`
 	DeploySSHPublicKeyFile   string `help:"SSH public key file for deploy access. Default: your ship identity becomes the first member."`
-	Ingress                  string `help:"Ingress mode: public, cloudflare, or private."`
-	Admin                    string `help:"Admin access mode: public-ssh or tailscale."`
-	Tailscale                *bool  `negatable:"" help:"Install and configure Tailscale."`
-	TailscaleAuthKey         string `help:"Tailscale auth key."`
-	TailscaleHostname        string `help:"Tailscale hostname."`
-	CloudflareTunnel         *bool  `negatable:"" help:"Install and configure Cloudflare Tunnel."`
-	CloudflareAPIToken       string `help:"Cloudflare API token."`
-	CloudflareAccountID      string `help:"Cloudflare account ID."`
-	CloudflareTunnelToken    string `help:"Cloudflare tunnel token."`
-	CloudflareTunnelConfig   string `help:"Cloudflare tunnel config path."`
-	InstallLitestream        *bool  `name:"litestream" negatable:"" help:"Install Litestream."`
 	CheckMode                bool   `name:"check" help:"Plan changes without writing files or running mutating commands."`
 	SuppressSetupNarration   bool   `name:"suppress-setup-narration" hidden:""`
-	SetupSecretsFile         string `name:"setup-secrets-file" hidden:""`
 }
 
 func (c boxSetupCmd) Run() error {
@@ -668,42 +651,8 @@ func (c boxSetupCmd) Run() error {
 	if c.DeploySSHPublicKeyFile != "" {
 		opts.DeploySSHPublicKeyFile = c.DeploySSHPublicKeyFile
 	}
-	if c.Ingress != "" {
-		opts.Ingress = c.Ingress
-	}
-	if c.Admin != "" {
-		opts.Admin = c.Admin
-	}
-	if c.Tailscale != nil {
-		opts.Tailscale = *c.Tailscale
-	}
-	if c.TailscaleAuthKey != "" {
-		opts.TailscaleAuthKey = c.TailscaleAuthKey
-	}
-	if c.TailscaleHostname != "" {
-		opts.TailscaleHostname = c.TailscaleHostname
-	}
-	if c.CloudflareTunnel != nil {
-		opts.CloudflareTunnel = *c.CloudflareTunnel
-	}
-	if c.CloudflareAPIToken != "" {
-		opts.CloudflareAPIToken = c.CloudflareAPIToken
-	}
-	if c.CloudflareAccountID != "" {
-		opts.CloudflareAccountID = c.CloudflareAccountID
-	}
-	if c.CloudflareTunnelToken != "" {
-		opts.CloudflareTunnelToken = c.CloudflareTunnelToken
-	}
-	if c.CloudflareTunnelConfig != "" {
-		opts.CloudflareTunnelConfig = c.CloudflareTunnelConfig
-	}
-	if c.InstallLitestream != nil {
-		opts.InstallLitestream = *c.InstallLitestream
-	}
 	opts.CheckMode = c.CheckMode
 	opts.NarrateSetup = !c.SuppressSetupNarration
-	opts.SetupSecretsFile = c.SetupSecretsFile
 	if !internalLocalBoxSetupWithProvidedKeys(c) {
 		identity, err := shipidentity.EnsureShipIdentity(shipidentity.Options{Output: os.Stderr})
 		if err != nil {

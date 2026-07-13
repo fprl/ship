@@ -71,12 +71,6 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 	opts.BootstrapUser = "root"
 	opts.OperatorSSHPublicKeyFile = operatorKeyFile
 	opts.DeploySSHPublicKeyFile = deployKeyFile
-	opts.Ingress = "cloudflare"
-	opts.Admin = "tailscale"
-	opts.TailscaleAuthKey = "tskey-auth-test"
-	opts.CloudflareAPIToken = "cf-token-test"
-	opts.CloudflareAccountID = "account-test"
-	opts.InstallLitestream = false
 	opts.CheckMode = true
 
 	plan, err := BuildPlan(opts, false, false)
@@ -91,117 +85,17 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 	if plan.Mode != "remote" || plan.TargetHost != "203.0.113.10" {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
-	if plan.Ingress != "cloudflare" || plan.Admin != "tailscale" {
-		t.Fatalf("unexpected presets: ingress=%s admin=%s", plan.Ingress, plan.Admin)
-	}
-	if plan.TailscaleAuthMode != "auth-key" {
-		t.Fatalf("unexpected tailscale auth mode: %s", plan.TailscaleAuthMode)
-	}
-	if plan.CloudflareServiceMode != "api" {
-		t.Fatalf("unexpected cloudflare mode: %s", plan.CloudflareServiceMode)
-	}
-
-	command := remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/operator.pub", "/tmp/deploy.pub", remoteSetupSecretsExample)
+	command := remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/operator.pub", "/tmp/deploy.pub")
 	for _, want := range []string{
 		`/tmp/ship-host-install.example box setup localhost --mode local`,
-		`--ingress cloudflare`,
-		`--admin tailscale`,
 		`--suppress-setup-narration`,
 		`--operator-ssh-public-key-file /tmp/operator.pub`,
 		`--deploy-ssh-public-key-file /tmp/deploy.pub`,
-		`--cloudflare-account-id account-test`,
-		`--setup-secrets-file /tmp/ship-setup-secrets.example`,
-		`--no-litestream`,
 		`--check`,
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("expected command to contain %q:\n%s", want, command)
 		}
-	}
-	for _, secret := range []string{"tskey-auth-test", "cf-token-test"} {
-		if strings.Contains(command, secret) {
-			t.Fatalf("remote command leaked secret %q:\n%s", secret, command)
-		}
-	}
-}
-
-func TestRemoteSetupSecretsArePipedAndCleanedUp(t *testing.T) {
-	plan := Plan{
-		BootstrapUser:         "root",
-		TailscaleAuthKey:      "tskey-auth-test",
-		CloudflareAPIToken:    "cf-token-test",
-		CloudflareTunnelToken: "cf-tunnel-token-test",
-	}
-	var calls []struct {
-		command string
-		stdin   string
-	}
-	installer := NewInstaller()
-	var createCommand string
-	installer.remoteOut = func(_ Plan, command string) (string, error) {
-		createCommand = command
-		return "/tmp/ship-setup-secrets.ABCDEF\n", nil
-	}
-	installer.remoteRun = func(_ Plan, command string, stdin []byte) error {
-		calls = append(calls, struct {
-			command string
-			stdin   string
-		}{command: command, stdin: string(stdin)})
-		return nil
-	}
-
-	path, cleanup, err := installer.writeRemoteSetupSecrets(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if path != "/tmp/ship-setup-secrets.ABCDEF" {
-		t.Fatalf("path = %q, want generated root-only path", path)
-	}
-	if createCommand != "umask 077; mktemp /tmp/ship-setup-secrets.XXXXXX" {
-		t.Fatalf("secret transport must create a root-only temp file, command:\n%s", createCommand)
-	}
-	if len(calls) != 1 {
-		t.Fatalf("write calls = %d, want 1", len(calls))
-	}
-	if !strings.Contains(calls[0].command, "cat > /tmp/ship-setup-secrets.ABCDEF && chmod 0600 /tmp/ship-setup-secrets.ABCDEF") {
-		t.Fatalf("secret transport must create a 0600 file, command:\n%s", calls[0].command)
-	}
-	for _, secret := range []string{"tskey-auth-test", "cf-token-test", "cf-tunnel-token-test"} {
-		if strings.Contains(calls[0].command, secret) {
-			t.Fatalf("secret leaked into write argv %q:\n%s", secret, calls[0].command)
-		}
-		if !strings.Contains(calls[0].stdin, secret) {
-			t.Fatalf("secret missing from transport payload %q:\n%s", secret, calls[0].stdin)
-		}
-	}
-
-	command := remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/operator.pub", "/tmp/deploy.pub", path)
-	for _, secret := range []string{"tskey-auth-test", "cf-token-test", "cf-tunnel-token-test"} {
-		if strings.Contains(command, secret) {
-			t.Fatalf("remote helper argv leaked secret %q:\n%s", secret, command)
-		}
-	}
-	if !strings.Contains(command, "--setup-secrets-file /tmp/ship-setup-secrets.ABCDEF") {
-		t.Fatalf("remote helper did not receive transport path:\n%s", command)
-	}
-
-	cleanup()
-	if len(calls) != 2 || calls[1].command != "rm -f /tmp/ship-setup-secrets.ABCDEF" {
-		t.Fatalf("cleanup call = %+v, want root-only transport removal", calls)
-	}
-}
-
-func TestApplySetupSecretsFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "setup-secrets.json")
-	if err := os.WriteFile(path, []byte(`{"tailscale_auth_key":"tskey-auth-test","cloudflare_api_token":"cf-token-test","cloudflare_tunnel_token":"cf-tunnel-token-test"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	opts := Options{SetupSecretsFile: path}
-	if err := applySetupSecretsFile(&opts); err != nil {
-		t.Fatal(err)
-	}
-	if opts.TailscaleAuthKey != "tskey-auth-test" || opts.CloudflareAPIToken != "cf-token-test" || opts.CloudflareTunnelToken != "cf-tunnel-token-test" {
-		t.Fatalf("setup secrets were not loaded: %+v", opts)
 	}
 }
 
@@ -257,8 +151,6 @@ func TestRunRemoteUsesUniqueHelperPathAndCleansItUp(t *testing.T) {
 				Mode:          "remote",
 				TargetHost:    "203.0.113.10",
 				BootstrapUser: "root",
-				Ingress:       "public",
-				Admin:         "public-ssh",
 			}, keyPlan{})
 			if tt.installError == nil && err != nil {
 				t.Fatal(err)
@@ -433,43 +325,17 @@ func TestSSHArgsUseParsedTargetOnce(t *testing.T) {
 	}
 }
 
-func TestSetupNarrationPrintsChoicesOnly(t *testing.T) {
+func TestSetupNarrationPrintsFixedTopology(t *testing.T) {
 	var out bytes.Buffer
 	installer := NewInstaller()
 	installer.Stderr = &out
 
-	installer.printSetupNarration(Plan{Ingress: "public", Admin: "public-ssh"})
+	installer.printSetupNarration(Plan{})
 
-	want := "ingress: public 80/443 (--ingress ...)\n" +
-		"admin: SSH keys only (--admin tailscale)\n"
+	want := "ingress: public 80/443\n" +
+		"admin: SSH keys only\n"
 	if out.String() != want {
 		t.Fatalf("setup narration mismatch\nwant:\n%s\ngot:\n%s", want, out.String())
-	}
-}
-
-func TestInstallSummaryNarrationDiet(t *testing.T) {
-	var out bytes.Buffer
-	installer := NewInstaller()
-	installer.Stderr = &out
-
-	installer.printInstallSummary(Plan{})
-
-	for _, notWant := range []string{
-		"ship installer starting",
-		"Operator user:",
-		"Deploy user:",
-		"Timezone:",
-		"Tailscale: false",
-		"Cloudflare Tunnel: false",
-		"Docker: false",
-		"Litestream: false",
-	} {
-		if strings.Contains(out.String(), notWant) {
-			t.Fatalf("default-off narration should not contain %q:\n%s", notWant, out.String())
-		}
-	}
-	if strings.TrimSpace(out.String()) != "" {
-		t.Fatalf("UTC/default summary should be silent, got:\n%s", out.String())
 	}
 }
 
@@ -546,36 +412,6 @@ func TestMalformedTargetFailsBeforeSSHPreflight(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "ssh-copy-id") {
 		t.Fatalf("malformed target should not get password-bridge remediation:\n%v", err)
-	}
-}
-
-func TestDefaultOptionsDoNotInstallLitestream(t *testing.T) {
-	opts := DefaultOptions(nil)
-	if opts.InstallLitestream {
-		t.Fatal("Litestream should be opt-in for v1")
-	}
-}
-
-func TestRemoteLocalInstallCommandEnablesLitestreamExplicitly(t *testing.T) {
-	opts := DefaultOptions(nil)
-	opts.Mode = "remote"
-	opts.TargetHost = "203.0.113.12"
-	opts.OperatorSSHPublicKeyFile = writeKeyFile(t, alicePublicKey+"\n")
-	opts.DeploySSHPublicKeyFile = writeKeyFile(t, bobPublicKey+"\n")
-	opts.Ingress = "public"
-	opts.Admin = "public-ssh"
-	opts.InstallLitestream = true
-
-	plan, err := BuildPlan(opts, false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	command := remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/operator.pub", "/tmp/deploy.pub", "")
-	if !strings.Contains(command, "--litestream") {
-		t.Fatalf("expected command to explicitly enable litestream:\n%s", command)
-	}
-	if strings.Contains(command, "--no-litestream") {
-		t.Fatalf("did not expect conflicting --no-litestream:\n%s", command)
 	}
 }
 
@@ -716,66 +552,6 @@ func hostKeyBForInstallTest() string {
 	return strings.Join(strings.Fields(bobPublicKey)[:2], " ")
 }
 
-func TestInstallPresetsMapToProviderFlags(t *testing.T) {
-	tests := []struct {
-		name             string
-		ingress          string
-		admin            string
-		wantCloudflare   bool
-		wantTailscale    bool
-		wantCloudflareMo string
-		wantTailscaleMo  string
-	}{
-		{name: "defaults", wantCloudflareMo: "disabled", wantTailscaleMo: "disabled"},
-		{name: "public ssh", ingress: "public", admin: "public-ssh", wantCloudflareMo: "disabled", wantTailscaleMo: "disabled"},
-		{name: "cloudflare tailscale", ingress: "cloudflare", admin: "tailscale", wantCloudflare: true, wantTailscale: true, wantCloudflareMo: "manual", wantTailscaleMo: "manual"},
-		{name: "private", ingress: "private", admin: "public-ssh", wantCloudflareMo: "disabled", wantTailscaleMo: "disabled"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			opts := DefaultOptions(nil)
-			opts.Mode = "remote"
-			opts.TargetHost = "203.0.113.20"
-			opts.DeploySSHPublicKeyFile = writeKeyFile(t, bobPublicKey+"\n")
-			opts.Ingress = tt.ingress
-			opts.Admin = tt.admin
-
-			plan, err := BuildPlan(opts, false, false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if plan.CloudflareTunnel != tt.wantCloudflare {
-				t.Fatalf("cloudflare=%v, want %v", plan.CloudflareTunnel, tt.wantCloudflare)
-			}
-			if plan.Tailscale != tt.wantTailscale {
-				t.Fatalf("tailscale=%v, want %v", plan.Tailscale, tt.wantTailscale)
-			}
-			if plan.CloudflareServiceMode != tt.wantCloudflareMo {
-				t.Fatalf("cloudflare mode=%s, want %s", plan.CloudflareServiceMode, tt.wantCloudflareMo)
-			}
-			if plan.TailscaleAuthMode != tt.wantTailscaleMo {
-				t.Fatalf("tailscale mode=%s, want %s", plan.TailscaleAuthMode, tt.wantTailscaleMo)
-			}
-		})
-	}
-}
-
-func TestInstallPresetsRejectInvalidValues(t *testing.T) {
-	opts := DefaultOptions(nil)
-	opts.Ingress = "vpn-provider-matrix"
-	_, err := BuildPlan(opts, false, false)
-	if err == nil || !strings.Contains(err.Error(), "invalid ingress mode") {
-		t.Fatalf("expected invalid ingress error, got %v", err)
-	}
-
-	opts = DefaultOptions(nil)
-	opts.Admin = "root-password"
-	_, err = BuildPlan(opts, false, false)
-	if err == nil || !strings.Contains(err.Error(), "invalid admin mode") {
-		t.Fatalf("expected invalid admin error, got %v", err)
-	}
-}
-
 func contains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -792,23 +568,6 @@ func errcatCause(t *testing.T, err error) string {
 		t.Fatalf("expected errcat error, got %v", err)
 	}
 	return coded.Cause()
-}
-
-func TestCloudflareTokenRequiresTunnel(t *testing.T) {
-	opts := DefaultOptions(nil)
-	opts.Mode = "remote"
-	opts.TargetHost = "203.0.113.12"
-	opts.DeploySSHPublicKeyFile = "deploy.pub"
-	opts.CloudflareTunnel = false
-	opts.CloudflareAPIToken = "cf-token-test"
-
-	_, err := BuildPlan(opts, false, false)
-	if err == nil {
-		t.Fatal("expected invalid Cloudflare options to fail")
-	}
-	if !strings.Contains(err.Error(), "--cloudflare-api-token requires Cloudflare Tunnel to be enabled") {
-		t.Fatalf("unexpected error: %v", err)
-	}
 }
 
 func TestAutoModeChoosesLocalOnlyOnRootHost(t *testing.T) {

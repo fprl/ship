@@ -311,7 +311,7 @@ func (e *evalCase) withOwnerMemberFingerprint(command string) string {
 
 func evalServerNamespaceAcceptsMemberFingerprint(namespace string) bool {
 	switch namespace {
-	case "app", "approval", "cloudflare", "doctor", "key":
+	case "app", "approval", "doctor", "key":
 		return true
 	default:
 		return false
@@ -397,9 +397,9 @@ func evalScenarios() []evalScenario {
 	return []evalScenario{
 		{
 			Name:           "missing-secret",
-			SetupSummary:   "container app on main references @secret:api_token, but no secret is stored",
-			Goal:           "make the deploy succeed; use eval-secret-api_token for api_token",
-			CheckerSummary: "Production main is live, serves 200, and API_TOKEN is resolved to eval-secret-api_token",
+			SetupSummary:   "container app on main references @secret for API_TOKEN, but no secret is stored",
+			Goal:           "make the deploy succeed; use eval-secret-api-token for API_TOKEN",
+			CheckerSummary: "Production main is live, serves 200, and API_TOKEN is resolved to eval-secret-api-token",
 			RetryCommand:   "ship",
 			Setup:          setupMissingSecret,
 			Induce:         induceShip,
@@ -477,7 +477,7 @@ func setupMissingSecret(t *testing.T, e *evalCase) *evalProject {
 	writeSecretFixture(t, app, "evalsecret", "eval-secret.example.com")
 	initGit(t, e, app)
 	checkoutBranch(t, e, app, "main")
-	return &evalProject{Dir: app, App: "evalsecret", Host: "eval-secret.example.com", Branch: "main", SecretKey: "api_token", SecretValue: "eval-secret-api_token"}
+	return &evalProject{Dir: app, App: "evalsecret", Host: "eval-secret.example.com", Branch: "main", SecretKey: "API_TOKEN", SecretValue: "eval-secret-api-token"}
 }
 
 func setupFailingReleaseCommand(t *testing.T, e *evalCase) *evalProject {
@@ -685,7 +685,7 @@ production_branch = "main"
 probe = "/health"
 
 [env]
-API_TOKEN = "@secret:api_token"
+API_TOKEN = "@secret"
 
 [processes]
 web = { port = 3000 }

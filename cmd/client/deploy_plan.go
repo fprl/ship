@@ -17,8 +17,7 @@ var (
 )
 
 type localDeployOptions struct {
-	IncludeDotenv bool
-	Dirty         *bool
+	Dirty *bool
 }
 
 type localDeployPlan struct {
@@ -123,15 +122,13 @@ func buildLocalDeployPlanForManifest(root, envName string, manifest *config.Mani
 		plan.Release = release
 	}
 
-	if !opts.IncludeDotenv {
-		if err := validateDeployArtifactDotenv(root, plan.Dirty, plan.ServeDirs); err != nil {
-			diags = append(diags, diagnostic{
-				Kind:    diagnosticKindDotenv,
-				Level:   diagnosticError,
-				Message: err.Error(),
-				Hint:    "Use [env] and @secret references instead. Pass --include-dotenv only when you intentionally want dotenv files in the deploy artifact.",
-			})
-		}
+	if err := validateDeployArtifactDotenv(root, plan.Dirty, plan.ServeDirs); err != nil {
+		diags = append(diags, diagnostic{
+			Kind:    diagnosticKindDotenv,
+			Level:   diagnosticError,
+			Message: err.Error(),
+			Hint:    "Import secrets with ship secret set --from .env, then remove the dotenv file from the artifact.",
+		})
 	}
 
 	return plan, diags, nil

@@ -43,8 +43,8 @@ func TestFreshHostInstall(t *testing.T) {
 	assertContainsInOrder(t, firstOutput,
 		"identity: fake-vps-smoke (~/.ssh/ship)",
 		"connected as root (bootstrap)",
-		"ingress: public 80/443 (--ingress ...)",
-		"admin: SSH keys only (--admin tailscale)",
+		"ingress: public 80/443",
+		"admin: SSH keys only",
 		"Using ship Linux helper binary",
 		"running provisioner on target",
 		"provisioning ",
@@ -57,10 +57,7 @@ func TestFreshHostInstall(t *testing.T) {
 		"ship installer starting",
 		"Operator user:",
 		"Deploy user:",
-		"Tailscale: false",
-		"Cloudflare Tunnel: false",
 		"Docker: false",
-		"Litestream: false",
 		"deploy@fake-vps",
 	} {
 		assertNotContains(t, firstOutput, notWant)
@@ -141,9 +138,6 @@ func TestFreshHostInstallEmptyAuthorizedKeysNoFlag(t *testing.T) {
 		"box", "setup", "fake-vps",
 		"--mode", "remote",
 		"--bootstrap-user", "root",
-		"--no-tailscale",
-		"--no-cloudflare-tunnel",
-		"--no-litestream",
 	)
 	if result.err == nil {
 		t.Fatalf("ship box setup should fail with empty bootstrap authorized_keys\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
@@ -164,9 +158,6 @@ func (e *smokeEnv) installHost(t *testing.T, deployPublicKeyFile string) (int, s
 	args := []string{
 		"box", "setup", "root@fake-vps",
 		"--mode", "remote",
-		"--no-tailscale",
-		"--no-cloudflare-tunnel",
-		"--no-litestream",
 	}
 	if deployPublicKeyFile != "" {
 		args = append(args, "--deploy-ssh-public-key-file", deployPublicKeyFile)
@@ -215,11 +206,9 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 			} `json:"users"`
 			Ingress struct {
 				Expose string `json:"expose"`
-				Tunnel string `json:"tunnel"`
 			} `json:"ingress"`
 			Features struct {
-				Docker     bool `json:"docker"`
-				Litestream bool `json:"litestream"`
+				Docker bool `json:"docker"`
 			} `json:"features"`
 		} `json:"desired"`
 		Meta struct {
@@ -238,10 +227,10 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	if state.Desired.Users.Operator != "operator" || state.Desired.Users.Deploy != "deploy" {
 		t.Fatalf("unexpected desired users: %+v", state.Desired.Users)
 	}
-	if state.Desired.Ingress.Expose != "public" || state.Desired.Ingress.Tunnel != "none" {
+	if state.Desired.Ingress.Expose != "public" {
 		t.Fatalf("unexpected ingress: %+v", state.Desired.Ingress)
 	}
-	if state.Desired.Features.Docker || state.Desired.Features.Litestream {
+	if state.Desired.Features.Docker {
 		t.Fatalf("unexpected enabled features: %+v", state.Desired.Features)
 	}
 	if state.Meta.LastApply.Status != "ok" || state.Meta.LastApply.OperationsChanged <= 0 {

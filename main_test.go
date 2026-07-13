@@ -173,6 +173,9 @@ func TestPublicCLIRejectsRemovedCompatibilityForms(t *testing.T) {
 		{"init", "--tls", "internal"},
 		{"init", "--env", "production"},
 		{"init", "--server", "deploy@example.com"},
+		{"init", "--template", "container"},
+		{"init", "--port", "3000"},
+		{"--include-dotenv"},
 		{"deploy"},
 		{"deploy", "production"},
 		{"deploy", "--env", "production"},
@@ -196,6 +199,18 @@ func TestPublicCLIRejectsRemovedCompatibilityForms(t *testing.T) {
 		{"box", "add-key", "alice"},
 		{"box", "init", "deploy@example.com"},
 		{"box", "doctor", "--server", "deploy@example.com"},
+		{"box", "setup", "example.com", "--ingress", "cloudflare"},
+		{"box", "setup", "example.com", "--admin", "tailscale"},
+		{"box", "setup", "example.com", "--tailscale"},
+		{"box", "setup", "example.com", "--tailscale-auth-key", "tskey-test"},
+		{"box", "setup", "example.com", "--tailscale-hostname", "ship"},
+		{"box", "setup", "example.com", "--cloudflare-tunnel"},
+		{"box", "setup", "example.com", "--cloudflare-api-token", "token"},
+		{"box", "setup", "example.com", "--cloudflare-account-id", "account"},
+		{"box", "setup", "example.com", "--cloudflare-tunnel-token", "token"},
+		{"box", "setup", "example.com", "--cloudflare-tunnel-config", "/tmp/config"},
+		{"box", "setup", "example.com", "--litestream"},
+		{"box", "setup", "example.com", "--setup-secrets-file", "/tmp/secrets"},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt, "_"), func(t *testing.T) {
@@ -222,6 +237,30 @@ func TestBoxWithoutSubcommandShowsSubcommandHelp(t *testing.T) {
 	}
 	if strings.Contains(text, "add-key") {
 		t.Fatalf("box parse error should not mention removed add-key subcommand, got: %v", err)
+	}
+}
+
+func TestBoxSetupRejectsRemovedTopologyFlags(t *testing.T) {
+	for _, flag := range []string{
+		"--ingress=cloudflare",
+		"--admin=tailscale",
+		"--tailscale",
+		"--tailscale-auth-key=tskey-test",
+		"--tailscale-hostname=ship",
+		"--cloudflare-tunnel",
+		"--cloudflare-api-token=token",
+		"--cloudflare-account-id=account",
+		"--cloudflare-tunnel-token=token",
+		"--cloudflare-tunnel-config=/tmp/config",
+		"--litestream",
+		"--setup-secrets-file=/tmp/secrets",
+	} {
+		t.Run(flag, func(t *testing.T) {
+			_, err := newTestParser(t).Parse([]string{"box", "setup", "example.com", flag})
+			if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+				t.Fatalf("parse error = %v, want unknown flag", err)
+			}
+		})
 	}
 }
 

@@ -67,8 +67,7 @@ Member identity and approvals:
 Manifest env:
 
 - `[env]` defines committed container environment variables for every deploy.
-- Values are strings. `"@secret"` means secret name equals the env key;
-  `"@secret:NAME"` points at a different secret key.
+- Values are strings. `"@secret"` is the only secret form and names the secret after the env key.
 - `[env.preview]` overlays `[env]` for Preview only. Keys merge, and the
   Preview value wins. Production ignores the overlay.
 - `[env.preview]` secrets resolve through Preview secret scoping: branch first,
@@ -91,17 +90,17 @@ Secret scoping:
 <!-- BEGIN VERBS -->
 ### `ship`
 - Purpose: Deploy the current branch and print the deployment URL.
-- Usage: `ship [--json] [--branch <name>] [--tls auto|internal] [--rebuild] [--include-dotenv] [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--json`: Emit the mutation object instead of stdout-is-URL; `--branch <name>`: Detached HEAD only; supplies the branch used for branch=env resolution; `--tls auto|internal` default `auto`: Select automatic public TLS or internal TLS for synthesized routes; `--rebuild`: Refresh base images and bypass the container build cache; `--include-dotenv`: Allow .env-style files in the uploaded artifact.
+- Usage: `ship [--json] [--branch <name>] [--tls auto|internal] [--rebuild] [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--json`: Emit the mutation object instead of stdout-is-URL; `--branch <name>`: Detached HEAD only; supplies the branch used for branch=env resolution; `--tls auto|internal` default `auto`: Select automatic public TLS or internal TLS for synthesized routes; `--rebuild`: Refresh base images and bypass the container build cache.
 - `--json` stdout schema: `{"url":"https://...","env":"prod","release":"abc123","processes":["web"],"durationMs":1234}`
 - Notes: Successful non-JSON stdout is exactly one URL plus a trailing newline; all phase lines go to stderr. Production refuses dirty worktrees and stale checkouts; Preview accepts dirty worktrees and creates the preview mapping if needed.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `not_a_git_repo`, `detached_head_requires_branch`, `branch_flag_requires_detached_head`, `unmappable_branch_name`, `dirty_worktree`, `behind_production`, `manifest_invalid`, `dockerfile_missing`, `multi_process_no_web_route`, `secret_missing`, `remote_preflight_failed`, `remote_preflight_after_prepare_failed`, `deploy_blocked_local_checks`, `release_command_failed`, `probe_failed`, `dotenv_rejected`, `host_key_changed`
 
 ### `init`
-- Purpose: Create local project files and a ship.toml manifest.
-- Usage: `ship init [--template container|static|php|hono] [--name <app>] [--box <box>] [--host <host>] [--port <port>] [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--template container|static|php|hono` default `container`: Scaffold shape; `--name <app>`: App name. Defaults to package.json name or the directory name; `--box <box>` default `203.0.113.7`: Box host written to the manifest; `--host <host>`: Route host. Defaults to <app>.example.com; `--port <port>`: Internal process port for container templates.
+- Purpose: Create a ship.toml manifest.
+- Usage: `ship init [--name <app>] [--box <box>] [--host <host>] [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--name <app>`: App name. Defaults to package.json name or the directory name; `--box <box>` default `203.0.113.7`: Box host written to the manifest; `--host <host>`: Route host. Defaults to <app>.example.com.
 - Notes: Never overwrites existing files; kept files are reported on stdout.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `usage_error`, `manifest_invalid`
@@ -245,7 +244,7 @@ Secret scoping:
 ### `box setup`
 - Purpose: Install or converge a box.
 - Usage: `ship box setup <ssh-target> [flags]`
-- Arguments and flags: `ssh-target`: Bootstrap SSH target like root@example.com or example.com; `--mode auto|local|remote` default `auto`: Execution mode; `--host <host>`: Target VPS host for remote bootstrap; `--bootstrap-user <user>`: SSH user for remote bootstrap; `--ssh-key <path>`: SSH private key for remote mode; `--operator-ssh-public-key-file <path>`: SSH public key file for operator access; `--deploy-ssh-public-key-file <path>`: SSH public key file for deploy access. Default: your ship identity becomes the first member; `--ingress public|cloudflare|private`: Ingress mode; `--admin public-ssh|tailscale`: Admin access mode; `--tailscale / --no-tailscale`: Install and configure Tailscale; `--tailscale-auth-key <key>`: Tailscale auth key; `--tailscale-hostname <name>`: Tailscale hostname; `--cloudflare-tunnel / --no-cloudflare-tunnel`: Install and configure Cloudflare Tunnel; `--cloudflare-api-token <token>`: Cloudflare API token; `--cloudflare-account-id <id>`: Cloudflare account ID; `--cloudflare-tunnel-token <token>`: Cloudflare tunnel token; `--cloudflare-tunnel-config <path>`: Cloudflare tunnel config path; `--litestream / --no-litestream`: Install Litestream; `--check`: Plan changes without mutating the host.
+- Arguments and flags: `ssh-target`: Bootstrap SSH target like root@example.com or example.com; `--mode auto|local|remote` default `auto`: Execution mode; `--bootstrap-user <user>`: SSH user for remote bootstrap; `--ssh-key <path>`: SSH private key for remote mode; `--operator-ssh-public-key-file <path>`: SSH public key file for operator access; `--deploy-ssh-public-key-file <path>`: SSH public key file for deploy access. Default: your ship identity becomes the first member; `--check`: Plan changes without mutating the host.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `usage_error`, `invalid_box_target`, `deploy_key_missing`, `operator_key_missing`, `ssh_private_key_missing`, `ssh_public_key_file_missing`, `ssh_public_key_file_empty`, `host_install_requires_root`, `host_install_ssh_failed`, `unsupported_target_architecture`, `host_helper_unavailable`, `host_helper_download_failed`, `host_install_unsupported_os`, `host_install_missing_tool`, `host_install_permission_denied`, `host_install_apply_failed`, `operation_failed`
 
@@ -430,9 +429,9 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 - `deploy_tmp_missing`: host preflight failed; cause: deploy tmp dir is missing: {path}; remediation: `ship box setup <ssh-target>`.
 - `detached_head_requires_branch`: branch resolution failed; cause: HEAD is detached; pass --branch <name> so ship can resolve the environment; remediation: `{command}`.
 - `dirty_worktree`: Production ship failed; cause: production branch {branch} has uncommitted changes; remediation: `git add . && git commit -m "<message>"`.
-- `dockerfile_missing`: Dockerfile is missing; cause: manifest declares processes but is missing a Dockerfile; remediation: `ship init`.
+- `dockerfile_missing`: Dockerfile is missing; cause: the declared processes need a Dockerfile to build; remediation: `write a Dockerfile, or declare a [routes] static route in ship.toml`.
 - `dotenv_malformed`: dotenv import failed; cause: {detail}; remediation: `{command}`; defaults: `command="ship secret set --from path/to/.env"`.
-- `dotenv_rejected`: deploy artifact contains dotenv files; cause: refusing to deploy dotenv file: {files}; remediation: `ship --include-dotenv`.
+- `dotenv_rejected`: deploy artifact contains dotenv files; cause: refusing to deploy dotenv file: {files}; remediation: `run ship secret set --from .env, then remove the file (allowed names: .env.example, .env.sample, .env.defaults)`.
 - `env_invalid`: app environment preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `env_missing`: app environment preflight failed; cause: {detail}; remediation: `ship`.
 - `github_keys_unavailable`: GitHub SSH key lookup failed; cause: no public SSH keys found for GitHub user {user}; remediation: `ship member add <path-to-public-key>`.

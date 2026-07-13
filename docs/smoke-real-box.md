@@ -43,11 +43,7 @@ host-key pin. Do not edit `~/.ssh/known_hosts`; ship uses
   --bootstrap-user root \
   --ssh-key ~/.ssh/<root-key> \
   --operator-ssh-public-key-file /tmp/ship-smoke-keys/operator.pub \
-  --deploy-ssh-public-key-file /tmp/ship-smoke-keys/deploy.pub \
-  --ingress public \
-  --admin public-ssh \
-  --no-tailscale \
-  --no-cloudflare-tunnel
+  --deploy-ssh-public-key-file /tmp/ship-smoke-keys/deploy.pub
 ```
 
 Expected output ends with `==> Provisioning complete` and next steps containing
@@ -123,7 +119,7 @@ box = "<IP>"
 probe = "/health"
 
 [env]
-SMOKE_SECRET = "@secret:smoke_key"
+SMOKE_SECRET = "@secret"
 
 [processes]
 web = { port = 3000, resources = { memory = "256m", cpus = 0.5 } }
@@ -146,7 +142,7 @@ git commit -q -m "fixture"
 ```sh
 printf 'smoke-secret-value' | \
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/ship/dist/ship secret set smoke_key
+  /path/to/ship/dist/ship secret set SMOKE_SECRET
 ```
 
 ```sh

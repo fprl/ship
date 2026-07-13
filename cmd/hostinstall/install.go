@@ -3,7 +3,6 @@ package hostinstall
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -34,20 +33,8 @@ type Options struct {
 	OperatorSSHPublicKeyFile string
 	DeploySSHPublicKeyFile   string
 	DeployKeyIsShipIdentity  bool
-	Ingress                  string
-	Admin                    string
-	Tailscale                bool
-	TailscaleAuthKey         string
-	TailscaleHostname        string
-	CloudflareTunnel         bool
-	CloudflareAPIToken       string
-	CloudflareAccountID      string
-	CloudflareTunnelToken    string
-	CloudflareTunnelConfig   string
-	InstallLitestream        bool
 	CheckMode                bool
 	NarrateSetup             bool
-	SetupSecretsFile         string
 }
 
 type Plan struct {
@@ -60,19 +47,6 @@ type Plan struct {
 	OperatorSSHPublicKeyFile string
 	DeploySSHPublicKeyFile   string
 	DeployKeyIsShipIdentity  bool
-	Ingress                  string
-	Admin                    string
-	Tailscale                bool
-	TailscaleAuthKey         string
-	TailscaleHostname        string
-	TailscaleAuthMode        string
-	CloudflareTunnel         bool
-	CloudflareAPIToken       string
-	CloudflareAccountID      string
-	CloudflareTunnelToken    string
-	CloudflareTunnelConfig   string
-	CloudflareServiceMode    string
-	InstallLitestream        bool
 	CheckMode                bool
 	NarrateSetup             bool
 }
@@ -94,17 +68,9 @@ type Installer struct {
 const passwordProvisionedDetail = "provider gave a password; this installs your ship key using it once; hardening then disables password login permanently"
 
 const (
-	remoteSetupSecretsPattern = "/tmp/ship-setup-secrets.XXXXXX"
-	remoteSetupSecretsExample = "/tmp/ship-setup-secrets.example"
-	remoteHelperPattern       = "/tmp/ship-host-install.XXXXXX"
-	remoteHelperExample       = "/tmp/ship-host-install.example"
+	remoteHelperPattern = "/tmp/ship-host-install.XXXXXX"
+	remoteHelperExample = "/tmp/ship-host-install.example"
 )
-
-type setupSecrets struct {
-	TailscaleAuthKey      string `json:"tailscale_auth_key,omitempty"`
-	CloudflareAPIToken    string `json:"cloudflare_api_token,omitempty"`
-	CloudflareTunnelToken string `json:"cloudflare_tunnel_token,omitempty"`
-}
 
 func NewInstaller() *Installer {
 	return &Installer{
@@ -121,9 +87,6 @@ func NewInstaller() *Installer {
 }
 
 func (i *Installer) RunOptions(opts Options) error {
-	if err := applySetupSecretsFile(&opts); err != nil {
-		return err
-	}
 	plan, err := BuildPlan(opts, i.geteuid() == 0, fileExists("/etc/os-release"))
 	if err != nil {
 		return err
@@ -189,28 +152,11 @@ func DefaultOptions(env map[string]string) Options {
 		BootstrapUser:            "root",
 		OperatorSSHPublicKeyFile: env["SHIP_OPERATOR_SSH_PUBLIC_KEY_FILE"],
 		DeploySSHPublicKeyFile:   env["SHIP_DEPLOY_SSH_PUBLIC_KEY_FILE"],
-		Ingress:                  env["SHIP_INGRESS"],
-		Admin:                    env["SHIP_ADMIN"],
-		Tailscale:                false,
-		TailscaleAuthKey:         env["SHIP_TAILSCALE_AUTH_KEY"],
-		TailscaleHostname:        env["SHIP_TAILSCALE_HOSTNAME"],
-		CloudflareTunnel:         false,
-		CloudflareAPIToken:       env["SHIP_CLOUDFLARE_API_TOKEN"],
-		CloudflareAccountID:      env["SHIP_CLOUDFLARE_ACCOUNT_ID"],
-		CloudflareTunnelToken:    env["SHIP_CLOUDFLARE_TUNNEL_TOKEN"],
-		CloudflareTunnelConfig:   env["SHIP_CLOUDFLARE_TUNNEL_CONFIG"],
-		InstallLitestream:        envBool(env, "SHIP_INSTALL_LITESTREAM", false),
 		NarrateSetup:             true,
 	}
 }
 
 func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
-	var err error
-	opts, err = applyInstallPresets(opts)
-	if err != nil {
-		return Plan{}, err
-	}
-
 	mode := opts.Mode
 	if mode == "auto" {
 		if opts.TargetHost != "" {
@@ -246,38 +192,6 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 		}
 	}
 
-	if !opts.Tailscale {
-		if opts.TailscaleAuthKey != "" {
-			return Plan{}, installUsageError("--tailscale-auth-key requires Tailscale to be enabled", boxSetupCommand(opts.TargetHost, "--tailscale", "--tailscale-auth-key", "<key>"))
-		}
-		if opts.TailscaleHostname != "" {
-			return Plan{}, installUsageError("--tailscale-hostname requires Tailscale to be enabled", boxSetupCommand(opts.TargetHost, "--tailscale", "--tailscale-hostname", "<name>"))
-		}
-	}
-	if !opts.CloudflareTunnel {
-		if opts.CloudflareTunnelToken != "" {
-			return Plan{}, installUsageError("--cloudflare-tunnel-token requires Cloudflare Tunnel to be enabled", boxSetupCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-tunnel-token", "<token>"))
-		}
-		if opts.CloudflareAPIToken != "" {
-			return Plan{}, installUsageError("--cloudflare-api-token requires Cloudflare Tunnel to be enabled", boxSetupCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-api-token", "<token>"))
-		}
-		if opts.CloudflareAccountID != "" {
-			return Plan{}, installUsageError("--cloudflare-account-id requires Cloudflare Tunnel to be enabled", boxSetupCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-account-id", "<account-id>"))
-		}
-		if opts.CloudflareTunnelConfig != "" {
-			return Plan{}, installUsageError("--cloudflare-tunnel-config requires Cloudflare Tunnel to be enabled", boxSetupCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-tunnel-config", "<path>"))
-		}
-	}
-	if opts.CloudflareAPIToken != "" && opts.CloudflareTunnelToken != "" {
-		return Plan{}, installUsageError("use either --cloudflare-api-token or --cloudflare-tunnel-token, not both", boxSetupCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-api-token", "<token>"))
-	}
-	if opts.CloudflareAPIToken != "" && opts.CloudflareTunnelConfig != "" {
-		return Plan{}, installUsageError("use either --cloudflare-api-token or --cloudflare-tunnel-config, not both", boxSetupCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-api-token", "<token>"))
-	}
-	if opts.CloudflareTunnelToken != "" && opts.CloudflareTunnelConfig != "" {
-		return Plan{}, installUsageError("use either --cloudflare-tunnel-token or --cloudflare-tunnel-config, not both", boxSetupCommand(opts.TargetHost, "--ingress", "cloudflare", "--cloudflare-tunnel-token", "<token>"))
-	}
-
 	operatorKeyFile := opts.OperatorSSHPublicKeyFile
 	deployKeyFile := opts.DeploySSHPublicKeyFile
 	if operatorKeyFile == "" && opts.SSHKey != "" && fileExists(opts.SSHKey+".pub") {
@@ -293,19 +207,6 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 		OperatorSSHPublicKeyFile: operatorKeyFile,
 		DeploySSHPublicKeyFile:   deployKeyFile,
 		DeployKeyIsShipIdentity:  opts.DeployKeyIsShipIdentity,
-		Ingress:                  opts.Ingress,
-		Admin:                    opts.Admin,
-		Tailscale:                opts.Tailscale,
-		TailscaleAuthKey:         opts.TailscaleAuthKey,
-		TailscaleHostname:        opts.TailscaleHostname,
-		TailscaleAuthMode:        tailscaleAuthMode(opts.Tailscale, opts.TailscaleAuthKey),
-		CloudflareTunnel:         opts.CloudflareTunnel,
-		CloudflareAPIToken:       opts.CloudflareAPIToken,
-		CloudflareAccountID:      opts.CloudflareAccountID,
-		CloudflareTunnelToken:    opts.CloudflareTunnelToken,
-		CloudflareTunnelConfig:   opts.CloudflareTunnelConfig,
-		CloudflareServiceMode:    cloudflareServiceMode(opts),
-		InstallLitestream:        opts.InstallLitestream,
 		CheckMode:                opts.CheckMode,
 		NarrateSetup:             opts.NarrateSetup,
 	}, nil
@@ -369,50 +270,12 @@ func invalidBoxSetupTarget(target string) error {
 	)
 }
 
-func applyInstallPresets(opts Options) (Options, error) {
-	switch opts.Ingress {
-	case "":
-		if opts.CloudflareTunnel {
-			opts.Ingress = "cloudflare"
-		} else {
-			opts.Ingress = "public"
-		}
-	case "public":
-		opts.Ingress = "public"
-		opts.CloudflareTunnel = false
-	case "cloudflare":
-		opts.CloudflareTunnel = true
-	case "private":
-		opts.CloudflareTunnel = false
-	default:
-		return Options{}, installUsageError(fmt.Sprintf("invalid ingress mode: %s (expected public, cloudflare, or private)", opts.Ingress), boxSetupCommand("", "--ingress", "public"))
-	}
-
-	switch opts.Admin {
-	case "":
-		if opts.Tailscale {
-			opts.Admin = "tailscale"
-		} else {
-			opts.Admin = "public-ssh"
-		}
-	case "public-ssh":
-		opts.Admin = "public-ssh"
-		opts.Tailscale = false
-	case "tailscale":
-		opts.Tailscale = true
-	default:
-		return Options{}, installUsageError(fmt.Sprintf("invalid admin mode: %s (expected public-ssh or tailscale)", opts.Admin), boxSetupCommand("", "--admin", "public-ssh"))
-	}
-	return opts, nil
-}
-
 func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) (provision.InstallSummary, error) {
 	if err := i.preflightSSH(plan); err != nil {
 		return provision.InstallSummary{}, err
 	}
 	if plan.NarrateSetup {
 		i.printSetupNarration(plan)
-		i.printInstallSummary(plan)
 	}
 	if err := i.ensureRemoteBootstrapAuthorizedKeys(plan); err != nil {
 		return provision.InstallSummary{}, err
@@ -445,17 +308,8 @@ func (i *Installer) runRemote(plan Plan, keyPlan keyPlan) (provision.InstallSumm
 		return provision.InstallSummary{}, err
 	}
 	defer cleanupKeys()
-	setupSecretsFile, cleanupSecrets, err := i.writeRemoteSetupSecrets(plan)
-	if err != nil {
-		return provision.InstallSummary{}, err
-	}
-	defer cleanupSecrets()
-
-	cmd := remoteLocalInstallCommand(remoteHelper, plan, operatorKeyFile, deployKeyFile, setupSecretsFile)
+	cmd := remoteLocalInstallCommand(remoteHelper, plan, operatorKeyFile, deployKeyFile)
 	cmd = cleanupRemoteHelperCommand(cmd, remoteHelper)
-	if setupSecretsFile != "" {
-		cmd = cleanupRemoteSetupSecretsCommand(cmd, setupSecretsFile)
-	}
 	i.step("running provisioner on target")
 	if plan.BootstrapUser == "root" {
 		if err := i.remoteCommand(plan, cmd); err != nil {
@@ -483,51 +337,18 @@ func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) (provision.InstallSumma
 
 	if plan.NarrateSetup {
 		i.printSetupNarration(plan)
-		i.printInstallSummary(plan)
 	}
 	summary, err := provision.RunInstall(context.Background(), local.Runner{}, provision.InstallOptions{
-		OperatorSSHPublicKeys:  keyLines(keyPlan.Operator),
-		DeploySSHPublicKeys:    keyLines(keyPlan.Deploy),
-		Ingress:                plan.Ingress,
-		Admin:                  plan.Admin,
-		Tailscale:              plan.Tailscale,
-		TailscaleAuthKey:       plan.TailscaleAuthKey,
-		TailscaleHostname:      plan.TailscaleHostname,
-		CloudflareTunnel:       plan.CloudflareTunnel,
-		CloudflareAPIToken:     plan.CloudflareAPIToken,
-		CloudflareAccountID:    plan.CloudflareAccountID,
-		CloudflareTunnelToken:  plan.CloudflareTunnelToken,
-		CloudflareTunnelConfig: plan.CloudflareTunnelConfig,
-		InstallLitestream:      plan.InstallLitestream,
-		CheckMode:              plan.CheckMode,
-		HelperBinaryPath:       helperPath,
+		OperatorSSHPublicKeys: keyLines(keyPlan.Operator),
+		DeploySSHPublicKeys:   keyLines(keyPlan.Deploy),
+		CheckMode:             plan.CheckMode,
+		HelperBinaryPath:      helperPath,
 	})
 	if err != nil {
 		return provision.InstallSummary{}, hostInstallApplyError(plan, err)
 	}
 	i.info("provisioning %s %d changes", summary.ApplyID, summary.OperationsChanged)
 	return summary, nil
-}
-
-func (i *Installer) printInstallSummary(plan Plan) {
-	if plan.Tailscale {
-		i.info("tailscale: enabled")
-		i.info("tailscale auth: %s", presentOrMissing(plan.TailscaleAuthKey, "auth key provided", "manual login required"))
-	}
-	if plan.CloudflareTunnel {
-		i.info("cloudflare tunnel: enabled")
-		switch {
-		case plan.CloudflareAPIToken != "":
-			i.info("cloudflare api: token provided")
-		case plan.CloudflareTunnelConfig != "":
-			i.info("cloudflare tunnel config: %s", plan.CloudflareTunnelConfig)
-		default:
-			i.info("cloudflare tunnel auth: %s", presentOrMissing(plan.CloudflareTunnelToken, "token provided", "service not enabled"))
-		}
-	}
-	if plan.InstallLitestream {
-		i.info("litestream: enabled")
-	}
 }
 
 func (i *Installer) dumpInstallPlan(plan Plan) error {
@@ -539,23 +360,12 @@ func (i *Installer) dumpInstallPlan(plan Plan) error {
 	fmt.Fprintf(i.Stdout, "plan.mode=%s\n", plan.Mode)
 	fmt.Fprintf(i.Stdout, "plan.target_host=%s\n", plan.TargetHost)
 	fmt.Fprintf(i.Stdout, "plan.bootstrap_user=%s\n", plan.BootstrapUser)
-	fmt.Fprintf(i.Stdout, "plan.ingress=%s\n", plan.Ingress)
-	fmt.Fprintf(i.Stdout, "plan.admin=%s\n", plan.Admin)
-	fmt.Fprintf(i.Stdout, "plan.tailscale=%s\n", boolText(plan.Tailscale))
-	fmt.Fprintf(i.Stdout, "plan.tailscale_auth_mode=%s\n", plan.TailscaleAuthMode)
-	fmt.Fprintf(i.Stdout, "plan.cloudflare_tunnel=%s\n", boolText(plan.CloudflareTunnel))
-	fmt.Fprintf(i.Stdout, "plan.cloudflare_service_mode=%s\n", plan.CloudflareServiceMode)
-	fmt.Fprintf(i.Stdout, "plan.litestream=%s\n", boolText(plan.InstallLitestream))
 	fmt.Fprintf(i.Stdout, "plan.check_mode=%s\n", boolText(plan.CheckMode))
 	fmt.Fprintf(i.Stdout, "plan.operator_key=%s\n", presentOrMissingKeys(keyPlan.Operator, "present", "missing"))
 	fmt.Fprintf(i.Stdout, "plan.deploy_key=%s\n", presentOrMissingKeys(keyPlan.Deploy, "present", "missing"))
 	if plan.Mode == "remote" {
 		fmt.Fprintln(i.Stdout, "--- remote-local-command ---")
-		setupSecretsFile := ""
-		if hasSetupSecrets(plan) {
-			setupSecretsFile = remoteSetupSecretsExample
-		}
-		fmt.Fprintln(i.Stdout, remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/ship-operator.pub", "/tmp/ship-deploy.pub", setupSecretsFile))
+		fmt.Fprintln(i.Stdout, remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/ship-operator.pub", "/tmp/ship-deploy.pub"))
 	}
 	return nil
 }
@@ -831,56 +641,6 @@ func (i *Installer) writeRemoteKeyFiles(plan Plan, keys keyPlan) (string, string
 	return operatorPath, deployPath, cleanup, nil
 }
 
-func (i *Installer) writeRemoteSetupSecrets(plan Plan) (string, func(), error) {
-	secrets := setupSecrets{
-		TailscaleAuthKey:      plan.TailscaleAuthKey,
-		CloudflareAPIToken:    plan.CloudflareAPIToken,
-		CloudflareTunnelToken: plan.CloudflareTunnelToken,
-	}
-	if !hasSetupSecrets(plan) {
-		return "", func() {}, nil
-	}
-	payload, err := json.Marshal(secrets)
-	if err != nil {
-		return "", func() {}, err
-	}
-	createCommand := "umask 077; mktemp " + utils.ShellEscape(remoteSetupSecretsPattern)
-	if plan.BootstrapUser != "root" {
-		createCommand = "sudo -n sh -c " + utils.ShellEscape(createCommand)
-	}
-	path, err := i.remoteOutput(plan, createCommand)
-	if err != nil {
-		return "", func() {}, remoteInstallCommandError(plan, "create setup secrets file on target", createCommand, err)
-	}
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", func() {}, fmt.Errorf("create setup secrets file on target: empty path")
-	}
-	writeCommand := "cat > " + utils.ShellEscape(path) + " && chmod 0600 " + utils.ShellEscape(path)
-	if plan.BootstrapUser != "root" {
-		writeCommand = "sudo -n sh -c " + utils.ShellEscape(writeCommand)
-	}
-	if err := i.remoteCommandInput(plan, writeCommand, payload); err != nil {
-		return "", func() {}, remoteInstallCommandError(plan, "write setup secrets on target", writeCommand, err)
-	}
-	cleanup := func() {
-		command := "rm -f " + utils.ShellEscape(path)
-		if plan.BootstrapUser != "root" {
-			command = "sudo -n " + command
-		}
-		_ = i.remoteCommand(plan, command)
-	}
-	return path, cleanup, nil
-}
-
-func hasSetupSecrets(plan Plan) bool {
-	return plan.TailscaleAuthKey != "" || plan.CloudflareAPIToken != "" || plan.CloudflareTunnelToken != ""
-}
-
-func cleanupRemoteSetupSecretsCommand(command string, path string) string {
-	return "sh -c " + utils.ShellEscape(command+"; status=$?; rm -f "+utils.ShellEscape(path)+"; exit $status")
-}
-
 func cleanupRemoteHelperCommand(command string, path string) string {
 	return "sh -c " + utils.ShellEscape(command+"; status=$?; rm -f "+utils.ShellEscape(path)+"; exit $status")
 }
@@ -908,15 +668,13 @@ func setupKnownHostOptions(plan Plan, strict string) []string {
 	return knownhosts.SSHOptions(path, strict)
 }
 
-func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string, deployKeyFile string, setupSecretsFile string) string {
+func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string, deployKeyFile string) string {
 	args := []string{
 		binary,
 		"box",
 		"setup",
 		"localhost",
 		"--mode", "local",
-		"--ingress", plan.Ingress,
-		"--admin", plan.Admin,
 		"--suppress-setup-narration",
 	}
 	if operatorKeyFile != "" {
@@ -924,31 +682,6 @@ func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string,
 	}
 	if deployKeyFile != "" {
 		args = append(args, "--deploy-ssh-public-key-file", deployKeyFile)
-	}
-	if setupSecretsFile != "" {
-		args = append(args, "--setup-secrets-file", setupSecretsFile)
-	}
-	if plan.Tailscale {
-		if plan.TailscaleHostname != "" {
-			args = append(args, "--tailscale-hostname", plan.TailscaleHostname)
-		}
-	} else {
-		args = append(args, "--no-tailscale")
-	}
-	if plan.CloudflareTunnel {
-		if plan.CloudflareAccountID != "" {
-			args = append(args, "--cloudflare-account-id", plan.CloudflareAccountID)
-		}
-		if plan.CloudflareTunnelConfig != "" {
-			args = append(args, "--cloudflare-tunnel-config", plan.CloudflareTunnelConfig)
-		}
-	} else {
-		args = append(args, "--no-cloudflare-tunnel")
-	}
-	if plan.InstallLitestream {
-		args = append(args, "--litestream")
-	} else {
-		args = append(args, "--no-litestream")
 	}
 	if plan.CheckMode {
 		args = append(args, "--check")
@@ -959,37 +692,6 @@ func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string,
 		escaped = append(escaped, utils.ShellEscape(arg))
 	}
 	return strings.Join(escaped, " ")
-}
-
-func applySetupSecretsFile(opts *Options) error {
-	if opts.SetupSecretsFile == "" {
-		return nil
-	}
-	info, err := os.Stat(opts.SetupSecretsFile)
-	if err != nil {
-		return fmt.Errorf("read setup secrets file: %w", err)
-	}
-	if info.Mode().Perm() != 0600 {
-		return fmt.Errorf("setup secrets file must have mode 0600")
-	}
-	data, err := os.ReadFile(opts.SetupSecretsFile)
-	if err != nil {
-		return fmt.Errorf("read setup secrets file: %w", err)
-	}
-	var secrets setupSecrets
-	if err := json.Unmarshal(data, &secrets); err != nil {
-		return fmt.Errorf("decode setup secrets file: %w", err)
-	}
-	if secrets.TailscaleAuthKey != "" {
-		opts.TailscaleAuthKey = secrets.TailscaleAuthKey
-	}
-	if secrets.CloudflareAPIToken != "" {
-		opts.CloudflareAPIToken = secrets.CloudflareAPIToken
-	}
-	if secrets.CloudflareTunnelToken != "" {
-		opts.CloudflareTunnelToken = secrets.CloudflareTunnelToken
-	}
-	return nil
 }
 
 type keyPlan struct {
@@ -1058,32 +760,6 @@ func repoLooksValid(dir string) bool {
 	return fileExists(filepath.Join(dir, "go.mod"))
 }
 
-func tailscaleAuthMode(enabled bool, authKey string) string {
-	if !enabled {
-		return "disabled"
-	}
-	if authKey != "" {
-		return "auth-key"
-	}
-	return "manual"
-}
-
-func cloudflareServiceMode(opts Options) string {
-	if !opts.CloudflareTunnel {
-		return "disabled"
-	}
-	switch {
-	case opts.CloudflareAPIToken != "":
-		return "api"
-	case opts.CloudflareTunnelToken != "":
-		return "token"
-	case opts.CloudflareTunnelConfig != "":
-		return "config"
-	default:
-		return "manual"
-	}
-}
-
 func helperBinariesExist(dir string) bool {
 	return fileExists(filepath.Join(dir, "ship-linux-amd64")) &&
 		fileExists(filepath.Join(dir, "ship-linux-arm64"))
@@ -1132,8 +808,8 @@ func keyLines(keys []plannedKey) []string {
 }
 
 func (i *Installer) printSetupNarration(plan Plan) {
-	fmt.Fprintln(i.Stderr, ingressNarration(plan))
-	fmt.Fprintln(i.Stderr, adminNarration(plan))
+	fmt.Fprintln(i.Stderr, "ingress: public 80/443")
+	fmt.Fprintln(i.Stderr, "admin: SSH keys only")
 }
 
 func (i *Installer) printMemberEnrollment(results []memberkeys.AddResult) {
@@ -1148,24 +824,6 @@ func (i *Installer) printMemberEnrollment(results []memberkeys.AddResult) {
 		}
 		fmt.Fprintf(i.Stderr, "member %s already authorized (%s, %s)\n", result.Key.Comment, role, result.Key.Fingerprint)
 	}
-}
-
-func ingressNarration(plan Plan) string {
-	switch plan.Ingress {
-	case "cloudflare":
-		return "ingress: Cloudflare Tunnel (--ingress public)"
-	case "private":
-		return "ingress: private network only (--ingress public)"
-	default:
-		return "ingress: public 80/443 (--ingress ...)"
-	}
-}
-
-func adminNarration(plan Plan) string {
-	if plan.Admin == "tailscale" {
-		return "admin: Tailscale SSH (--admin public-ssh)"
-	}
-	return "admin: SSH keys only (--admin tailscale)"
 }
 
 func deployKeyMissingError(detail string, passwordTarget string) error {
@@ -1254,13 +912,6 @@ func boolText(value bool) string {
 		return "true"
 	}
 	return "false"
-}
-
-func presentOrMissing(value string, present string, missing string) string {
-	if value != "" {
-		return present
-	}
-	return missing
 }
 
 func installUsageError(detail, command string) error {

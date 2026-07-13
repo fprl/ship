@@ -13,12 +13,6 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 	store := Store{Root: root}
 
 	desired := validHostDesired()
-	desired.Ingress.Tunnel = TunnelCloudflare
-	desired.Features.Litestream = true
-	desired.Packages = map[string]DesiredPackage{
-		"litestream": {Source: "github-release", Version: "0.5.8"},
-		"podman":     {Source: "ubuntu", Track: "noble"},
-	}
 	observed := HostObserved{
 		Packages: map[string]ObservedPackage{
 			"podman": {Version: "5.0.3"},
@@ -46,15 +40,10 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 		`"observed": {`,
 		`"meta": {`,
 		`"expose": "private"`,
-		`"tunnel": "cloudflare"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected host.json to contain %q:\n%s", want, text)
 		}
-	}
-	packagesBlock := text[strings.Index(text, `"packages": {`):]
-	if strings.Index(packagesBlock, `"caddy"`) > strings.Index(packagesBlock, `"litestream"`) {
-		t.Fatalf("package keys are not stable-sorted:\n%s", text)
 	}
 	assertMode(t, store.HostPath(), 0644)
 
@@ -65,33 +54,6 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 	if loaded.Version != 1 || loaded.Desired.Users.Operator != "operator" {
 		t.Fatalf("unexpected loaded host file: %+v", loaded)
 	}
-
-	if err := store.WriteCloudflare(CloudflareFile{
-		Version:    CurrentVersion,
-		AccountID:  "account-test",
-		TunnelID:   "tunnel-test",
-		TunnelName: "ship-prod-1",
-		Routes: map[string]CloudflareRoute{
-			"api.example.com": {
-				App:         "api",
-				ZoneID:      "zone-test",
-				DNSRecordID: "record-test",
-			},
-		},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if got := store.CloudflarePath(); got != filepath.Join(root, "providers", "cloudflare.json") {
-		t.Fatalf("unexpected cloudflare path: %s", got)
-	}
-	cfData, err := os.ReadFile(store.CloudflarePath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(cfData), "dns_records") {
-		t.Fatalf("Cloudflare state should use routes as its single route source:\n%s", cfData)
-	}
-	assertMode(t, store.CloudflarePath(), 0600)
 
 	if err := store.WriteDoctor(DoctorFile{
 		Version:    CurrentVersion,
@@ -251,10 +213,9 @@ func TestWriteHostStatePreservesDesired(t *testing.T) {
   "version": 1,
   "desired": {
       "users": {"operator":"operator", "deploy":"deploy"},
-      "ingress": {"tunnel":"none", "expose":"private"},
-      "features": {"litestream":true, "docker":false},
+      "ingress": {"expose":"private"},
+      "features": {"docker":false},
       "packages": {
-        "litestream": {"version":"0.5.8", "source":"github-release"},
         "podman": {"track":"noble", "source":"ubuntu"}
       }
   },
@@ -272,9 +233,6 @@ func TestWriteHostStatePreservesDesired(t *testing.T) {
 	if err := store.WriteHostState(HostObserved{
 		Packages: map[string]ObservedPackage{
 			"caddy": {Version: "2.8.4"},
-		},
-		Ingress: HostIngressObserved{
-			CloudflaredServiceActive: true,
 		},
 	}, HostMeta{
 		ShipVersion: "0.3.0",
@@ -442,16 +400,6 @@ func TestStoreValidatesVersionsAcrossStateFiles(t *testing.T) {
 		unsupported string
 	}{
 		{
-			name:        "cloudflare",
-			path:        store.CloudflarePath(),
-			read:        func() error { _, err := store.ReadCloudflare(); return err },
-			writeZero:   func() error { return store.WriteCloudflare(CloudflareFile{}) },
-			zeroRaw:     `{"version":0,"routes":{}}`,
-			futureRaw:   `{"version":2,"routes":{}}`,
-			required:    "providers/cloudflare.json version is required",
-			unsupported: "unsupported providers/cloudflare.json version 2",
-		},
-		{
 			name:        "doctor",
 			path:        store.DoctorPath(),
 			read:        func() error { _, err := store.ReadDoctor(); return err },
@@ -512,11 +460,6 @@ func TestReadHostRejectsInvalidDesiredValues(t *testing.T) {
 			want:   "ingress.expose",
 		},
 		{
-			name:   "invalid tunnel",
-			mutate: func(d *HostDesired) { d.Ingress.Tunnel = "" },
-			want:   "ingress.tunnel",
-		},
-		{
 			name: "missing package source",
 			mutate: func(d *HostDesired) {
 				d.Packages["caddy"] = DesiredPackage{Track: "stable"}
@@ -549,7 +492,6 @@ func validHostDesired() HostDesired {
 		},
 		Ingress: HostIngressDesired{
 			Expose: ExposePrivate,
-			Tunnel: TunnelNone,
 		},
 		Features: HostFeatures{},
 		Packages: map[string]DesiredPackage{},

@@ -115,8 +115,8 @@ var catalogue = map[Code]Entry{
 	CodeDockerfileMissing: {
 		Code:                CodeDockerfileMissing,
 		MessageTemplate:     "Dockerfile is missing",
-		CauseTemplate:       "manifest declares processes but is missing a Dockerfile",
-		RemediationTemplate: "ship init",
+		CauseTemplate:       "the declared processes need a Dockerfile to build",
+		RemediationTemplate: "write a Dockerfile, or declare a [routes] static route in ship.toml",
 	},
 	CodeOperationFailed: {
 		Code:                CodeOperationFailed,
@@ -370,7 +370,7 @@ var catalogue = map[Code]Entry{
 		Code:                CodeDotenvRejected,
 		MessageTemplate:     "deploy artifact contains dotenv files",
 		CauseTemplate:       "refusing to deploy dotenv file: {files}",
-		RemediationTemplate: "ship --include-dotenv",
+		RemediationTemplate: "run ship secret set --from .env, then remove the file (allowed names: .env.example, .env.sample, .env.defaults)",
 	},
 	CodeDotenvMalformed: {
 		Code:                CodeDotenvMalformed,

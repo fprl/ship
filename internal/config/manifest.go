@@ -24,7 +24,7 @@ const (
 	ShapeStatic    = "static"
 )
 
-const DockerfileMissingDetail = "manifest declares processes but is missing a Dockerfile"
+const DockerfileMissingDetail = "the declared processes need a Dockerfile to build"
 
 var (
 	AppRe        = names.AppRe
@@ -35,8 +35,7 @@ var (
 )
 
 const (
-	secretBare   = "@secret"
-	secretPrefix = "@secret:"
+	secretBare = "@secret"
 )
 
 const ProductionEnvName = "prod"
@@ -764,13 +763,6 @@ func splitVarsBlock(vars map[string]any) (map[string]string, map[string]string) 
 			refs[k] = k
 			continue
 		}
-		if strings.HasPrefix(s, secretPrefix) {
-			key := strings.TrimPrefix(s, secretPrefix)
-			if EnvKeyRe.MatchString(key) {
-				refs[k] = key
-				continue
-			}
-		}
 		literals[k] = s
 	}
 	return literals, refs
@@ -821,11 +813,8 @@ func validateVarsBlock(table string, vars map[string]any, reservePreview bool, e
 			if v == secretBare {
 				continue
 			}
-			if strings.HasPrefix(v, secretPrefix) {
-				ref := strings.TrimPrefix(v, secretPrefix)
-				if !EnvKeyRe.MatchString(ref) {
-					*errors = append(*errors, fmt.Sprintf("%s value starts with reserved prefix '@secret:', use a valid secret key", label))
-				}
+			if strings.HasPrefix(v, "@secret:") {
+				*errors = append(*errors, fmt.Sprintf("%s uses @secret:NAME aliasing, which was removed; name the secret after the variable and use \"@secret\"", label))
 			}
 		case bool:
 			*errors = append(*errors, fmt.Sprintf("%s must be a string; if you want %q, write it as a quoted string", label, fmt.Sprintf("%t", v)))

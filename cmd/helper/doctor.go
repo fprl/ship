@@ -425,9 +425,6 @@ func doctorHostStateCheck(stateStore store.Store, boxTarget string) store.Doctor
 	if _, err := stateStore.ReadHost(); err != nil {
 		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("host state invalid: %v", err), remediation)
 	}
-	if _, err := stateStore.ReadCloudflare(); err != nil {
-		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("cloudflare state invalid: %v", err), remediation)
-	}
 	if info, err := os.Stat(secrets.RootDir()); err != nil {
 		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("secrets root unavailable: %v", err), remediation)
 	} else if !info.IsDir() {
@@ -786,16 +783,8 @@ func doctorServiceFindingsFor(desired store.HostDesired, serviceStatus func(stri
 	return findings
 }
 
-func requiredServicesFor(desired store.HostDesired) []string {
-	required := []string{"caddy"}
-	switch desired.Ingress.Tunnel {
-	case store.TunnelCloudflare:
-		required = append(required, "cloudflared")
-	case store.TunnelTailscaleFunnel:
-		required = append(required, "tailscaled")
-	}
-	sort.Strings(required)
-	return required
+func requiredServicesFor(store.HostDesired) []string {
+	return []string{"caddy"}
 }
 
 func doctorCheck(id, status, evidence, remediation string) store.DoctorCheck {

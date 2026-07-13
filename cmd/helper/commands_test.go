@@ -32,7 +32,6 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"doctor", "--json"},
 		{"doctor", "--box-target", "example.com", "--json"},
 		{"doctor", "record"},
-		{"cloudflare", "setup-tunnel", "--name", "ship", "--account-id", "account-test", "--token-file", "/tmp/token"},
 		{"app", "setup-env", "api", "production"},
 		{"app", "--member-fingerprint", aliceFingerprint, "status", "--json", "api", "production"},
 		{"app", "preflight", "--secret", "DATABASE_URL", "--json", "api", "production"},
@@ -114,8 +113,6 @@ func TestServerCLIAppliesMemberFingerprintFlag(t *testing.T) {
 func TestServerCLIRejectsRemovedCompatibilityCommands(t *testing.T) {
 	tests := [][]string{
 		{"status"},
-		{"cloudflare", "publish", "--app", "api", "api.example.com"},
-		{"cloudflare", "remove", "--app", "api"},
 		{"app", "restart", "api", "production"},
 		{"app", "rollback", "--json", "api", "production"},
 		{"app", "backup", "api", "production"},

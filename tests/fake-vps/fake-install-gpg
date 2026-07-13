@@ -19,12 +19,6 @@ fingerprint_for_path() {
     *docker*)
       printf '9DC858229FC7DD38854AE2D88D81803C0EBFCD88'
       ;;
-    *tailscale*)
-      printf '2596A99EAAB33821893C0A79458CA832957F5868'
-      ;;
-    *cloudflare*)
-      printf 'CC94B39C77AE7342A68B89628A682D308D4E5E73'
-      ;;
   esac
 }
 

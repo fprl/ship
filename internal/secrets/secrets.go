@@ -1,5 +1,5 @@
 // Package secrets is the host-side per-(app, env, key) secret store
-// for `@secret:KEY` references resolved by `server app apply`.
+// for bare `@secret` references resolved by `server app apply`.
 //
 // Storage shape: one file per secret, value verbatim, no metadata.
 //
