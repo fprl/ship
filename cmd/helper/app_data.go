@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/utils"
 )
@@ -573,6 +574,10 @@ func writeDataTarFile(tw *tar.Writer, name string, data []byte, mode os.FileMode
 }
 
 func restoreAppData(app, env, archive string) (dataSnapshotMetadata, error) {
+	archive, err := host.ValidateDeployTmpSource(archive)
+	if err != nil {
+		return dataSnapshotMetadata{}, err
+	}
 	defer os.Remove(archive)
 	if err := sweepDataSnapshotStaging(app, env); err != nil {
 		return dataSnapshotMetadata{}, err
@@ -613,7 +618,7 @@ func restoreAppData(app, env, archive string) (dataSnapshotMetadata, error) {
 		return dataSnapshotMetadata{}, fmt.Errorf("swap restored data dir: %w", err)
 	}
 	if err := applyEnvLayoutPerms(app, env); err != nil {
-		return dataSnapshotMetadata{}, err
+		fmt.Fprintf(os.Stderr, "warning: data restored but layout perms need attention: %v\n", err)
 	}
 	return meta, nil
 }

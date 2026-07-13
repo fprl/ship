@@ -158,11 +158,16 @@ func CmdDataRestore(root, idOrPath, confirm string) {
 	if _, err := os.Stat(path); err != nil {
 		utils.DieError(operationError(fmt.Sprintf("read snapshot %s: %v", path, err), "ship data ls"), 1)
 	}
-	remote := fmt.Sprintf("%s/data-restore-%s-%d.data.tar.gz", RemoteDeployTmpDir, read.EnvName, time.Now().UnixNano())
-	if _, err := runSSHRequired(read.Runner, read.AppContext.Server, "mkdir -p "+utils.ShellEscape(RemoteDeployTmpDir), "create snapshot staging failed", "ship data restore"); err != nil {
+	// Stage under a unique subdir with the same mkdir+chmod+rm-rf shape the
+	// deploy path uses, so an agent member's forced shell allows it (a bare
+	// mkdir on the parent, or rm -f on a file, is outside the agent allowlist).
+	remoteDir := fmt.Sprintf("%s/data-restore-%s-%d", RemoteDeployTmpDir, read.EnvName, time.Now().UnixNano())
+	remote := remoteDir + "/snapshot.data.tar.gz"
+	mkdirCmd := fmt.Sprintf("mkdir -p %s && chmod 0700 %s", utils.ShellEscape(remoteDir), utils.ShellEscape(remoteDir))
+	if _, err := runSSHRequired(read.Runner, read.AppContext.Server, mkdirCmd, "create snapshot staging failed", "ship data restore"); err != nil {
 		utils.DieError(err, 1)
 	}
-	defer func() { _, _, _, _ = read.Runner.RunSSH(read.AppContext.Server, "rm -f "+utils.ShellEscape(remote)) }()
+	defer func() { _, _, _, _ = read.Runner.RunSSH(read.AppContext.Server, "rm -rf "+utils.ShellEscape(remoteDir)) }()
 	if err := read.Runner.Upload(path, remote, read.AppContext.Server); err != nil {
 		utils.DieError(operationError(fmt.Sprintf("upload snapshot: %v", err), "ship data restore"), 1)
 	}

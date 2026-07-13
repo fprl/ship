@@ -245,8 +245,12 @@ func URLServes200(runShell func(command string) CommandResult, rawURL string) er
 	if path == "" {
 		path = "/"
 	}
-	command := fmt.Sprintf("curl -fsS -o /dev/null -w '%%{http_code}' -H %s %s",
-		ShellQuote("Host: "+parsed.Hostname()),
+	headers := "-H " + ShellQuote("Host: "+parsed.Hostname())
+	if token := parsed.Query().Get("ship"); token != "" {
+		headers += " -H " + ShellQuote("x-ship-capability: "+token)
+	}
+	command := fmt.Sprintf("curl -fsS -o /dev/null -w '%%{http_code}' %s %s",
+		headers,
 		ShellQuote("http://127.0.0.1"+path),
 	)
 	result := runShell(command)

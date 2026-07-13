@@ -151,7 +151,7 @@ func dockerfileMissingDetails(details []string) bool {
 }
 
 func dockerfileMissingMessage(message string) bool {
-	return strings.Contains(message, "missing a Dockerfile")
+	return strings.Contains(message, config.DockerfileMissingDetail)
 }
 
 func manifestMissing(message string) bool {

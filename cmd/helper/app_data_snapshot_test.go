@@ -16,6 +16,7 @@ import (
 func TestRestoreDataSnapshotRejectsInvalidArchiveBeforeLiveDataMutation(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	t.Setenv("SHIP_DEPLOY_TMP_DIR", root)
 	dataDir := identity.DataDir("api", "production")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
@@ -38,6 +39,7 @@ func TestRestoreDataSnapshotRejectsInvalidArchiveBeforeLiveDataMutation(t *testi
 func TestRestoreDataSnapshotRejectsMissingDataBeforeLiveDataMutation(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	t.Setenv("SHIP_DEPLOY_TMP_DIR", root)
 	dataDir := identity.DataDir("api", "production")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
@@ -57,6 +59,7 @@ func TestRestoreDataSnapshotRejectsMissingDataBeforeLiveDataMutation(t *testing.
 func TestRestoreDataSnapshotRejectsCorruptMetadataBeforeLiveDataMutation(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	t.Setenv("SHIP_DEPLOY_TMP_DIR", root)
 	dataDir := identity.DataDir("api", "production")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
@@ -97,6 +100,7 @@ func TestRestoreDataSnapshotRejectsCorruptMetadataBeforeLiveDataMutation(t *test
 func TestRestoreDataSnapshotRejectsAppMismatchBeforeLiveDataMutation(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	t.Setenv("SHIP_DEPLOY_TMP_DIR", root)
 	dataDir := identity.DataDir("api", "production")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
@@ -116,6 +120,7 @@ func TestRestoreDataSnapshotRejectsAppMismatchBeforeLiveDataMutation(t *testing.
 func TestRestoreDataSnapshotStagingFailureLeavesLiveDataUntouched(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	t.Setenv("SHIP_DEPLOY_TMP_DIR", root)
 	dataDir := identity.DataDir("api", "production")
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		t.Fatal(err)
@@ -135,6 +140,23 @@ func TestRestoreDataSnapshotStagingFailureLeavesLiveDataUntouched(t *testing.T) 
 		t.Fatal("expected staging failure")
 	}
 	assertLiveData(t, dataDir, "live")
+}
+
+func TestRestoreDataSnapshotRejectsArchiveOutsideDeployTmpWithoutRemovingIt(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	t.Setenv("SHIP_DEPLOY_TMP_DIR", filepath.Join(root, "deploy-tmp"))
+	archive := filepath.Join(root, "outside.data.tar.gz")
+	if err := os.WriteFile(archive, []byte("must survive"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := restoreAppData("api", "production", archive); err == nil {
+		t.Fatal("restore accepted archive outside deploy tmp")
+	}
+	if _, err := os.Stat(archive); err != nil {
+		t.Fatalf("outside archive was removed: %v", err)
+	}
 }
 
 func TestSweepDataSnapshotStagingRemovesStaleDirectories(t *testing.T) {

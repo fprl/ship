@@ -646,8 +646,14 @@ CMD ["/bin/sh", "-c", "sleep 3600"]
 	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, previewURL)
 	previewRelease := gitRelease(t, e, app)
 	previewEnv := e.urlBody(t, previewURL, "/ship-env")
+	// SHIP_URL is the env's own clean https URL; the capability token rides
+	// only the deploy-stdout URL, never the process env.
+	cleanPreviewURL := previewURL
+	if i := strings.IndexByte(cleanPreviewURL, '?'); i >= 0 {
+		cleanPreviewURL = cleanPreviewURL[:i]
+	}
 	for _, want := range []string{
-		"SHIP_URL=" + previewURL + "\n",
+		"SHIP_URL=" + cleanPreviewURL + "\n",
 		"SHIP_BRANCH=feature/phase1\n",
 		"SHIP_ENV=preview\n",
 		"SHIP_RELEASE=" + previewRelease + "\n",
@@ -1395,6 +1401,9 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	setOwner()
 	e.ship(t, app, nil, "box", "config", "fake-vps", "set", "notify.url", sink.URL("/box"))
 
+	// Clear consumed events so the next approval_requested wait sees the
+	// agent's box-notify request, not the earlier shipper box-config one.
+	e.dockerExec(t, "rm -f "+sink.eventsPath)
 	setAgent()
 	notifyDenied := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "notify", "fake-vps", sink.URL("/moved"))
 	if notifyDenied.err == nil {
@@ -1587,7 +1596,7 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 	if err := os.WriteFile(badSnapshot, []byte("corrupt"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	badRestore := e.runShip(t, app, nil, "data", "restore", badSnapshot)
+	badRestore := e.runCommand(t, app, []string{"SHIP_ERROR_JSON=1"}, nil, e.goBin, "data", "restore", badSnapshot)
 	if badRestore.err == nil {
 		t.Fatal("corrupt snapshot restore should fail")
 	}
@@ -1664,12 +1673,12 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 	if deniedSave.err == nil {
 		t.Fatal("agent data save should require approval")
 	}
-	assertContains(t, deniedSave.stdout+deniedSave.stderr, "approval_required")
+	assertContains(t, deniedSave.stdout+deniedSave.stderr, "approval required for app=dataapi env="+previewEnv+" class=preview data=save")
 	deniedRestore := e.runCommand(t, app, agentEnv, nil, e.goBin, "data", "restore", snapshot)
 	if deniedRestore.err == nil {
 		t.Fatal("agent data restore should require approval")
 	}
-	assertContains(t, deniedRestore.stdout+deniedRestore.stderr, "approval_required")
+	assertContains(t, deniedRestore.stdout+deniedRestore.stderr, "approval required for app=dataapi env="+previewEnv+" class=preview data=restore")
 	approvalID := approvalIDFromOutput(t, deniedText)
 	e.pathPrefix = ownerPrefix
 	approved := e.ship(t, app, nil, "approve", approvalID)
@@ -2433,6 +2442,7 @@ web = { port = 3000 }
 
 	e.ship(t, app, []byte("prod-base-token"), "secret", "set", "PROD_TOKEN")
 	e.ship(t, app, []byte("prod-leak-token"), "secret", "set", "API_TOKEN")
+	e.ship(t, app, []byte("shared-preview-prod-token"), "secret", "set", "PROD_TOKEN", "--preview")
 	e.ship(t, app, []byte("shared-preview-token"), "secret", "set", "API_TOKEN", "--preview")
 	e.ship(t, app, nil)
 	prodEnv := e.dockerExec(t, "cat "+identity.EnvFile("overlay", productionEnv))
@@ -3184,6 +3194,19 @@ func approvalIDFromOutput(t *testing.T, output string) string {
 			t.Fatalf("approval line missing id:\n%s", output)
 		}
 		return id
+	}
+	for _, line := range strings.Split(output, "\n") {
+		var payload struct {
+			Error struct {
+				Remediation string `json:"remediation"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(line), &payload) != nil {
+			continue
+		}
+		if id, ok := strings.CutPrefix(payload.Error.Remediation, "ship approve "); ok && strings.TrimSpace(id) != "" {
+			return strings.TrimSpace(id)
+		}
 	}
 	t.Fatalf("approval output missing remediation:\n%s", output)
 	return ""

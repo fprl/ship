@@ -580,10 +580,11 @@ var verbs = []Verb{
 		Usage:   "ship status [--json] [--config <path>]",
 		Flags:   []Flag{configFlag, {Name: "--json", Purpose: "Emit structured JSON instead of the text table."}},
 		JSONSchema: schema(
-			`{"app":"api","envs":[{"class":"production","branch":"main","url":"https://...","env":"prod","release":"abc123","health":"healthy","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}]}]}`,
+			`{"app":"api","envs":[{"class":"preview","branch":"feature/x","url":"https://...","capability_url":"https://...?ship=...","env":"feature-x-ab12","release":"abc123","health":"healthy","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":true,"dirty":true,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}]}]}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"manifest_invalid", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
+		Notes:     []string{"capability_url is optional and appears only for Preview environments. pinned and dirty are omitted when false."},
 	},
 	{
 		Verb:    "logs",
@@ -700,10 +701,13 @@ var verbs = []Verb{
 		},
 	},
 	{
-		Verb:      "data ls",
-		Purpose:   "List local data snapshots for this app.",
-		Usage:     "ship data ls [--json] [--config <path>]",
-		Flags:     []Flag{configFlag, {Name: "--json", Purpose: "Emit stable snapshot JSON."}},
+		Verb:    "data ls",
+		Purpose: "List local data snapshots for this app.",
+		Usage:   "ship data ls [--json] [--config <path>]",
+		Flags:   []Flag{configFlag, {Name: "--json", Purpose: "Emit stable snapshot JSON."}},
+		JSONSchema: schema(
+			`{"snapshots":[{"id":"...","name":"...","size":123,"created":"2026-07-07T10:00:00Z","env":"prod","release":"abc123"}]}`,
+		),
 		ExitCodes: normalExit,
 		Errors:    []string{"operation_failed"},
 	},

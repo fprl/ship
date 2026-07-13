@@ -272,7 +272,11 @@ func (e *smokeEnv) urlBody(t *testing.T, rawURL, path string) string {
 	if err != nil {
 		t.Fatalf("parse URL %q: %v", rawURL, err)
 	}
-	command := "curl -fsS -H " + h.ShellQuote("Host: "+parsed.Hostname()) + " " + h.ShellQuote("http://127.0.0.1"+path)
+	headers := "-H " + h.ShellQuote("Host: "+parsed.Hostname())
+	if token := parsed.Query().Get("ship"); token != "" {
+		headers += " -H " + h.ShellQuote("x-ship-capability: "+token)
+	}
+	command := "curl -fsS " + headers + " " + h.ShellQuote("http://127.0.0.1"+path)
 	return e.ssh(t, command)
 }
 
@@ -292,7 +296,11 @@ func (e *smokeEnv) configureSSHWithKey(t *testing.T, keyPath string) string {
 	}
 	port := portOutput[colon+1:]
 
-	homeSSH := filepath.Join(e.tmp, "teammate-home", ".ssh")
+	// Key the config and wrapper dirs by the identity file so a test that
+	// configures several members (agent, shipper, …) gets independent ssh
+	// wrappers instead of the last call clobbering a shared config.
+	slot := filepath.Base(keyPath)
+	homeSSH := filepath.Join(e.tmp, "teammate-home-"+slot, ".ssh")
 	if err := os.MkdirAll(homeSSH, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +320,7 @@ func (e *smokeEnv) configureSSHWithKey(t *testing.T, keyPath string) string {
 		t.Fatal(err)
 	}
 
-	binDir := filepath.Join(e.tmp, "teammate-bin")
+	binDir := filepath.Join(e.tmp, "teammate-bin-"+slot)
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		t.Fatal(err)
 	}

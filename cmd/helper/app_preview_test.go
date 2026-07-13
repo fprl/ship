@@ -222,6 +222,35 @@ func TestReapExpiredPreviewsDestroysUnpinnedPurgesSecretsAndSkipsPinnedAndProd(t
 	}
 }
 
+func TestReapExpiredPreviewsSkipsPreviewPinnedAfterInitialCheck(t *testing.T) {
+	setupPreviewHostTest(t)
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	env := writePreviewIdentityForTest(t, "api", "old-branch-ab12", "old/branch", "old-branch", "ab12", now.Add(-previewTTL-time.Hour), false)
+
+	count, err := reapExpiredPreviewsWithLock(now, func(app, gotEnv string, purge bool) (destroySummary, error) {
+		t.Fatalf("reaper destroyed %s/%s after it was pinned", app, gotEnv)
+		return destroySummary{}, nil
+	}, func(app, gotEnv string) (*appEnvLock, error) {
+		if err := pinPreview(app, gotEnv, true); err != nil {
+			return nil, err
+		}
+		return acquireAppEnvLock(app, gotEnv)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("reaped %d previews, want 0", count)
+	}
+	file, err := readEnvIdentity("api", env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Preview == nil || !file.Preview.Pinned {
+		t.Fatalf("preview should remain pinned: %+v", file.Preview)
+	}
+}
+
 func TestUnknownPreviewBranchErrorText(t *testing.T) {
 	err := unknownPreviewBranchError("feat/x")
 	want := "preview environment lookup failed\nno preview environment is mapped for branch \"feat/x\"\nnext: git checkout feat/x && ship"

@@ -2,6 +2,7 @@ package helper
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"time"
@@ -34,6 +35,10 @@ func (envReapCmd) Run() error {
 }
 
 func reapExpiredPreviews(now time.Time, destroy destroyEnvFunc) (int, error) {
+	return reapExpiredPreviewsWithLock(now, destroy, acquireAppEnvLock)
+}
+
+func reapExpiredPreviewsWithLock(now time.Time, destroy destroyEnvFunc, acquire func(app, env string) (*appEnvLock, error)) (int, error) {
 	files, err := allPreviewIdentities()
 	if err != nil {
 		return 0, err
@@ -46,10 +51,28 @@ func reapExpiredPreviews(now time.Time, destroy destroyEnvFunc) (int, error) {
 		if file.Preview.ExpiresAt.After(now) {
 			continue
 		}
-		lock, err := acquireAppEnvLock(file.App, file.Env)
+		lock, err := acquire(file.App, file.Env)
 		if err != nil {
 			return reaped, err
 		}
+		refreshed, err := readEnvIdentity(file.App, file.Env)
+		if err != nil {
+			releaseErr := lock.Release()
+			if releaseErr != nil {
+				return reaped, fmt.Errorf("release lock for %s (%s): %v", file.App, file.Env, releaseErr)
+			}
+			if os.IsNotExist(err) {
+				continue
+			}
+			return reaped, err
+		}
+		if refreshed.Env == productionEnvName || refreshed.Preview == nil || refreshed.Preview.Pinned || refreshed.Preview.ExpiresAt == nil || refreshed.Preview.ExpiresAt.After(now) {
+			if err := lock.Release(); err != nil {
+				return reaped, fmt.Errorf("release lock for %s (%s): %v", file.App, file.Env, err)
+			}
+			continue
+		}
+		file = refreshed
 		notifyURL := ""
 		release := latestSuccessfulRelease(file.App, file.Env)
 		if ctx, cleanup, err := loadAppliedAppContext(file.App, file.Env); err == nil {

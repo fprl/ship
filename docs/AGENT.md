@@ -109,7 +109,8 @@ Secret scoping:
 - Purpose: Show all live environments for this app.
 - Usage: `ship status [--json] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--json`: Emit structured JSON instead of the text table.
-- `--json` stdout schema: `{"app":"api","envs":[{"class":"production","branch":"main","url":"https://...","env":"prod","release":"abc123","health":"healthy","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}]}]}`
+- `--json` stdout schema: `{"app":"api","envs":[{"class":"preview","branch":"feature/x","url":"https://...","capability_url":"https://...?ship=...","env":"feature-x-ab12","release":"abc123","health":"healthy","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":true,"dirty":true,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}]}]}`
+- Notes: capability_url is optional and appears only for Preview environments. pinned and dirty are omitted when false.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `manifest_invalid`, `ssh_unreachable`, `box_not_initialized`, `host_key_changed`, `operation_failed`
 
@@ -187,6 +188,7 @@ Secret scoping:
 - Purpose: List local data snapshots for this app.
 - Usage: `ship data ls [--json] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--json`: Emit stable snapshot JSON.
+- `--json` stdout schema: `{"snapshots":[{"id":"...","name":"...","size":123,"created":"2026-07-07T10:00:00Z","env":"prod","release":"abc123"}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `operation_failed`
 

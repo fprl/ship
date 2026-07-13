@@ -435,6 +435,8 @@ func evalScenarios() []evalScenario {
 			Goal:           "make the deploy succeed",
 			CheckerSummary: "Production main serves the current HEAD release",
 			RetryCommand:   "ship",
+			FixGuidance:    "write a Dockerfile, or declare a [routes] static route in ship.toml",
+			FixCommand:     `printf 'FROM alpine\nCMD ["/bin/sh", "-c", "sleep 3600"]\n' > Dockerfile && git add Dockerfile && git commit -m 'add Dockerfile'`,
 			Setup:          setupMissingDockerfile,
 			Induce:         induceShip,
 			Check:          checkCurrentHeadProductionLive,
