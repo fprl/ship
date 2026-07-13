@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.4.1
+
+Security hardening across the agent and box-update surfaces the v0.4.0 features
+lean on. Nothing here changes a command you run; it changes what a compromised
+or over-eager key can do with one.
+
+### Security
+
+- Agent keys now resolve to their member and role by the SSH key that actually
+  authenticated, never by a `--member` name the caller supplies. Two keys
+  enrolled under one name with different roles can no longer let an agent key
+  act as the owner; enrollment rejects the role conflict up front.
+- `ship box update` sends a version, and the box downloads and checksum-verifies
+  that official release itself instead of running bytes the client uploads. An
+  owner-approved agent can move a box only to a genuine release, never to an
+  arbitrary root binary. See ADR-0011.
+
+### Fixed
+
+- Box updates now take a box-wide lock, journal the attempt before mutating, and
+  a new `box_update` doctor check flags an update that started without
+  completing or a helper whose version has drifted from its own artifacts.
+- Version comparison honors semantic-version pre-release ordering, so
+  `v0.4.1-rc1` sorts before `v0.4.1`.
+- `SHIP_LINUX_HELPER` overrides must be an ELF binary matching the target
+  architecture.
+- A restore validates the backup manifest before swapping live `/data`, so a
+  corrupt backup leaves current data intact.
+- Destroying a preview environment removes its share token, and the app's
+  generated preview-protection credentials are removed with the app's last
+  environment.
+
 ## v0.4.0
 
 Protected Previews and share links keep unfinished work in your team's hands:
