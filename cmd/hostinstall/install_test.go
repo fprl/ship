@@ -18,6 +18,49 @@ const (
 	bobPublicKey   = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICtppnbbz76teU3iU6BguTmo//WITtYN35e4gSER6UNt bob"
 )
 
+func TestReadPublicKeyFileErrorCodes(t *testing.T) {
+	t.Run("missing file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "missing.pub")
+		_, err := readPublicKeyFile(path)
+		coded, ok := errcat.As(err)
+		if !ok || coded.Code() != errcat.CodeSSHPublicKeyFileMissing {
+			t.Fatalf("code = %v, want %s", err, errcat.CodeSSHPublicKeyFileMissing)
+		}
+		if got, want := coded.Cause(), "SSH public key file not found: "+path; got != want {
+			t.Fatalf("cause = %q, want %q", got, want)
+		}
+		if got, want := coded.Remediation(), keygenCommand(privateKeyPathForPublic(path)); got != want {
+			t.Fatalf("remediation = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("empty file", func(t *testing.T) {
+		path := writeKeyFile(t, "\n# no keys\n")
+		_, err := readPublicKeyFile(path)
+		coded, ok := errcat.As(err)
+		if !ok || coded.Code() != errcat.CodeSSHPublicKeyFileEmpty {
+			t.Fatalf("code = %v, want %s", err, errcat.CodeSSHPublicKeyFileEmpty)
+		}
+		if got, want := coded.Cause(), "SSH public key file is empty: "+path; got != want {
+			t.Fatalf("cause = %q, want %q", got, want)
+		}
+		if got, want := coded.Remediation(), publicKeyFromPrivateCommand(path); got != want {
+			t.Fatalf("remediation = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("invalid key line", func(t *testing.T) {
+		_, err := readPublicKeyFile(writeKeyFile(t, "ssh-ed25519\n"))
+		coded, ok := errcat.As(err)
+		if !ok || coded.Code() != errcat.CodeSSHPublicKeyInvalid {
+			t.Fatalf("code = %v, want %s", err, errcat.CodeSSHPublicKeyInvalid)
+		}
+		if got, want := coded.Cause(), "public key line must contain key type and key body"; got != want {
+			t.Fatalf("detail = %q, want %q", got, want)
+		}
+	})
+}
+
 func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 	operatorKeyFile := writeKeyFile(t, alicePublicKey+"\n")
 	deployKeyFile := writeKeyFile(t, bobPublicKey+"\n")

@@ -113,6 +113,34 @@ func TestRunSSHRequiredUsesCallerRemediation(t *testing.T) {
 	}
 }
 
+func TestResolveMemberAddSourceRejectsInvalidPublicKeys(t *testing.T) {
+	t.Run("invalid line", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "invalid.pub")
+		if err := os.WriteFile(path, []byte("ssh-ed25519\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		_, err := resolveMemberAddSource(path)
+		coded, ok := errcat.As(err)
+		if !ok || coded.Code() != errcat.CodeSSHPublicKeyInvalid {
+			t.Fatalf("code = %v, want %s", err, errcat.CodeSSHPublicKeyInvalid)
+		}
+		if got, want := coded.Cause(), "public key line must contain key type and key body"; got != want {
+			t.Fatalf("detail = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("garbage base64 body", func(t *testing.T) {
+		_, err := resolveMemberAddSource("ssh-ed25519 not-base64")
+		coded, ok := errcat.As(err)
+		if !ok || coded.Code() != errcat.CodeSSHPublicKeyInvalid {
+			t.Fatalf("code = %v, want %s", err, errcat.CodeSSHPublicKeyInvalid)
+		}
+		if got, want := coded.Cause(), "public key body is not valid base64"; got != want {
+			t.Fatalf("detail = %q, want %q", got, want)
+		}
+	})
+}
+
 func writeClientDockerfile(t *testing.T, root string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(root, "Dockerfile"), []byte("FROM alpine\n"), 0644); err != nil {

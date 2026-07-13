@@ -3,8 +3,6 @@ package hostinstall
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -999,13 +997,7 @@ type keyPlan struct {
 	Deploy   []plannedKey
 }
 
-type plannedKey struct {
-	Line        string
-	Type        string
-	Body        string
-	Comment     string
-	Fingerprint string
-}
+type plannedKey = memberkeys.AuthorizedKey
 
 func resolveSSHKeyPlan(plan Plan, requireOperator bool, _ string, passwordTarget string) (keyPlan, error) {
 	operatorKeys, err := readPublicKeyFile(plan.OperatorSSHPublicKeyFile)
@@ -1108,91 +1100,25 @@ func readPublicKeyFile(path string) ([]plannedKey, error) {
 			"command": keygenCommand(privateKeyPathForPublic(path)),
 		})
 	}
-	keys, err := normalizePublicKeys(string(data), false)
-	if err != nil {
-		return nil, err
+	empty := true
+	for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r", ""), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			empty = false
+			break
+		}
 	}
-	if len(keys) == 0 {
+	if empty {
 		return nil, errcat.New(errcat.CodeSSHPublicKeyFileEmpty, errcat.Fields{
 			"path":    path,
 			"command": publicKeyFromPrivateCommand(path),
 		})
 	}
-	return keys, nil
-}
-
-func normalizePublicKeys(raw string, skipInvalid bool) ([]plannedKey, error) {
-	var keys []plannedKey
-	for _, line := range strings.Split(strings.ReplaceAll(raw, "\r", ""), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, err := normalizePublicKeyLine(line)
-		if err != nil {
-			if skipInvalid {
-				continue
-			}
-			return nil, err
-		}
-		keys = append(keys, key)
+	keys, err := memberkeys.Normalize(string(data), "")
+	if err != nil {
+		return nil, err
 	}
 	return keys, nil
-}
-
-func normalizePublicKeyLine(line string) (plannedKey, error) {
-	fields := strings.Fields(line)
-	if len(fields) < 2 {
-		return plannedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "public key line must contain key type and key body"})
-	}
-	if !supportedPublicKeyType(fields[0]) {
-		return plannedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": fmt.Sprintf("unsupported public key type %q", fields[0])})
-	}
-	if fields[1] == "" {
-		return plannedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "public key body is empty"})
-	}
-	fingerprint, err := publicKeyFingerprint(fields[1])
-	if err != nil {
-		return plannedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": err.Error()})
-	}
-	comment := ""
-	if len(fields) > 2 {
-		comment = strings.Join(fields[2:], " ")
-	}
-	comment = strings.Join(strings.Fields(comment), " ")
-	if comment == "" {
-		comment = "ship-member"
-	}
-	return plannedKey{
-		Line:        fields[0] + " " + fields[1] + " " + comment,
-		Type:        fields[0],
-		Body:        fields[1],
-		Comment:     comment,
-		Fingerprint: fingerprint,
-	}, nil
-}
-
-func supportedPublicKeyType(value string) bool {
-	switch value {
-	case "ssh-ed25519", "ssh-rsa",
-		"ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
-		"sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com":
-		return true
-	default:
-		return false
-	}
-}
-
-func publicKeyFingerprint(body string) (string, error) {
-	blob, err := base64.StdEncoding.DecodeString(body)
-	if err != nil {
-		return "", fmt.Errorf("public key body is not valid base64")
-	}
-	if len(blob) == 0 {
-		return "", fmt.Errorf("public key body is empty")
-	}
-	sum := sha256.Sum256(blob)
-	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:]), nil
 }
 
 func keyLines(keys []plannedKey) []string {

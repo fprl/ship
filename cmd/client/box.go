@@ -6,6 +6,7 @@ import (
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/knownhosts"
+	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/names"
 	"github.com/fprl/ship/internal/release"
 	"github.com/fprl/ship/internal/utils"
@@ -592,59 +593,19 @@ func fetchGitHubPublicKeys(user string) (string, error) {
 
 func looksLikeSSHPublicKey(value string) bool {
 	fields := strings.Fields(value)
-	return len(fields) >= 2 && supportedPublicKeyType(fields[0])
+	return len(fields) >= 2 && memberkeys.SupportedType(fields[0])
 }
 
 func normalizeSSHPublicKeys(raw, comment string) ([]string, error) {
-	var keys []string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, err := normalizeSSHPublicKeyLine(line, comment)
-		if err != nil {
-			return nil, err
-		}
-		keys = append(keys, key)
+	keys, err := memberkeys.Normalize(raw, comment)
+	if err != nil {
+		return nil, err
 	}
-	if len(keys) == 0 {
-		return nil, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "no SSH public keys found"})
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		lines = append(lines, key.Line)
 	}
-	return keys, nil
-}
-
-func normalizeSSHPublicKeyLine(line, forcedComment string) (string, error) {
-	fields := strings.Fields(line)
-	if len(fields) < 2 {
-		return "", errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "public key line must contain key type and key body"})
-	}
-	if !supportedPublicKeyType(fields[0]) {
-		return "", errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": fmt.Sprintf("unsupported public key type %q", fields[0])})
-	}
-	if fields[1] == "" {
-		return "", errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "public key body is empty"})
-	}
-	comment := strings.TrimSpace(forcedComment)
-	if comment == "" && len(fields) > 2 {
-		comment = strings.Join(fields[2:], " ")
-	}
-	if comment == "" {
-		comment = "ship-member"
-	}
-	comment = strings.Join(strings.Fields(comment), " ")
-	return fields[0] + " " + fields[1] + " " + comment, nil
-}
-
-func supportedPublicKeyType(value string) bool {
-	switch value {
-	case "ssh-ed25519", "ssh-rsa",
-		"ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521",
-		"sk-ssh-ed25519@openssh.com", "sk-ecdsa-sha2-nistp256@openssh.com":
-		return true
-	default:
-		return false
-	}
+	return lines, nil
 }
 
 func keyComment(keys []string) string {
