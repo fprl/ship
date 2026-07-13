@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.4.2
+
+Deploys start faster and failures explain themselves. No command changes:
+this release cuts SSH round-trips before a deploy and makes error paths say
+what actually happened and what to run next.
+
+### Changed
+
+- Deploy preflight makes one SSH round-trip instead of three before any work
+  starts.
+
+### Fixed
+
+- When a Caddy reload fails AND restoring the previous route also fails, every
+  path (deploy, rollback, restore, destroy, preview protection) now reports
+  "manual fix required" with the fragment path. This warning was silently
+  dropped on the reload stage in most paths.
+- Remote command failures carry the failing command's own next-step hint
+  instead of a one-size-fits-all `ship box doctor`.
+- A helper newer than the client can introduce new error codes without
+  crashing the client: unknown codes degrade to a plain operation error that
+  names the unrecognized code.
+- `ship box status` and deploy preflight preserve a host-key-changed failure
+  instead of flattening it to a generic error, and host-key detection reads
+  only SSH's stderr, so remote output printing "offending key" can't fake it.
+- Deploy preflight rejects a response for the wrong app or environment.
+- SSH public keys must be real key material everywhere: `member add` and
+  `box setup` wire-parse the key body and match its declared type, rejecting
+  up front a key OpenSSH could never use instead of installing it and
+  reporting a member who can't actually connect.
+- One SSH key parser, one version comparator, one remote-error decoder across
+  client and box; several drifted copies consolidated.
+
 ## v0.4.1
 
 Security hardening across the agent and box-update surfaces the v0.4.0 features
