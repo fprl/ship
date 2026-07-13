@@ -383,18 +383,7 @@ func (c appApplyCmd) switchTraffic(app *config.AppContext, result applyReleaseRe
 		if result.staticSnapshot != nil {
 			_ = restoreStaticCurrent(c.App, c.Env, *result.staticSnapshot)
 		}
-		var caddyErr caddyReloadStageError
-		if errors.As(err, &caddyErr) {
-			switch {
-			case caddyErr.Stage == "validate" && caddyErr.RestoreErr != nil:
-				return fmt.Errorf("caddy validate rejected the fragment AND restore failed (manual fix required at %s): %v (restore: %v)", caddyPath, caddyErr.Err, caddyErr.RestoreErr)
-			case caddyErr.Stage == "validate":
-				return fmt.Errorf("caddy validate rejected the fragment, restored previous: %v", caddyErr.Err)
-			case caddyErr.Stage == "reload":
-				return fmt.Errorf("caddy reload: %v", caddyErr.Err)
-			}
-		}
-		return err
+		return caddyStageActionError(err, "deploy", caddyPath)
 	}
 	return nil
 }

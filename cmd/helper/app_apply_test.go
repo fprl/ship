@@ -2,6 +2,7 @@ package helper
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,6 +119,53 @@ func TestResolveEnvDoesNotMutateInputMaps(t *testing.T) {
 
 func ptrTime(t time.Time) *time.Time {
 	return &t
+}
+
+func TestCaddyStageActionErrorReportsReloadRestoreFailure(t *testing.T) {
+	path := "/etc/caddy/conf.d/api.production.caddy"
+	for _, action := range []string{"deploy", "after rollback", "after restore", "after destroy"} {
+		t.Run(action, func(t *testing.T) {
+			err := caddyStageActionError(caddyReloadStageError{
+				Stage:      "reload",
+				Err:        errors.New("reload rejected config"),
+				RestoreErr: errors.New("restore rename failed"),
+			}, action, path)
+
+			for _, want := range []string{"reload rejected config", "restore rename failed", "manual fix required at " + path} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q does not contain %q", err, want)
+				}
+			}
+		})
+	}
+	for _, action := range []string{"deploy", "after rollback", "after restore", "after destroy"} {
+		t.Run("validate "+action, func(t *testing.T) {
+			restored := caddyStageActionError(caddyReloadStageError{Stage: "validate", Err: errors.New("invalid config")}, action, path)
+			if !strings.Contains(restored.Error(), "invalid config") {
+				t.Fatalf("validate restore success error = %q", restored)
+			}
+			if !strings.Contains(restored.Error(), "restored previous") {
+				t.Fatalf("validate restore success error = %q, want restored previous wording", restored)
+			}
+
+			failed := caddyStageActionError(caddyReloadStageError{Stage: "validate", Err: errors.New("invalid config"), RestoreErr: errors.New("restore failed")}, action, path)
+			for _, want := range []string{"invalid config", "restore failed", "manual fix required at " + path} {
+				if !strings.Contains(failed.Error(), want) {
+					t.Fatalf("error %q does not contain %q", failed, want)
+				}
+			}
+		})
+	}
+}
+
+func TestCaddyStageActionErrorPassesThroughOtherErrors(t *testing.T) {
+	if err := caddyStageActionError(nil, "deploy", "/etc/caddy/conf.d/api.production.caddy"); err != nil {
+		t.Fatalf("nil error = %v", err)
+	}
+	original := errors.New("unrelated failure")
+	if got := caddyStageActionError(original, "deploy", "/etc/caddy/conf.d/api.production.caddy"); got != original {
+		t.Fatalf("pass-through error = %v, want original", got)
+	}
 }
 
 func writePreviewIdentityForResolveTest(t *testing.T, app, env string, preview *identity.PreviewIdentity) {

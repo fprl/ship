@@ -19,7 +19,7 @@ func CmdRollback(root string, release string) {
 	defer read.Runner.Close()
 
 	actor := deployIdentity(root, read.Runner, read.AppContext.Server)
-	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppRollbackCommand(read.AppContext.AppName, read.EnvName, release, actor), "rollback failed")
+	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppRollbackCommand(read.AppContext.AppName, read.EnvName, release, actor), "rollback failed", "ship rollback "+release)
 	fmt.Print(rewriteRollbackSummary(out, read))
 }
 
@@ -34,7 +34,7 @@ func CmdSave(root string, dest string) {
 	}
 	defer read.Runner.Close()
 
-	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppBackupCommand(read.AppContext.AppName, read.EnvName, dest), "save failed")
+	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppBackupCommand(read.AppContext.AppName, read.EnvName, dest), "save failed", "ship save "+dest)
 	fmt.Print(out)
 }
 
@@ -45,8 +45,8 @@ func CmdRestore(root string, from string) {
 	}
 	defer read.Runner.Close()
 
-	runSSHChecked(read.Runner, read.AppContext.Server, serverAppSetupEnvCommand(read.AppContext.AppName, read.EnvName), "restore setup failed")
-	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppRestoreCommand(read.AppContext.AppName, read.EnvName, from), "restore failed")
+	runSSHChecked(read.Runner, read.AppContext.Server, serverAppSetupEnvCommand(read.AppContext.AppName, read.EnvName), "restore setup failed", "ship restore "+from)
+	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppRestoreCommand(read.AppContext.AppName, read.EnvName, from), "restore failed", "ship restore "+from)
 	fmt.Print(rewriteRestoreSummary(out, read))
 }
 
@@ -93,7 +93,7 @@ func CmdRm(root string, branch string, confirm string) {
 		}), 1)
 	}
 
-	if _, err := runSSHRequired(runner, baseCtx.Server, serverAppDestroyEnvCommand(baseCtx.AppName, envName), "rm failed"); err != nil {
+	if _, err := runSSHRequired(runner, baseCtx.Server, serverAppDestroyEnvCommand(baseCtx.AppName, envName), "rm failed", "ship rm "+displayBranch); err != nil {
 		utils.DieError(err, 1)
 	}
 	fmt.Printf("Removed %s %s\n", kind, displayBranch)

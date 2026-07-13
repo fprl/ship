@@ -88,7 +88,7 @@ func CmdStatus(root string, jsonFlag bool) {
 	}
 	defer runner.Close()
 
-	out := runSSHChecked(runner, ctx.Server, serverAppListCommand(true), "status failed")
+	out := runSSHChecked(runner, ctx.Server, serverAppListCommand(true), "status failed", "ship status")
 	payload, err := statusFromAppList(ctx, out)
 	if err != nil {
 		utils.DieError(err, 1)
@@ -389,20 +389,24 @@ func CmdLogs(root string, process string, follow bool, tail *int, jsonFlag bool)
 	}
 	out, stderr, code, err := read.Runner.RunSSH(read.AppContext.Server, cmdStr)
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			utils.DieError(coded, 1)
+		outcome := decodeRemoteOutcome(out, stderr, code, err, "logs failed")
+		if outcome.TransportCoded != nil {
+			utils.DieError(outcome.TransportCoded, 1)
 		}
-		remote := extractRemoteError(out, stderr, "logs failed")
-		if remote.Coded != nil {
-			writeRemoteStderr(stderr)
-			utils.DieError(remote.Coded, 1)
+		if outcome.RemoteCoded != nil {
+			writeRemoteStderr(outcome)
+			utils.DieError(outcome.RemoteCoded, 1)
 		}
-		if remote.Detail != "" {
-			utils.DieError(operationError(fmt.Sprintf("logs failed: %s", remote.Detail), "ship logs"), 1)
+		if outcome.Detail != "" {
+			utils.DieError(operationError(fmt.Sprintf("logs failed: %s", outcome.Detail), "ship logs"), 1)
 		}
 		utils.DieError(operationError("logs failed", "ship logs"), 1)
 	}
-	writeRemoteStderr(stderr)
+	forwardStderr := strings.TrimSpace(stderr) != ""
+	if _, stderrIsErrorJSON := errcat.ParseJSON(stderr); stderrIsErrorJSON {
+		forwardStderr = false
+	}
+	writeRemoteStderr(remoteOutcome{Stderr: stderr, ForwardStderr: forwardStderr})
 	if strings.TrimSpace(out) == "" && strings.TrimSpace(stderr) == "" {
 		fmt.Fprintln(os.Stderr, "no log lines yet")
 	}

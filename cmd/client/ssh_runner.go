@@ -417,21 +417,21 @@ type sshRunner interface {
 	RunSSH(server string, command string) (string, string, int, error)
 }
 
-func runSSHRequired(runner sshRunner, server string, command string, errMsg string) (string, error) {
+func runSSHRequired(runner sshRunner, server string, command string, errMsg string, remediation string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			return "", coded
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+		if outcome.TransportCoded != nil {
+			return "", outcome.TransportCoded
 		}
-		remote := extractRemoteError(stdout, stderr, "")
-		if remote.Coded != nil {
-			writeRemoteStderr(stderr)
-			return "", remote.Coded
+		if outcome.RemoteCoded != nil {
+			writeRemoteStderr(outcome)
+			return "", outcome.RemoteCoded
 		}
-		if remote.Detail != "" {
-			return "", operationError(fmt.Sprintf("%s: %s", errMsg, remote.Detail), "ship box doctor")
+		if outcome.Detail != "" {
+			return "", operationError(fmt.Sprintf("%s: %s", errMsg, outcome.Detail), remediation)
 		}
-		return "", operationError(errMsg, "ship box doctor")
+		return "", operationError(errMsg, remediation)
 	}
 	return stdout, nil
 }
@@ -439,46 +439,54 @@ func runSSHRequired(runner sshRunner, server string, command string, errMsg stri
 func runSSHDetail(runner sshRunner, server string, command string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			return "", coded
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "remote command failed")
+		if outcome.TransportCoded != nil {
+			return "", outcome.TransportCoded
 		}
-		remote := extractRemoteError(stdout, stderr, "remote command failed")
-		if remote.Coded != nil {
-			writeRemoteStderr(stderr)
-			return "", remote.Coded
+		if outcome.RemoteCoded != nil {
+			writeRemoteStderr(outcome)
+			return "", outcome.RemoteCoded
 		}
-		return "", operationError(remote.Detail, "ship box doctor")
+		return "", operationError(outcome.Detail, "ship box doctor")
 	}
 	return stdout, nil
 }
 
-func remoteCodedError(stdout, stderr string) (*errcat.Error, bool) {
+type remoteOutcome struct {
+	TransportCoded *errcat.Error
+	RemoteCoded    *errcat.Error
+	Detail         string
+	Stderr         string
+	ForwardStderr  bool
+}
+
+func decodeRemoteOutcome(stdout, stderr string, code int, err error, fallback string) remoteOutcome {
+	outcome := remoteOutcome{Stderr: stderr}
+	if coded, ok := errcat.As(err); ok {
+		outcome.TransportCoded = coded
+		return outcome
+	}
 	if coded, ok := errcat.ParseJSON(stdout); ok {
-		return coded, true
+		outcome.RemoteCoded = coded
+		if strings.TrimSpace(stderr) != "" {
+			if _, stderrIsErrorJSON := errcat.ParseJSON(stderr); !stderrIsErrorJSON {
+				outcome.ForwardStderr = true
+			}
+		}
+		return outcome
 	}
 	if coded, ok := errcat.ParseJSON(stderr); ok {
-		return coded, true
+		outcome.RemoteCoded = coded
+		return outcome
 	}
-	return nil, false
-}
-
-type remoteErrorDetail struct {
-	Coded  *errcat.Error
-	Detail string
-}
-
-func extractRemoteError(stdout, stderr, fallback string) remoteErrorDetail {
-	if coded, ok := remoteCodedError(stdout, stderr); ok {
-		return remoteErrorDetail{Coded: coded}
+	outcome.Detail = cleanRemoteErrorText(stderr)
+	if outcome.Detail == "" {
+		outcome.Detail = cleanRemoteErrorText(stdout)
 	}
-	detail := cleanRemoteErrorText(stderr)
-	if detail == "" {
-		detail = cleanRemoteErrorText(stdout)
+	if outcome.Detail == "" {
+		outcome.Detail = fallback
 	}
-	if detail == "" {
-		detail = fallback
-	}
-	return remoteErrorDetail{Detail: detail}
+	return outcome
 }
 
 func cleanRemoteErrorText(text string) string {
@@ -489,13 +497,11 @@ func cleanRemoteErrorText(text string) string {
 	return text
 }
 
-func writeRemoteStderr(stderr string) {
-	if strings.TrimSpace(stderr) == "" {
+func writeRemoteStderr(outcome remoteOutcome) {
+	if !outcome.ForwardStderr {
 		return
 	}
-	if _, ok := errcat.ParseJSON(stderr); ok {
-		return
-	}
+	stderr := outcome.Stderr
 	fmt.Fprint(os.Stderr, stderr)
 	if !strings.HasSuffix(stderr, "\n") {
 		fmt.Fprintln(os.Stderr)
@@ -555,8 +561,8 @@ func manifestInvalidError(detail, command string) error {
 	})
 }
 
-func runSSHChecked(runner sshRunner, server string, command string, errMsg string) string {
-	stdout, err := runSSHRequired(runner, server, command, errMsg)
+func runSSHChecked(runner sshRunner, server string, command string, errMsg string, remediation string) string {
+	stdout, err := runSSHRequired(runner, server, command, errMsg, remediation)
 	if err != nil {
 		utils.DieError(err, 1)
 	}

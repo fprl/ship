@@ -38,7 +38,7 @@ func CmdBoxLs(server string, jsonFlag bool) {
 	}
 	defer runner.Close()
 
-	out := runSSHChecked(runner, server, serverAppListCommand(jsonFlag), "app list failed")
+	out := runSSHChecked(runner, server, serverAppListCommand(jsonFlag), "app list failed", "ship box ls "+server)
 	fmt.Print(out)
 }
 
@@ -169,21 +169,21 @@ func readBoxStatus(runner *CommandRunner, server string) (boxStatusPayload, erro
 func readBoxVersion(runner sshRunner, server string) (boxVersionPayload, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, serverVersionCommand(true))
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			return boxVersionPayload{}, coded
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "box version probe failed")
+		if outcome.TransportCoded != nil {
+			return boxVersionPayload{}, outcome.TransportCoded
 		}
-		remote := extractRemoteError(stdout, stderr, "box version probe failed")
-		if remote.Coded != nil {
-			if remote.Coded.Code() == errcat.CodeUsageError {
+		if outcome.RemoteCoded != nil {
+			if outcome.RemoteCoded.Code() == errcat.CodeUsageError {
 				return boxVersionPayload{}, errcat.New(errcat.CodeBoxSetupRequired, errcat.Fields{"server": server})
 			}
-			writeRemoteStderr(stderr)
-			return boxVersionPayload{}, remote.Coded
+			writeRemoteStderr(outcome)
+			return boxVersionPayload{}, outcome.RemoteCoded
 		}
-		if strings.HasPrefix(remote.Detail, "sudo:") {
+		if strings.HasPrefix(outcome.Detail, "sudo:") {
 			return boxVersionPayload{}, errcat.New(errcat.CodeBoxSetupRequired, errcat.Fields{"server": server})
 		}
-		return boxVersionPayload{}, operationError(remote.Detail, "ship box status "+server)
+		return boxVersionPayload{}, operationError(outcome.Detail, "ship box status "+server)
 	}
 	var payload boxVersionPayload
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil || payload.Version == "" {
@@ -200,11 +200,11 @@ func runBoxDoctorJSON(runner *CommandRunner, server string) (string, error) {
 		return stdout, nil
 	}
 	if err != nil || code != 0 {
-		remote := extractRemoteError(stdout, stderr, "box doctor failed")
-		if remote.Coded != nil {
-			return "", remote.Coded
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "box doctor failed")
+		if outcome.RemoteCoded != nil {
+			return "", outcome.RemoteCoded
 		}
-		return "", operationError(remote.Detail, "ship box status "+server)
+		return "", operationError(outcome.Detail, "ship box status "+server)
 	}
 	return stdout, nil
 }
@@ -232,15 +232,15 @@ func CmdBoxUpdate(server string) {
 	}
 	stdout, stderr, code, err := runner.RunSSH(server, serverUpdateCommand(version.Version))
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			utils.DieError(coded, 1)
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "box update failed")
+		if outcome.TransportCoded != nil {
+			utils.DieError(outcome.TransportCoded, 1)
 		}
-		remoteErr := extractRemoteError(stdout, stderr, "box update failed")
-		if remoteErr.Coded != nil {
-			writeRemoteStderr(stderr)
-			utils.DieError(remoteErr.Coded, 1)
+		if outcome.RemoteCoded != nil {
+			writeRemoteStderr(outcome)
+			utils.DieError(outcome.RemoteCoded, 1)
 		}
-		utils.DieError(operationError(remoteErr.Detail, "ship box update "+server), 1)
+		utils.DieError(operationError(outcome.Detail, "ship box update "+server), 1)
 	}
 	fmt.Print(stdout)
 }
@@ -305,15 +305,15 @@ func CmdMemberAdd(server, source string, role string) {
 	stdin := []byte(strings.Join(input.Keys, "\n") + "\n")
 	stdout, stderr, code, err := runner.RunSSHWithStdin(server, serverKeyAddCommand(input.Comment, role), stdin)
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			utils.DieError(coded, 1)
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+		if outcome.TransportCoded != nil {
+			utils.DieError(outcome.TransportCoded, 1)
 		}
-		remote := extractRemoteError(stdout, stderr, "")
-		if remote.Coded != nil {
-			writeRemoteStderr(stderr)
-			utils.DieError(remote.Coded, 1)
+		if outcome.RemoteCoded != nil {
+			writeRemoteStderr(outcome)
+			utils.DieError(outcome.RemoteCoded, 1)
 		}
-		detail := remote.Detail
+		detail := outcome.Detail
 		if detail == "" {
 			detail = "member add failed"
 		}
@@ -334,15 +334,15 @@ func CmdMemberLs(server string, jsonFlag bool) {
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverKeyListCommand(jsonFlag))
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			utils.DieError(coded, 1)
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+		if outcome.TransportCoded != nil {
+			utils.DieError(outcome.TransportCoded, 1)
 		}
-		remote := extractRemoteError(stdout, stderr, "")
-		if remote.Coded != nil {
-			writeRemoteStderr(stderr)
-			utils.DieError(remote.Coded, 1)
+		if outcome.RemoteCoded != nil {
+			writeRemoteStderr(outcome)
+			utils.DieError(outcome.RemoteCoded, 1)
 		}
-		detail := remote.Detail
+		detail := outcome.Detail
 		if detail == "" {
 			detail = "member ls failed"
 		}
@@ -363,15 +363,15 @@ func CmdMemberRm(server, name string) {
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverKeyRmCommand(name))
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			utils.DieError(coded, 1)
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+		if outcome.TransportCoded != nil {
+			utils.DieError(outcome.TransportCoded, 1)
 		}
-		remote := extractRemoteError(stdout, stderr, "")
-		if remote.Coded != nil {
-			writeRemoteStderr(stderr)
-			utils.DieError(remote.Coded, 1)
+		if outcome.RemoteCoded != nil {
+			writeRemoteStderr(outcome)
+			utils.DieError(outcome.RemoteCoded, 1)
 		}
-		detail := remote.Detail
+		detail := outcome.Detail
 		if detail == "" {
 			detail = "member rm failed"
 		}
@@ -399,7 +399,7 @@ func CmdBoxRm(server, app, confirm string) {
 	}
 	defer runner.Close()
 
-	out := runSSHChecked(runner, server, serverAppDestroyCommand(app), "box rm failed")
+	out := runSSHChecked(runner, server, serverAppDestroyCommand(app), "box rm failed", "ship box rm "+server+" "+app+" --confirm "+app)
 	fmt.Print(out)
 }
 
@@ -431,19 +431,19 @@ func CmdBoxDoctor(server string, jsonFlag bool) {
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverDoctorCommand(server, jsonFlag))
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			utils.DieError(coded, 1)
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+		if outcome.TransportCoded != nil {
+			utils.DieError(outcome.TransportCoded, 1)
 		}
-		remote := extractRemoteError(stdout, stderr, "")
-		if remote.Coded != nil {
-			utils.DieError(remote.Coded, 1)
+		if outcome.RemoteCoded != nil {
+			utils.DieError(outcome.RemoteCoded, 1)
 		}
 		if jsonFlag && json.Valid([]byte(stdout)) {
 			fmt.Print(stdout)
 			os.Exit(1)
 		}
-		if remote.Detail != "" {
-			utils.DieError(operationError(fmt.Sprintf("failed to run doctor: %s", remote.Detail), "ship box doctor "+server), 1)
+		if outcome.Detail != "" {
+			utils.DieError(operationError(fmt.Sprintf("failed to run doctor: %s", outcome.Detail), "ship box doctor "+server), 1)
 		}
 		utils.DieError(operationError("failed to run doctor", "ship box doctor "+server), 1)
 	}
@@ -474,15 +474,15 @@ func CmdBoxNotify(server, url string, remove bool) {
 	}
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			utils.DieError(coded, 1)
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+		if outcome.TransportCoded != nil {
+			utils.DieError(outcome.TransportCoded, 1)
 		}
-		remote := extractRemoteError(stdout, stderr, "")
-		if remote.Coded != nil {
-			writeRemoteStderr(stderr)
-			utils.DieError(remote.Coded, 1)
+		if outcome.RemoteCoded != nil {
+			writeRemoteStderr(outcome)
+			utils.DieError(outcome.RemoteCoded, 1)
 		}
-		detail := remote.Detail
+		detail := outcome.Detail
 		if detail == "" {
 			detail = "box notify failed"
 		}

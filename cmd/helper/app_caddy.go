@@ -2,6 +2,7 @@ package helper
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -285,6 +286,23 @@ func (e caddyReloadStageError) Error() string {
 
 func (e caddyReloadStageError) Unwrap() error {
 	return e.Err
+}
+
+// caddyStageActionError renders a caddyReloadStageError for the user:
+// which caddy stage failed during which action, and — when the fragment
+// restore ALSO failed — the manual-fix warning with the fragment path.
+func caddyStageActionError(err error, action string, caddyPath string) error {
+	if err == nil {
+		return nil
+	}
+	var caddyErr caddyReloadStageError
+	if !errors.As(err, &caddyErr) {
+		return err
+	}
+	if caddyErr.RestoreErr != nil {
+		return fmt.Errorf("caddy %s (%s) failed AND fragment restore failed (manual fix required at %s): %v (restore: %v)", caddyErr.Stage, action, caddyPath, caddyErr.Err, caddyErr.RestoreErr)
+	}
+	return fmt.Errorf("caddy %s (%s) failed, restored previous fragment: %v", caddyErr.Stage, action, caddyErr.Err)
 }
 
 // reloadCaddyOrRestore serializes on a box-wide lock: validate and

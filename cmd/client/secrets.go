@@ -337,10 +337,11 @@ func listSecretKeys(secret secretContext, remediation string) ([]string, error) 
 func runSecretCommand(runner secretRunner, server, command, errMsg, remediation string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			return "", coded
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "no error detail")
+		if outcome.TransportCoded != nil {
+			return "", outcome.TransportCoded
 		}
-		return "", secretRemoteError(stdout, stderr, errMsg, remediation)
+		return "", secretRemoteError(outcome, errMsg, remediation)
 	}
 	return stdout, nil
 }
@@ -348,22 +349,22 @@ func runSecretCommand(runner secretRunner, server, command, errMsg, remediation 
 func runSecretCommandWithStdin(runner secretRunner, server, command string, stdin []byte, errMsg, remediation string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSHWithStdin(server, command, stdin)
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			return "", coded
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "no error detail")
+		if outcome.TransportCoded != nil {
+			return "", outcome.TransportCoded
 		}
-		return "", secretRemoteError(stdout, stderr, errMsg, remediation)
+		return "", secretRemoteError(outcome, errMsg, remediation)
 	}
 	return stdout, nil
 }
 
-func secretRemoteError(stdout, stderr, errMsg, remediation string) error {
-	remote := extractRemoteError(stdout, stderr, "no error detail")
-	if remote.Coded != nil {
-		writeRemoteStderr(stderr)
-		return remote.Coded
+func secretRemoteError(outcome remoteOutcome, errMsg, remediation string) error {
+	if outcome.RemoteCoded != nil {
+		writeRemoteStderr(outcome)
+		return outcome.RemoteCoded
 	}
-	if remote.Detail != "" {
-		errMsg += ": " + remote.Detail
+	if outcome.Detail != "" {
+		errMsg += ": " + outcome.Detail
 	}
 	return operationError(errMsg, remediation)
 }
@@ -386,7 +387,7 @@ func CmdSecretList(root string, jsonFlag bool, preview bool, branch string) {
 	}
 	defer secret.Runner.Close()
 
-	out := runSSHChecked(secret.Runner, secret.AppContext.Server, serverAppSecretListCommand(secret.AppContext.AppName, secret.EnvName, jsonFlag), "secret list failed")
+	out := runSSHChecked(secret.Runner, secret.AppContext.Server, serverAppSecretListCommand(secret.AppContext.AppName, secret.EnvName, jsonFlag), "secret list failed", "ship secret ls")
 	if jsonFlag {
 		fmt.Print(out)
 		return
@@ -410,7 +411,7 @@ func CmdSecretRm(root string, key string, preview bool, branch string) {
 		utils.DieError(err, 1)
 	}
 
-	out := runSSHChecked(secret.Runner, secret.AppContext.Server, serverAppSecretRmCommand(secret.AppContext.AppName, secret.EnvName, key), "secret rm failed")
+	out := runSSHChecked(secret.Runner, secret.AppContext.Server, serverAppSecretRmCommand(secret.AppContext.AppName, secret.EnvName, key), "secret rm failed", "ship secret rm "+key)
 	if strings.Contains(out, "was not set") {
 		fmt.Printf("Secret %s was not set for %s.\n", key, secret.surface())
 		return

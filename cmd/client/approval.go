@@ -27,15 +27,15 @@ func CmdApprove(server, id string, jsonFlag bool) {
 	}
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			utils.DieError(coded, 1)
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+		if outcome.TransportCoded != nil {
+			utils.DieError(outcome.TransportCoded, 1)
 		}
-		remote := extractRemoteError(stdout, stderr, "")
-		if remote.Coded != nil {
-			writeRemoteStderr(stderr)
-			utils.DieError(remote.Coded, 1)
+		if outcome.RemoteCoded != nil {
+			writeRemoteStderr(outcome)
+			utils.DieError(outcome.RemoteCoded, 1)
 		}
-		detail := remote.Detail
+		detail := outcome.Detail
 		if detail == "" {
 			detail = "approval command failed"
 		}

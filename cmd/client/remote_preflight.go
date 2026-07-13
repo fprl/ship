@@ -24,7 +24,7 @@ func ensureRemoteEnvReadyForDeploy(runner sshRunner, ctx *config.AppContext) err
 	if !remotePreflightOnlyNeedsEnvPreparation(report) {
 		return remotePreflightError(report, false)
 	}
-	if _, err := runSSHRequired(runner, ctx.Server, serverAppSetupEnvCommand(ctx.AppName, ctx.EnvName), "failed to prepare app environment"); err != nil {
+	if _, err := runSSHRequired(runner, ctx.Server, serverAppSetupEnvCommand(ctx.AppName, ctx.EnvName), "failed to prepare app environment", "ship"); err != nil {
 		return err
 	}
 	report, err = fetchRemotePreflightReport(runner, ctx)
@@ -69,8 +69,8 @@ func deployHostPreflight(runner sshRunner, ctx *config.AppContext) error {
 }
 
 func agentShellRefusedRemote(stdout, stderr string) bool {
-	coded, ok := remoteCodedError(stdout, stderr)
-	return ok && coded.Code() == errcat.CodeOperationFailed && strings.Contains(coded.Cause(), "agent_shell_refused")
+	outcome := decodeRemoteOutcome(stdout, stderr, 1, nil, "")
+	return outcome.RemoteCoded != nil && outcome.RemoteCoded.Code() == errcat.CodeOperationFailed && strings.Contains(outcome.RemoteCoded.Cause(), "agent_shell_refused")
 }
 
 func fetchRemotePreflightReport(runner sshRunner, ctx *config.AppContext) (remotePreflightReport, error) {
@@ -84,18 +84,18 @@ func fetchRemotePreflightReport(runner sshRunner, ctx *config.AppContext) (remot
 	if err == nil && code == 0 {
 		return remotePreflightReport{}, deployPreflightError("invalid preflight response from host")
 	}
-	if coded, ok := errcat.As(err); ok {
-		return remotePreflightReport{}, coded
+	outcome := decodeRemoteOutcome(stdout, stderr, code, err, "no error detail")
+	if outcome.TransportCoded != nil {
+		return remotePreflightReport{}, outcome.TransportCoded
 	}
-	remote := extractRemoteError(stdout, stderr, "no error detail")
-	if remote.Coded != nil {
-		return remotePreflightReport{}, remote.Coded
+	if outcome.RemoteCoded != nil {
+		return remotePreflightReport{}, outcome.RemoteCoded
 	}
-	return remotePreflightReport{}, deployPreflightError(remote.Detail)
+	return remotePreflightReport{}, deployPreflightError(outcome.Detail)
 }
 
 func commandDetail(stdout, stderr, fallback string) string {
-	return extractRemoteError(stdout, stderr, fallback).Detail
+	return decodeRemoteOutcome(stdout, stderr, 1, nil, fallback).Detail
 }
 
 type remotePreflightReport struct {

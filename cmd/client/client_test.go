@@ -58,6 +58,61 @@ func TestResolveMemberAddSourceStripsPublicKeyPathExtensions(t *testing.T) {
 	}
 }
 
+func TestDecodeRemoteOutcome(t *testing.T) {
+	codedJSON := errcat.New(errcat.CodeOperationFailed, errcat.Fields{"detail": "remote failed", "command": "ship retry"}).JSONLine()
+	transport := errcat.New(errcat.CodeSSHUnreachable, errcat.Fields{"target": "example.com", "detail": "connection refused"})
+
+	for _, tt := range []struct {
+		name              string
+		stdout            string
+		stderr            string
+		code              int
+		err               error
+		fallback          string
+		wantDetail        string
+		wantTransport     bool
+		wantRemote        bool
+		wantForwardStderr bool
+	}{
+		{name: "coded JSON on stdout", stdout: codedJSON, stderr: "diagnostic\\n", code: 1, wantRemote: true, wantForwardStderr: true},
+		{name: "coded JSON on stderr", stderr: codedJSON, code: 1, wantRemote: true},
+		{name: "strips repeated error prefixes", stderr: " Error: Error: failed ", code: 1, wantDetail: "failed"},
+		{name: "stdout fallback", stdout: " Error: failed on stdout ", code: 1, wantDetail: "failed on stdout"},
+		{name: "caller fallback", code: 1, fallback: "remote command failed", wantDetail: "remote command failed"},
+		{name: "transport coded error wins", stdout: codedJSON, stderr: "diagnostic", code: 1, err: transport, wantTransport: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			outcome := decodeRemoteOutcome(tt.stdout, tt.stderr, tt.code, tt.err, tt.fallback)
+			if (outcome.TransportCoded != nil) != tt.wantTransport {
+				t.Fatalf("transport coded = %v, want %v", outcome.TransportCoded, tt.wantTransport)
+			}
+			if (outcome.RemoteCoded != nil) != tt.wantRemote {
+				t.Fatalf("remote coded = %v, want %v", outcome.RemoteCoded, tt.wantRemote)
+			}
+			if outcome.Detail != tt.wantDetail {
+				t.Fatalf("detail = %q, want %q", outcome.Detail, tt.wantDetail)
+			}
+			if outcome.ForwardStderr != tt.wantForwardStderr {
+				t.Fatalf("forward stderr = %v, want %v", outcome.ForwardStderr, tt.wantForwardStderr)
+			}
+		})
+	}
+}
+
+func TestRunSSHRequiredUsesCallerRemediation(t *testing.T) {
+	runner := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
+		"status": {{stderr: "host unavailable", code: 1}},
+	}}
+	_, err := runSSHRequired(runner, "example.com", "status", "status failed", "ship status")
+	coded, ok := errcat.As(err)
+	if !ok {
+		t.Fatalf("expected errcat error, got %v", err)
+	}
+	if got := coded.Remediation(); got != "ship status" {
+		t.Fatalf("remediation = %q, want ship status", got)
+	}
+}
+
 func writeClientDockerfile(t *testing.T, root string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(root, "Dockerfile"), []byte("FROM alpine\n"), 0644); err != nil {

@@ -362,20 +362,7 @@ func removeAppCaddyfile(app, env string) (bool, error) {
 		return false, fmt.Errorf("remove caddy fragment %s: %v", path, err)
 	}
 	if err := reloadCaddyOrRestore(path, prevFragment, prevExisted); err != nil {
-		var caddyErr caddyReloadStageError
-		if errors.As(err, &caddyErr) {
-			switch {
-			case caddyErr.Stage == "validate" && caddyErr.RestoreErr != nil:
-				return false, fmt.Errorf("caddy validate after destroy failed AND restore failed (manual fix required at %s): %v (restore: %v)", path, caddyErr.Err, caddyErr.RestoreErr)
-			case caddyErr.Stage == "validate":
-				return false, fmt.Errorf("caddy validate after destroy failed, restored previous fragment: %v", caddyErr.Err)
-			case caddyErr.Stage == "reload" && caddyErr.RestoreErr != nil:
-				return false, fmt.Errorf("caddy reload after destroy failed AND restore failed (manual fix required at %s): %v (restore: %v)", path, caddyErr.Err, caddyErr.RestoreErr)
-			case caddyErr.Stage == "reload":
-				return false, fmt.Errorf("caddy reload after destroy failed, restored previous fragment: %v", caddyErr.Err)
-			}
-		}
-		return false, err
+		return false, caddyStageActionError(err, "after destroy", path)
 	}
 	return true, nil
 }

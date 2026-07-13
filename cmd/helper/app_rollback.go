@@ -2,7 +2,6 @@ package helper
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -191,18 +190,7 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 		cleanupStarted()
 		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
 		_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
-		var caddyErr caddyReloadStageError
-		if errors.As(err, &caddyErr) {
-			switch {
-			case caddyErr.Stage == "validate" && caddyErr.RestoreErr != nil:
-				return rollbackPayload{}, fmt.Errorf("caddy validate rejected the rollback fragment AND restore failed (manual fix required at %s): %v (restore: %v)", caddyPath, caddyErr.Err, caddyErr.RestoreErr)
-			case caddyErr.Stage == "validate":
-				return rollbackPayload{}, fmt.Errorf("caddy validate after rollback: %v", caddyErr.Err)
-			case caddyErr.Stage == "reload":
-				return rollbackPayload{}, fmt.Errorf("caddy reload after rollback: %v", caddyErr.Err)
-			}
-		}
-		return rollbackPayload{}, err
+		return rollbackPayload{}, caddyStageActionError(err, "after rollback", caddyPath)
 	}
 	if err := persistCurrentManifestFromRelease(c.App, c.Env, targetRelease); err != nil {
 		return rollbackPayload{}, err

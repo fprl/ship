@@ -3,7 +3,6 @@ package helper
 import (
 	"archive/tar"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -330,18 +329,7 @@ func restoreBackupWithOptions(app, env, from, dir string, dryRun bool, opts rest
 		removeContainers(startedContainers)
 		_ = restoreEnvFile(app, env, envSnapshot)
 		_ = restoreStaticCurrent(app, env, staticSnapshot)
-		var caddyErr caddyReloadStageError
-		if errors.As(err, &caddyErr) {
-			switch {
-			case caddyErr.Stage == "validate" && caddyErr.RestoreErr != nil:
-				return backupMetadata{}, fmt.Errorf("caddy validate after restore failed AND fragment restore failed (manual fix required at %s): %v (restore: %v)", caddyPath, caddyErr.Err, caddyErr.RestoreErr)
-			case caddyErr.Stage == "validate":
-				return backupMetadata{}, fmt.Errorf("caddy validate after restore: %v", caddyErr.Err)
-			case caddyErr.Stage == "reload":
-				return backupMetadata{}, fmt.Errorf("caddy reload after restore: %v", caddyErr.Err)
-			}
-		}
-		return backupMetadata{}, err
+		return backupMetadata{}, caddyStageActionError(err, "after restore", caddyPath)
 	}
 	removeContainers(containersToRemove)
 	return meta, nil

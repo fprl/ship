@@ -238,7 +238,7 @@ func shipUploadPhase(state *shipRunState) error {
 	state.CleanupRemoteDir = func() {
 		_, _, _, _ = state.Runner.RunSSH(state.Context.Server, fmt.Sprintf("rm -rf %s", utils.ShellEscape(state.RemoteDir)))
 	}
-	if _, err := runSSHRequired(state.Runner, state.Context.Server, fmt.Sprintf("mkdir -p %s && chmod 0700 %s", utils.ShellEscape(state.RemoteDir), utils.ShellEscape(state.RemoteDir)), "failed to create remote deploy dir"); err != nil {
+	if _, err := runSSHRequired(state.Runner, state.Context.Server, fmt.Sprintf("mkdir -p %s && chmod 0700 %s", utils.ShellEscape(state.RemoteDir), utils.ShellEscape(state.RemoteDir)), "failed to create remote deploy dir", "ship"); err != nil {
 		return err
 	}
 	if err := state.Runner.Upload(state.LocalTar, state.RemoteDir+"/source.tar", state.Context.Server); err != nil {
@@ -259,7 +259,7 @@ func shipApplyPhase(state *shipRunState, rebuild bool, tlsMode string) error {
 		rebuild,
 		tlsMode,
 	)
-	_, err := runSSHRequired(state.Runner, state.Context.Server, applyCmd, "deploy failed")
+	_, err := runSSHRequired(state.Runner, state.Context.Server, applyCmd, "deploy failed", "ship")
 	return err
 }
 

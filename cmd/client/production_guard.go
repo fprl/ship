@@ -35,7 +35,7 @@ func enforceProductionAncestry(root string, runner sshRunner, ctx *config.AppCon
 }
 
 func fetchDeployedCommit(runner sshRunner, ctx *config.AppContext) (string, bool, error) {
-	out, err := runSSHRequired(runner, ctx.Server, serverAppStatusCommand(ctx.AppName, ctx.EnvName), "read deployed release failed")
+	out, err := runSSHRequired(runner, ctx.Server, serverAppStatusCommand(ctx.AppName, ctx.EnvName), "read deployed release failed", "ship status")
 	if err != nil {
 		return "", false, err
 	}
