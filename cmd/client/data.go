@@ -107,12 +107,23 @@ func CmdDataSave(root, outPath string) {
 	if err != nil {
 		utils.DieError(err, 1)
 	}
-	if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+	dir := filepath.Dir(outPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		utils.DieError(operationError(fmt.Sprintf("create snapshot directory: %v", err), "ship data save"), 1)
 	}
-	failure, stderr, code, runErr := read.Runner.RunSSHToFile(read.AppContext.Server, serverAppDataSaveCommand(read.AppContext.AppName, read.EnvName), outPath)
+	// Stream into a temporary file and rename on success so a failed or
+	// interrupted save can never truncate an existing snapshot at outPath,
+	// and a partial file (which does not end in .data.tar.gz) never shows
+	// up in `data ls`.
+	tmp, err := os.CreateTemp(dir, ".ship-data-save-*.partial")
+	if err != nil {
+		utils.DieError(operationError(fmt.Sprintf("create snapshot temp file: %v", err), "ship data save"), 1)
+	}
+	tmpPath := tmp.Name()
+	_ = tmp.Close()
+	failure, stderr, code, runErr := read.Runner.RunSSHToFile(read.AppContext.Server, serverAppDataSaveCommand(read.AppContext.AppName, read.EnvName), tmpPath)
 	if runErr != nil || code != 0 {
-		_ = os.Remove(outPath)
+		_ = os.Remove(tmpPath)
 		outcome := decodeRemoteOutcome(failure, stderr, code, runErr, "data save failed")
 		if outcome.TransportCoded != nil {
 			utils.DieError(outcome.TransportCoded, 1)
@@ -122,6 +133,10 @@ func CmdDataSave(root, outPath string) {
 			utils.DieError(outcome.RemoteCoded, 1)
 		}
 		utils.DieError(operationError("data save failed: "+outcome.Detail, "ship data save"), 1)
+	}
+	if err := os.Rename(tmpPath, outPath); err != nil {
+		_ = os.Remove(tmpPath)
+		utils.DieError(operationError(fmt.Sprintf("finalize snapshot: %v", err), "ship data save"), 1)
 	}
 	if strings.TrimSpace(stderr) != "" {
 		fmt.Fprint(os.Stderr, stderr)

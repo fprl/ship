@@ -403,15 +403,31 @@ func stopContainers(names []string) error {
 	return nil
 }
 
-func startContainers(names []string) {
+func startContainers(names []string) error {
+	var failed []string
 	for _, name := range names {
-		_, _ = utils.RunChecked("podman", []string{"start", name}, "")
+		if _, err := utils.RunChecked("podman", []string{"start", name}, ""); err != nil {
+			failed = append(failed, name)
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("restart containers %s", strings.Join(failed, ", "))
+	}
+	return nil
+}
+
+// warnOnRestartFailure restarts stopped containers after a data-directory
+// swap. The swap is the point of no return, so a restart failure is a warning
+// the operator must see, not a reason to report the completed swap as failed.
+func warnOnRestartFailure(stopped []string) {
+	if err := startContainers(stopped); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v; run ship box doctor\n", err)
 	}
 }
 
 func (r applyReleaseResult) cleanupFailed(app, env string) {
 	removeContainers(r.startedContainers)
-	startContainers(r.stoppedContainers)
+	warnOnRestartFailure(r.stoppedContainers)
 	if r.staticSnapshot != nil {
 		_ = restoreStaticCurrent(app, env, *r.staticSnapshot)
 	}

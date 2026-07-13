@@ -107,8 +107,8 @@ func ValidateDeployTmpSource(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("source file does not exist: %s", path)
 	}
-	if fi.IsDir() {
-		return "", fmt.Errorf("source path is a directory: %s", path)
+	if !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("source path is not a regular file: %s", path)
 	}
 
 	sudoUid := os.Getenv("SUDO_UID")

@@ -213,7 +213,7 @@ func forkAppData(app, prodEnv, previewEnv string, opts dataForkOptions) (summary
 	if err != nil {
 		return dataForkSummary{}, err
 	}
-	defer startContainers(stopped)
+	defer warnOnRestartFailure(stopped)
 
 	previewData := identity.DataDir(app, previewEnv)
 	if err := exchangeDirs(previewData, tmp); err != nil {
@@ -221,8 +221,10 @@ func forkAppData(app, prodEnv, previewEnv string, opts dataForkOptions) (summary
 	}
 	swapped = true
 	_ = os.RemoveAll(tmp)
+	// The swap above already succeeded; a layout-perms failure now is a
+	// warning, not a fork failure (mirrors restoreAppData).
 	if err := applyEnvLayoutPerms(app, previewEnv); err != nil {
-		return dataForkSummary{}, err
+		fmt.Fprintf(os.Stderr, "warning: data forked but layout perms need attention: %v\n", err)
 	}
 	return summary, nil
 }
@@ -241,13 +243,18 @@ func resetAppData(app, previewEnv string) error {
 	if err != nil {
 		return err
 	}
-	defer startContainers(stopped)
+	defer warnOnRestartFailure(stopped)
 
 	dataDir := identity.DataDir(app, previewEnv)
 	if err := emptyDirContents(dataDir); err != nil {
 		return err
 	}
-	return applyEnvLayoutPerms(app, previewEnv)
+	// /data is already emptied; a layout-perms failure now is a warning,
+	// not a reset failure (mirrors restoreAppData).
+	if err := applyEnvLayoutPerms(app, previewEnv); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: data reset but layout perms need attention: %v\n", err)
+	}
+	return nil
 }
 
 func copyDataDirForFork(srcRoot, dstRoot string) (dataForkSummary, error) {
@@ -273,6 +280,22 @@ func copyDataDirForFork(srcRoot, dstRoot string) (dataForkSummary, error) {
 				return err
 			}
 			return os.Chmod(target, info.Mode().Perm())
+		}
+
+		// /data is owned by the unprivileged app user, so a symlink here
+		// is attacker-controlled. Never follow it as root: preserve it as
+		// a symlink so the tar writer and restore path (which reject
+		// escaping targets) handle it, instead of copying the link target.
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			if err := os.Symlink(link, target); err != nil {
+				return err
+			}
+			summary.Files = append(summary.Files, dataForkFile{Path: filepath.ToSlash(rel)})
+			return nil
 		}
 
 		sqlite, err := isSQLiteDataFile(path)
@@ -612,7 +635,7 @@ func restoreAppData(app, env, archive string) (dataSnapshotMetadata, error) {
 	if err != nil {
 		return dataSnapshotMetadata{}, err
 	}
-	defer startContainers(stopped)
+	defer warnOnRestartFailure(stopped)
 	// Validation and staging complete above; nothing may mutate live /data before this exchange.
 	if err := exchangeDirs(dataDir, stagedData); err != nil {
 		return dataSnapshotMetadata{}, fmt.Errorf("swap restored data dir: %w", err)

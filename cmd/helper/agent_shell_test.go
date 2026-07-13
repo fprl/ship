@@ -46,6 +46,24 @@ func TestAgentShellAllowsHelperProtocolAndForcesPinnedFingerprint(t *testing.T) 
 			original: "sudo -n /usr/local/bin/ship server app apply --git-author 'Smoke <smoke@example.com>' api prod",
 			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "apply", "--git-author", "Smoke <smoke@example.com>", "api", "prod"},
 		},
+		{
+			// Kong applies last-value-wins, so an inline `=value` form left
+			// in the tail would override the pinned fingerprint and let an
+			// agent key authorize as an arbitrary owner. It must be stripped.
+			name:     "lying fingerprint inline equals form",
+			original: "sudo -n /usr/local/bin/ship server app destroy api --member-fingerprint=SHA256:owner",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "destroy", "api"},
+		},
+		{
+			name:     "lying member inline equals form",
+			original: "sudo -n /usr/local/bin/ship server app --member=SHA256:owner destroy api",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "destroy", "api"},
+		},
+		{
+			name:     "lying fingerprint after literal separator stays positional",
+			original: "sudo -n /usr/local/bin/ship server app destroy api -- --member-fingerprint=SHA256:owner",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "destroy", "api", "--", "--member-fingerprint=SHA256:owner"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

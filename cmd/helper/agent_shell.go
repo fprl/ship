@@ -119,13 +119,30 @@ func forceAgentMemberFingerprint(argv []string, fingerprint string) []string {
 			out = append(out, tail[i:]...)
 			break
 		}
-		if tail[i] == "--member" || tail[i] == "--member-fingerprint" {
-			i++
+		// Drop every client-supplied member/fingerprint claim in any
+		// spelling. The pinned fingerprint injected above is the only
+		// identity the helper may see; leaving a `--flag=value` form in
+		// the tail lets Kong's last-value-wins override it and lets an
+		// agent key authorize as an arbitrary member.
+		if flag, inlineValue := isForcedMemberClaim(tail[i]); flag {
+			if !inlineValue {
+				i++ // also drop the following value token
+			}
 			continue
 		}
 		out = append(out, tail[i])
 	}
 	return out
+}
+
+func isForcedMemberClaim(token string) (isFlag bool, hasInlineValue bool) {
+	switch {
+	case token == "--member-fingerprint", token == "--member":
+		return true, false
+	case strings.HasPrefix(token, "--member-fingerprint="), strings.HasPrefix(token, "--member="):
+		return true, true
+	}
+	return false, false
 }
 
 func isPrepareUploadCommand(argv []string) bool {

@@ -92,6 +92,58 @@ func TestForkAppDataVacuumCopiesSQLiteUploadsAndLeavesProdUnchanged(t *testing.T
 	}
 }
 
+func TestForkAppDataPreservesSymlinksWithoutFollowingThemAsRoot(t *testing.T) {
+	setupDataHostTest(t)
+	app := "linkapi"
+	preview := "feature-link-abcd"
+	writeDataPreviewIdentity(t, app, preview, "feature/link")
+	prodDir := identity.DataDir(app, productionEnvName)
+	previewDir := identity.DataDir(app, preview)
+	if err := os.MkdirAll(prodDir, 0775); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(previewDir, 0775); err != nil {
+		t.Fatal(err)
+	}
+
+	// A root-readable secret outside the app's /data. The app user can plant
+	// a symlink to it; snapshotting must not follow the link and copy its
+	// contents (the .db name would otherwise route through the sqlite path
+	// and be read by root).
+	secret := filepath.Join(t.TempDir(), "root-secret")
+	if err := os.WriteFile(secret, []byte("TOP-SECRET"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(prodDir, "leak.db")); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := forkAppData(app, productionEnvName, preview, dataForkOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.SQLiteFiles != 0 {
+		t.Fatalf("symlink must not be treated as sqlite: %+v", summary)
+	}
+
+	copied := filepath.Join(previewDir, "leak.db")
+	info, err := os.Lstat(copied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("leak.db should remain a symlink, got mode %v", info.Mode())
+	}
+	if target, err := os.Readlink(copied); err != nil || target != secret {
+		t.Fatalf("symlink target = %q err=%v, want %q", target, err, secret)
+	}
+	// The snapshot stored a link, not the secret's bytes: the entry is not a
+	// regular file, so root never copied the target's contents into it.
+	if info.Mode().IsRegular() {
+		t.Fatal("snapshot copied the secret file contents through the symlink")
+	}
+}
+
 func TestForkAppDataFailureBeforeSwapLeavesPreviewDataIntact(t *testing.T) {
 	requireSQLite3(t)
 	setupDataHostTest(t)
