@@ -59,9 +59,12 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"preview", "unpin", "feat/x"},
 		{"preview", "share"},
 		{"preview", "share", "--rotate"},
-		{"save"},
-		{"save", "--to", "/tmp/backups"},
-		{"restore", "--from", "backup-id"},
+		{"data", "save"},
+		{"data", "save", "--out", "/tmp/api.data.tar.gz"},
+		{"data", "restore", "backup-id"},
+		{"data", "restore", "backup-id", "--confirm", "api"},
+		{"data", "ls"},
+		{"data", "ls", "--json"},
 		{"secret", "set", "DATABASE_URL"},
 		{"secret", "set", "DATABASE_URL", "--preview"},
 		{"secret", "set", "DATABASE_URL", "--branch", "feat/x"},
@@ -168,6 +171,30 @@ func TestLogsTailRejectsNegative(t *testing.T) {
 	}
 }
 
+func TestParseBoxConfigArgs(t *testing.T) {
+	tests := []struct {
+		args                   []string
+		wantTarget, wantAction string
+		wantKey, wantValue     string
+	}{
+		{args: []string{"example.com"}, wantTarget: "example.com"},
+		{args: []string{"example.com", "set", "notify.url", "https://ntfy.example/ship"}, wantTarget: "example.com", wantAction: "set", wantKey: "notify.url", wantValue: "https://ntfy.example/ship"},
+		{args: []string{"unset", "notify.url"}, wantAction: "unset", wantKey: "notify.url"},
+	}
+	for _, tt := range tests {
+		target, action, key, value, err := parseBoxConfigArgs(tt.args)
+		if err != nil {
+			t.Fatalf("parseBoxConfigArgs(%v): %v", tt.args, err)
+		}
+		if target != tt.wantTarget || action != tt.wantAction || key != tt.wantKey || value != tt.wantValue {
+			t.Fatalf("parseBoxConfigArgs(%v) = (%q, %q, %q, %q)", tt.args, target, action, key, value)
+		}
+	}
+	if _, _, _, _, err := parseBoxConfigArgs([]string{"example.com", "set", "notify.url"}); err == nil {
+		t.Fatal("parseBoxConfigArgs accepted set without a value")
+	}
+}
+
 func TestPublicCLIRejectsRemovedCompatibilityForms(t *testing.T) {
 	tests := [][]string{
 		{"setup", "--env", "production"},
@@ -186,6 +213,8 @@ func TestPublicCLIRejectsRemovedCompatibilityForms(t *testing.T) {
 		{"status", "production"},
 		{"backup", "production"},
 		{"backup", "list", "production"},
+		{"save"},
+		{"restore", "--from", "backup-id"},
 		{"restore", "--from", "backup-id", "production"},
 		{"restore", "--from", "backup-id", "--env", "production"},
 		{"secret", "set", "production", "DATABASE_URL"},
@@ -390,7 +419,7 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	}
 	_, _ = parser.Parse([]string{"--help"})
 	text := stdout.String() + stderr.String()
-	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "preview <command>", "save", "restore", "ssh", "secret <command>", "box <command>", "member <command>", "approve", "docs", "help", "version"} {
+	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "data <command>", "preview <command>", "ssh", "secret <command>", "box <command>", "member <command>", "approve", "docs", "help", "version"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("top-level help should mention %q, got:\n%s", want, text)
 		}
@@ -555,7 +584,7 @@ func parserPublicVerbs(t *testing.T) []string {
 func documentedParserVerbs(t *testing.T) []string {
 	t.Helper()
 	out := parserPublicVerbs(t)
-	out = append(out, "completion")
+	out = append(out, "box config set", "box config unset", "completion")
 	sort.Strings(out)
 	return out
 }

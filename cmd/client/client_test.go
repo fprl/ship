@@ -393,18 +393,6 @@ func TestRewriteRollbackSummaryUsesSurfaceEnvironmentName(t *testing.T) {
 	}
 }
 
-func TestRewriteRestoreSummaryUsesSurfaceEnvironmentName(t *testing.T) {
-	read := readContext{
-		AppContext: &config.AppContext{AppName: "api", EnvName: "feat-x-ab12"},
-		Address:    readAddress{EnvName: "feat-x", PreviewBranch: "feat/x"},
-		EnvName:    "feat-x-ab12",
-	}
-	out := rewriteRestoreSummary("Restored api (feat-x-ab12) from backup-id at release abc123\n", read)
-	if !strings.Contains(out, "Restored Preview feat/x from backup-id at release abc123") {
-		t.Fatalf("restore summary leaked internal env:\n%s", out)
-	}
-}
-
 func TestDeploymentURLSynthesizesSSLIPWithoutRoutes(t *testing.T) {
 	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "203.0.113.7"}
 	got := deploymentURL(ctx, "prod")
@@ -1157,9 +1145,8 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "exec tty", command: serverAppExecCommand("api", "production", true, []string{"env"})},
 		{name: "rollback latest", command: serverAppRollbackCommand("api", "production", "", actor)},
 		{name: "rollback release", command: serverAppRollbackCommand("api", "production", "abc1234", actor)},
-		{name: "backup create", command: serverAppBackupCommand("api", "production", "")},
-		{name: "backup to", command: serverAppBackupCommand("api", "production", "/tmp/backups")},
-		{name: "restore", command: serverAppRestoreCommand("api", "production", "backup-id")},
+		{name: "data save", command: serverAppDataSaveCommand("api", "production")},
+		{name: "data restore", command: serverAppDataRestoreCommand("api", "production", "/tmp/ship-deploy/snapshot.data.tar.gz")},
 		{name: "destroy app", command: serverAppDestroyCommand("api")},
 		{name: "destroy env purge", command: serverAppDestroyEnvCommand("api", "production")},
 		{name: "preview resolve or create", command: serverAppPreviewResolveOrCreateCommand("api", "feat/x")},
@@ -1185,6 +1172,9 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "box notify get", command: serverBoxNotifyGetCommand()},
 		{name: "box notify set", command: serverBoxNotifySetCommand("https://ntfy.example/ship")},
 		{name: "box notify clear", command: serverBoxNotifyClearCommand()},
+		{name: "box config get", command: serverBoxConfigGetCommand()},
+		{name: "box config set", command: serverBoxConfigSetCommand("notify.url", "https://ntfy.example/ship")},
+		{name: "box config unset", command: serverBoxConfigUnsetCommand("notify.url")},
 	}
 
 	for _, tt := range commands {
@@ -1272,6 +1262,7 @@ func serverSubcommandCoveredBySudoers(subcommand string) bool {
 		strings.HasPrefix(subcommand, "doctor ") ||
 		strings.HasPrefix(subcommand, "key ") ||
 		strings.HasPrefix(subcommand, "approval ") ||
+		strings.HasPrefix(subcommand, "config ") ||
 		strings.HasPrefix(subcommand, "notify ")
 }
 
@@ -1477,26 +1468,21 @@ func TestSplitLogLinesEmptyIsEmptyArray(t *testing.T) {
 	}
 }
 
-func TestServerAppBackupCommands(t *testing.T) {
+func TestServerAppDataSnapshotCommands(t *testing.T) {
 	tests := []struct {
 		name string
 		got  string
 		want string
 	}{
 		{
-			name: "create",
-			got:  serverAppBackupCommand("api", "production", ""),
-			want: "sudo -n /usr/local/bin/ship server app backup create api production",
-		},
-		{
-			name: "create to",
-			got:  serverAppBackupCommand("api", "production", "/tmp/backups"),
-			want: "sudo -n /usr/local/bin/ship server app backup create --to /tmp/backups api production",
+			name: "save",
+			got:  serverAppDataSaveCommand("api", "production"),
+			want: "sudo -n /usr/local/bin/ship server app data save api production",
 		},
 		{
 			name: "restore",
-			got:  serverAppRestoreCommand("api", "production", "backup-id"),
-			want: "sudo -n /usr/local/bin/ship server app backup restore --from backup-id api production",
+			got:  serverAppDataRestoreCommand("api", "production", "/tmp/ship-deploy/snapshot.data.tar.gz"),
+			want: "sudo -n /usr/local/bin/ship server app data restore --archive /tmp/ship-deploy/snapshot.data.tar.gz api production",
 		},
 	}
 	for _, tt := range tests {

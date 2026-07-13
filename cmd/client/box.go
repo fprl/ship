@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -454,6 +455,112 @@ func CmdBoxNotify(server, url string, remove bool) {
 		utils.DieError(operationError(detail, "ship box notify "+server), 1)
 	}
 	fmt.Print(stdout)
+}
+
+type boxConfigValue struct {
+	Value   string `json:"value"`
+	Default string `json:"default"`
+	Source  string `json:"source"`
+}
+
+type boxConfigPayload struct {
+	Config map[string]boxConfigValue `json:"config"`
+}
+
+func CmdBoxConfigGet(server string, jsonFlag bool) {
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box config"), 2)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer runner.Close()
+
+	payload, err := readBoxConfig(runner, server)
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	if jsonFlag {
+		data, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			utils.DieError(err, 1)
+		}
+		fmt.Println(string(data))
+		return
+	}
+	keys := make([]string, 0, len(payload.Config))
+	keyWidth, valueWidth, defaultWidth := len("key"), len("value"), len("default")
+	for key, value := range payload.Config {
+		keys = append(keys, key)
+		keyWidth = max(keyWidth, len(key))
+		valueWidth = max(valueWidth, len(boxConfigDisplayValue(value.Value)))
+		defaultWidth = max(defaultWidth, len(boxConfigDisplayValue(value.Default)))
+	}
+	sort.Strings(keys)
+	fmt.Printf("%-*s  %-*s  %-*s  source\n", keyWidth, "key", valueWidth, "value", defaultWidth, "default")
+	for _, key := range keys {
+		value := payload.Config[key]
+		fmt.Printf("%-*s  %-*s  %-*s  %s\n", keyWidth, key, valueWidth, boxConfigDisplayValue(value.Value), defaultWidth, boxConfigDisplayValue(value.Default), value.Source)
+	}
+}
+
+func CmdBoxConfigSet(server, key, value string) {
+	CmdBoxConfigMutation(server, serverBoxConfigSetCommand(key, value), "ship box config "+server+" set "+key)
+}
+
+func CmdBoxConfigUnset(server, key string) {
+	CmdBoxConfigMutation(server, serverBoxConfigUnsetCommand(key), "ship box config "+server+" unset "+key)
+}
+
+func CmdBoxConfigMutation(server, command, remediation string) {
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box config"), 2)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer runner.Close()
+	stdout, stderr, code, err := runner.RunSSH(server, command)
+	if err != nil || code != 0 {
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+		if outcome.TransportCoded != nil {
+			utils.DieError(outcome.TransportCoded, 1)
+		}
+		if outcome.RemoteCoded != nil {
+			writeRemoteStderr(outcome)
+			utils.DieError(outcome.RemoteCoded, 1)
+		}
+		detail := outcome.Detail
+		if detail == "" {
+			detail = "box config failed"
+		}
+		utils.DieError(operationError(detail, remediation), 1)
+	}
+	fmt.Print(stdout)
+}
+
+func readBoxConfig(runner sshRunner, server string) (boxConfigPayload, error) {
+	out, err := runSSHDetail(runner, server, serverBoxConfigGetCommand())
+	if err != nil {
+		return boxConfigPayload{}, err
+	}
+	var payload boxConfigPayload
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		return boxConfigPayload{}, operationError(fmt.Sprintf("box config failed: invalid config JSON: %v", err), "ship box config "+server)
+	}
+	if payload.Config == nil {
+		return boxConfigPayload{}, operationError("box config failed: invalid config JSON", "ship box config "+server)
+	}
+	return payload, nil
+}
+
+func boxConfigDisplayValue(value string) string {
+	if value == "" {
+		return "unset"
+	}
+	return value
 }
 
 const invalidBoxTargetManifestRemediation = "fix ship.toml box"

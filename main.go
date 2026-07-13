@@ -29,10 +29,8 @@ type cli struct {
 	Why        whyCmd           `cmd:"" group:"project" help:"Explain the latest deploy outcome for the current branch environment."`
 	Rollback   rollbackCmd      `cmd:"" group:"project" help:"Roll back the current branch environment."`
 	Rm         rmCmd            `cmd:"rm" group:"project" help:"Remove an environment by branch name."`
-	Data       dataCmd          `cmd:"" group:"project" help:"Manage Preview data forks."`
+	Data       dataCmd          `cmd:"" group:"project" help:"Manage app data."`
 	Preview    previewCmd       `cmd:"" group:"project" help:"Manage the current Preview."`
-	Save       saveCmd          `cmd:"" group:"project" help:"Create a backup for the current branch environment."`
-	Restore    restoreCmd       `cmd:"" group:"project" help:"Restore the current branch environment from a backup."`
 	SSH        sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the box."`
 	Secret     secretCmd        `cmd:"" group:"project" help:"Manage secrets for the current branch environment."`
 	Box        boxCmd           `cmd:"" group:"host" help:"Install or inspect a ship box."`
@@ -287,34 +285,6 @@ func (c rollbackCmd) Run() error {
 	return nil
 }
 
-type saveCmd struct {
-	projectArgs
-	To string `name:"to" help:"Destination directory on the host. Supports plain paths and file:// URLs."`
-}
-
-func (c saveCmd) Run() error {
-	root, err := c.projectRoot()
-	if err != nil {
-		return err
-	}
-	client.CmdSave(root, c.To)
-	return nil
-}
-
-type restoreCmd struct {
-	projectArgs
-	From string `name:"from" required:"" help:"Backup ID or path on the host."`
-}
-
-func (c restoreCmd) Run() error {
-	root, err := c.projectRoot()
-	if err != nil {
-		return err
-	}
-	client.CmdRestore(root, c.From)
-	return nil
-}
-
 type rmCmd struct {
 	projectArgs
 	Branch  string `arg:"" help:"Branch name whose environment should be removed."`
@@ -331,8 +301,11 @@ func (c rmCmd) Run() error {
 }
 
 type dataCmd struct {
-	Fork dataForkCmd `cmd:"" help:"Fork Production /data into this branch's Preview."`
-	Rm   dataRmCmd   `cmd:"rm" help:"Reset this branch's Preview /data to empty."`
+	Fork    dataForkCmd    `cmd:"" help:"Fork Production /data into this branch's Preview."`
+	Rm      dataRmCmd      `cmd:"rm" help:"Reset this branch's Preview /data to empty."`
+	Save    dataSaveCmd    `cmd:"" help:"Save this environment's /data to a local snapshot."`
+	Restore dataRestoreCmd `cmd:"" help:"Restore this environment's /data from a local snapshot."`
+	Ls      dataLsCmd      `cmd:"" help:"List local data snapshots for this app."`
 }
 
 type dataForkCmd struct {
@@ -358,6 +331,49 @@ func (c dataRmCmd) Run() error {
 		return err
 	}
 	client.CmdDataRm(root)
+	return nil
+}
+
+type dataSaveCmd struct {
+	projectArgs
+	Out string `name:"out" type:"path" help:"Local path for the snapshot."`
+}
+
+func (c dataSaveCmd) Run() error {
+	root, err := c.projectRoot()
+	if err != nil {
+		return err
+	}
+	client.CmdDataSave(root, c.Out)
+	return nil
+}
+
+type dataRestoreCmd struct {
+	projectArgs
+	Snapshot string `arg:"" help:"Local snapshot ID or path."`
+	Confirm  string `name:"confirm" help:"Required app-name confirmation for Production."`
+}
+
+func (c dataRestoreCmd) Run() error {
+	root, err := c.projectRoot()
+	if err != nil {
+		return err
+	}
+	client.CmdDataRestore(root, c.Snapshot, c.Confirm)
+	return nil
+}
+
+type dataLsCmd struct {
+	projectArgs
+	JSON bool `name:"json" help:"Emit stable snapshot JSON."`
+}
+
+func (c dataLsCmd) Run() error {
+	root, err := c.projectRoot()
+	if err != nil {
+		return err
+	}
+	client.CmdDataLs(root, c.JSON)
 	return nil
 }
 
@@ -424,15 +440,16 @@ func (c secretRmCmd) Run() error {
 }
 
 type boxCmd struct {
-	Setup  boxSetupCmd  `cmd:"" help:"Install or converge a box."`
-	Doctor boxDoctorCmd `cmd:"" help:"Run box diagnostics."`
-	Notify boxNotifyCmd `cmd:"" help:"Read or set the box notification webhook."`
-	Apps   boxAppsCmd   `cmd:"" help:"Show the box's app table."`
-	Ls     boxLsCmd     `cmd:"" hidden:""`
-	Rm     boxRmCmd     `cmd:"rm" help:"Destroy an app and all its environments on a box."`
-	Status boxStatusCmd `cmd:"" help:"Show helper version, disk, apps, and approvals for one box."`
-	Update boxUpdateCmd `cmd:"" help:"Update a box helper and version-owned artifacts."`
-	Forget boxForgetCmd `cmd:"" hidden:"" help:"Drop a box host-key pin."`
+	Setup  boxSetupCmd        `cmd:"" help:"Install or converge a box."`
+	Doctor boxDoctorCmd       `cmd:"" help:"Run box diagnostics."`
+	Notify boxNotifyCmd       `cmd:"" help:"Read or set the box notification webhook."`
+	Apps   boxAppsCmd         `cmd:"" help:"Show the box's app table."`
+	Ls     boxLsCmd           `cmd:"" hidden:""`
+	Rm     boxRmCmd           `cmd:"rm" help:"Destroy an app and all its environments on a box."`
+	Status boxStatusCmd       `cmd:"" help:"Show helper version, disk, apps, and approvals for one box."`
+	Update boxUpdateCmd       `cmd:"" help:"Update a box helper and version-owned artifacts."`
+	Forget boxForgetCmd       `cmd:"" hidden:"" help:"Drop a box host-key pin."`
+	Config boxConfigClientCmd `cmd:"" help:"Read or change box configuration."`
 }
 
 type boxStatusCmd struct {
@@ -469,6 +486,88 @@ type boxNotifyCmd struct {
 	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	URL    string `arg:"" optional:"" name:"url" help:"Webhook URL to set."`
 	Remove bool   `name:"rm" help:"Clear the box webhook."`
+}
+
+type boxConfigClientCmd struct {
+	Config string   `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Args   []string `arg:"" optional:"" name:"args" help:"Box host, optionally followed by set/unset and a key."`
+	JSON   bool     `name:"json" help:"Emit stable structured box config JSON."`
+}
+
+func (c boxConfigClientCmd) Run() error {
+	targetArg, action, key, value, err := parseBoxConfigArgs(c.Args)
+	if err != nil {
+		return err
+	}
+	target, err := boxTargetFor(c.Config, targetArg, "ship box config <box>")
+	if err != nil {
+		return err
+	}
+	switch action {
+	case "":
+		client.CmdBoxConfigGet(target, c.JSON)
+	case "set":
+		if c.JSON {
+			return errcat.New(errcat.CodeUsageError, errcat.Fields{"detail": "--json is only valid when reading box config", "command": "ship box config <box> --json"})
+		}
+		client.CmdBoxConfigSet(target, key, value)
+	case "unset":
+		if c.JSON {
+			return errcat.New(errcat.CodeUsageError, errcat.Fields{"detail": "--json is only valid when reading box config", "command": "ship box config <box> --json"})
+		}
+		client.CmdBoxConfigUnset(target, key)
+	}
+	return nil
+}
+
+func parseBoxConfigArgs(args []string) (target, action, key, value string, err error) {
+	usage := func(detail string) (string, string, string, string, error) {
+		return "", "", "", "", errcat.New(errcat.CodeUsageError, errcat.Fields{"detail": detail, "command": "ship box config <box> [--json] | ship box config <box> set <key> <value> | ship box config <box> unset <key>"})
+	}
+	if len(args) == 0 {
+		return "", "", "", "", nil
+	}
+	if args[0] == "set" || args[0] == "unset" {
+		action = args[0]
+		args = args[1:]
+		switch action {
+		case "set":
+			if len(args) != 2 {
+				return usage("box config set requires <key> <value>")
+			}
+			return "", action, args[0], args[1], nil
+		case "unset":
+			if len(args) != 1 {
+				return usage("box config unset requires <key>")
+			}
+			return "", action, args[0], "", nil
+		}
+	} else {
+		target = args[0]
+		args = args[1:]
+	}
+	if len(args) == 0 {
+		return target, action, "", "", nil
+	}
+	if action != "" {
+		return usage("box config action accepts too many arguments")
+	}
+	action = args[0]
+	args = args[1:]
+	switch action {
+	case "set":
+		if len(args) != 2 {
+			return usage("box config set requires <key> <value>")
+		}
+		return target, action, args[0], args[1], nil
+	case "unset":
+		if len(args) != 1 {
+			return usage("box config unset requires <key>")
+		}
+		return target, action, args[0], "", nil
+	default:
+		return usage("box config action must be set or unset")
+	}
 }
 
 func (c boxNotifyCmd) Run() error {

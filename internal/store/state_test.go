@@ -126,19 +126,19 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 		t.Fatalf("unexpected members state: %+v", membersState)
 	}
 
-	if err := store.WriteBoxNotify(BoxNotifyFile{Version: CurrentVersion, URL: " https://ntfy.example/ship "}); err != nil {
+	if err := store.WriteBoxConfig(BoxConfigFile{Version: CurrentVersion, Values: map[string]string{"notify.url": "https://ntfy.example/ship"}}); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.BoxNotifyPath(); got != filepath.Join(root, "box-notify.json") {
-		t.Fatalf("unexpected box notify path: %s", got)
+	if got := store.BoxConfigPath(); got != filepath.Join(root, "box-config.json") {
+		t.Fatalf("unexpected box config path: %s", got)
 	}
-	assertMode(t, store.BoxNotifyPath(), 0600)
-	boxNotify, err := store.ReadBoxNotify()
+	assertMode(t, store.BoxConfigPath(), 0600)
+	boxConfig, err := store.ReadBoxConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if boxNotify.URL != "https://ntfy.example/ship" {
-		t.Fatalf("box notify URL = %q", boxNotify.URL)
+	if boxConfig.Values["notify.url"] != "https://ntfy.example/ship" {
+		t.Fatalf("box config notify.url = %q", boxConfig.Values["notify.url"])
 	}
 
 	if err := store.WriteApprovals(ApprovalsFile{
@@ -204,6 +204,22 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 	}
 	if approvalsState.Version != CurrentVersion || len(approvalsState.Requests) != 1 || approvalsState.Requests[0].Member.Role != MemberRoleAgent {
 		t.Fatalf("unexpected approvals state: %+v", approvalsState)
+	}
+}
+
+func TestBoxConfigRefusesUnknownKeysAndWrongTypes(t *testing.T) {
+	state := Store{Root: t.TempDir()}
+	if err := os.WriteFile(state.BoxConfigPath(), []byte(`{"version":1,"values":{"unknown.key":"value"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.ReadBoxConfig(); err == nil {
+		t.Fatal("ReadBoxConfig accepted an unknown key")
+	}
+	if err := os.WriteFile(state.BoxConfigPath(), []byte(`{"version":1,"values":{"notify.url":123}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.ReadBoxConfig(); err == nil {
+		t.Fatal("ReadBoxConfig accepted a non-string value")
 	}
 }
 

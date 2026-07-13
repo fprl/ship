@@ -20,13 +20,6 @@ func TestRunCheckedWithTimeout(t *testing.T) {
 	}
 }
 
-func TestBackupDirDefaultMatchesServerContract(t *testing.T) {
-	t.Setenv("SHIP_BACKUP_DIR", "")
-	if got := BackupDir(); got != "/etc/ship/backups" {
-		t.Fatalf("unexpected backup dir: %s", got)
-	}
-}
-
 func TestNormalizeRawErrorsDoesNotStringMatchManifestText(t *testing.T) {
 	coded := normalizeExitError(errors.New("ship.toml not found"), 1)
 	if coded.Code() != errcat.CodeOperationFailed {

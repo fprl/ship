@@ -24,13 +24,6 @@ func ShellEscape(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func BackupDir() string {
-	if p := os.Getenv("SHIP_BACKUP_DIR"); p != "" {
-		return p
-	}
-	return "/etc/ship/backups"
-}
-
 func SystemctlBin() string {
 	if b := os.Getenv("SHIP_SYSTEMCTL_BIN"); b != "" {
 		return b

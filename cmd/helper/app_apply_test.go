@@ -301,19 +301,6 @@ func TestContainersForRemovedProcesses(t *testing.T) {
 	}
 }
 
-func TestContainersOutsideDesiredRelease(t *testing.T) {
-	desired := identity.ContainerName("api", "production", "web", "abc123")
-	entries := []containerEntry{
-		{Names: []string{desired}, Labels: map[string]string{"ship.process": "web"}},
-		{Names: []string{"stale-web"}, Labels: map[string]string{"ship.process": "web"}},
-		{Names: []string{"stale-worker"}, Labels: map[string]string{"ship.process": "worker"}},
-	}
-	got := containersOutsideDesiredRelease(entries, "api", "production", map[string]config.Process{"web": {}}, "abc123")
-	if len(got) != 2 || got[0] != "stale-web" || got[1] != "stale-worker" {
-		t.Fatalf("unexpected restore cleanup set: %+v", got)
-	}
-}
-
 func TestNextProcessContainerNameUsesInstanceWhenDefaultExists(t *testing.T) {
 	base := identity.ContainerName("api", "production", "web", "abc123")
 	got := nextProcessContainerName([]containerEntry{

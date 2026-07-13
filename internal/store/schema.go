@@ -1,5 +1,7 @@
 package store
 
+import "github.com/fprl/ship/internal/config"
+
 const CurrentVersion = 1
 
 type ExposeMode string
@@ -102,11 +104,106 @@ type MembersFile struct {
 	Members map[string]MemberRecord `json:"members"`
 }
 
-// BoxNotifyFile is box-global pager configuration. It deliberately lives
-// beside members and approvals: no app owns box-level notifications.
-type BoxNotifyFile struct {
-	Version int    `json:"version"`
-	URL     string `json:"url"`
+type BoxConfigValueType string
+
+const (
+	BoxConfigValueTypeURLOrEmpty BoxConfigValueType = "url_or_empty"
+)
+
+type BoxConfigApplyMode string
+
+const (
+	BoxConfigApplyNone     BoxConfigApplyMode = "none"
+	BoxConfigApplyConverge BoxConfigApplyMode = "converge"
+)
+
+type BoxConfigKey struct {
+	Name                   string
+	Type                   BoxConfigValueType
+	Default                string
+	WriteRole              MemberRole
+	OutOfRoleNeedsApproval bool
+	Apply                  BoxConfigApplyMode
+}
+
+// BoxConfigSchema is the complete box-config authority boundary. A generic
+// setter is safe only because every key declares its authorization policy.
+var BoxConfigSchema = []BoxConfigKey{
+	{
+		Name:                   "notify.url",
+		Type:                   BoxConfigValueTypeURLOrEmpty,
+		Default:                "",
+		WriteRole:              MemberRoleOwner,
+		OutOfRoleNeedsApproval: true,
+		Apply:                  BoxConfigApplyNone,
+	},
+}
+
+type BoxConfigFile struct {
+	Version int               `json:"version"`
+	Values  map[string]string `json:"values"`
+}
+
+type BoxConfigKeyUnknownError struct {
+	Key       string
+	ValidKeys []string
+}
+
+func (e *BoxConfigKeyUnknownError) Error() string {
+	return "unknown box config key: " + e.Key
+}
+
+type BoxConfigValueError struct {
+	Key    string
+	Detail string
+}
+
+func (e *BoxConfigValueError) Error() string {
+	return "invalid box config value for " + e.Key + ": " + e.Detail
+}
+
+func LookupBoxConfigKey(name string) (BoxConfigKey, bool) {
+	for _, key := range BoxConfigSchema {
+		if key.Name == name {
+			return key, true
+		}
+	}
+	return BoxConfigKey{}, false
+}
+
+func ValidateBoxConfigValue(key, value string) error {
+	spec, ok := LookupBoxConfigKey(key)
+	if !ok {
+		return &BoxConfigKeyUnknownError{Key: key, ValidKeys: BoxConfigKeys()}
+	}
+	switch spec.Type {
+	case BoxConfigValueTypeURLOrEmpty:
+		if value != "" {
+			if err := config.ValidateNotifyURL(value); err != nil {
+				return &BoxConfigValueError{Key: key, Detail: err.Error()}
+			}
+		}
+	default:
+		return &BoxConfigValueError{Key: key, Detail: "unsupported value type"}
+	}
+	return nil
+}
+
+func ValidateBoxConfigFile(file BoxConfigFile) error {
+	for key, value := range file.Values {
+		if err := ValidateBoxConfigValue(key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func BoxConfigKeys() []string {
+	keys := make([]string, 0, len(BoxConfigSchema))
+	for _, key := range BoxConfigSchema {
+		keys = append(keys, key.Name)
+	}
+	return keys
 }
 
 type ApprovalMember struct {

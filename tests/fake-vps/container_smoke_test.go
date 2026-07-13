@@ -87,7 +87,6 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("preview protection uses one capability", env.testPreviewProtection)
 	t.Run("container rollback runs an older image release", env.testRollback)
 	t.Run("proactive release image pruning", env.testImagePruning)
-	t.Run("backup and restore round-trip app state", env.testBackupRestore)
 	t.Run("deploy removes processes dropped from the manifest", env.testRemovedProcessReconciliation)
 	t.Run("concurrent deploys of the same app env serialize", env.testConcurrentDeploys)
 	t.Run("static-only app deploys and restores without containers", env.testStaticOnlyAppLifecycle)
@@ -313,13 +312,22 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	unset := e.ship(t, app, nil, "box", "notify", "fake-vps")
 	assertContains(t, unset, "box notify is unset")
 	assertContains(t, unset, "next: ship box notify <box> <url>")
-	set := e.ship(t, app, nil, "box", "notify", "fake-vps", sink.URL("/box"))
-	assertContains(t, set, "box notify set")
+	freshConfig := e.ship(t, app, nil, "box", "config", "fake-vps", "--json")
+	assertContains(t, freshConfig, `"notify.url"`)
+	assertContains(t, freshConfig, `"source": "default"`)
+	set := e.ship(t, app, nil, "box", "config", "fake-vps", "set", "notify.url", sink.URL("/box"))
+	assertContains(t, set, "box config set notify.url")
 	if got := e.ship(t, app, nil, "box", "notify", "fake-vps"); got != sink.URL("/box")+"\n" {
 		t.Fatalf("box notify read = %q, want %q", got, sink.URL("/box")+"\n")
 	}
+	if got := e.ship(t, app, nil, "box", "config", "fake-vps", "--json"); !strings.Contains(got, `"source": "set"`) || !strings.Contains(got, sink.URL("/box")) {
+		t.Fatalf("box config set = %q", got)
+	}
 	cleared := e.ship(t, app, nil, "box", "notify", "fake-vps", "--rm")
 	assertContains(t, cleared, "box notify cleared")
+	if got := e.ship(t, app, nil, "box", "config", "fake-vps", "--json"); !strings.Contains(got, `"source": "default"`) {
+		t.Fatalf("box config unset = %q", got)
+	}
 	e.ship(t, app, nil, "box", "notify", "fake-vps", sink.URL("/box"))
 
 	secondApp := filepath.Join(e.tmp, "notify-second-api")
@@ -1359,6 +1367,34 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	setOwner := func() { e.pathPrefix = ownerPrefix }
 	t.Cleanup(setOwner)
 
+	shipperKeyPath := filepath.Join(e.tmp, "shipper-role")
+	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "shipper-role", "-f", shipperKeyPath)
+	e.ship(t, app, nil, "member", "add", shipperKeyPath+".pub", "--role", "shipper")
+	shipperKey, err := os.ReadFile(shipperKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shipperEnv := []string{"SHIP_SSH_KEY=" + string(shipperKey)}
+	shipperPrefix := e.configureSSHWithKey(t, shipperKeyPath)
+	setShipper := func() { e.pathPrefix = shipperPrefix }
+	setShipper()
+	configDenied := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "config", "fake-vps", "set", "notify.url", sink.URL("/shipper"))
+	if configDenied.err == nil {
+		t.Fatal("shipper box config set should require approval")
+	}
+	configID := approvalIDFromOutput(t, configDenied.stdout+configDenied.stderr)
+	configRequested := sink.waitForEvent(t, notifyEventApprovalRequested)
+	assertNotifySmokeField(t, configRequested, "_sink_path", "/box")
+	assertNotifySmokeNested(t, configRequested, "why.target.summary", "box config set notify.url")
+	setOwner()
+	e.ship(t, app, nil, "approve", configID)
+	setShipper()
+	if retry := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "config", "fake-vps", "set", "notify.url", sink.URL("/shipper")); retry.err != nil {
+		t.Fatalf("approved shipper box config retry should succeed: %v\nstdout:\n%s\nstderr:\n%s", retry.err, retry.stdout, retry.stderr)
+	}
+	setOwner()
+	e.ship(t, app, nil, "box", "config", "fake-vps", "set", "notify.url", sink.URL("/box"))
+
 	setAgent()
 	notifyDenied := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "notify", "fake-vps", sink.URL("/moved"))
 	if notifyDenied.err == nil {
@@ -1532,6 +1568,34 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 		t.Fatalf("prod data changed after fork:\nbefore:\n%s\nafter:\n%s", prodHash, got)
 	}
 
+	snapshot := strings.TrimSpace(e.ship(t, app, nil, "data", "save"))
+	t.Cleanup(func() { _ = os.Remove(snapshot) })
+	if _, err := os.Stat(snapshot); err != nil {
+		t.Fatalf("data save did not create local snapshot %q: %v", snapshot, err)
+	}
+	assertContains(t, e.ship(t, app, nil, "data", "ls"), filepath.Base(snapshot))
+	e.dockerExec(t, "test -z \"$(find "+identity.EnvRoot("dataapi", previewEnv)+" -maxdepth 1 -name '.data-save-*' -print)\"")
+	e.ship(t, app, nil, "exec", "sqlite3", "/data/app.db", "INSERT INTO items(name) VALUES ('after-save');")
+	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/data-count")); got != "4" {
+		t.Fatalf("preview row count after write = %q, want 4", got)
+	}
+	e.ship(t, app, nil, "data", "restore", snapshot)
+	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/data-count")); got != "3" {
+		t.Fatalf("preview row count after restore = %q, want 3", got)
+	}
+	badSnapshot := filepath.Join(e.tmp, "corrupt.data.tar.gz")
+	if err := os.WriteFile(badSnapshot, []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	badRestore := e.runShip(t, app, nil, "data", "restore", badSnapshot)
+	if badRestore.err == nil {
+		t.Fatal("corrupt snapshot restore should fail")
+	}
+	assertContains(t, badRestore.stdout+badRestore.stderr, "data_snapshot_invalid")
+	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/data-count")); got != "3" {
+		t.Fatalf("corrupt restore changed data: %q", got)
+	}
+
 	e.ship(t, app, nil, "exec", "sqlite3", "/data/app.db", "INSERT INTO items(name) VALUES ('preview-only');")
 	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/data-count")); got != "4" {
 		t.Fatalf("preview write row count = %q, want 4", got)
@@ -1554,6 +1618,11 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, previewURL)
 
 	e.mustRun(t, app, nil, "git", "checkout", "main")
+	prodRestore := e.runShip(t, app, nil, "data", "restore", snapshot)
+	if prodRestore.err == nil {
+		t.Fatal("production data restore without --confirm should fail")
+	}
+	assertContains(t, prodRestore.stdout+prodRestore.stderr, "Production rm requires --confirm dataapi")
 	onProd := e.runShip(t, app, nil, "data", "fork")
 	if onProd.err == nil {
 		t.Fatal("data fork on production branch should fail")
@@ -1591,6 +1660,16 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 	}
 	deniedText := denied.stdout + denied.stderr
 	assertContains(t, deniedText, "approval required for app=dataapi env="+previewEnv+" class=preview data=fork from=prod")
+	deniedSave := e.runCommand(t, app, agentEnv, nil, e.goBin, "data", "save")
+	if deniedSave.err == nil {
+		t.Fatal("agent data save should require approval")
+	}
+	assertContains(t, deniedSave.stdout+deniedSave.stderr, "approval_required")
+	deniedRestore := e.runCommand(t, app, agentEnv, nil, e.goBin, "data", "restore", snapshot)
+	if deniedRestore.err == nil {
+		t.Fatal("agent data restore should require approval")
+	}
+	assertContains(t, deniedRestore.stdout+deniedRestore.stderr, "approval_required")
 	approvalID := approvalIDFromOutput(t, deniedText)
 	e.pathPrefix = ownerPrefix
 	approved := e.ship(t, app, nil, "approve", approvalID)
@@ -1670,53 +1749,6 @@ web = { port = 3000 }
 	// box rm must purge the Preview capability credential with its environment.
 	e.dockerExec(t, "test ! -e /etc/ship/secrets/boxrmapi/"+previewEnv+"/capability-token")
 	e.dockerExec(t, "test ! -e /etc/ship/secrets/boxrmapi")
-}
-
-func (e *smokeEnv) testBackupRestore(t *testing.T) {
-	app := filepath.Join(e.tmp, "container-api")
-	e.dockerExec(t, "printf 'durable-state' > "+identity.DataDir("api", productionEnv)+"/data.txt")
-
-	prodStatus := statusEnvByClass(t, e, app, "production")
-	backupRelease := prodStatus.Release
-	backupID := backupIDFromSaveOutput(t, e.ship(t, app, nil, "save"))
-
-	mustWrite(t, filepath.Join(app, "README.md"), "post-backup release\n")
-	e.commitFixture(t, app)
-	newRelease := gitRelease(t, e, app)
-	if newRelease == backupRelease {
-		t.Fatal("expected fixture commit to produce a new release")
-	}
-	e.ship(t, app, nil)
-	newContainer := identity.ContainerName("api", productionEnv, "web", newRelease)
-	e.dockerExec(t, "test -f /run/fake-podman/containers/"+newContainer+".labels")
-
-	e.ship(t, app, nil, "restore", "--from", backupID)
-	e.dockerExec(t, "test ! -f /run/fake-podman/containers/"+newContainer+".labels")
-	statusJSON := e.ship(t, app, nil, "status", "--json")
-	assertContains(t, statusJSON, `"release": "`+backupRelease+`"`)
-
-	e.ship(t, app, nil, "rm", prodStatus.Branch, "--confirm", "api")
-	if exists := e.run(t, e.repoRoot, nil, "docker", "exec", e.container, "bash", "-c", "test -e "+identity.DataDir("api", productionEnv)+"/data.txt"); exists.err == nil {
-		t.Fatal("destroy should remove data before restore")
-	}
-
-	e.ship(t, app, nil, "restore", "--from", backupID)
-	got := strings.TrimSpace(e.dockerExec(t, "cat "+identity.DataDir("api", productionEnv)+"/data.txt"))
-	if got != "durable-state" {
-		t.Fatalf("restored data = %q, want durable-state", got)
-	}
-	envRootStat := strings.TrimSpace(e.dockerExec(t, "stat -c '%a %U' "+identity.EnvRoot("api", productionEnv)))
-	if envRootStat != "755 root" {
-		t.Fatalf("restored env root ownership = %q, want `755 root`", envRootStat)
-	}
-	dataStat := strings.TrimSpace(e.dockerExec(t, "stat -c '%a %U' "+identity.DataDir("api", productionEnv)))
-	if dataStat != "2775 "+identity.SystemUser("api", productionEnv) {
-		t.Fatalf("restored data ownership = %q, want `2775 %s`", dataStat, identity.SystemUser("api", productionEnv))
-	}
-	status := e.ship(t, app, nil, "status")
-	assertContains(t, status, "Production "+prodStatus.Branch)
-	assertContains(t, status, "health=healthy")
-	e.assertRemoteBody(t, "curl -fsS -H 'Host: api.example.com' http://127.0.0.1/health", "ok")
 }
 
 func (e *smokeEnv) testRollback(t *testing.T) {
@@ -1970,11 +2002,6 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	assertContains(t, rawRollback, "Rolled back Production "+prodStatus.Branch+" from "+newRelease+" to "+oldRelease)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: static.example.com' http://127.0.0.1/", "static-ok")
 
-	backupID := backupIDFromSaveOutput(t, e.ship(t, app, nil, "save"))
-
-	e.ship(t, app, nil, "rm", prodStatus.Branch, "--confirm", "site")
-	e.ship(t, app, nil, "restore", "--from", backupID)
-	e.assertRemoteBody(t, "curl -fsS -H 'Host: static.example.com' http://127.0.0.1/", "static-ok")
 }
 
 func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
@@ -2010,24 +2037,9 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v2")
 
 	e.ship(t, app, nil, "rollback")
-	prodStatus := statusEnvByClass(t, e, app, "production")
 	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", productionEnv))
 	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
 	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", productionEnv, oldRelease, "mixed.example.com/docs")+`"`)
-	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
-
-	backupID := backupIDFromSaveOutput(t, e.ship(t, app, nil, "save"))
-	e.ship(t, app, nil)
-	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v2")
-	e.ship(t, app, nil, "restore", "--from", backupID)
-	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", productionEnv))
-	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
-	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", productionEnv, oldRelease, "mixed.example.com/docs")+`"`)
-	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
-
-	e.ship(t, app, nil, "rm", prodStatus.Branch, "--confirm", "mix")
-	e.ship(t, app, nil, "restore", "--from", backupID)
-	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/health", "ok")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
 
 	manifestPath := filepath.Join(app, "ship.toml")
@@ -3366,20 +3378,6 @@ func appListEnvByAppClassBranch(t *testing.T, payload smokeAppListPayload, app, 
 	}
 	t.Fatalf("app list missing %s %s %s: %+v", app, class, branch, payload.Apps)
 	return smokeAppListEnv{}
-}
-
-func backupIDFromSaveOutput(t *testing.T, output string) string {
-	t.Helper()
-	fields := strings.Fields(output)
-	if len(fields) < 3 || fields[0] != "Created" || fields[1] != "backup" {
-		t.Fatalf("unexpected save output: %q", output)
-	}
-	name := filepath.Base(fields[2])
-	id := strings.TrimSuffix(name, ".tar")
-	if id == "" || id == name {
-		t.Fatalf("save output did not contain a backup tar path: %q", output)
-	}
-	return id
 }
 
 type previewIdentityPayload struct {

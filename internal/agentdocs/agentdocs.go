@@ -675,6 +675,39 @@ var verbs = []Verb{
 		},
 	},
 	{
+		Verb:      "data save",
+		Purpose:   "Save this environment's /data as a local snapshot.",
+		Usage:     "ship data save [--out <path>] [--config <path>]",
+		Flags:     []Flag{configFlag, {Name: "--out", Value: "<path>", Purpose: "Local path for the snapshot."}},
+		ExitCodes: normalExit,
+		Errors:    []string{"approval_required", "host_key_changed", "missing_tool", "operation_failed"},
+		Notes: []string{
+			"Snapshots land at ~/.ship/backups/<app>/<env>-<release>-<utc>.data.tar.gz unless --out is supplied. stdout is exactly that local path; narration is stderr.",
+			"SQLite files use VACUUM INTO and other files use cp -a. Consistency is per-file, not cross-file; live writes across files are not one atomic point in time.",
+			"Snapshots contain metadata.json and data/ only. Secrets are never included.",
+		},
+	},
+	{
+		Verb:      "data restore",
+		Purpose:   "Restore this environment's /data from a local snapshot.",
+		Usage:     "ship data restore <id|path> [--confirm <app>] [--config <path>]",
+		Flags:     []Flag{configFlag, {Name: "id|path", Purpose: "Snapshot filename stem or local path."}, {Name: "--confirm", Value: "<app>", Purpose: "Required app-name confirmation when restoring Production."}},
+		ExitCodes: normalExit,
+		Errors:    []string{"rm_confirmation_required", "approval_required", "data_snapshot_invalid", "host_key_changed", "operation_failed"},
+		Notes: []string{
+			"The client uploads to /tmp/ship-deploy; the helper validates gzip/tar, metadata, app identity, and data/ before it stops containers or swaps /data. Snapshot env may differ from the target env.",
+			"Production restore requires --confirm <app> and an owner role. Shippers may restore preview data; agents receive approval_required.",
+		},
+	},
+	{
+		Verb:      "data ls",
+		Purpose:   "List local data snapshots for this app.",
+		Usage:     "ship data ls [--json] [--config <path>]",
+		Flags:     []Flag{configFlag, {Name: "--json", Purpose: "Emit stable snapshot JSON."}},
+		ExitCodes: normalExit,
+		Errors:    []string{"operation_failed"},
+	},
+	{
 		Verb:      "preview pin",
 		Purpose:   "Pin a Preview environment so the reaper leaves it running.",
 		Usage:     "ship preview pin <branch> [--config <path>]",
@@ -704,22 +737,6 @@ var verbs = []Verb{
 			"Requires a current Preview environment. Any member may read; owners and shippers may rotate; agent-role keys receive approval_required for rotation.",
 			"Stdout is exactly the capability URL. Every Preview is protected and its capability dies when that Preview is reaped.",
 		},
-	},
-	{
-		Verb:      "save",
-		Purpose:   "Create a backup for the current branch environment.",
-		Usage:     "ship save [--to <path>] [--config <path>]",
-		Flags:     []Flag{configFlag, {Name: "--to", Value: "<path>", Purpose: "Destination directory on the host. Supports plain paths and file:// URLs."}},
-		ExitCodes: normalExit,
-		Errors:    []string{"unknown_preview_branch", "host_key_changed", "operation_failed"},
-	},
-	{
-		Verb:      "restore",
-		Purpose:   "Restore the current branch environment from a backup.",
-		Usage:     "ship restore --from <id|path> [--config <path>]",
-		Flags:     []Flag{configFlag, {Name: "--from", Value: "<id|path>", Purpose: "Backup ID or path on the host."}},
-		ExitCodes: normalExit,
-		Errors:    []string{"unknown_preview_branch", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:      "ssh",
@@ -900,6 +917,46 @@ var verbs = []Verb{
 		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
 	},
 	{
+		Verb:    "box config",
+		Purpose: "Show effective box configuration and where every value comes from.",
+		Usage:   "ship box config [<box>] [--json]",
+		Flags: []Flag{
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
+			{Name: "--json", Purpose: "Emit stable effective config JSON."},
+		},
+		JSONSchema: schema(
+			`{"config":{"notify.url":{"value":"https://ntfy.example/ship","default":"","source":"set"}}}`,
+		),
+		ExitCodes: normalExit,
+		Errors:    []string{"box_config_key_unknown", "box_config_value_invalid", "box_target_required", "invalid_box_target", "host_key_changed", "operation_failed"},
+		Notes:     []string{"Any member may read. Every key reports its effective value, default, and whether the value is default or explicitly set."},
+	},
+	{
+		Verb:    "box config set",
+		Purpose: "Set one schema-authorized box configuration value.",
+		Usage:   "ship box config [<box>] set <key> <value>",
+		Flags: []Flag{
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
+			{Name: "key", Purpose: "Configuration key. Current key: notify.url."},
+			{Name: "value", Purpose: "Value validated by the key schema."},
+		},
+		ExitCodes: normalExit,
+		Errors:    []string{"approval_required", "box_config_key_unknown", "box_config_value_invalid", "box_target_required", "invalid_box_target", "host_key_changed", "operation_failed"},
+		Notes:     []string{"Authorization is declared by the key schema. notify.url is owner-set; an out-of-role request mints one approval and succeeds once after ship approve <id>."},
+	},
+	{
+		Verb:    "box config unset",
+		Purpose: "Restore one box configuration key to its schema default.",
+		Usage:   "ship box config [<box>] unset <key>",
+		Flags: []Flag{
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
+			{Name: "key", Purpose: "Configuration key. Current key: notify.url."},
+		},
+		ExitCodes: normalExit,
+		Errors:    []string{"approval_required", "box_config_key_unknown", "box_target_required", "invalid_box_target", "host_key_changed", "operation_failed"},
+		Notes:     []string{"Unset removes the explicit value and restores the schema default."},
+	},
+	{
 		Verb:    "box notify",
 		Purpose: "Read, set, or clear the box notification webhook.",
 		Usage:   "ship box notify <box> [url] [--rm]",
@@ -909,9 +966,10 @@ var verbs = []Verb{
 			{Name: "--rm", Purpose: "Clear the box webhook."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"usage_error", "box_target_required", "invalid_box_target", "approval_required", "host_key_changed", "operation_failed"},
+		Errors:    []string{"usage_error", "box_config_value_invalid", "box_target_required", "invalid_box_target", "approval_required", "host_key_changed", "operation_failed"},
 		Notes: []string{
 			"Any member may read. Only owners may set or clear; other roles receive approval_required and retry after ship approve <id>.",
+			"This is sugar over box config key notify.url; both paths share one value and journal shape.",
 			"When unset, the command prints an unset notice and next: ship box notify <box> <url>.",
 		},
 	},
@@ -1089,11 +1147,16 @@ const outputAndDataContracts = `
 
 - ` + "`ship data fork`" + ` copies Production ` + "`/data`" + ` into the current branch Preview and bounces the existing Preview containers.
 - ` + "`ship data rm`" + ` empties the current branch Preview ` + "`/data`" + ` and bounces the existing Preview containers.
-- Both commands require an existing Preview environment. If none exists, the error code is ` + "`no_preview_env`" + ` with remediation ` + "`ship`" + `.
-- Both commands refuse Production branches with ` + "`data_fork_on_production`" + `.
+- ` + "`ship data save`" + ` streams a data-only gzip tar to the laptop; its default destination is ` + "`~/.ship/backups/<app>/<env>-<release>-<utc>.data.tar.gz`" + `. Its stdout is exactly the local path.
+- ` + "`ship data restore <id|path>`" + ` uploads through ` + "`/tmp/ship-deploy`" + `, validates the archive before touching ` + "`/data`" + `, then stops containers, swaps data, and starts them. Snapshot envs may be restored into another env.
+- ` + "`ship data ls [--json]`" + ` lists local snapshots only; it never calls the helper.
+- ` + "`data fork`" + ` and ` + "`data rm`" + ` require an existing Preview environment. If none exists, the error code is ` + "`no_preview_env`" + ` with remediation ` + "`ship`" + `.
+- ` + "`data fork`" + ` and ` + "`data rm`" + ` refuse Production branches with ` + "`data_fork_on_production`" + `.
 - Owner and shipper roles may run data commands. Agents get ` + "`approval_required`" + ` because Production data is above the agent default role.
 - ` + "`ship data fork`" + ` prints forked relative file names and byte sizes, the Preview URL, and this exact PII line: ` + "`note: Production data, including any PII, now exists in this less-guarded Preview.`" + `.
 - If no SQLite files are found, ` + "`ship data fork`" + ` still copies non-database files and prints: ` + "`note: No SQLite files found; copied non-database files from /data only.`" + `.
+- Data snapshots use SQLite ` + "`VACUUM INTO`" + ` and ` + "`cp -a`" + ` for other files. Their consistency guarantee is per-file, not cross-file.
+- Snapshots never contain secrets. After a box loss: ` + "`ship box setup`" + `, ` + "`ship`" + `, ` + "`ship secret set --from .env`" + `, then ` + "`ship data restore`" + `.
 
 ## Deploy journal schema
 

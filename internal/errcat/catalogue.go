@@ -80,10 +80,12 @@ const (
 	CodeHostInstallMissingTool            Code = "host_install_missing_tool"
 	CodeHostInstallPermissionDenied       Code = "host_install_permission_denied"
 	CodeHostInstallApplyFailed            Code = "host_install_apply_failed"
-	CodeBackupDataMissing                 Code = "backup_data_missing"
+	CodeDataSnapshotInvalid               Code = "data_snapshot_invalid"
 	CodeClientBehindHelper                Code = "client_behind_helper"
 	CodeBoxVersionAmbiguous               Code = "box_version_ambiguous"
 	CodeBoxSetupRequired                  Code = "box_setup_required"
+	CodeBoxConfigKeyUnknown               Code = "box_config_key_unknown"
+	CodeBoxConfigValueInvalid             Code = "box_config_value_invalid"
 )
 
 type Fields map[string]string
@@ -522,11 +524,12 @@ var catalogue = map[Code]Entry{
 		CauseTemplate:       "{detail}",
 		RemediationTemplate: "{command}",
 	},
-	CodeBackupDataMissing: {
-		Code:                CodeBackupDataMissing,
-		MessageTemplate:     "backup is invalid",
-		CauseTemplate:       "backup payload is missing data/ directory",
-		RemediationTemplate: "create a new backup",
+	CodeDataSnapshotInvalid: {
+		Code:                CodeDataSnapshotInvalid,
+		MessageTemplate:     "data snapshot is invalid",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "ship data ls",
+		Defaults:            Fields{"detail": "snapshot metadata or data payload is invalid"},
 	},
 	CodeClientBehindHelper: {
 		Code:                CodeClientBehindHelper,
@@ -545,6 +548,18 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "box predates one-command update",
 		CauseTemplate:       "this box's helper and sudo rules are older than ship box update",
 		RemediationTemplate: "ship box setup {server}",
+	},
+	CodeBoxConfigKeyUnknown: {
+		Code:                CodeBoxConfigKeyUnknown,
+		MessageTemplate:     "box config key is unknown",
+		CauseTemplate:       "{key} is not a valid box config key; valid keys: {valid}",
+		RemediationTemplate: "{command}",
+	},
+	CodeBoxConfigValueInvalid: {
+		Code:                CodeBoxConfigValueInvalid,
+		MessageTemplate:     "box config value is invalid",
+		CauseTemplate:       "{key}: {detail}",
+		RemediationTemplate: "{command}",
 	},
 }
 

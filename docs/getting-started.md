@@ -201,19 +201,21 @@ ship approve abc123xy
 
 Approvals expire after 15 minutes.
 
-## 9. Back up and restore
+## 9. Save and restore data
 
-Create a backup for the current branch environment:
-
-```bash
-ship save
-```
-
-Restore by backup ID or path:
+Save the current environment's `/data` locally:
 
 ```bash
-ship restore --from 20260707T100000Z-abc123
+ship data save
 ```
 
-Backups include `/data`, active static assets, the applied manifest snapshot,
-release metadata, and secrets for that app environment.
+List local snapshots, then restore one by ID or path:
+
+```bash
+ship data ls
+ship data restore prod-abc123-20260707T100000Z --confirm api
+```
+
+Snapshots contain `/data` and metadata only; they never include secrets. After
+a box loss, run `ship box setup`, redeploy with `ship`, import secrets again
+with `ship secret set --from .env`, then run `ship data restore`.

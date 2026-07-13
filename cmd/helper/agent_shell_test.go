@@ -37,6 +37,11 @@ func TestAgentShellAllowsHelperProtocolAndForcesPinnedFingerprint(t *testing.T) 
 			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "notify", "--member-fingerprint", "SHA256:agent", "set", "https://example.com/hook"},
 		},
 		{
+			name:     "config passes to helper role check",
+			original: "sudo -n /usr/local/bin/ship server config set notify.url https://example.com/hook",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "config", "--member-fingerprint", "SHA256:agent", "set", "notify.url", "https://example.com/hook"},
+		},
+		{
 			name:     "quoted helper arg",
 			original: "sudo -n /usr/local/bin/ship server app apply --git-author 'Smoke <smoke@example.com>' api prod",
 			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "apply", "--git-author", "Smoke <smoke@example.com>", "api", "prod"},

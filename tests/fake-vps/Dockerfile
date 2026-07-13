@@ -35,7 +35,7 @@ COPY tests/fake-vps/fake-podman.caddy.py /usr/local/bin/fake-podman.caddy.py
 RUN chmod 0755 /usr/local/bin/ship /usr/local/bin/systemctl /usr/local/bin/caddy /usr/local/bin/podman \
   && chmod 0644 /usr/local/bin/fake-podman.app.py /usr/local/bin/fake-podman.caddy.py \
   && printf '%s\n' 'operator ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/operator \
-  && printf '%s\n' 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *' > /etc/sudoers.d/ship \
+  && printf '%s\n' 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server config *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *' > /etc/sudoers.d/ship \
   && chmod 0440 /etc/sudoers.d/operator /etc/sudoers.d/ship
 
 EXPOSE 22

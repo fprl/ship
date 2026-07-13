@@ -217,11 +217,12 @@ func notifyApprovalRequested(request store.ApprovalRequest, now time.Time) {
 }
 
 func boxNotifyURL() string {
-	file, err := store.Default().ReadBoxNotify()
+	url, err := boxConfigValueFor("notify.url")
 	if err != nil {
+		fmt.Fprintf(notifyStderr, "warning: failed to read box-config.json for notifications: %v\n", err)
 		return ""
 	}
-	return strings.TrimSpace(file.URL)
+	return url
 }
 
 func notifyBoxHost() string {

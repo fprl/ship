@@ -1,9 +1,12 @@
 package helper
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateBoxNotifyURL(t *testing.T) {
-	for _, raw := range []string{"", "not a url", "example.com/hook", "ftp://example.com/hook"} {
+	for _, raw := range []string{"not a url", "example.com/hook", "ftp://example.com/hook"} {
 		if _, err := validateBoxNotifyURL(raw); err == nil {
 			t.Fatalf("validateBoxNotifyURL(%q) succeeded, want error", raw)
 		}
@@ -16,5 +19,15 @@ func TestValidateBoxNotifyURL(t *testing.T) {
 		if got != raw {
 			t.Fatalf("validated URL = %q, want %q", got, raw)
 		}
+	}
+}
+
+func TestValidateBoxNotifyURLEmptyRefusesSet(t *testing.T) {
+	_, err := validateBoxNotifyURL("")
+	if err == nil {
+		t.Fatal("validateBoxNotifyURL(\"\") succeeded, want error")
+	}
+	if !strings.Contains(err.Error(), "unset notify.url") || !strings.Contains(err.Error(), "--rm") {
+		t.Fatalf("empty URL error = %q, want unset guidance", err)
 	}
 }

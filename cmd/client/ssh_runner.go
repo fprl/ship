@@ -253,6 +253,47 @@ func (r *CommandRunner) RunSSH(server string, command string) (string, string, i
 	return stdout, stderr, code, mapSSHTransportError(server, stderr, code, err)
 }
 
+// RunSSHToFile streams remote stdout directly to path. On failure it returns
+// the small stdout error payload so callers can preserve errcat errors before
+// removing the incomplete archive.
+func (r *CommandRunner) RunSSHToFile(server, command, path string) (string, string, int, error) {
+	var args []string
+	args = append(args, r.SshOptions...)
+	command = r.withMemberFingerprint(command)
+	args = append(args, deploySSHTarget(server), command)
+	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return "", "", 1, err
+	}
+	cmd := exec.Command("ssh", args...)
+	cmd.Stdout = out
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	closeErr := out.Close()
+	code := 0
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			code = exitErr.ExitCode()
+		} else {
+			code = 1
+		}
+	}
+	if closeErr != nil && runErr == nil {
+		runErr, code = closeErr, 1
+	}
+	stderrText := stderr.String()
+	if runErr == nil && code == 0 {
+		return "", stderrText, 0, nil
+	}
+	failure, _ := os.ReadFile(path)
+	if len(failure) > 64*1024 {
+		failure = failure[len(failure)-64*1024:]
+	}
+	return string(failure), stderrText, code, mapSSHTransportError(server, stderrText, code, runErr)
+}
+
 // RunSSHWithStdin pipes `stdin` to the remote command and captures
 // stdout/stderr/exit. Used by `ship secret set` so the secret
 // value never lands in argv, the host process table, or shell

@@ -36,8 +36,16 @@ func boxUpdateLockPath() string {
 	return filepath.Join(appEnvLockDir(), "box-update.lock")
 }
 
+func boxConfigLockPath() string {
+	return filepath.Join(appEnvLockDir(), "box-config.lock")
+}
+
 func acquireBoxUpdateLock() (*appEnvLock, error) {
 	return acquireLockFile(boxUpdateLockPath())
+}
+
+func acquireBoxConfigLock() (*appEnvLock, error) {
+	return acquireLockFile(boxConfigLockPath())
 }
 
 func acquireAppEnvLock(app, env string) (*appEnvLock, error) {

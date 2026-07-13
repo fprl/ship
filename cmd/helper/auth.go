@@ -20,21 +20,19 @@ import (
 const (
 	approvalTTL = 15 * time.Minute
 
-	helperVerbShip          helperVerb = "ship"
-	helperVerbRollback      helperVerb = "rollback"
-	helperVerbExec          helperVerb = "exec"
-	helperVerbRead          helperVerb = "read"
-	helperVerbSecretSet     helperVerb = "secret_set"
-	helperVerbSecretRead    helperVerb = "secret_read"
-	helperVerbSecretRemove  helperVerb = "secret_remove"
-	helperVerbPreviewPin    helperVerb = "preview_pin"
-	helperVerbShare         helperVerb = "share"
-	helperVerbData          helperVerb = "data"
-	helperVerbRemoveEnv     helperVerb = "rm"
-	helperVerbMember        helperVerb = "member"
-	helperVerbBackupCreate  helperVerb = "save"
-	helperVerbBackupRestore helperVerb = "restore"
-	helperVerbBoxMutation   helperVerb = "box_mutation"
+	helperVerbShip         helperVerb = "ship"
+	helperVerbRollback     helperVerb = "rollback"
+	helperVerbExec         helperVerb = "exec"
+	helperVerbRead         helperVerb = "read"
+	helperVerbSecretSet    helperVerb = "secret_set"
+	helperVerbSecretRead   helperVerb = "secret_read"
+	helperVerbSecretRemove helperVerb = "secret_remove"
+	helperVerbPreviewPin   helperVerb = "preview_pin"
+	helperVerbShare        helperVerb = "share"
+	helperVerbData         helperVerb = "data"
+	helperVerbRemoveEnv    helperVerb = "rm"
+	helperVerbMember       helperVerb = "member"
+	helperVerbBoxMutation  helperVerb = "box_mutation"
 
 	roleScopeAny     roleScope = "any"
 	roleScopePreview roleScope = "preview"
@@ -106,13 +104,33 @@ func setServerMemberFingerprint(fingerprint string) {
 }
 
 func authorizeHelper(verb helperVerb, target authTarget) (serverMember, error) {
+	return authorizeHelperWithPolicy(verb, target, func(member serverMember) bool {
+		return helperAllows(member.Role, verb, target.Class)
+	}, true)
+}
+
+func authorizeBoxConfigMutation(key store.BoxConfigKey, target authTarget) (serverMember, error) {
+	return authorizeHelperWithPolicy(helperVerbBoxMutation, target, func(member serverMember) bool {
+		return member.Role == store.MemberRoleOwner || member.Role == key.WriteRole
+	}, key.OutOfRoleNeedsApproval)
+}
+
+func authorizeHelperWithPolicy(verb helperVerb, target authTarget, allowed func(serverMember) bool, mintApproval bool) (serverMember, error) {
 	member, err := resolveServerMember()
 	if err != nil {
 		return serverMember{}, err
 	}
 	serverAuthorizedMember = &member
-	if helperAllows(member.Role, verb, target.Class) {
+	if allowed(member) {
 		return member, nil
+	}
+	if !mintApproval {
+		return serverMember{}, errcat.New(errcat.CodeRoleDenied, errcat.Fields{
+			"member":  member.Name,
+			"role":    string(member.Role),
+			"summary": target.Summary,
+			"command": "ask an owner to run " + target.Summary,
+		})
 	}
 	if consumed, err := consumeApprovedRequest(member, verb, target); err != nil {
 		return serverMember{}, err

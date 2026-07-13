@@ -146,11 +146,13 @@ func validUpdateBinary(path string) bool {
 }
 
 type updateJournalEntry struct {
-	SchemaVersion int    `json:"schema_version"`
-	Event         string `json:"event"`
-	At            string `json:"at"`
-	Version       string `json:"version"`
-	Changes       int    `json:"changes"`
+	SchemaVersion int            `json:"schema_version"`
+	Event         string         `json:"event"`
+	At            string         `json:"at"`
+	Version       string         `json:"version"`
+	Changes       int            `json:"changes"`
+	Key           string         `json:"key,omitempty"`
+	Actor         *journalMember `json:"actor,omitempty"`
 }
 
 func appendUpdateJournal(entry updateJournalEntry) error {
@@ -161,6 +163,9 @@ func appendUpdateJournal(entry updateJournalEntry) error {
 		return err
 	}
 	path := store.Default().UpdatesJournalPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err

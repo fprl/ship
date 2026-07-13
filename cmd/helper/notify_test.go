@@ -114,7 +114,7 @@ func TestNotifyDoctorDegradedPayloadCarriesEvidenceAndRunnableRemediation(t *tes
 	setupPreviewHostTest(t)
 	t.Setenv("SHIP_STATE_DIR", t.TempDir())
 	sink := newNotifyTestSink(t)
-	if err := store.Default().WriteBoxNotify(store.BoxNotifyFile{Version: store.CurrentVersion, URL: sink.URL}); err != nil {
+	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"notify.url": sink.URL}}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 7, 7, 10, 4, 5, 0, time.UTC)
@@ -139,7 +139,7 @@ func TestNotifyApprovalRequestedPayloadCarriesLiteralApproveCommand(t *testing.T
 	t.Setenv("SHIP_STATE_DIR", t.TempDir())
 	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName, InfraID: identity.InfraID("api", productionEnvName)})
 	sink := newNotifyTestSink(t)
-	if err := store.Default().WriteBoxNotify(store.BoxNotifyFile{Version: store.CurrentVersion, URL: sink.URL}); err != nil {
+	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"notify.url": sink.URL}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := appendDeployJournalEntry("api", productionEnvName, deployJournalEntry{
@@ -186,7 +186,7 @@ func TestNotifyApprovalRequestedForBoxTargetUsesBoxWebhook(t *testing.T) {
 	setupPreviewHostTest(t)
 	t.Setenv("SHIP_STATE_DIR", t.TempDir())
 	sink := newNotifyTestSink(t)
-	if err := store.Default().WriteBoxNotify(store.BoxNotifyFile{Version: store.CurrentVersion, URL: sink.URL}); err != nil {
+	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"notify.url": sink.URL}}); err != nil {
 		t.Fatal(err)
 	}
 

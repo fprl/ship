@@ -167,6 +167,29 @@ Secret scoping:
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `data_fork_on_production`, `no_preview_env`, `approval_required`, `host_key_changed`, `operation_failed`
 
+### `data save`
+- Purpose: Save this environment's /data as a local snapshot.
+- Usage: `ship data save [--out <path>] [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--out <path>`: Local path for the snapshot.
+- Notes: Snapshots land at ~/.ship/backups/<app>/<env>-<release>-<utc>.data.tar.gz unless --out is supplied. stdout is exactly that local path; narration is stderr. SQLite files use VACUUM INTO and other files use cp -a. Consistency is per-file, not cross-file; live writes across files are not one atomic point in time. Snapshots contain metadata.json and data/ only. Secrets are never included.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `approval_required`, `host_key_changed`, `missing_tool`, `operation_failed`
+
+### `data restore`
+- Purpose: Restore this environment's /data from a local snapshot.
+- Usage: `ship data restore <id|path> [--confirm <app>] [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `id|path`: Snapshot filename stem or local path; `--confirm <app>`: Required app-name confirmation when restoring Production.
+- Notes: The client uploads to /tmp/ship-deploy; the helper validates gzip/tar, metadata, app identity, and data/ before it stops containers or swaps /data. Snapshot env may differ from the target env. Production restore requires --confirm <app> and an owner role. Shippers may restore preview data; agents receive approval_required.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `rm_confirmation_required`, `approval_required`, `data_snapshot_invalid`, `host_key_changed`, `operation_failed`
+
+### `data ls`
+- Purpose: List local data snapshots for this app.
+- Usage: `ship data ls [--json] [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--json`: Emit stable snapshot JSON.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `operation_failed`
+
 ### `preview pin`
 - Purpose: Pin a Preview environment so the reaper leaves it running.
 - Usage: `ship preview pin <branch> [--config <path>]`
@@ -188,20 +211,6 @@ Secret scoping:
 - Notes: Requires a current Preview environment. Any member may read; owners and shippers may rotate; agent-role keys receive approval_required for rotation. Stdout is exactly the capability URL. Every Preview is protected and its capability dies when that Preview is reaped.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `no_preview_env`, `share_on_production`, `approval_required`, `host_key_changed`, `operation_failed`
-
-### `save`
-- Purpose: Create a backup for the current branch environment.
-- Usage: `ship save [--to <path>] [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--to <path>`: Destination directory on the host. Supports plain paths and file:// URLs.
-- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `unknown_preview_branch`, `host_key_changed`, `operation_failed`
-
-### `restore`
-- Purpose: Restore the current branch environment from a backup.
-- Usage: `ship restore --from <id|path> [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--from <id|path>`: Backup ID or path on the host.
-- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `unknown_preview_branch`, `host_key_changed`, `operation_failed`
 
 ### `ssh`
 - Purpose: Open an SSH session to the box for the current app.
@@ -300,13 +309,38 @@ Secret scoping:
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_target_required`, `invalid_box_target`, `ssh_unreachable`, `box_not_initialized`, `host_key_changed`, `operation_failed`
 
+### `box config`
+- Purpose: Show effective box configuration and where every value comes from.
+- Usage: `ship box config [<box>] [--json]`
+- Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit stable effective config JSON.
+- `--json` stdout schema: `{"config":{"notify.url":{"value":"https://ntfy.example/ship","default":"","source":"set"}}}`
+- Notes: Any member may read. Every key reports its effective value, default, and whether the value is default or explicitly set.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `box_config_key_unknown`, `box_config_value_invalid`, `box_target_required`, `invalid_box_target`, `host_key_changed`, `operation_failed`
+
+### `box config set`
+- Purpose: Set one schema-authorized box configuration value.
+- Usage: `ship box config [<box>] set <key> <value>`
+- Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `key`: Configuration key. Current key: notify.url; `value`: Value validated by the key schema.
+- Notes: Authorization is declared by the key schema. notify.url is owner-set; an out-of-role request mints one approval and succeeds once after ship approve <id>.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `approval_required`, `box_config_key_unknown`, `box_config_value_invalid`, `box_target_required`, `invalid_box_target`, `host_key_changed`, `operation_failed`
+
+### `box config unset`
+- Purpose: Restore one box configuration key to its schema default.
+- Usage: `ship box config [<box>] unset <key>`
+- Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `key`: Configuration key. Current key: notify.url.
+- Notes: Unset removes the explicit value and restores the schema default.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `approval_required`, `box_config_key_unknown`, `box_target_required`, `invalid_box_target`, `host_key_changed`, `operation_failed`
+
 ### `box notify`
 - Purpose: Read, set, or clear the box notification webhook.
 - Usage: `ship box notify <box> [url] [--rm]`
 - Arguments and flags: `box`: Box host. Omit only for a read in an app directory, which uses ship.toml box; `url`: Webhook URL to set. Omit to print the current URL; `--rm`: Clear the box webhook.
-- Notes: Any member may read. Only owners may set or clear; other roles receive approval_required and retry after ship approve <id>. When unset, the command prints an unset notice and next: ship box notify <box> <url>.
+- Notes: Any member may read. Only owners may set or clear; other roles receive approval_required and retry after ship approve <id>. This is sugar over box config key notify.url; both paths share one value and journal shape. When unset, the command prints an unset notice and next: ship box notify <box> <url>.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `usage_error`, `box_target_required`, `invalid_box_target`, `approval_required`, `host_key_changed`, `operation_failed`
+- Common error codes: `usage_error`, `box_config_value_invalid`, `box_target_required`, `invalid_box_target`, `approval_required`, `host_key_changed`, `operation_failed`
 
 ### `box apps`
 - Purpose: Show the box's app table.
@@ -368,11 +402,16 @@ Secret scoping:
 
 - `ship data fork` copies Production `/data` into the current branch Preview and bounces the existing Preview containers.
 - `ship data rm` empties the current branch Preview `/data` and bounces the existing Preview containers.
-- Both commands require an existing Preview environment. If none exists, the error code is `no_preview_env` with remediation `ship`.
-- Both commands refuse Production branches with `data_fork_on_production`.
+- `ship data save` streams a data-only gzip tar to the laptop; its default destination is `~/.ship/backups/<app>/<env>-<release>-<utc>.data.tar.gz`. Its stdout is exactly the local path.
+- `ship data restore <id|path>` uploads through `/tmp/ship-deploy`, validates the archive before touching `/data`, then stops containers, swaps data, and starts them. Snapshot envs may be restored into another env.
+- `ship data ls [--json]` lists local snapshots only; it never calls the helper.
+- `data fork` and `data rm` require an existing Preview environment. If none exists, the error code is `no_preview_env` with remediation `ship`.
+- `data fork` and `data rm` refuse Production branches with `data_fork_on_production`.
 - Owner and shipper roles may run data commands. Agents get `approval_required` because Production data is above the agent default role.
 - `ship data fork` prints forked relative file names and byte sizes, the Preview URL, and this exact PII line: `note: Production data, including any PII, now exists in this less-guarded Preview.`.
 - If no SQLite files are found, `ship data fork` still copies non-database files and prints: `note: No SQLite files found; copied non-database files from /data only.`.
+- Data snapshots use SQLite `VACUUM INTO` and `cp -a` for other files. Their consistency guarantee is per-file, not cross-file.
+- Snapshots never contain secrets. After a box loss: `ship box setup`, `ship`, `ship secret set --from .env`, then `ship data restore`.
 
 ## Deploy journal schema
 
@@ -399,8 +438,9 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 <!-- BEGIN GENERATED ERRCAT -->
 - `approval_expired`: approval expired; cause: approval {id} expired for {summary}; remediation: `retry the command to mint a fresh request`.
 - `approval_required`: approval required for {summary}; cause: {member} ({role}) requested {summary}; approval id {id}; remediation: `ship approve {id}`.
-- `backup_data_missing`: backup is invalid; cause: backup payload is missing data/ directory; remediation: `create a new backup`.
 - `behind_production`: Production ship failed; cause: deployed commit {deployed} {detail}; remediation: `git pull`.
+- `box_config_key_unknown`: box config key is unknown; cause: {key} is not a valid box config key; valid keys: {valid}; remediation: `{command}`.
+- `box_config_value_invalid`: box config value is invalid; cause: {key}: {detail}; remediation: `{command}`.
 - `box_missing_tool`: box preflight failed; cause: required server tool is missing on {target}: {tool}; remediation: `ship box setup {target}`.
 - `box_not_initialized`: box preflight failed; cause: ship server API is missing at /usr/local/bin/ship on {target}; remediation: `ship box setup {target}`.
 - `box_rm_confirmation_required`: box rm confirmation failed; cause: box rm requires --confirm {app}; remediation: `ship box rm {app} --confirm {app}`.
@@ -410,6 +450,7 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 - `branch_flag_requires_detached_head`: branch resolution failed; cause: --branch is only accepted on ship when HEAD is detached; remediation: `ship`.
 - `client_behind_helper`: client is behind the box helper; cause: helper version {helper_version} is newer than client version {client_version}; remediation: `curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | bash`.
 - `data_fork_on_production`: data command refused on Production; cause: branch {branch} maps to Production; data commands target Preview branches only; remediation: `git checkout <preview-branch>`.
+- `data_snapshot_invalid`: data snapshot is invalid; cause: {detail}; remediation: `ship data ls`; defaults: `detail="snapshot metadata or data payload is invalid"`.
 - `deploy_blocked_local_checks`: deploy blocked by local checks; cause: {detail}; remediation: `{command}`; defaults: `command="fix local checks", detail="local checks reported errors; see stderr above"`.
 - `deploy_key_missing`: bootstrap SSH key is missing; cause: {detail}; remediation: `{command}`; defaults: `command="ssh-copy-id -i ~/.ssh/ship.pub root@<ip>", detail="provider gave a password; this installs your ship key using it once; hardening then disables password login permanently"`.
 - `deploy_tmp_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.

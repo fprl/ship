@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/fprl/ship/internal/config"
-	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -31,16 +30,16 @@ func (notifyGetCmd) Run() error {
 	if _, err := authorizeHelper(helperVerbRead, authTargetForBox("box notify")); err != nil {
 		utils.DieError(err, 1)
 	}
-	file, err := store.Default().ReadBoxNotify()
+	url, err := boxConfigValueFor("notify.url")
 	if err != nil {
 		return err
 	}
-	if file.URL == "" {
+	if url == "" {
 		fmt.Println("box notify is unset")
 		fmt.Println("next: ship box notify <box> <url>")
 		return nil
 	}
-	fmt.Println(file.URL)
+	fmt.Println(url)
 	return nil
 }
 
@@ -49,15 +48,8 @@ type notifySetCmd struct {
 }
 
 func (c notifySetCmd) Run() error {
-	url, err := validateBoxNotifyURL(c.URL)
-	if err != nil {
-		return err
-	}
-	if _, err := authorizeHelper(helperVerbBoxMutation, authTargetForBox("box notify set", boxNotifyTargetArg(url))); err != nil {
+	if err := setBoxConfig("notify.url", c.URL, "box notify set"); err != nil {
 		utils.DieError(err, 1)
-	}
-	if err := store.Default().WriteBoxNotify(store.BoxNotifyFile{Version: store.CurrentVersion, URL: url}); err != nil {
-		return err
 	}
 	fmt.Println("box notify set")
 	return nil
@@ -66,7 +58,7 @@ func (c notifySetCmd) Run() error {
 func validateBoxNotifyURL(raw string) (string, error) {
 	url := strings.TrimSpace(raw)
 	if url == "" {
-		return "", fmt.Errorf("notify must be a valid URL")
+		return "", fmt.Errorf("notify.url cannot be empty; use ship box config <box> unset notify.url or ship box notify <box> --rm")
 	}
 	if err := config.ValidateNotifyURL(url); err != nil {
 		return "", err
@@ -82,11 +74,8 @@ func boxNotifyTargetArg(url string) string {
 type notifyClearCmd struct{}
 
 func (notifyClearCmd) Run() error {
-	if _, err := authorizeHelper(helperVerbBoxMutation, authTargetForBox("box notify clear")); err != nil {
+	if err := unsetBoxConfig("notify.url", "box notify clear"); err != nil {
 		utils.DieError(err, 1)
-	}
-	if err := store.Default().WriteBoxNotify(store.BoxNotifyFile{Version: store.CurrentVersion}); err != nil {
-		return err
 	}
 	fmt.Println("box notify cleared")
 	return nil

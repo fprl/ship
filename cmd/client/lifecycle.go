@@ -27,33 +27,6 @@ func rewriteRollbackSummary(out string, read readContext) string {
 	return rewriteEnvSummary(out, read, "Rolled back")
 }
 
-func CmdSave(root string, dest string) {
-	read, err := currentReadContext(root, "save")
-	if err != nil {
-		utils.DieError(err, 1)
-	}
-	defer read.Runner.Close()
-
-	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppBackupCommand(read.AppContext.AppName, read.EnvName, dest), "save failed", "ship save "+dest)
-	fmt.Print(out)
-}
-
-func CmdRestore(root string, from string) {
-	read, err := currentReadContext(root, "restore")
-	if err != nil {
-		utils.DieError(err, 1)
-	}
-	defer read.Runner.Close()
-
-	runSSHChecked(read.Runner, read.AppContext.Server, serverAppSetupEnvCommand(read.AppContext.AppName, read.EnvName), "restore setup failed", "ship restore "+from)
-	out := runSSHChecked(read.Runner, read.AppContext.Server, serverAppRestoreCommand(read.AppContext.AppName, read.EnvName, from), "restore failed", "ship restore "+from)
-	fmt.Print(rewriteRestoreSummary(out, read))
-}
-
-func rewriteRestoreSummary(out string, read readContext) string {
-	return rewriteEnvSummary(out, read, "Restored")
-}
-
 func rewriteEnvSummary(out string, read readContext, verb string) string {
 	kind, branch := readSurface(read)
 	prefix := fmt.Sprintf("%s %s (%s) ", verb, read.AppContext.AppName, read.EnvName)

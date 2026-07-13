@@ -14,11 +14,10 @@ type appCmd struct {
 	Rollback          appRollbackCmd   `cmd:"rollback" help:"Run an older image release for one (app, env) pair."`
 	Exec              appExecCmd       `cmd:"exec" help:"Run a one-off command in a fresh container for one (app, env) pair."`
 	Why               appWhyCmd        `cmd:"why" help:"Show the latest deploy journal entry for one (app, env)."`
-	Backup            appBackupCmd     `cmd:"backup" help:"Create, list, remove, and restore app backups."`
 	Logs              appLogsCmd       `cmd:"logs" help:"Tail logs for one process via podman logs."`
 	Secret            appSecretCmd     `cmd:"secret" help:"Manage the per-(app, env, key) secret store."`
 	Preview           appPreviewCmd    `cmd:"preview" help:"Manage preview branch mappings."`
-	Data              appDataCmd       `cmd:"data" help:"Manage preview data forks."`
+	Data              appDataCmd       `cmd:"data" help:"Manage app data."`
 }
 
 func (c appCmd) BeforeApply() error {

@@ -380,7 +380,7 @@ func TestRecordDoctorRunPersistsChecksAndDelta(t *testing.T) {
 }
 
 func TestHelperSudoRegexRequiresServerSubtree(t *testing.T) {
-	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *"
+	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server config *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *"
 	if !HelperSudoRe.MatchString(good) {
 		t.Fatal("expected server subtree sudoers grant to match")
 	}
@@ -401,7 +401,7 @@ func setupDoctorSudoers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "operator"), []byte("operator ALL=(ALL) NOPASSWD:ALL\n"), 0440); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ship"), []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *\n"), 0440); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "ship"), []byte("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server config *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *\n"), 0440); err != nil {
 		t.Fatal(err)
 	}
 }

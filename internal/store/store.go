@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 type Store struct {
@@ -49,8 +48,8 @@ func (s Store) MembersPath() string {
 	return filepath.Join(s.root(), "members.json")
 }
 
-func (s Store) BoxNotifyPath() string {
-	return filepath.Join(s.root(), "box-notify.json")
+func (s Store) BoxConfigPath() string {
+	return filepath.Join(s.root(), "box-config.json")
 }
 
 func (s Store) ApprovalsPath() string {
@@ -181,28 +180,49 @@ func (s Store) WriteMembers(file MembersFile) error {
 	return writeJSON(s.MembersPath(), file, 0644)
 }
 
-func (s Store) ReadBoxNotify() (*BoxNotifyFile, error) {
-	var file BoxNotifyFile
-	if err := readJSON(s.BoxNotifyPath(), &file); err != nil {
+func (s Store) ReadBoxConfig() (*BoxConfigFile, error) {
+	var raw struct {
+		Version int                        `json:"version"`
+		Values  map[string]json.RawMessage `json:"values"`
+	}
+	if err := readJSON(s.BoxConfigPath(), &raw); err != nil {
 		if os.IsNotExist(err) {
-			return &BoxNotifyFile{Version: CurrentVersion}, nil
+			return &BoxConfigFile{Version: CurrentVersion, Values: map[string]string{}}, nil
 		}
 		return nil, err
 	}
-	if err := validateVersion("box-notify.json", file.Version); err != nil {
+	file := BoxConfigFile{Version: raw.Version, Values: make(map[string]string, len(raw.Values))}
+	for key, rawValue := range raw.Values {
+		var value string
+		if err := json.Unmarshal(rawValue, &value); err != nil {
+			return nil, &BoxConfigValueError{Key: key, Detail: "must be a string"}
+		}
+		file.Values[key] = value
+	}
+	if err := validateVersion("box-config.json", file.Version); err != nil {
 		return nil, err
 	}
-	file.URL = strings.TrimSpace(file.URL)
+	if file.Values == nil {
+		file.Values = map[string]string{}
+	}
+	if err := ValidateBoxConfigFile(file); err != nil {
+		return nil, err
+	}
 	return &file, nil
 }
 
-func (s Store) WriteBoxNotify(file BoxNotifyFile) error {
-	if err := validateVersion("box-notify.json", file.Version); err != nil {
+func (s Store) WriteBoxConfig(file BoxConfigFile) error {
+	if err := validateVersion("box-config.json", file.Version); err != nil {
 		return err
 	}
 	file.Version = CurrentVersion
-	file.URL = strings.TrimSpace(file.URL)
-	return writeJSON(s.BoxNotifyPath(), file, 0600)
+	if file.Values == nil {
+		file.Values = map[string]string{}
+	}
+	if err := ValidateBoxConfigFile(file); err != nil {
+		return err
+	}
+	return writeJSON(s.BoxConfigPath(), file, 0600)
 }
 
 func (s Store) ReadApprovals() (*ApprovalsFile, error) {

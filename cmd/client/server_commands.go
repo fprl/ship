@@ -135,6 +135,18 @@ func serverBoxNotifyClearCommand() string {
 	return serverCommand("notify", "clear")
 }
 
+func serverBoxConfigGetCommand() string {
+	return serverCommand("config", "get")
+}
+
+func serverBoxConfigSetCommand(key, value string) string {
+	return serverCommand("config", "set", key, value)
+}
+
+func serverBoxConfigUnsetCommand(key string) string {
+	return serverCommand("config", "unset", key)
+}
+
 func serverAppLogsCommand(appName, envName, process string, follow bool, tail *int) string {
 	args := []string{"app", "logs"}
 	if follow {
@@ -182,21 +194,6 @@ func serverAppRollbackCommand(appName, envName, release string, actor deployIden
 	return serverCommand(args...)
 }
 
-func serverAppBackupCommand(appName, envName, dest string) string {
-	args := []string{"app", "backup", "create"}
-	if dest != "" {
-		args = append(args, "--to", dest)
-	}
-	args = append(args, appName, envName)
-	return serverCommand(args...)
-}
-
-func serverAppRestoreCommand(appName, envName, from string) string {
-	args := []string{"app", "backup", "restore", "--from", from}
-	args = append(args, appName, envName)
-	return serverCommand(args...)
-}
-
 func serverAppDestroyEnvCommand(appName, envName string) string {
 	args := []string{"app", "destroy-env", "--purge"}
 	args = append(args, appName, envName)
@@ -234,6 +231,14 @@ func serverAppDataForkCommand(appName, prodEnv, previewEnv string) string {
 
 func serverAppDataRmCommand(appName, previewEnv string) string {
 	return serverCommand("app", "data", "rm", appName, previewEnv)
+}
+
+func serverAppDataSaveCommand(appName, envName string) string {
+	return serverCommand("app", "data", "save", appName, envName)
+}
+
+func serverAppDataRestoreCommand(appName, envName, archive string) string {
+	return serverCommand("app", "data", "restore", "--archive", archive, appName, envName)
 }
 
 func serverAppSecretSetCommand(appName, envName, key string) string {

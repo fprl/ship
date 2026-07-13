@@ -237,7 +237,7 @@ func TestRoleMatrixShipperDeniedMemberOwnerUnrestricted(t *testing.T) {
 	if _, err := authorizeHelper(helperVerbMember, authTargetForBox("member add", "name=teammate")); err != nil {
 		t.Fatalf("owner member add should be allowed: %v", err)
 	}
-	if _, err := authorizeHelper(helperVerbBackupRestore, authTargetForAppEnv("api", productionEnvName, "backup=latest")); err != nil {
+	if _, err := authorizeHelper(helperVerbData, authTargetForAppEnv("api", productionEnvName, "data=restore")); err != nil {
 		t.Fatalf("owner restore should be allowed: %v", err)
 	}
 }
@@ -257,6 +257,30 @@ func TestDataForkRequiresShipperOwnerAndAgentsRequestApproval(t *testing.T) {
 	setServerMemberFingerprint(bobFingerprint)
 	if _, err := authorizeHelper(helperVerbData, target); err != nil {
 		t.Fatalf("shipper data fork should be allowed: %v", err)
+	}
+}
+
+func TestDataRestoreProductionRequiresOwnerAfterDataAuthorization(t *testing.T) {
+	setupAuthTest(t, map[string]store.MemberRecord{
+		aliceFingerprint: {Name: "alice", Role: store.MemberRoleShipper},
+		bobFingerprint:   {Name: "bob", Role: store.MemberRoleOwner},
+	})
+	target := authTargetForAppEnv("api", productionEnvName, "data=restore")
+
+	setServerMemberFingerprint(aliceFingerprint)
+	if _, err := authorizeHelper(helperVerbData, target); err != nil {
+		t.Fatalf("shipper data authorization: %v", err)
+	}
+	if _, err := authorizeHelper(helperVerbBoxMutation, target); !errcat.Is(err, errcat.CodeApprovalRequired) {
+		t.Fatalf("shipper production restore owner gate = %v, want approval_required", err)
+	}
+
+	setServerMemberFingerprint(bobFingerprint)
+	if _, err := authorizeHelper(helperVerbData, target); err != nil {
+		t.Fatalf("owner data authorization: %v", err)
+	}
+	if _, err := authorizeHelper(helperVerbBoxMutation, target); err != nil {
+		t.Fatalf("owner production restore gate: %v", err)
 	}
 }
 
