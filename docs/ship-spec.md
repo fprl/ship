@@ -22,9 +22,10 @@ Every decision below optimizes those three. The end state:
 4. **The box is a teammate, not infrastructure.** It reports in, explains
    itself (`why`), and pages your agent with the diagnosis and fix
    attached (journal + notify + doctor here; resident loop in RFD-0002).
-5. **Zero security decisions.** One hardened shape. The only choices
-   are topology modes (`--ingress`, `--admin`, §4) — never mechanisms,
-   ciphers, ports, or policies.
+5. **Zero security decisions.** One hardened shape: public ingress,
+   keys-only SSH. No topology choices at setup — never mechanisms,
+   ciphers, ports, or policies (§18; tunnels return post-v1 as a single
+   hardening act on the box-config foundation, §19).
 6. **Exit is a feature.** Delete ship and a boring, well-configured Linux
    server keeps serving. No PaaS can say this sentence.
 7. **Proof, not promises.** The agent eval suite (§9) is public evidence
@@ -40,7 +41,8 @@ agent-era catalog, sleeping previews).
 
 ship is the v2 surface of the pre-existing engine in this repository.
 It is **an adaptation, not a rewrite**: the deploy pipeline, host hardening,
-routing, secrets storage, backup machinery, helper privilege model, and the
+routing, secrets storage, backup machinery (since replaced by §18's
+data-only snapshots), helper privilege model, and the
 fake-vps test harness are kept. What changes is the CLI surface, the
 addressing model (git branch = environment), preview environments, the
 output/error contract, and agent operability.
@@ -98,8 +100,7 @@ worker = { cmd = "node build/worker.js", preview = false }
 
 [env]                               # renamed from [vars], no alias kept
 LOG_LEVEL    = "info"
-DATABASE_URL = "@secret"            # NEW shorthand: secret name = var name
-SMTP_URL     = "@secret:MAIL_URL"   # existing explicit form kept
+DATABASE_URL = "@secret"            # the only secret form: secret name = var name
 
 [env.preview]                       # optional; overlays [env] in previews only
 LOG_LEVEL    = "debug"
@@ -113,7 +114,10 @@ notify  = "https://ntfy.sh/..."     # NEW: webhook, §7
 Rules:
 
 - `@secret` references are whole-value only (existing behavior). The bare
-  `"@secret"` form resolves to a secret named after the variable.
+  `"@secret"` form resolves to a secret named after the variable, and it
+  is the **only** form — `@secret:NAME` aliasing was removed July 13
+  (D5, §18): one rule, name the secret after the var. Two vars needing
+  the same value set it twice.
 - `production_branch` (optional) names the branch that deploys to prod;
   default `main`, else `master`.
 - `[env.preview]` (optional) overlays `[env]` for **preview envs only**:
@@ -133,13 +137,16 @@ Rules:
 - Per-process `port` is kept (default: the Dockerfile's sole `EXPOSE`,
   else 3000). Per-process `health` is removed — the top-level `probe`
   gates the routed process; other processes just get supervision.
-- `ship init` writes `ship.toml` AND a starter `Dockerfile` when none
-  exists, from an explicit template
-  (`--template container|static|php|hono`, default `container`; the
-  existing template system in `cmd/client/init.go`). Stack *detection*
-  (package.json / requirements / go.mod / static dir choosing the
-  template) is not built yet — TODO(§2), a v0.4.x candidate. Never
-  overwrite existing files (existing behavior, keep).
+- `ship init` writes `ship.toml` and **nothing else** (D7, §18). The
+  starter-app templates (python default, php, hono, static index.html)
+  are removed: ship deploys the app you have, it is not a framework
+  starter catalogue. No Dockerfile present and no static route →
+  `ship` fails with code `dockerfile_missing` and a remediation that
+  names both paths (write a Dockerfile; or declare a static route).
+  Stack *detection* (package.json / requirements / go.mod / static dir
+  writing a correct Dockerfile for an **existing** app) remains the
+  valuable future — TODO(§2). Never overwrite existing files (existing
+  behavior, keep).
 
 ## 3. Addressing: branch = environment
 
@@ -175,8 +182,9 @@ the env identity file (extend the existing identity storage).
 ### Preview lifecycle
 
 - Created automatically on first `ship` from a branch. No setup verb.
-- **TTL 72 h** from last ship; `ship pin <branch>` clears expiry,
-  `ship unpin` restores it.
+- **TTL 72 h** from last ship; `ship preview pin <branch>` clears expiry,
+  `ship preview unpin <branch>` restores it (nested under `preview`
+  since July 13 — D13, §18).
 - A reaper runs on the box (systemd timer installed by `box setup`,
   invoking a new helper verb `server env reap`) and destroys expired
   preview envs — equivalent to the existing destroy path, secrets purged.
@@ -192,11 +200,18 @@ the env identity file (extend the existing identity storage).
 ## 4. CLI surface (complete)
 
 ```
-ship                      deploy current branch; stdout = URL (see §5)
+ship                      deploy current branch; stdout = URL (see §5;
+                          for previews, the URL carries the capability,
+                          §15)
                           flags: --tls internal (§8), --rebuild,
-                          --include-dotenv, --branch (detached HEAD only,
-                          §3), --json (§5), --config <path>
-ship init                 scaffold ship.toml + Dockerfile (stack detection)
+                          --branch (detached HEAD only, §3), --json (§5),
+                          --config <path>
+                          (--include-dotenv removed July 13 — D6, §18:
+                          `secret set --from .env` is the only path for
+                          .env contents; .env never rides a release
+                          artifact)
+ship init                 scaffold ship.toml only (D7, §18; stack
+                          detection TODO §2)
                           flags: --config <path>
 ship help [verb] [--json] per-verb usage from the ship docs source (§9)
 ship status [--json]      all live envs for this app: branch, url, release,
@@ -211,17 +226,22 @@ ship why [--json]              explain the last failed/aborted deploy (§7)
 ship rollback [release]        previous release of the current branch's env;
                           release = commit short-sha (from ship status)
 ship rm <branch> [--confirm <name>]   destroy an environment
-ship pin <branch> / ship unpin <branch>
-ship preview password [--rotate]   print/rotate the team password and
-                          bypass token for this app's protected
-                          previews (§15)
-ship share [--rm]         mint/print (or revoke) the capability link
-                          for this preview (§15)
-ship secret set <KEY> [--preview|--branch <name>]   stdin-only (§6)
+ship preview share [--rotate]   print (or rotate) this preview's
+                          capability URL (§15)
+ship preview pin <branch> / ship preview unpin <branch>
+ship secret set <KEY> [--preview|--branch <name>]   stdin-only (§6);
+                          bare form targets the CURRENT BRANCH's env
+                          (D4, §18) — prod is set from the production
+                          branch, same rule as every other verb
 ship secret ls [--json] / ship secret rm <KEY> [--preview|--branch <name>]
-ship save [--to path] / ship restore --from <id|path>   existing backup/restore
+ship data save [--out <path>] / ship data restore <id|path> / ship data ls
+                          data-only snapshots, pulled to the laptop
+                          (D1, §18 — replaces whole-app save/restore)
 ship ssh                  existing
-ship box setup <ssh-target> [--ingress ...] [--admin ...]   host install
+ship box setup <ssh-target>   host install — ONE shape, no topology
+                          flags (D10, §18: public ingress 80/443,
+                          keys-only SSH; the --ingress/--admin 3×2
+                          matrix and --litestream are removed)
                           (renamed from box init — two unrelated inits
                           confused; "setup" is Kamal's word).
                           IDENTITY MODEL (the login ship doesn't have):
@@ -256,8 +276,8 @@ ship box setup <ssh-target> [--ingress ...] [--admin ...]   host install
                           enrollment actually executes on the box):
                             identity: franco (created ~/.ssh/ship)
                             connected as root (bootstrap)
-                            ingress: public 80/443 (--ingress ...)
-                            admin: SSH keys only (--admin tailscale)
+                            ingress: public 80/443
+                            admin: SSH keys only
                             member added: franco (SHA256:...)
                           The <ssh-target> accepts host or user@host;
                           user@host sets the bootstrap user (a
@@ -345,10 +365,12 @@ ship box doctor [--json]  existing doctor, output upgraded per §9
                           polluted it (a rebuilt box left 30 stale
                           entries in dev) and fought the
                           rebuild-a-box-freely ethos.
-ship box ls [--json]      existing app list (explicit scope, works
-                          anywhere); --json is the box app list: per-app
-                          envs, branches, urls, releases, health,
-                          expiry (Phase 3)
+ship box apps [--json]    the box's app table (renamed from box ls
+                          July 13 — D8, §18: `ls` names nothing, and
+                          it is reserved for listing BOXES if multi-box
+                          ever lands); --json is the box app list:
+                          per-app envs, branches, urls, releases,
+                          health, expiry
 ship box rm <app> [--confirm <app>]   destroy an app and all its envs
                           without the repo dir (orphan cleanup; same
                           confirm guard as prod rm; Phase 3)
@@ -361,7 +383,11 @@ ship box status <box> [--json]   one-box summary: helper version vs
 ship box update <box>     converge helper + version-owned artifacts
                           to this client's version (§16)
 ship box notify <box> [<url>|--rm]   read/set/clear the box webhook
-                          for box-scoped events (§17)
+                          for box-scoped events (§17); sugar over the
+                          box config key notify.url (§19)
+ship box config <box> [--json]        print the box's effective config
+ship box config <box> set <key> <val> / unset <key>   per-key policy
+                          enforced helper-side (§19)
 ship docs                 print the agent contract (§9)
 ship version
 ```
@@ -404,12 +430,18 @@ positional env args, `--server` on app commands (comes from `ship.toml`).
 
 Engine secrets are already per-(app, env), stdin-only. New scoping layer:
 
-- `ship secret set KEY` → sets the **prod** value.
+- `ship secret set KEY` → targets the **current branch's env**, exactly
+  like every other verb (branch=env, §3): on the production branch it
+  sets the prod value; on a feature branch it sets that branch's value.
+  (Changed July 13 — D4, §18. The old bare-form-means-prod rule was the
+  one verb family that ignored branch=env: it silently mutated
+  production from a feature branch.)
 - `ship secret set KEY --preview` → sets a single shared **preview** value
   that all preview envs of the app resolve.
 - `ship secret set KEY --branch <name>` → sets a value for that branch's
   env only (stored in the existing per-(app, env) secret store) — e.g. a
-  pinned `staging` branch with its own credentials.
+  pinned `staging` branch with its own credentials, or prod from a
+  detached-HEAD CI checkout.
 - Resolution at deploy: prod env → prod values only; preview env → its
   branch value if set, else the shared preview value. A `@secret`
   reference with no value for the target scope **fails the deploy** with
@@ -529,7 +561,7 @@ bypasses the catalogue; `ship docs | wc -l` > 0 and drift test green.
 bulk import: `ship secret set --from .env [--preview|--branch <name>]`
 (merge by default; `--replace` makes the file authoritative for the
 scope and lists removed key names on stderr — never values);
-`member add|ls|rm`, `box rm <app>` + the `box ls --json` app list,
+`member add|ls|rm`, `box rm <app>` + the `box apps --json` app list,
 install one-liner (curl script — the only install story; a Homebrew
 tap is deliberately cut, deferred until users ask) + shell
 completions, README rewritten around the four moments (§0),
@@ -538,10 +570,8 @@ transcripts, CHANGELOG, release.
 
 Work honestly serially: Phase 1 acceptance before Phase 2 work. Deferred
 backlog (do not start, tracked for later): mounted-cargo fast path;
-git-push transport; pre-release data snapshot/rewind-lite; private
-preview auth (sketch: `preview_auth = true` → Caddy basic-auth on
-preview hosts with a generated per-app credential surfaced by
-`ship status`, probe/agent bypass token); `preview_domain` wildcard
+git-push transport; pre-release data snapshot/rewind-lite
+(superseded in part by §18's data verbs); `preview_domain` wildcard
 base (previews on `*.preview.yourdomain.com` instead of sslip —
 Vercel's preview-suffix equivalent); watch mode (dev-class env: source
 synced from the laptop into a container running the framework's own
@@ -585,11 +615,12 @@ ship approve <id>           grant one-shot; requests expire in 15 min
   - **owner** — everything, including member management, box setup/rm,
     restore, rm prod.
   - **shipper** — ship prod + previews, status/logs/why/exec, rollback,
-    secrets set, pin/unpin, rm previews. Not: member verbs, restore,
-    rm prod, box-level mutations.
+    secrets set, pin/unpin, rm previews, data save/restore on
+    previews. Not: member verbs, restore into prod, rm prod,
+    box-level mutations.
   - **agent** — ship/rollback/pin/exec on **preview envs only**;
     status/logs/why/docs everywhere. Not: prod mutations, secret read
-    or set, rm, save/restore, shell.
+    or set, rm, data save/restore, shell.
 - Out-of-role → errcat `approval_required` carrying the request id and
   the literal `ship approve <id>`; the helper mints the request into a
   box-global queue; a `notify` event `approval_requested` fires with
@@ -677,71 +708,80 @@ an agent-role key → `approval_required`; a `/data` with only uploads
 (no SQLite) copies the files; a second `data fork` refreshes. Tag
 v0.3.0 when green on a real-box fork round-trip.
 
-## 15. Preview protection and share links (v0.4 arc — promotes RFD-0004 #10)
+## 15. Preview protection: one capability (v0.4 arc; redesigned July 13 — D13, §18)
 
-Previews are for your team, not the internet. One manifest line and
-every preview URL asks for the team password; prod stays public,
-always. A share link hands one preview to one outsider without handing
-over the password.
+Previews are for your team, not the internet — and nobody types a
+password. Every preview is protected, always, by **one capability
+token**: possession of the URL is access. The same token works for a
+teammate clicking a PR link, an external guest you paste it to, and an
+agent sending a header. Prod stays public, always.
+
+> History, honestly: v0.4.0 shipped a three-credential design (team
+> password + automation bypass token + per-preview share link) behind an
+> opt-in `[previews] protected` knob. Redesigned before any user
+> existed; the trio, the knob, and the open protected-by-default
+> flag-day question were all deleted outright (zero users, no shims).
+> The rotate matrix — three credentials, three lifecycles — died with
+> them. Vercel-check: their team members never feel protection because
+> SSO recognizes them; the capability URL is the no-accounts equivalent.
 
 Surface:
 
 ```
-ship preview password [--rotate]   print (or rotate) the team password +
-                                   bypass token for this app's previews
-ship share [--rm]                  mint/print (or revoke) this preview's
-                                   share link
+ship preview share [--rotate]   print (or rotate) this preview's
+                                capability URL
 ```
 
-```toml
-[previews]              # NEW section: preview *behavior* (not env vars —
-protected = true        # [env.preview] stays a pure variable overlay)
-```
-
-- **Opt-in in v0.4.0.** Protected-by-default is a real flag-day decision
-  (RFD-0004 open question) — not made here.
-- **Mechanism:** Caddy `basic_auth` (username `team`, bcrypt hash) added
-  to **preview vhosts only** when the manifest says `protected = true`.
-  Prod vhosts never gain auth — there is no knob for it; structurally
-  impossible, not just discouraged.
-- **Password:** generated box-side (never user-chosen, never in argv or
-  logs, §12) on the first protected apply; stored with app state like a
-  secret. `ship preview password` prints it; `--rotate` regenerates and
-  re-renders the fragments of all live previews. Requires shipper/owner;
-  an agent key → `approval_required` (reading the team credential is
-  above the agent default).
-- **Automation bypass:** requests carrying `x-ship-bypass: <token>` skip
-  auth (CI smoke tests, agents, screenshot tools). The token is separate
-  from the password — rotating one never breaks the other. Printed by
-  `ship preview password`, same role gate.
+- **Always protected. No knob.** Anonymous requests to a preview vhost
+  get 401. Prod vhosts never gain auth — structurally impossible, not
+  just discouraged (unchanged from v0.4.0).
+- **The capability** is generated box-side at preview-env creation
+  (never user-chosen, never in argv or logs, §12), stored with app
+  state like a secret. Three equivalent presentations of the same
+  token:
+  - **URL**: `<preview-url>?ship=<token>` — Caddy matches a valid
+    token, sets a signed cookie, redirects to the clean URL (the
+    v0.4.0 share-link machinery, kept). This is what `ship` prints on
+    stdout for a preview deploy (§5) and what you paste in a PR or to
+    a guest.
+  - **Cookie**: set by the redirect; signed against the current token
+    generation, so rotation invalidates outstanding cookies.
+  - **Header**: `x-ship-capability: <token>` — CI smoke tests, agents,
+    screenshot tools.
+- **`ship preview share`** (preview branch only) re-prints the
+  capability URL; `--rotate` regenerates the token and re-renders the
+  fragments of all this preview's routes. stdout = the URL (§5).
+  Reading is any member's right (the deploying member already sees it
+  on stdout; `ship status --json` carries it too). **Rotation** is
+  shipper/owner; agent → `approval_required`.
+- **Leak response is one flow:** rotate. Teammates self-heal via the
+  CLI (`ship status`); externals get the fresh link re-sent — which is
+  exactly the desired outcome after a leak.
 - **Probes and doctor are structurally unaffected:** they hit process
-  ports on the box, not Caddy vhosts — a protected deploy can never fail
-  its probe because of protection.
-- **`ship share`** (preview branch only): prints a capability URL —
-  `<preview-url>?ship_share=<token>`. Caddy matches a valid token, sets
-  a signed cookie, redirects to the clean URL; the cookie passes from
-  then on. One active share link per preview: re-running prints the
-  same link, `--rm` revokes it, `--rm` then `share` rotates it. Share
-  links die with the preview (reap destroys them). Requires
-  shipper/owner; agent → `approval_required`. stdout = the share URL
-  (§5).
-- **Errors:** `previews_not_protected` (password/share on an app without
-  `protected = true`; remediation: set it and `ship`),
-  `share_on_production` (share from the production branch; remediation:
-  previews only), plus existing `no_preview_env`.
+  ports on the box, not Caddy vhosts — protection can never fail a
+  probe.
+- Capabilities die with the preview (reap destroys them).
+- **Errors:** `share_on_production` (capability verbs from the
+  production branch; remediation: previews only), plus existing
+  `no_preview_env`. (`previews_not_protected` deleted with the knob.)
 
-Deferred (do not build now): the protected-by-default flip; per-member
-credentials / SSO-grade auth; `share --ttl` self-expiry; a branded
-password page (native browser prompt is v0.4.0).
+Growth path, deliberately not built (record: the one-token design is
+the N=1 case of "a preview has named capabilities"; if guest-vs-team
+revocation is ever needed, `--name` mints a second named capability —
+additive, no redesign): named capabilities; per-member credentials /
+Agent Badges (RFD-0004); `--ttl` self-expiry.
 
-Acceptance (fake-vps): protected preview → anonymous request 401, team
-password 200, bypass header 200; prod URL serves anonymously before and
-after; probe passes during a protected deploy; share token URL → cookie
-→ clean-URL 200, revoked token → 401; `--rotate` invalidates the old
-password while the bypass token keeps working; agent key on
-password/share → `approval_required`; unprotected app →
-`previews_not_protected`. Real-box: one browser round-trip (password
-prompt + share link) on a live preview. Ships in the v0.4.0 tag.
+Acceptance (fake-vps): preview → anonymous 401; capability URL →
+cookie → clean-URL redirect → 200; capability header → 200; `ship`
+stdout for a preview deploy is the capability URL and it serves 200
+as printed; `--rotate` → old URL, old header value, and
+previously-issued cookies all 401 while the new URL works;
+`ship status --json` carries the current capability URL; prod serves
+anonymously before and after; probe passes on a protected deploy;
+reap destroys the capability (token 401 after reap); agent key on
+`--rotate` → `approval_required`; capability verbs on the production
+branch → `share_on_production`. Real-box: one browser round-trip
+(click capability URL → in; rotate → old link dead) on a live preview.
 
 ## 16. Box status and update (v0.4 arc)
 
@@ -760,10 +800,16 @@ ship box update <box>            converge the box to this client's
                                  artifacts)
 ```
 
-- **`ship box status`** prints: helper version vs client version with an
-  update hint when behind (`next: ship box update <box>`), disk usage,
-  apps with env counts, pending approvals count. Any member may read.
-  `--json` is the machine view (resident substrate, RFD-0002).
+- **`ship box status`** prints a one-screen summary: helper version vs
+  client version with an update hint when behind
+  (`next: ship box update <box>`), disk usage, app count, pending
+  approvals count, and the last doctor-timer result with its age. Any
+  member may read. `--json` is the machine view (resident substrate,
+  RFD-0002). The full app table is `ship box apps` (D8, §18); the
+  active probe is `ship box doctor` — three verbs, three questions
+  (summary / list / examine), none folded into another. Status must
+  not fetch data it discards (the v0.4.0 implementation pulled the
+  full app list and doctor JSON for counts — fix as plumbing).
 - **`ship box update`** pushes the client-matched helper binary over the
   existing setup transfer path and re-applies **version-owned artifacts**
   (systemd units, sudoers fragment, agent-shell) idempotently. Journals
@@ -825,3 +871,129 @@ app URL; `approval_requested` → box URL once; `deploy_aborted` → the
 owning app's URL only; read/set/`--rm` round-trip with narration; role
 matrix on set; AGENT.md regenerated (drift test covers the event
 tables). Ships in the v0.4.0 tag.
+
+## 18. Simplification batch (settled with Franco July 13, 2026 — D1–D13)
+
+One product pass, decisions D1–D13, recorded in ADR-0012..0016. The
+normative rules live in the sections they amend (§0.5, §2, §3, §4, §6,
+§15, §16, §19); this section holds the rationale index and the
+acceptance criteria for the pieces no other section owns. Arc
+unscheduled at write time — Franco sequences it against the resident
+(RFD-0002).
+
+Decision index: **D1** data-only backups, verbs under `data`, snapshot
+lands on the laptop (ADR-0012, amends ADR-0007) · **D2** secrets never
+backed up · **D3** scheduled off-box backup parked (RFD-0007) · **D4**
+bare `secret set` follows branch=env (§6) · **D5** `@secret:NAME`
+removed (§2) · **D6** `--include-dotenv` removed (§4) · **D7** init
+starters removed (§2) · **D8** `box status`/`box apps`/`box doctor`
+split, `ls` renamed (§16, ADR-0016) · **D9** `box forget` stays hidden,
+discovered via remediation · **D10** one topology (§4, ADR-0013) ·
+**D11** box config foundation (§19, ADR-0014) · **D12** control plane
+stays SSH-as-pipe (RFD-0006) · **D13** one preview capability (§15,
+ADR-0015).
+
+### Data verbs (D1/D2 — replaces whole-app `save`/`restore`)
+
+Your code is in git. Your secrets came from your laptop. The only
+thing on the box that can die is `/data` — so that is what ship backs
+up, and the snapshot does not live on the box it protects.
+
+```
+ship data save [--out <path>]    snapshot this branch env's /data →
+                                 a tar.gz ON YOUR LAPTOP
+ship data restore <id|path>      upload a snapshot and swap it in
+ship data ls [--json]            list local snapshots for this app
+```
+
+- **`data save`**: the helper snapshots the env's `/data` — SQLite
+  files (`*.db`, `*.sqlite*`) via `VACUUM INTO` (WAL-safe under live
+  writes), everything else `cp -a` — tars it, and streams it to the
+  client. Default landing:
+  `~/.ship/backups/<app>/<env>-<release>-<utc>.data.tar.gz`
+  (`--out` overrides). The box keeps **nothing** (work dir cleaned) —
+  a backup that lives on the box it protects is theater, which is what
+  killed the v0.1 whole-app design (ADR-0012). stdout = the local
+  path; stderr narrates files and sizes. Consistency bar is per-file,
+  not cross-file (same as `data fork`): documented, not hidden.
+- **`data restore`**: uploads the tar, **validates shape and manifest
+  before touching `/data`** (the v0.4.1 restore lesson, `19fa7c5`),
+  then stop → swap → start (the `data fork` bounce). Restoring prod
+  additionally requires `--confirm <name>` (same guard as `rm` prod).
+- **Secrets are never in a snapshot** (D2): their source of truth is
+  off-box already; plaintext-on-the-same-disk was the worst part of
+  the old design. Box dies → `box setup` → `ship` → re-import via
+  `secret set --from .env` → `data restore`.
+- Roles: like `data fork` — shipper/owner; agent → `approval_required`.
+  Restore **into prod** is owner-only (§13: replacing prod data
+  wholesale is an owner act), on top of the `--confirm` guard.
+- The whole-app `ship save`/`ship restore` verbs and their engine
+  backup format are **deleted** (zero users, no shims).
+
+### Batch acceptance
+
+Fake-vps: `data save` on a preview with a live-written SQLite db plus
+loose files → tar lands locally, box-side work dir gone; `data
+restore` round-trips the sqlite rows; a corrupted tar refuses
+**before** any `/data` mutation; prod restore without `--confirm`
+refuses; agent on save/restore → `approval_required`; `data ls` lists
+the snapshot. Bare `ship secret set` on a feature branch sets that
+env's value and **prod's value is byte-identical before/after** (the
+inverse of §6's old test); bare set on the production branch sets
+prod. `ship` on a repo with no Dockerfile and no static route →
+`dockerfile_missing` with both remediations; `ship init` writes only
+`ship.toml`. `box setup --ingress`/`--admin`/`--litestream` → usage
+error (flags gone). `--include-dotenv` → usage error; a `.env` in the
+worktree never appears in the uploaded artifact (assert
+archive contents). `@secret:NAME` in a manifest → manifest error
+naming the bare-form rule. `box apps` serves the old `box ls` table;
+`box ls` → usage error suggesting `box apps`. §15 acceptance runs as
+written. AGENT.md regenerated; error catalogue drift test green
+(removed codes gone, `dockerfile_missing` present). Real-box: data
+save/restore round-trip on the testing box.
+
+## 19. Box config foundation (D11 — ADR-0014)
+
+One canonical, schema-validated config document on the box; every
+future box-level option is a key in it, not a new flag or a new
+storage file. Growth without sprawl: OpenClaw-grade storage
+discipline, ship-grade authorization.
+
+```
+ship box config <box> [--json]          effective config: value, default,
+                                        source (default|set), per key
+ship box config <box> set <key> <val>   validate → authorize → journal →
+                                        apply
+ship box config <box> unset <key>       back to the default
+```
+
+- **The file**: box-side, next to members/approvals state. Atomic
+  writes (temp + rename). Schema-validated on every read and write;
+  **unknown keys refuse** (the error lists valid keys). A version
+  field for future migration.
+- **The schema declares, per key**: type, default, write role
+  (owner/shipper), whether out-of-role requests mint an approval
+  (§13), and an apply mode — `none` (value is read on next use) or
+  `converge` (side effects; reuses the bounded-converge machinery of
+  ADR-0011). Authorization lives **in the schema**, which is what
+  makes a generic setter safe here when it would be a hole anywhere
+  else — every key has a declared owner, or it doesn't exist.
+- **Initial keys** (deliberately few): `notify.url` (owner-set,
+  apply=none) — `ship box notify` becomes sugar over it, §17 semantics
+  unchanged. No converge-mode key exists yet, so no converge plumbing
+  is built yet — the schema field reserves the concept (future:
+  `harden.tailscale`, `backup.*` per RFD-0007).
+- **What this is not**: app config. `ship.toml` in the repo stays the
+  only app-level config — versioned, PR-reviewed, next to the code it
+  configures. The box config holds box-scoped operational settings
+  only. There is no wizard: a key you must be walked through is a
+  decision ship should have made itself (§0.5).
+
+Acceptance (fake-vps): `box config --json` on a fresh box shows
+`notify.url` unset with its default and source; owner `set notify.url`
+→ journaled, `box notify <box>` prints the same value, an induced box
+event POSTs to it; shipper `set` → `approval_required`, approve →
+succeeds once; unknown key → error listing valid keys; wrong type →
+error; `unset` restores default; `box notify <box> <url>` and
+`box config set notify.url <url>` are observably the same operation
+(one storage, one journal shape). AGENT.md regenerated.

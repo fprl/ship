@@ -20,3 +20,7 @@ section with acceptance criteria, the same bar ship-spec sets.
   triage (v0.4.0–v0.6.0 sequencing).
 - [RFD-0005](0005-sleeping-previews.md) — sleeping previews: socket
   activation scales previews to zero; requires preview protection.
+- [RFD-0006](0006-control-plane.md) — control plane: SSH pipe vs HTTPS
+  gateway; decision record with revisit triggers (July 13).
+- [RFD-0007](0007-scheduled-offbox-backup.md) — scheduled off-box
+  backup: R2/S3 push on a timer, on the box-config foundation; parked.

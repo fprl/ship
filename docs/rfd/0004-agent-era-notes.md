@@ -101,8 +101,9 @@ never enter a syncable tree.
 
 ## Open, flagged honestly
 
-- Preview privacy **default flip** (protected-by-default) is a real
-  flag-day decision, not yet made — v0.4.0 ships it opt-in.
+- ~~Preview privacy **default flip** (protected-by-default)~~ —
+  settled July 13: always protected, knob deleted, one capability
+  token (D13, ADR-0015, spec §15).
 - Swap-at-setup contradicts ADR-0010's "no build machinery" stance;
   adopting it means amending the ADR.
 - Whether git notes push to origin by default; Front Desk per-box or

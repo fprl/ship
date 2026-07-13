@@ -1,7 +1,10 @@
 # RFD-0005: Sleeping previews — serverless economics on a box you own
 
-**Status: draft, scheduled for the v0.6.0 agentic wave** (RFD-0004).
-Requires Preview Protection (v0.4.0). Does not touch prod, ever.
+**Status: draft, post-v1.** Slotted for the agentic wave in RFD-0004's
+July 12 triage, but like every RFD it is unscheduled until promoted to
+a spec section with acceptance criteria. Requires preview protection
+(v0.4.0, redesigned as one capability — spec §15). Does not touch
+prod, ever.
 
 ## Pitch
 
