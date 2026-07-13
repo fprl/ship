@@ -15,6 +15,7 @@ import (
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
+	"github.com/fprl/ship/internal/version"
 )
 
 // appApplyCmd is the per-env deploy primitive. Given a
@@ -85,7 +86,8 @@ func (c appApplyCmd) recordClientVersion() error {
 		return err
 	}
 	seen := strings.TrimSpace(hostFile.Meta.LastClientVersion)
-	if seen != "" && compareShipVersions(clientVersion, seen) <= 0 {
+	cmp, ok := version.Compare(clientVersion, seen)
+	if seen != "" && (!ok || cmp <= 0) {
 		return nil
 	}
 	hostFile.Meta.LastClientVersion = clientVersion

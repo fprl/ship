@@ -106,6 +106,14 @@ func projectAppRoot(configPath string) (string, error) {
 	return root, nil
 }
 
+type projectArgs struct {
+	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+}
+
+func (p projectArgs) projectRoot() (string, error) {
+	return projectAppRoot(p.Config)
+}
+
 type initCmd struct {
 	Config   string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Template string `name:"template" enum:"container,static,php,hono" default:"container" help:"Scaffold template."`
@@ -131,7 +139,7 @@ func (c initCmd) Run() error {
 }
 
 type shipCmd struct {
-	Config        string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 	Branch        string `name:"branch" hidden:"" help:"Branch name to use when HEAD is detached."`
 	TLS           string `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode for this deploy."`
 	JSON          bool   `name:"json" help:"Emit structured deployment JSON instead of the URL."`
@@ -140,7 +148,7 @@ type shipCmd struct {
 }
 
 func (c shipCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -149,11 +157,11 @@ func (c shipCmd) Run() error {
 }
 
 type sshCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 }
 
 func (c sshCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -162,12 +170,12 @@ func (c sshCmd) Run() error {
 }
 
 type statusCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text table."`
+	projectArgs
+	JSON bool `name:"json" help:"Emit structured JSON instead of the text table."`
 }
 
 func (c statusCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -176,7 +184,7 @@ func (c statusCmd) Run() error {
 }
 
 type logsCmd struct {
-	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 	Process string `arg:"" optional:"" help:"Process name. Optional when only one process runs."`
 	Follow  bool   `name:"follow" short:"f" help:"Stream new log lines."`
 	Tail    *int   `name:"tail" help:"How many trailing lines to show. Defaults to 100 when omitted; use 0 with --follow to stream new lines only."`
@@ -187,7 +195,7 @@ func (c logsCmd) Run() error {
 	if err := client.ValidateLogsTail(c.Tail); err != nil {
 		return err
 	}
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -196,13 +204,13 @@ func (c logsCmd) Run() error {
 }
 
 type execCmd struct {
-	Config  string   `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 	Branch  string   `name:"branch" help:"Branch name to inspect."`
 	Command []string `arg:"" required:"" passthrough:"" help:"Command and arguments to run."`
 }
 
 func (c execCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -211,13 +219,13 @@ func (c execCmd) Run() error {
 }
 
 type whyCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 	Branch string `name:"branch" help:"Branch name to inspect."`
 	JSON   bool   `name:"json" help:"Emit the raw deploy journal entry as JSON."`
 }
 
 func (c whyCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -226,12 +234,12 @@ func (c whyCmd) Run() error {
 }
 
 type pinCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 	Branch string `arg:"" help:"Branch name to pin."`
 }
 
 func (c pinCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -240,7 +248,7 @@ func (c pinCmd) Run() error {
 }
 
 type unpinCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 	Branch string `arg:"" help:"Branch name to unpin."`
 }
 
@@ -249,17 +257,17 @@ type previewCmd struct {
 }
 
 type previewPasswordCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Rotate bool   `name:"rotate" help:"Generate a new team password; the bypass token stays unchanged."`
+	projectArgs
+	Rotate bool `name:"rotate" help:"Generate a new team password; the bypass token stays unchanged."`
 }
 
 type shareCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Rm     bool   `name:"rm" help:"Revoke this preview's share link."`
+	projectArgs
+	Rm bool `name:"rm" help:"Revoke this preview's share link."`
 }
 
 func (c shareCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -268,7 +276,7 @@ func (c shareCmd) Run() error {
 }
 
 func (c previewPasswordCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -277,7 +285,7 @@ func (c previewPasswordCmd) Run() error {
 }
 
 func (c unpinCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -286,12 +294,12 @@ func (c unpinCmd) Run() error {
 }
 
 type rollbackCmd struct {
-	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 	Release string `arg:"" optional:"" help:"Release to run. Omitted = previous local release."`
 }
 
 func (c rollbackCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -300,12 +308,12 @@ func (c rollbackCmd) Run() error {
 }
 
 type saveCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	To     string `name:"to" help:"Destination directory on the host. Supports plain paths and file:// URLs."`
+	projectArgs
+	To string `name:"to" help:"Destination directory on the host. Supports plain paths and file:// URLs."`
 }
 
 func (c saveCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -314,12 +322,12 @@ func (c saveCmd) Run() error {
 }
 
 type restoreCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	From   string `name:"from" required:"" help:"Backup ID or path on the host."`
+	projectArgs
+	From string `name:"from" required:"" help:"Backup ID or path on the host."`
 }
 
 func (c restoreCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -328,13 +336,13 @@ func (c restoreCmd) Run() error {
 }
 
 type rmCmd struct {
-	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 	Branch  string `arg:"" help:"Branch name whose environment should be removed."`
 	Confirm string `name:"confirm" help:"Required app-name confirmation for Production."`
 }
 
 func (c rmCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -348,11 +356,11 @@ type dataCmd struct {
 }
 
 type dataForkCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 }
 
 func (c dataForkCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -361,11 +369,11 @@ func (c dataForkCmd) Run() error {
 }
 
 type dataRmCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 }
 
 func (c dataRmCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -380,7 +388,7 @@ type secretCmd struct {
 }
 
 type secretSetCmd struct {
-	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 	Preview bool   `name:"preview" help:"Store the shared Preview value."`
 	Branch  string `name:"branch" help:"Store the value for one branch Preview env."`
 	From    string `name:"from" type:"path" help:"Bulk import KEY=VALUE pairs from a dotenv file."`
@@ -389,7 +397,7 @@ type secretSetCmd struct {
 }
 
 func (c secretSetCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -404,14 +412,14 @@ func (c secretSetCmd) Run() error {
 }
 
 type secretListCmd struct {
-	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 	Preview bool   `name:"preview" help:"List the shared Preview scope."`
 	Branch  string `name:"branch" help:"List one branch Preview scope."`
 	JSON    bool   `name:"json" help:"Emit structured JSON instead of plain key lines."`
 }
 
 func (c secretListCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
@@ -420,14 +428,14 @@ func (c secretListCmd) Run() error {
 }
 
 type secretRmCmd struct {
-	Config  string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
+	projectArgs
 	Preview bool   `name:"preview" help:"Remove from the shared Preview scope."`
 	Branch  string `name:"branch" help:"Remove from one branch Preview scope."`
 	Key     string `arg:"" help:"Env-var name to remove."`
 }
 
 func (c secretRmCmd) Run() error {
-	root, err := projectAppRoot(c.Config)
+	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}

@@ -120,9 +120,9 @@ func readBoxStatus(runner *CommandRunner, server string) (boxStatusPayload, erro
 	payload.HelperVersion = versionPayload.Version
 	payload.ClientVersion = version.Version
 	payload.LastClientVersion = versionPayload.LastClientVersion
-	cmp := compareShipVersions(versionPayload.Version, version.Version)
-	payload.UpdateAvailable = cmp < 0
-	payload.HelperAhead = cmp > 0 || (cmp == 0 && versionPayload.Version != version.Version)
+	cmp, ok := version.Compare(versionPayload.Version, version.Version)
+	payload.UpdateAvailable = ok && cmp < 0
+	payload.HelperAhead = (ok && cmp > 0) || ((!ok || cmp == 0) && versionPayload.Version != version.Version)
 
 	appsOut, err := runSSHDetail(runner, server, serverAppListCommand(true))
 	if err != nil {
@@ -223,11 +223,11 @@ func CmdBoxUpdate(server string) {
 	if err != nil {
 		utils.DieError(err, 1)
 	}
-	cmp := compareShipVersions(remote.Version, version.Version)
+	cmp, ok := version.Compare(remote.Version, version.Version)
 	if err := validateBoxUpdateTarget(remote.Version, version.Version, server); err != nil {
 		utils.DieError(err, 1)
 	}
-	if cmp == 0 {
+	if !ok || cmp == 0 {
 		fmt.Println("box update: already current")
 		return
 	}
@@ -265,11 +265,11 @@ func classifyBoxUpdate(helperVersion, clientVersion, server string) error {
 			"server":         server,
 		})
 	}
-	cmp := compareShipVersions(helperVersion, clientVersion)
-	if cmp > 0 {
+	cmp, ok := version.Compare(helperVersion, clientVersion)
+	if ok && cmp > 0 {
 		return errcat.New(errcat.CodeClientBehindHelper, errcat.Fields{"helper_version": helperVersion, "client_version": clientVersion})
 	}
-	if cmp == 0 && helperVersion != clientVersion {
+	if (!ok || cmp == 0) && helperVersion != clientVersion {
 		return errcat.New(errcat.CodeBoxVersionAmbiguous, errcat.Fields{"helper_version": helperVersion, "client_version": clientVersion, "server": server})
 	}
 	return nil
@@ -291,7 +291,7 @@ func isGitDescribeVersion(value string) bool {
 
 func CmdMemberAdd(server, source string, role string) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "fix ship.toml box"}), 2)
+		utils.DieError(invalidBoxTargetError(server, invalidBoxTargetManifestRemediation), 2)
 	}
 	input, err := resolveMemberAddSource(source)
 	if err != nil {
@@ -325,7 +325,7 @@ func CmdMemberAdd(server, source string, role string) {
 
 func CmdMemberLs(server string, jsonFlag bool) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "fix ship.toml box"}), 2)
+		utils.DieError(invalidBoxTargetError(server, invalidBoxTargetManifestRemediation), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -354,7 +354,7 @@ func CmdMemberLs(server string, jsonFlag bool) {
 
 func CmdMemberRm(server, name string) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "fix ship.toml box"}), 2)
+		utils.DieError(invalidBoxTargetError(server, invalidBoxTargetManifestRemediation), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -492,7 +492,12 @@ func CmdBoxNotify(server, url string, remove bool) {
 	fmt.Print(stdout)
 }
 
+const invalidBoxTargetManifestRemediation = "fix ship.toml box"
+
 func invalidBoxTargetError(target string, prefix string) error {
+	if prefix == invalidBoxTargetManifestRemediation {
+		return errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": prefix})
+	}
 	box := "203.0.113.7"
 	if host, ok := config.UserHostBoxHost(target); ok {
 		box = host

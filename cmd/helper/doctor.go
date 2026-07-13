@@ -227,16 +227,7 @@ type doctorOptions struct {
 }
 
 func defaultDoctorOptions(boxTarget string) doctorOptions {
-	return doctorOptions{
-		StateStore:  store.Default(),
-		BoxTarget:   boxTarget,
-		Now:         time.Now,
-		Service:     host.SystemServiceStatus,
-		Timer:       systemdTimerState,
-		Disk:        diskUsageForPath,
-		TLSStatuses: routedTLSCertStatuses,
-		AppEnvs:     identityAppEnvs,
-	}
+	return normalizeDoctorOptions(doctorOptions{BoxTarget: boxTarget})
 }
 
 func normalizeDoctorOptions(opts doctorOptions) doctorOptions {
@@ -392,7 +383,8 @@ func doctorHelperVersionCheck(stateStore store.Store, boxTarget string) store.Do
 	if seen == "" {
 		return doctorCheck(doctorCheckHelperVersion, doctorStatusOK, "last client version unavailable", doctorRerunCommand(boxTarget))
 	}
-	if compareShipVersions(version.Version, seen) >= 0 {
+	cmp, ok := version.Compare(version.Version, seen)
+	if !ok || cmp >= 0 {
 		return doctorCheck(doctorCheckHelperVersion, doctorStatusOK, "helper="+version.Version+" last_client="+seen, doctorRerunCommand(boxTarget))
 	}
 	return doctorCheck(doctorCheckHelperVersion, doctorStatusDegraded, "helper="+version.Version+" last_client="+seen, doctorBoxUpdateCommand(boxTarget))

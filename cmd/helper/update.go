@@ -68,7 +68,8 @@ func validateUpdateTarget(installed, target string) error {
 	if !release.IsVersion(target) {
 		return fmt.Errorf("box update requires a released version, got %q; rerun ship box setup for a development build", target)
 	}
-	if compareShipVersions(installed, target) >= 0 {
+	cmp, ok := version.Compare(installed, target)
+	if !ok || cmp >= 0 {
 		return fmt.Errorf("box update target %s must be strictly newer than installed helper %s", target, installed)
 	}
 	return nil

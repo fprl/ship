@@ -5,13 +5,12 @@ import (
 	"strings"
 
 	"github.com/fprl/ship/internal/config"
-	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/utils"
 )
 
 func CmdApprove(server, id string, jsonFlag bool) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(errcat.New(errcat.CodeInvalidBoxTarget, errcat.Fields{"command": "fix ship.toml box"}), 2)
+		utils.DieError(invalidBoxTargetError(server, invalidBoxTargetManifestRemediation), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
