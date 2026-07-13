@@ -188,7 +188,7 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	e.ssh(t, "grep -Fq 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server config *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *' /etc/sudoers.d/ship")
 	e.ssh(t, "grep -q 'fake-vps-smoke' /home/operator/.ssh/authorized_keys")
 	e.ssh(t, "grep -q 'fake-vps-smoke' /home/deploy/.ssh/authorized_keys")
-	e.ssh(t, "test -d /etc/ship/providers && test -d /etc/ship/secrets && test ! -e /etc/ship/backups")
+	e.ssh(t, "test -d /etc/ship/secrets && test ! -e /etc/ship/providers && test ! -e /etc/ship/backups")
 	assertEqual(t, strings.TrimSpace(e.ssh(t, "stat -c '%a' /etc/ship/secrets")), "700")
 	assertEqual(t, strings.TrimSpace(e.ssh(t, "stat -c '%a' /tmp/ship-deploy")), "1777")
 	e.ssh(t, "grep -Fq '# BEGIN ship podman bridges' /etc/ufw/before.rules")
@@ -255,13 +255,13 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 		"default deny incoming",
 		"default allow outgoing",
 		"allow 22/tcp",
-		"allow 41641/udp",
 		"allow 80/tcp",
 		"allow 443/tcp",
 		"--force enable",
 	} {
 		assertContains(t, ufwLog, want)
 	}
+	assertNotContains(t, ufwLog, "41641")
 	assertEqual(t, strings.TrimSpace(e.ssh(t, "timedatectl show --property=Timezone --value")), "UTC")
 	assertEqual(t, strings.TrimSpace(e.ssh(t, "cat /run/ship-fresh-host/locale")), "en_US.UTF-8")
 }
