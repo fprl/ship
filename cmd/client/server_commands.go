@@ -31,8 +31,8 @@ func serverVersionCommand(jsonFlag bool) string {
 	return serverCommand("version")
 }
 
-func serverUpdateCommand(binary string) string {
-	return serverCommand("update", "--binary", binary)
+func serverUpdateCommand(version string) string {
+	return serverCommand("update", "--version", version)
 }
 
 func serverAppSetupEnvCommand(appName string, envName string) string {

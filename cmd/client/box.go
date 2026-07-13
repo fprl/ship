@@ -1,14 +1,13 @@
 package client
 
 import (
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"github.com/fprl/ship/cmd/hostinstall"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/knownhosts"
 	"github.com/fprl/ship/internal/names"
+	"github.com/fprl/ship/internal/release"
 	"github.com/fprl/ship/internal/utils"
 	"github.com/fprl/ship/internal/version"
 	"io"
@@ -224,38 +223,14 @@ func CmdBoxUpdate(server string) {
 		utils.DieError(err, 1)
 	}
 	cmp := compareShipVersions(remote.Version, version.Version)
-	if err := classifyBoxUpdate(remote.Version, version.Version, server); err != nil {
+	if err := validateBoxUpdateTarget(remote.Version, version.Version, server); err != nil {
 		utils.DieError(err, 1)
 	}
-	if cmp == 0 && remote.RecordedClientVersion == version.Version {
+	if cmp == 0 {
 		fmt.Println("box update: already current")
 		return
 	}
-	arch, err := helperArchitecture(remote.Architecture)
-	if err != nil {
-		utils.DieError(err, 1)
-	}
-	installer := hostinstall.NewInstaller()
-	installer.Stdout = io.Discard
-	installer.Stderr = io.Discard
-	helper, cleanup, err := installer.PrepareHelperBinaryForArch(server, arch)
-	if err != nil {
-		utils.DieError(err, 1)
-	}
-	defer cleanup()
-	remoteDir, err := newBoxUpdateRemoteDir()
-	if err != nil {
-		utils.DieError(err, 1)
-	}
-	if _, err := runSSHRequired(runner, server, "mkdir -p "+utils.ShellEscape(remoteDir)+" && chmod 0700 "+utils.ShellEscape(remoteDir), "box update staging failed"); err != nil {
-		utils.DieError(err, 1)
-	}
-	defer runner.RunSSH(server, "rm -rf "+utils.ShellEscape(remoteDir))
-	remoteHelper := remoteDir + "/helper"
-	if err := runner.Upload(helper, remoteHelper, server); err != nil {
-		utils.DieError(operationError(fmt.Sprintf("box update upload failed: %v", err), "ship box update "+server), 1)
-	}
-	stdout, stderr, code, err := runner.RunSSH(server, serverUpdateCommand(remoteHelper))
+	stdout, stderr, code, err := runner.RunSSH(server, serverUpdateCommand(version.Version))
 	if err != nil || code != 0 {
 		if coded, ok := errcat.As(err); ok {
 			utils.DieError(coded, 1)
@@ -268,6 +243,17 @@ func CmdBoxUpdate(server string) {
 		utils.DieError(operationError(remoteErr.Detail, "ship box update "+server), 1)
 	}
 	fmt.Print(stdout)
+}
+
+func validateBoxUpdateTarget(helperVersion, clientVersion, server string) error {
+	if !release.IsVersion(clientVersion) {
+		return errcat.New(errcat.CodeBoxVersionAmbiguous, errcat.Fields{
+			"helper_version": helperVersion,
+			"client_version": clientVersion,
+			"server":         server,
+		})
+	}
+	return classifyBoxUpdate(helperVersion, clientVersion, server)
 }
 
 func classifyBoxUpdate(helperVersion, clientVersion, server string) error {
@@ -300,25 +286,6 @@ func isGitDescribeVersion(value string) bool {
 	}
 	_, err := strconv.Atoi(parts[0])
 	return err == nil
-}
-
-func helperArchitecture(raw string) (string, error) {
-	switch strings.TrimSpace(raw) {
-	case "x86_64", "amd64":
-		return "amd64", nil
-	case "aarch64", "arm64":
-		return "arm64", nil
-	default:
-		return "", errcat.New(errcat.CodeUnsupportedTargetArchitecture, errcat.Fields{"architecture": strings.TrimSpace(raw)})
-	}
-}
-
-func newBoxUpdateRemoteDir() (string, error) {
-	var token [8]byte
-	if _, err := rand.Read(token[:]); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s/box-update-%x", RemoteDeployTmpDir, token), nil
 }
 
 func CmdMemberAdd(server, source string, role string) {

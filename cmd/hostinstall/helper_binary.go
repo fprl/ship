@@ -2,34 +2,23 @@ package hostinstall
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"debug/elf"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
-	"time"
 
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/release"
 	"github.com/fprl/ship/internal/version"
 )
 
 const (
-	defaultReleaseBaseURL = "https://github.com/fprl/ship/releases/download"
-	defaultReleaseAPIURL  = "https://api.github.com/repos/fprl/ship"
+	defaultReleaseBaseURL = release.DefaultBaseURL
 )
 
-var releaseVersionPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$`)
-
-// PrepareHelperBinaryForArch resolves the same client-matched Linux helper
-// used by box setup. Day-N update deliberately shares setup's release,
-// prebuilt-binary, and local-build behavior.
+// PrepareHelperBinaryForArch resolves the Linux helper used by box setup.
 func (i *Installer) PrepareHelperBinaryForArch(target, arch string) (string, func(), error) {
 	return i.prepareRemoteHelperBinary(Plan{TargetHost: target}, arch)
 }
@@ -155,146 +144,14 @@ func (i *Installer) downloadReleaseHelperBinary(plan Plan, tag string, name stri
 	downloadURL := baseURL + "/" + tag + "/" + name
 	i.info("Downloading ship Linux helper binary from %s", downloadURL)
 
-	client := http.Client{Timeout: 2 * time.Minute}
 	token := releaseDownloadToken(i.Env)
 	remediation := helperDownloadCommand(plan.TargetHost, baseURL, token)
-	data, err := i.downloadReleaseAsset(&client, tag, name, token, downloadURL, baseURL, remediation)
+	data, err := release.DownloadVerifiedAsset(i.Env, tag, name)
 	if err != nil {
-		return "", func() {}, err
-	}
-
-	sumsURL := baseURL + "/" + tag + "/SHA256SUMS"
-	sums, err := i.downloadReleaseAsset(&client, tag, "SHA256SUMS", token, sumsURL, baseURL, remediation)
-	if err != nil {
-		return "", func() {}, err
-	}
-	if err := verifyReleaseAssetChecksum(name, data, sums, remediation); err != nil {
-		return "", func() {}, err
+		return "", func() {}, helperDownloadError(oneLineError(err), remediation)
 	}
 
 	return writeExecutableTempFile(name, bytes.NewReader(data))
-}
-
-func (i *Installer) downloadReleaseAsset(client *http.Client, tag string, name string, token string, downloadURL string, baseURL string, remediation string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, downloadURL, nil)
-	if err != nil {
-		return nil, helperDownloadError("build helper download request failed: "+oneLineError(err), remediation)
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, helperDownloadError("download "+downloadURL+" failed: "+oneLineError(err), remediation)
-	}
-	if resp.StatusCode != http.StatusOK {
-		if token != "" && resp.StatusCode == http.StatusNotFound && canUseReleaseAPI(i.Env, baseURL) {
-			_ = resp.Body.Close()
-			return i.downloadGitHubReleaseAsset(client, tag, name, token, remediation)
-		}
-		_ = resp.Body.Close()
-		return nil, helperDownloadError("download "+downloadURL+" failed: HTTP "+resp.Status, remediation)
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, helperDownloadError("read "+downloadURL+" failed: "+oneLineError(err), remediation)
-	}
-	return data, nil
-}
-
-func (i *Installer) downloadGitHubReleaseAsset(client *http.Client, tag string, name string, token string, remediation string) ([]byte, error) {
-	apiBaseURL := strings.TrimRight(envDefault(i.Env, "SHIP_RELEASE_API_BASE_URL", defaultReleaseAPIURL), "/")
-	releaseURL := apiBaseURL + "/releases/tags/" + url.PathEscape(tag)
-
-	req, err := http.NewRequest(http.MethodGet, releaseURL, nil)
-	if err != nil {
-		return nil, helperDownloadError("build GitHub release request failed: "+oneLineError(err), remediation)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, helperDownloadError("download "+name+" via GitHub API failed: "+oneLineError(err), remediation)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, helperDownloadError("download "+name+" via GitHub API failed: HTTP "+resp.Status, remediation)
-	}
-
-	var release struct {
-		Assets []struct {
-			Name string `json:"name"`
-			URL  string `json:"url"`
-		} `json:"assets"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, helperDownloadError("decode GitHub release response failed: "+oneLineError(err), remediation)
-	}
-
-	var assetURL string
-	for _, asset := range release.Assets {
-		if asset.Name == name {
-			assetURL = asset.URL
-			break
-		}
-	}
-	if assetURL == "" {
-		return nil, helperDownloadError("release "+tag+" does not contain asset "+name, remediation)
-	}
-
-	assetReq, err := http.NewRequest(http.MethodGet, assetURL, nil)
-	if err != nil {
-		return nil, helperDownloadError("build GitHub asset request failed: "+oneLineError(err), remediation)
-	}
-	assetReq.Header.Set("Authorization", "Bearer "+token)
-	assetReq.Header.Set("Accept", "application/octet-stream")
-
-	assetResp, err := client.Do(assetReq)
-	if err != nil {
-		return nil, helperDownloadError("download "+name+" via GitHub API failed: "+oneLineError(err), remediation)
-	}
-	defer assetResp.Body.Close()
-	if assetResp.StatusCode != http.StatusOK {
-		return nil, helperDownloadError("download "+name+" via GitHub API failed: HTTP "+assetResp.Status, remediation)
-	}
-
-	data, err := io.ReadAll(assetResp.Body)
-	if err != nil {
-		return nil, helperDownloadError("read "+name+" via GitHub API failed: "+oneLineError(err), remediation)
-	}
-	return data, nil
-}
-
-func verifyReleaseAssetChecksum(name string, data []byte, sums []byte, remediation string) error {
-	want, err := checksumForAsset(name, sums, remediation)
-	if err != nil {
-		return err
-	}
-	gotBytes := sha256.Sum256(data)
-	got := hex.EncodeToString(gotBytes[:])
-	if !strings.EqualFold(got, want) {
-		return helperDownloadError("checksum mismatch for "+name+": got "+got+", want "+want, remediation)
-	}
-	return nil
-}
-
-func checksumForAsset(name string, sums []byte, remediation string) (string, error) {
-	for _, line := range strings.Split(string(sums), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 2 {
-			continue
-		}
-		if fields[1] == name || strings.TrimPrefix(fields[1], "*") == name {
-			if _, err := hex.DecodeString(fields[0]); err != nil || len(fields[0]) != sha256.Size*2 {
-				return "", helperDownloadError("invalid SHA256SUMS entry for "+name, remediation)
-			}
-			return fields[0], nil
-		}
-	}
-	return "", helperDownloadError("SHA256SUMS does not contain "+name, remediation)
 }
 
 func writeExecutableTempFile(name string, reader io.Reader) (string, func(), error) {
@@ -333,10 +190,6 @@ func writeExecutableTempFile(name string, reader io.Reader) (string, func(), err
 	return path, cleanup, nil
 }
 
-func canUseReleaseAPI(env map[string]string, baseURL string) bool {
-	return strings.TrimSpace(env["SHIP_RELEASE_API_BASE_URL"]) != "" || baseURL == defaultReleaseBaseURL
-}
-
 func releaseDownloadToken(env map[string]string) string {
 	for _, key := range []string{"SHIP_RELEASE_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"} {
 		if token := strings.TrimSpace(env[key]); token != "" {
@@ -347,5 +200,5 @@ func releaseDownloadToken(env map[string]string) string {
 }
 
 func isReleaseVersion(value string) bool {
-	return releaseVersionPattern.MatchString(value)
+	return release.IsVersion(value)
 }

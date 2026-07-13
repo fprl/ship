@@ -8,6 +8,7 @@ RUN apt-get update \
     ca-certificates \
     curl \
     git \
+    openssl \
     openssh-server \
     python3 \
     rsync \

@@ -1744,6 +1744,13 @@ func TestClassifyBoxUpdateVersionSkew(t *testing.T) {
 	})
 }
 
+func TestValidateBoxUpdateTargetRefusesDevelopmentBuild(t *testing.T) {
+	err := validateBoxUpdateTarget("v0.4.0", "v0.4.1-3-gabcdef", "203.0.113.7")
+	if !errcat.Is(err, errcat.CodeBoxVersionAmbiguous) {
+		t.Fatalf("validateBoxUpdateTarget error = %v, want %s", err, errcat.CodeBoxVersionAmbiguous)
+	}
+}
+
 func TestIsGitDescribeVersion(t *testing.T) {
 	tests := []struct {
 		value string

@@ -42,6 +42,7 @@ const (
 	doctorCheckDoctorTimer    = "doctor_timer"
 	doctorCheckDeployJournals = "deploy_journals"
 	doctorCheckHelperVersion  = "helper_version"
+	doctorCheckBoxUpdate      = "box_update"
 
 	reaperTimerUnit = "ship-preview-reaper.timer"
 	doctorTimerUnit = "ship-doctor.timer"
@@ -324,7 +325,59 @@ func doctorChecksFor(opts doctorOptions) []store.DoctorCheck {
 		doctorDoctorTimerCheck(opts.Timer, opts.BoxTarget),
 		doctorDeployJournalsCheck(opts.AppEnvs, opts.BoxTarget),
 		doctorHelperVersionCheck(opts.StateStore, opts.BoxTarget),
+		doctorBoxUpdateCheck(opts.StateStore, opts.BoxTarget),
 	}
+}
+
+func doctorBoxUpdateCheck(stateStore store.Store, boxTarget string) store.DoctorCheck {
+	file, err := os.Open(stateStore.UpdatesJournalPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return doctorBoxUpdateVersionCheck(stateStore, boxTarget)
+		}
+		return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "cannot read update journal: "+singleLine(err.Error()), doctorBoxUpdateCommand(boxTarget))
+	}
+	defer file.Close()
+
+	pending := make(map[string]bool)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var entry updateJournalEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "invalid update journal entry", doctorBoxUpdateCommand(boxTarget))
+		}
+		switch entry.Event {
+		case "started":
+			pending[entry.Version] = true
+		case "completed":
+			delete(pending, entry.Version)
+		default:
+			return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "invalid update journal event", doctorBoxUpdateCommand(boxTarget))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "cannot read update journal: "+singleLine(err.Error()), doctorBoxUpdateCommand(boxTarget))
+	}
+	if len(pending) > 0 {
+		versions := make([]string, 0, len(pending))
+		for target := range pending {
+			versions = append(versions, target)
+		}
+		sort.Strings(versions)
+		return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "incomplete update started for "+strings.Join(versions, ", "), doctorBoxUpdateCommand(boxTarget))
+	}
+	return doctorBoxUpdateVersionCheck(stateStore, boxTarget)
+}
+
+func doctorBoxUpdateVersionCheck(stateStore store.Store, boxTarget string) store.DoctorCheck {
+	hostFile, err := stateStore.ReadHost()
+	if err != nil || strings.TrimSpace(hostFile.Meta.ShipVersion) == "" {
+		return doctorCheck(doctorCheckBoxUpdate, doctorStatusOK, "no incomplete update recorded", doctorRerunCommand(boxTarget))
+	}
+	if hostFile.Meta.ShipVersion != version.Version {
+		return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "helper="+version.Version+" artifacts="+hostFile.Meta.ShipVersion, doctorBoxUpdateCommand(boxTarget))
+	}
+	return doctorCheck(doctorCheckBoxUpdate, doctorStatusOK, "helper and version-owned artifacts="+version.Version, doctorRerunCommand(boxTarget))
 }
 
 func doctorHelperVersionCheck(stateStore store.Store, boxTarget string) store.DoctorCheck {

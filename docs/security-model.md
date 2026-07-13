@@ -126,6 +126,13 @@ network setup, resolved env-file writes, Podman container lifecycle, Caddy
 fragment generation, and app cleanup. Keep that API narrow and auditable
 instead of adding ad hoc sudo commands to the public CLI.
 
+Updating the helper itself is the sharpest edge of this API: `ship box update`
+takes a version and the box fetches and checksum-verifies that release itself,
+so an owner-approved agent can move the box only to a genuine release, never to
+arbitrary root bytes. See ADR-0011 for that decision and why the converge gets
+bounded robustness (lock, journal-first, skew detection) rather than
+transactional rollback.
+
 ## State and Drift
 
 The host should be checkable through the box surface. `ship box ls --json`

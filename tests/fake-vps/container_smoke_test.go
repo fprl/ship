@@ -123,6 +123,7 @@ func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
 	currentHelper := e.buildStampedShip(t, "ship-helper-current", "linux", currentVersion)
 	oldHelper := e.buildStampedShip(t, "ship-helper-old", "linux", oldVersion)
 	newerHelper := e.buildStampedShip(t, "ship-helper-newer", "linux", newerVersion)
+	e.startReleaseFixture(t, currentHelper)
 	recordApp := filepath.Join(e.tmp, "box-version-api")
 	mustMkdir(t, recordApp)
 	writeBoxVersionFixture(t, recordApp)
@@ -174,6 +175,20 @@ func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
 		t.Fatalf("second update = %q, want exact no-op", noOp.stdout)
 	}
 
+	beforeTamperedUpdate := strings.TrimSpace(e.dockerExec(t, "sha256sum /usr/local/bin/ship"))
+	e.dockerExec(t, "printf tampered-helper > /tmp/ship-release-fixture/ship-linux-"+runtime.GOARCH)
+	tamperedClient := e.buildStampedShip(t, "ship-client-tampered", "", newerVersion)
+	tampered := e.runCommand(t, e.repoRoot, clientEnv, nil, tamperedClient, "box", "update", "fake-vps")
+	if tampered.err == nil {
+		t.Fatal("box update accepted a release artifact with a mismatched checksum")
+	}
+	assertContains(t, tampered.stdout+tampered.stderr, "checksum mismatch")
+	afterTamperedUpdate := strings.TrimSpace(e.dockerExec(t, "sha256sum /usr/local/bin/ship"))
+	if afterTamperedUpdate != beforeTamperedUpdate {
+		t.Fatalf("checksum mismatch changed installed helper:\nbefore %s\nafter  %s", beforeTamperedUpdate, afterTamperedUpdate)
+	}
+	assertNotContains(t, e.dockerExec(t, "cat /etc/ship/updates-journal.jsonl"), `"version":"`+newerVersion+`"`)
+
 	e.mustRun(t, e.repoRoot, nil, "docker", "cp", newerHelper, e.container+":/usr/local/bin/ship")
 	behindEnv := append([]string{"SHIP_ERROR_JSON=1"}, clientEnv...)
 	behind := e.runCommand(t, e.repoRoot, behindEnv, nil, clientBinary, "box", "update", "fake-vps")
@@ -181,6 +196,58 @@ func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
 		t.Fatal("older client must not downgrade newer helper")
 	}
 	assertContains(t, behind.stdout+behind.stderr, "client_behind_helper")
+}
+
+func (e *smokeEnv) startReleaseFixture(t *testing.T, helper string) {
+	t.Helper()
+	name := "ship-linux-" + runtime.GOARCH
+	e.dockerExec(t, "rm -rf /tmp/ship-release-fixture && mkdir -p /tmp/ship-release-fixture")
+	e.mustRun(t, e.repoRoot, nil, "docker", "cp", helper, e.container+":/tmp/ship-release-fixture/"+name)
+	e.dockerExec(t, "cd /tmp/ship-release-fixture && sha256sum "+name+" > SHA256SUMS")
+	e.dockerExec(t, `openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/ship-release-fixture/key.pem -out /tmp/ship-release-fixture/cert.pem -days 1 -subj '/CN=github.com' -addext 'subjectAltName=DNS:github.com' >/dev/null 2>&1
+cp /tmp/ship-release-fixture/cert.pem /usr/local/share/ca-certificates/ship-release-fixture.crt
+update-ca-certificates >/dev/null
+printf '127.0.0.1 github.com\n' >> /etc/hosts
+cat > /tmp/ship-release-fixture/server.py <<'PY'
+import http.server
+import os
+import ssl
+
+root = '/tmp/ship-release-fixture'
+class Handler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        return
+    def do_GET(self):
+        name = 'SHA256SUMS' if self.path.endswith('/SHA256SUMS') else os.path.basename(self.path)
+        path = os.path.join(root, name)
+        if not os.path.isfile(path):
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header('Content-Length', str(os.path.getsize(path)))
+        self.end_headers()
+        with open(path, 'rb') as f:
+            self.wfile.write(f.read())
+
+server = http.server.ThreadingHTTPServer(('127.0.0.1', 443), Handler)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain(certfile=root + '/cert.pem', keyfile=root + '/key.pem')
+server.socket = context.wrap_socket(server.socket, server_side=True)
+server.serve_forever()
+PY
+python3 /tmp/ship-release-fixture/server.py >/tmp/ship-release-fixture/server.log 2>&1 &
+echo $! > /tmp/ship-release-fixture/server.pid
+for i in $(seq 1 50); do
+  if curl -fsS https://github.com/fprl/ship/releases/download/v0.4.1/SHA256SUMS >/dev/null 2>&1; then exit 0; fi
+  sleep 0.1
+done
+cat /tmp/ship-release-fixture/server.log >&2
+exit 1`)
+	t.Cleanup(func() {
+		e.dockerExec(t, `if [ -f /tmp/ship-release-fixture/server.pid ]; then kill "$(cat /tmp/ship-release-fixture/server.pid)" 2>/dev/null || true; fi
+rm -f /usr/local/share/ca-certificates/ship-release-fixture.crt
+update-ca-certificates >/dev/null || true`)
+	})
 }
 
 func (e *smokeEnv) buildStampedShip(t *testing.T, name, goos, stampedVersion string) string {
@@ -1475,11 +1542,17 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	assertContains(t, listing, secondID+" agent-role app=roleapi env=prod class=production release="+prodRelease+" ")
 
 	setAgent()
-	updateDenied := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "update", "fake-vps")
+	const updateHelperVersion = "v0.4.0"
+	const updateClientVersion = "v0.4.1"
+	oldHelper := e.buildStampedShip(t, "agent-update-helper-old", "linux", updateHelperVersion)
+	updateClient := e.buildStampedShip(t, "agent-update-client", "", updateClientVersion)
+	e.mustRun(t, e.repoRoot, nil, "docker", "cp", oldHelper, e.container+":/usr/local/bin/ship")
+	updateDenied := e.runCommand(t, app, agentEnv, nil, updateClient, "box", "update", "fake-vps")
 	if updateDenied.err == nil {
 		t.Fatal("agent box update should require approval")
 	}
 	assertContains(t, updateDenied.stdout+updateDenied.stderr, "approval required for box update")
+	e.mustRun(t, e.repoRoot, nil, "docker", "cp", e.linuxBin, e.container+":/usr/local/bin/ship")
 
 	setOwner()
 	journal := e.ssh(t, "cat "+identity.DeployJournalFile("roleapi", productionEnv))

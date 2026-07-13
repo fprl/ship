@@ -7,12 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/provision"
 	"github.com/fprl/ship/internal/provision/local"
+	"github.com/fprl/ship/internal/release"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 	"github.com/fprl/ship/internal/version"
@@ -20,7 +22,14 @@ import (
 
 type updateHelperCmd struct {
 	MemberFingerprint string `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
-	Binary            string `name:"binary" required:"" help:"Uploaded client-matched helper binary."`
+	Version           string `name:"version" required:"" help:"Released ship version to converge."`
+}
+
+var runVerifiedUpdateLocal = func(binary string) error {
+	cmd := exec.Command(binary, "server", "update-local", "--binary", binary)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func (c updateHelperCmd) BeforeApply() error { return requireRoot() }
@@ -30,18 +39,51 @@ func (c updateHelperCmd) Run() error {
 	if _, err := authorizeHelper(helperVerbBoxMutation, authTargetForBox("box update")); err != nil {
 		utils.DieError(err, 1)
 	}
-	if !validUpdateBinary(c.Binary) {
-		return fmt.Errorf("invalid update helper path: %s", c.Binary)
+	if err := validateUpdateTarget(version.Version, c.Version); err != nil {
+		return err
 	}
-	cmd := exec.Command(c.Binary, "server", "update-local", "--binary", c.Binary)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+
+	lock, err := acquireBoxUpdateLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+
+	name := "ship-linux-" + runtime.GOARCH
+	data, err := release.DownloadVerifiedAsset(environmentMap(), c.Version, name)
+	if err != nil {
+		return fmt.Errorf("download verified release helper %s: %w; restore outbound HTTPS access to release artifacts, then rerun ship box update", c.Version, err)
+	}
+	return runVerifiedUpdate(c.Version, func() error {
+		binary, cleanup, err := writeVerifiedUpdateBinary(data)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		return runVerifiedUpdateLocal(binary)
+	})
 }
 
-// updateLocalCmd is invoked by the uploaded binary after the installed helper
-// has checked the member role. Keeping artifact rendering in the uploaded
-// binary means an update always writes this client's owned files.
+func validateUpdateTarget(installed, target string) error {
+	if !release.IsVersion(target) {
+		return fmt.Errorf("box update requires a released version, got %q; rerun ship box setup for a development build", target)
+	}
+	if compareShipVersions(installed, target) >= 0 {
+		return fmt.Errorf("box update target %s must be strictly newer than installed helper %s", target, installed)
+	}
+	return nil
+}
+
+func runVerifiedUpdate(target string, mutate func() error) error {
+	if err := appendUpdateJournal(updateJournalEntry{Event: "started", Version: target}); err != nil {
+		return err
+	}
+	return mutate()
+}
+
+// updateLocalCmd is invoked by the verified release binary after the installed
+// helper has checked the member role. Rendering from that binary keeps every
+// version-owned artifact aligned with the downloaded release.
 type updateLocalCmd struct {
 	Binary string `name:"binary" required:""`
 }
@@ -58,11 +100,40 @@ func (c updateLocalCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	if err := appendUpdateJournal(summary); err != nil {
+	if err := appendUpdateJournal(updateJournalEntry{
+		Event:   "completed",
+		Version: version.Version,
+		Changes: summary.OperationsChanged,
+	}); err != nil {
 		return err
 	}
 	fmt.Printf("box updated: %s (%d changes)\n", version.Version, summary.OperationsChanged)
 	return nil
+}
+
+func writeVerifiedUpdateBinary(data []byte) (string, func(), error) {
+	dir, err := os.MkdirTemp(host.DeployTmpDir(), "box-update-")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create verified helper directory: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	path := filepath.Join(dir, "helper")
+	if err := os.WriteFile(path, data, 0755); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("write verified helper: %w", err)
+	}
+	return path, cleanup, nil
+}
+
+func environmentMap() map[string]string {
+	env := make(map[string]string)
+	for _, entry := range os.Environ() {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok {
+			env[name] = value
+		}
+	}
+	return env
 }
 
 func validUpdateBinary(path string) bool {
@@ -75,18 +146,16 @@ func validUpdateBinary(path string) bool {
 
 type updateJournalEntry struct {
 	SchemaVersion int    `json:"schema_version"`
+	Event         string `json:"event"`
 	At            string `json:"at"`
 	Version       string `json:"version"`
 	Changes       int    `json:"changes"`
 }
 
-func appendUpdateJournal(summary provision.InstallSummary) error {
-	entry, err := json.Marshal(updateJournalEntry{
-		SchemaVersion: 1,
-		At:            time.Now().UTC().Format(time.RFC3339Nano),
-		Version:       version.Version,
-		Changes:       summary.OperationsChanged,
-	})
+func appendUpdateJournal(entry updateJournalEntry) error {
+	entry.SchemaVersion = 1
+	entry.At = time.Now().UTC().Format(time.RFC3339Nano)
+	data, err := json.Marshal(entry)
 	if err != nil {
 		return err
 	}
@@ -96,6 +165,8 @@ func appendUpdateJournal(summary provision.InstallSummary) error {
 		return err
 	}
 	defer file.Close()
-	_, err = file.Write(append(entry, '\n'))
-	return err
+	if _, err := file.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	return file.Sync()
 }

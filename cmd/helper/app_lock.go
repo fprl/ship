@@ -32,6 +32,14 @@ func appNamedLockPath(app, name string) string {
 	return filepath.Join(appEnvLockDir(), fmt.Sprintf("app-%s-%s.lock", app, name))
 }
 
+func boxUpdateLockPath() string {
+	return filepath.Join(appEnvLockDir(), "box-update.lock")
+}
+
+func acquireBoxUpdateLock() (*appEnvLock, error) {
+	return acquireLockFile(boxUpdateLockPath())
+}
+
 func acquireAppEnvLock(app, env string) (*appEnvLock, error) {
 	if err := validateAppEnv(app, env); err != nil {
 		return nil, err
