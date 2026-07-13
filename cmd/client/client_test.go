@@ -1663,6 +1663,61 @@ func (f *fakeSSHRunner) RunSSH(_ string, command string) (string, string, int, e
 	return "", fmt.Sprintf("unexpected command: %s", command), 1, nil
 }
 
+func TestDeployHostPreflight(t *testing.T) {
+	ctx := &config.AppContext{Server: "example.com"}
+	agentShellRefusal := errcat.WithCause(
+		errcat.New(errcat.CodeOperationFailed, errcat.Fields{"detail": "shell command rejected"}),
+		"agent_shell_refused: agent keys use the server API",
+	).(*errcat.Error).JSONLine()
+	transport := errcat.New(errcat.CodeHostKeyChanged, errcat.Fields{"box": "example.com"})
+
+	for _, tt := range []struct {
+		name     string
+		result   fakeSSHResult
+		wantCode errcat.Code
+		wantNil  bool
+	}{
+		{name: "transport coded error is unchanged", result: fakeSSHResult{err: transport}, wantCode: errcat.CodeHostKeyChanged},
+		{name: "agent shell refusal proceeds through server API", result: fakeSSHResult{stdout: agentShellRefusal, code: 1}, wantNil: true},
+		{name: "missing ship marker", result: fakeSSHResult{stdout: "login banner\nship_preflight:no_ship\n", code: 1}, wantCode: errcat.CodeBoxNotInitialized},
+		{name: "missing rsync marker", result: fakeSSHResult{stdout: "ship_preflight:no_rsync", code: 1}, wantCode: errcat.CodeBoxMissingTool},
+		{name: "marker-like banner is not a marker", result: fakeSSHResult{stdout: "notice: ship_preflight:no_ship is reserved", code: 1}, wantCode: errcat.CodeSSHUnreachable},
+		{name: "unmarked failure is unreachable", result: fakeSSHResult{stderr: "remote command failed", code: 1}, wantCode: errcat.CodeSSHUnreachable},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
+				deployHostPreflightCommand: {tt.result},
+			}}
+
+			err := deployHostPreflight(runner, ctx)
+			if tt.wantNil {
+				if err != nil {
+					t.Fatalf("deployHostPreflight() error = %v, want nil", err)
+				}
+			} else {
+				coded, ok := errcat.As(err)
+				if !ok || coded.Code() != tt.wantCode {
+					t.Fatalf("deployHostPreflight() error = %v, want %s", err, tt.wantCode)
+				}
+				if tt.wantCode == errcat.CodeHostKeyChanged && err != transport {
+					t.Fatalf("transport coded error was replaced: got %v, want %v", err, transport)
+				}
+			}
+			assertCommandCount(t, runner.commands, deployHostPreflightCommand, 1)
+		})
+	}
+
+	t.Run("healthy box uses one compound probe", func(t *testing.T) {
+		runner := &fakeSSHRunner{responses: map[string]string{deployHostPreflightCommand: ""}}
+		if err := deployHostPreflight(runner, ctx); err != nil {
+			t.Fatal(err)
+		}
+		if len(runner.commands) != 1 || runner.commands[0] != deployHostPreflightCommand {
+			t.Fatalf("commands = %#v, want exactly [%q]", runner.commands, deployHostPreflightCommand)
+		}
+	})
+}
+
 func TestEnsureRemoteEnvReadyPreparesMissingEnv(t *testing.T) {
 	ctx := &config.AppContext{
 		AppName: "api",
@@ -1672,9 +1727,7 @@ func TestEnsureRemoteEnvReadyPreparesMissingEnv(t *testing.T) {
 	preflightCmd := serverAppPreflightJSONCommand("api", "production", nil)
 	runner := &fakeSSHRunner{
 		responses: map[string]string{
-			"true":                        `ok`,
-			"test -x /usr/local/bin/ship": "",
-			"command -v rsync >/dev/null": "",
+			deployHostPreflightCommand:                    "",
 			serverAppSetupEnvCommand("api", "production"): "App api (production) is ready",
 		},
 		sequences: map[string][]fakeSSHResult{
@@ -1692,9 +1745,7 @@ func TestEnsureRemoteEnvReadyPreparesMissingEnv(t *testing.T) {
 	if !strings.Contains(joined, serverAppSetupEnvCommand("api", "production")) {
 		t.Fatalf("expected deploy preparation to run setup-env, got:\n%s", joined)
 	}
-	assertCommandCount(t, runner.commands, "true", 1)
-	assertCommandCount(t, runner.commands, "test -x /usr/local/bin/ship", 1)
-	assertCommandCount(t, runner.commands, "command -v rsync >/dev/null", 1)
+	assertCommandCount(t, runner.commands, deployHostPreflightCommand, 1)
 }
 
 func assertCommandCount(t *testing.T, commands []string, command string, want int) {
@@ -1720,9 +1771,7 @@ func TestEnsureRemoteEnvReadyDoesNotPrepareWhenSecretsAreMissing(t *testing.T) {
 	preflightCmd := serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})
 	runner := &fakeSSHRunner{
 		responses: map[string]string{
-			"true":                        `ok`,
-			"test -x /usr/local/bin/ship": "",
-			"command -v rsync >/dev/null": "",
+			deployHostPreflightCommand: "",
 		},
 		failures: map[string]string{
 			preflightCmd: `{"app":"api","env":"production","healthy":false,"issues":[{"code":"env_missing","message":"app env is not prepared: missing /var/apps/api.production"},{"code":"secret_missing","message":"missing secret DATABASE_URL; run ` + "`" + `ship secret set DATABASE_URL` + "`" + `"}]}`,
@@ -1748,9 +1797,7 @@ func TestEnsureRemoteEnvReadyUsesPostPrepareBoundaryForSecondPreflightFailure(t 
 	preflightCmd := serverAppPreflightJSONCommand("api", "production", nil)
 	runner := &fakeSSHRunner{
 		responses: map[string]string{
-			"true":                        `ok`,
-			"test -x /usr/local/bin/ship": "",
-			"command -v rsync >/dev/null": "",
+			deployHostPreflightCommand:                    "",
 			serverAppSetupEnvCommand("api", "production"): "App api (production) is ready",
 		},
 		sequences: map[string][]fakeSSHResult{

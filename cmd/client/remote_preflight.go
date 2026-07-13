@@ -10,6 +10,13 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 )
 
+const deployHostPreflightCommand = "test -x /usr/local/bin/ship || { echo ship_preflight:no_ship; exit 1; }; command -v rsync >/dev/null || { echo ship_preflight:no_rsync; exit 1; }"
+
+const (
+	deployHostPreflightNoShipMarker  = "ship_preflight:no_ship"
+	deployHostPreflightNoRsyncMarker = "ship_preflight:no_rsync"
+)
+
 func ensureRemoteEnvReadyForDeploy(runner sshRunner, ctx *config.AppContext) error {
 	if err := deployHostPreflight(runner, ctx); err != nil {
 		return err
@@ -38,34 +45,41 @@ func ensureRemoteEnvReadyForDeploy(runner sshRunner, ctx *config.AppContext) err
 }
 
 func deployHostPreflight(runner sshRunner, ctx *config.AppContext) error {
-	if stdout, stderr, code, err := runner.RunSSH(ctx.Server, "true"); err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			return coded
-		}
-		if agentShellRefusedRemote(stdout, stderr) {
-			return nil
-		}
-		return errcat.New(errcat.CodeSSHUnreachable, errcat.Fields{
+	stdout, stderr, code, err := runner.RunSSH(ctx.Server, deployHostPreflightCommand)
+	if _, ok := errcat.As(err); ok {
+		return err
+	}
+	if agentShellRefusedRemote(stdout, stderr) {
+		return nil
+	}
+	if deployHostPreflightMarkerPresent(stdout, deployHostPreflightNoShipMarker) {
+		return errcat.New(errcat.CodeBoxNotInitialized, errcat.Fields{
 			"target": ctx.Server,
-			"detail": commandDetail(stdout, stderr, "remote SSH command failed"),
+			"detail": commandDetail(stdout, stderr, "missing ship server API"),
 		})
 	}
-	if stdout, stderr, code, err := runner.RunSSH(ctx.Server, "test -x /usr/local/bin/ship"); err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			return coded
-		}
-		return errcat.New(errcat.CodeBoxNotInitialized, errcat.Fields{"target": ctx.Server, "detail": commandDetail(stdout, stderr, "missing ship server API")})
-	}
-	if _, _, code, err := runner.RunSSH(ctx.Server, "command -v rsync >/dev/null"); err != nil || code != 0 {
-		if coded, ok := errcat.As(err); ok {
-			return coded
-		}
+	if deployHostPreflightMarkerPresent(stdout, deployHostPreflightNoRsyncMarker) {
 		return errcat.New(errcat.CodeBoxMissingTool, errcat.Fields{
 			"target": ctx.Server,
 			"tool":   "rsync",
 		})
 	}
-	return nil
+	if err == nil && code == 0 {
+		return nil
+	}
+	return errcat.New(errcat.CodeSSHUnreachable, errcat.Fields{
+		"target": ctx.Server,
+		"detail": commandDetail(stdout, stderr, "remote SSH command failed"),
+	})
+}
+
+func deployHostPreflightMarkerPresent(stdout, marker string) bool {
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+		if line == marker {
+			return true
+		}
+	}
+	return false
 }
 
 func agentShellRefusedRemote(stdout, stderr string) bool {
