@@ -36,7 +36,10 @@ func ensureRemoteEnvReadyForDeploy(runner sshRunner, ctx *config.AppContext) err
 	}
 	report, err = fetchRemotePreflightReport(runner, ctx)
 	if err != nil {
-		return deployPreflightAfterPreparationError(preflightErrorDetail(err))
+		if errcat.Is(err, errcat.CodeRemotePreflightFailed) {
+			return deployPreflightAfterPreparationError(preflightErrorDetail(err))
+		}
+		return err
 	}
 	if !report.Healthy {
 		return remotePreflightError(report, true)
@@ -89,7 +92,13 @@ func agentShellRefusedRemote(stdout, stderr string) bool {
 
 func fetchRemotePreflightReport(runner sshRunner, ctx *config.AppContext) (remotePreflightReport, error) {
 	stdout, stderr, code, err := runner.RunSSH(ctx.Server, serverAppPreflightJSONCommand(ctx.AppName, ctx.EnvName, secretRefKeys(ctx.SecretRefs)))
+	if _, ok := errcat.As(err); ok {
+		return remotePreflightReport{}, err
+	}
 	if report, ok := parseRemotePreflightReport(stdout); ok {
+		if report.App != ctx.AppName || report.Env != ctx.EnvName {
+			return remotePreflightReport{}, deployPreflightError("preflight response for wrong app/env")
+		}
 		if code != 0 && report.Healthy {
 			return remotePreflightReport{}, deployPreflightError("preflight command failed but reported healthy")
 		}

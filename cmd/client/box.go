@@ -202,6 +202,9 @@ func runBoxDoctorJSON(runner *CommandRunner, server string) (string, error) {
 	}
 	if err != nil || code != 0 {
 		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "box doctor failed")
+		if outcome.TransportCoded != nil {
+			return "", outcome.TransportCoded
+		}
 		if outcome.RemoteCoded != nil {
 			return "", outcome.RemoteCoded
 		}

@@ -667,7 +667,6 @@ func TestCommandRunnerEnvKeyWinsOverShipIdentity(t *testing.T) {
 func TestSSHHostKeyFailureMapsToErrcat(t *testing.T) {
 	err := mapSSHTransportError(
 		"203.0.113.7",
-		"",
 		"@@@@@@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@@@@@@\nHost key verification failed.",
 		255,
 		errors.New("exit status 255"),
@@ -678,6 +677,33 @@ func TestSSHHostKeyFailureMapsToErrcat(t *testing.T) {
 	want := "box host key changed\nSSH host key for 203.0.113.7 is unknown or changed; if the box was rebuilt, re-establish the pin; if not, investigate before trusting this host\nnext: ship box setup <ssh-target>"
 	if err.Error() != want {
 		t.Fatalf("host key error mismatch\nwant:\n%s\ngot:\n%s", want, err)
+	}
+}
+
+func TestSSHHostKeyFailureDoesNotScanStdout(t *testing.T) {
+	bin := t.TempDir()
+	ssh := filepath.Join(bin, "ssh")
+	if err := os.WriteFile(ssh, []byte("#!/bin/sh\necho 'the remote program reported an offending key'\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	_, _, _, err := (&CommandRunner{}).RunSSH("203.0.113.7", "false")
+	if errcat.Is(err, errcat.CodeHostKeyChanged) {
+		t.Fatalf("stdout text was misclassified as a host-key failure: %v", err)
+	}
+}
+
+func TestRunBoxDoctorJSONPreservesTransportCodedError(t *testing.T) {
+	bin := t.TempDir()
+	ssh := filepath.Join(bin, "ssh")
+	if err := os.WriteFile(ssh, []byte("#!/bin/sh\necho 'Host key verification failed.' >&2\nexit 255\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	_, err := runBoxDoctorJSON(&CommandRunner{}, "203.0.113.7")
+	if !errcat.Is(err, errcat.CodeHostKeyChanged) {
+		t.Fatalf("error = %v, want %s", err, errcat.CodeHostKeyChanged)
 	}
 }
 
@@ -1818,6 +1844,55 @@ func TestEnsureRemoteEnvReadyUsesPostPrepareBoundaryForSecondPreflightFailure(t 
 	if strings.Contains(err.Error(), "No remote files, routes, or containers were changed.") {
 		t.Fatalf("post-prepare failure must not claim no remote files changed, got %v", err)
 	}
+}
+
+func TestEnsureRemoteEnvReadyPreservesCodedSecondPreflightFailure(t *testing.T) {
+	ctx := &config.AppContext{AppName: "api", EnvName: "production", Server: "example.com"}
+	preflightCmd := serverAppPreflightJSONCommand("api", "production", nil)
+	transport := errcat.New(errcat.CodeHostKeyChanged, errcat.Fields{"box": "example.com"})
+	runner := &fakeSSHRunner{
+		responses: map[string]string{
+			deployHostPreflightCommand:                    "",
+			serverAppSetupEnvCommand("api", "production"): "App api (production) is ready",
+		},
+		sequences: map[string][]fakeSSHResult{
+			preflightCmd: {
+				{stdout: `{"app":"api","env":"production","healthy":false,"issues":[{"code":"env_missing","message":"environment missing"}]}`, code: 1},
+				{err: transport},
+			},
+		},
+	}
+
+	err := ensureRemoteEnvReadyForDeploy(runner, ctx)
+	if err != transport {
+		t.Fatalf("second coded preflight error = %v, want original %v", err, transport)
+	}
+}
+
+func TestFetchRemotePreflightReportRejectsWrongTargetAndCodedErrors(t *testing.T) {
+	ctx := &config.AppContext{AppName: "api", EnvName: "production", Server: "example.com"}
+	command := serverAppPreflightJSONCommand("api", "production", nil)
+
+	t.Run("wrong app env", func(t *testing.T) {
+		runner := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
+			command: {{stdout: `{"app":"other","env":"preview","healthy":true,"issues":[]}`}},
+		}}
+		_, err := fetchRemotePreflightReport(runner, ctx)
+		if !errcat.Is(err, errcat.CodeRemotePreflightFailed) || !strings.Contains(err.Error(), "wrong app/env") {
+			t.Fatalf("error = %v, want remote_preflight_failed for wrong app/env", err)
+		}
+	})
+
+	t.Run("transport coded error wins over parseable report", func(t *testing.T) {
+		transport := errcat.New(errcat.CodeHostKeyChanged, errcat.Fields{"box": "example.com"})
+		runner := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
+			command: {{stdout: `{"app":"api","env":"production","healthy":true,"issues":[]}`, err: transport}},
+		}}
+		_, err := fetchRemotePreflightReport(runner, ctx)
+		if err != transport {
+			t.Fatalf("error = %v, want original transport error %v", err, transport)
+		}
+	})
 }
 
 func TestReadBoxVersionMapsPreUpdateBoxesToSetupRequired(t *testing.T) {

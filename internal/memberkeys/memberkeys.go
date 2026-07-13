@@ -9,6 +9,7 @@ import (
 
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/store"
+	"golang.org/x/crypto/ssh"
 )
 
 type AuthorizedKey struct {
@@ -64,7 +65,7 @@ func NormalizeLine(line, comment string) (AuthorizedKey, error) {
 	if fields[1] == "" {
 		return AuthorizedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "public key body is empty"})
 	}
-	fingerprint, err := PublicKeyFingerprint(fields[1])
+	fingerprint, err := PublicKeyFingerprint(fields[0], fields[1])
 	if err != nil {
 		return AuthorizedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": err.Error()})
 	}
@@ -96,9 +97,9 @@ func ParseLine(line string) (AuthorizedKey, error) {
 	if len(fields) < 2 || !SupportedType(fields[0]) {
 		return AuthorizedKey{}, fmt.Errorf("not a plain SSH public key")
 	}
-	fingerprint, err := PublicKeyFingerprint(fields[1])
+	fingerprint, err := PublicKeyFingerprint(fields[0], fields[1])
 	if err != nil {
-		return AuthorizedKey{}, err
+		return AuthorizedKey{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": err.Error()})
 	}
 	comment := ""
 	if len(fields) > 2 {
@@ -343,13 +344,20 @@ func KeyMaterial(kind, body string) string {
 	return kind + "\x00" + body
 }
 
-func PublicKeyFingerprint(body string) (string, error) {
+func PublicKeyFingerprint(kind, body string) (string, error) {
 	blob, err := base64.StdEncoding.DecodeString(body)
 	if err != nil {
 		return "", fmt.Errorf("public key body is not valid base64")
 	}
 	if len(blob) == 0 {
 		return "", fmt.Errorf("public key body is empty")
+	}
+	key, err := ssh.ParsePublicKey(blob)
+	if err != nil {
+		return "", fmt.Errorf("public key body is not a valid SSH public key")
+	}
+	if key.Type() != kind {
+		return "", fmt.Errorf("public key type %q does not match declared type %q", key.Type(), kind)
 	}
 	sum := sha256.Sum256(blob)
 	return "SHA256:" + base64.RawStdEncoding.EncodeToString(sum[:]), nil

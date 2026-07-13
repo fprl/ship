@@ -64,6 +64,23 @@ func TestShareOnProductionRender(t *testing.T) {
 	}
 }
 
+func TestParseJSONUnknownCodeDegradesToOperationFailed(t *testing.T) {
+	input := `{"error":{"code":"helper_new_failure","message":"new helper failure","cause":"new cause","remediation":"ship retry"}}`
+	err, ok := ParseJSON(input)
+	if !ok {
+		t.Fatal("ParseJSON() did not recognize error JSON")
+	}
+	if err.Code() != CodeOperationFailed {
+		t.Fatalf("code = %q, want %q", err.Code(), CodeOperationFailed)
+	}
+	if err.Message() != "new helper failure" || err.Remediation() != "ship retry" {
+		t.Fatalf("payload fields were not preserved: %+v", err.Object())
+	}
+	if !strings.Contains(err.Cause(), "helper_new_failure") || !strings.Contains(err.Cause(), "new cause") {
+		t.Fatalf("cause = %q, want original code and cause", err.Cause())
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)

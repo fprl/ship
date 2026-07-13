@@ -587,7 +587,7 @@ func New(code Code, fields Fields) *Error {
 func MustLookup(code Code) Entry {
 	entry, ok := catalogue[code]
 	if !ok {
-		panic(fmt.Sprintf("uncatalogued error code: %s", code))
+		panic(fmt.Sprintf("uncatalogued error code: %s", string(code)))
 	}
 	return entry
 }
@@ -653,7 +653,20 @@ func (e *Error) JSONLine() string {
 
 func FromObject(obj ErrorObject) *Error {
 	code := Code(obj.Code)
-	MustLookup(code)
+	if _, ok := catalogue[code]; !ok {
+		cause := obj.Cause
+		if cause == "" {
+			cause = fmt.Sprintf("received uncatalogued error code %q", obj.Code)
+		} else {
+			cause = fmt.Sprintf("received uncatalogued error code %q: %s", obj.Code, cause)
+		}
+		return &Error{
+			code:        CodeOperationFailed,
+			message:     obj.Message,
+			cause:       cause,
+			remediation: obj.Remediation,
+		}
+	}
 	return &Error{
 		code:        code,
 		message:     obj.Message,

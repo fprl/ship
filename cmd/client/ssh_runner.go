@@ -250,7 +250,7 @@ func (r *CommandRunner) RunSSH(server string, command string) (string, string, i
 	command = r.withMemberFingerprint(command)
 	args = append(args, deploySSHTarget(server), command)
 	stdout, stderr, code, err := runCommand("ssh", args, "")
-	return stdout, stderr, code, mapSSHTransportError(server, stdout, stderr, code, err)
+	return stdout, stderr, code, mapSSHTransportError(server, stderr, code, err)
 }
 
 // RunSSHWithStdin pipes `stdin` to the remote command and captures
@@ -282,7 +282,7 @@ func (r *CommandRunner) RunSSHWithStdin(server string, command string, stdin []b
 	}
 	out := stdout.String()
 	errOut := stderr.String()
-	return out, errOut, code, mapSSHTransportError(server, out, errOut, code, err)
+	return out, errOut, code, mapSSHTransportError(server, errOut, code, err)
 }
 
 func (r *CommandRunner) RunSSHPassthrough(server string, command string) error {
@@ -336,8 +336,8 @@ func (r *CommandRunner) preflightHostKey(server string) error {
 		args = append(args, r.SshOptions...)
 	}
 	args = append(args, deploySSHTarget(server), "true")
-	stdout, stderr, code, err := runCommand("ssh", args, "")
-	mapped := mapSSHTransportError(server, stdout, stderr, code, err)
+	_, stderr, code, err := runCommand("ssh", args, "")
+	mapped := mapSSHTransportError(server, stderr, code, err)
 	if coded, ok := errcat.As(mapped); ok && coded.Code() == errcat.CodeHostKeyChanged {
 		return coded
 	}
@@ -376,7 +376,7 @@ func (r *CommandRunner) Upload(local string, remote string, server string) error
 	args = append(args, "-az", local, fmt.Sprintf("%s:%s", deploySSHTarget(server), remote))
 	_, stderr, code, err := runCommand("rsync", args, "")
 	if err != nil || code != 0 {
-		if sshHostKeyFailure("", stderr) {
+		if sshHostKeyFailure(stderr) {
 			return hostKeyChangedError(server)
 		}
 		return operationError(fmt.Sprintf("rsync failed (exit %d): %s", code, strings.TrimSpace(stderr)), "ship")
@@ -522,8 +522,8 @@ func operationError(detail, command string) error {
 	})
 }
 
-func mapSSHTransportError(server, stdout, stderr string, code int, err error) error {
-	if (err != nil || code != 0) && sshHostKeyFailure(stdout, stderr) {
+func mapSSHTransportError(server, stderr string, code int, err error) error {
+	if (err != nil || code != 0) && sshHostKeyFailure(stderr) {
 		return hostKeyChangedError(server)
 	}
 	return err
@@ -537,8 +537,8 @@ func hostKeyChangedError(server string) error {
 	return errcat.New(errcat.CodeHostKeyChanged, errcat.Fields{"box": box})
 }
 
-func sshHostKeyFailure(stdout, stderr string) bool {
-	text := strings.ToLower(stdout + "\n" + stderr)
+func sshHostKeyFailure(stderr string) bool {
+	text := strings.ToLower(stderr)
 	for _, pattern := range []string{
 		"remote host identification has changed",
 		"host key verification failed",

@@ -225,7 +225,7 @@ func rerenderProtectedPreviewLocked(appName, env string, credentials previewProt
 		return err
 	}
 	if err := reloadCaddyOrRestore(path, previous, existed); err != nil {
-		return err
+		return caddyStageActionError(err, "updating preview protection", path)
 	}
 	return nil
 }

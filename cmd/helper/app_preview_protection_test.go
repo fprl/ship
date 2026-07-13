@@ -1,8 +1,10 @@
 package helper
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fprl/ship/internal/secrets"
@@ -30,5 +32,17 @@ func TestPreviewProtectionCredentialsAreAppWideAndIdempotent(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("credential file mode = %o, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestPreviewProtectionCaddyFailureIncludesManualFixPath(t *testing.T) {
+	path := "/etc/caddy/conf.d/api.preview.caddy"
+	err := caddyStageActionError(caddyReloadStageError{
+		Stage:      "validate",
+		Err:        errors.New("invalid config"),
+		RestoreErr: errors.New("restore failed"),
+	}, "updating preview protection", path)
+	if !strings.Contains(err.Error(), "manual fix required at "+path) {
+		t.Fatalf("error = %q, want manual fix path", err)
 	}
 }
