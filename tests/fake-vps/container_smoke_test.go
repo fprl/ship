@@ -596,7 +596,7 @@ func (e *smokeEnv) testDailyVerbHostKeyTOFU(t *testing.T) {
 	copyShipIdentityForHome(t, e.shipHome, freshHome)
 	knownHosts := filepath.Join(freshHome, ".config", "ship", "known_hosts")
 
-	first := e.runCommand(t, app, []string{"HOME=" + freshHome}, nil, e.goBin, "status")
+	first := e.runCommand(t, app, []string{"HOME=" + freshHome, "XDG_CONFIG_HOME="}, nil, e.goBin, "status")
 	if first.err != nil {
 		t.Fatalf("daily status should pin unknown host and succeed: %v\nstdout:\n%s\nstderr:\n%s", first.err, first.stdout, first.stderr)
 	}
@@ -604,7 +604,7 @@ func (e *smokeEnv) testDailyVerbHostKeyTOFU(t *testing.T) {
 	pinned := readFile(t, knownHosts)
 	assertContains(t, pinned, "fake-vps ")
 
-	second := e.runCommand(t, app, []string{"HOME=" + freshHome}, nil, e.goBin, "status")
+	second := e.runCommand(t, app, []string{"HOME=" + freshHome, "XDG_CONFIG_HOME="}, nil, e.goBin, "status")
 	if second.err != nil {
 		t.Fatalf("daily status should verify existing host pin: %v\nstdout:\n%s\nstderr:\n%s", second.err, second.stdout, second.stderr)
 	}
@@ -614,7 +614,7 @@ func (e *smokeEnv) testDailyVerbHostKeyTOFU(t *testing.T) {
 	if err := os.WriteFile(knownHosts, []byte("fake-vps "+wrongKey+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	changed := e.runCommand(t, app, []string{"HOME=" + freshHome}, nil, e.goBin, "status")
+	changed := e.runCommand(t, app, []string{"HOME=" + freshHome, "XDG_CONFIG_HOME="}, nil, e.goBin, "status")
 	if changed.err == nil {
 		t.Fatalf("daily status should refuse changed host key\nstdout:\n%s\nstderr:\n%s", changed.stdout, changed.stderr)
 	}

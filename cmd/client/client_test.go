@@ -610,6 +610,7 @@ func TestResolveReadPreviewEnvPropagatesUnknownBranchError(t *testing.T) {
 func TestCommandRunnerWithoutEnvKeyPinsShipIdentity(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("USER", "runner-user")
 	t.Setenv("SHIP_SSH_KEY", "")
 
@@ -635,6 +636,7 @@ func TestCommandRunnerWithoutEnvKeyPinsShipIdentity(t *testing.T) {
 func TestCommandRunnerEnvKeyWinsOverShipIdentity(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("USER", "runner-user")
 	t.Setenv("SHIP_SSH_KEY", generatePrivateKeyForClientTest(t))
 

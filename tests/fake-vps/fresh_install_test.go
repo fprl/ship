@@ -354,7 +354,7 @@ func readFile(t *testing.T, path string) string {
 
 func (e *smokeEnv) assertHostDoctorNotInstalled(t *testing.T) {
 	t.Helper()
-	doctorEnv := []string{"HOME=" + filepath.Join(e.tmp, "preinstall-doctor-home")}
+	doctorEnv := []string{"HOME=" + filepath.Join(e.tmp, "preinstall-doctor-home"), "XDG_CONFIG_HOME="}
 	result := e.runCommand(t, e.repoRoot, doctorEnv, nil, e.goBin, "box", "doctor", "fake-vps")
 	if result.err == nil {
 		t.Fatalf("box doctor passed before install\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
@@ -377,7 +377,7 @@ func (e *smokeEnv) assertWrongHostKeyRefuses(t *testing.T) {
 	if err := os.WriteFile(knownHosts, []byte(readFile(t, filepath.Join(e.shipHome, ".config", "ship", "known_hosts"))), 0600); err != nil {
 		t.Fatal(err)
 	}
-	clean := e.runCommand(t, e.repoRoot, []string{"HOME=" + home}, nil, e.goBin, "box", "doctor", "fake-vps")
+	clean := e.runCommand(t, e.repoRoot, []string{"HOME=" + home, "XDG_CONFIG_HOME="}, nil, e.goBin, "box", "doctor", "fake-vps")
 	if clean.err != nil {
 		t.Fatalf("box doctor should pass with the real host key\nstdout:\n%s\nstderr:\n%s", clean.stdout, clean.stderr)
 	}
@@ -385,7 +385,7 @@ func (e *smokeEnv) assertWrongHostKeyRefuses(t *testing.T) {
 	if err := os.WriteFile(knownHosts, []byte("fake-vps "+wrongKey+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	result := e.runCommand(t, e.repoRoot, []string{"HOME=" + home}, nil, e.goBin, "box", "doctor", "fake-vps")
+	result := e.runCommand(t, e.repoRoot, []string{"HOME=" + home, "XDG_CONFIG_HOME="}, nil, e.goBin, "box", "doctor", "fake-vps")
 	if result.err == nil {
 		t.Fatalf("box doctor should fail with wrong host key\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
