@@ -18,6 +18,7 @@ import (
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/provision"
 	"github.com/fprl/ship/internal/provision/local"
+	"github.com/fprl/ship/internal/shipidentity"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 	"github.com/fprl/ship/internal/version"
@@ -34,6 +35,7 @@ type Options struct {
 	OperatorSSHPublicKeyFile string
 	DeploySSHPublicKeyFile   string
 	DeployKeyIsShipIdentity  bool
+	MemberName               string
 	CheckMode                bool
 	NarrateSetup             bool
 }
@@ -49,6 +51,7 @@ type Plan struct {
 	OperatorSSHPublicKeyFile string
 	DeploySSHPublicKeyFile   string
 	DeployKeyIsShipIdentity  bool
+	MemberName               string
 	CheckMode                bool
 	NarrateSetup             bool
 }
@@ -131,7 +134,9 @@ func (i *Installer) RunOptions(opts Options) error {
 	}
 
 	if !plan.CheckMode {
-		i.printMemberEnrollment(summary.DeployKeyResults)
+		if plan.Mode == "local" {
+			i.printLocalMemberEnrollment(plan.MemberName, summary.DeployKeyResults)
+		}
 	}
 	if !plan.CheckMode && plan.Mode == "remote" {
 		if err := i.pinKnownHost(plan); err != nil {
@@ -145,6 +150,16 @@ func (i *Installer) RunOptions(opts Options) error {
 	return nil
 }
 
+func (i *Installer) printLocalMemberEnrollment(name string, results []memberkeys.AddResult) {
+	for _, result := range results {
+		if result.Added {
+			fmt.Fprintf(i.Stderr, "enrolled you as %s (owner)\n", name)
+			break
+		}
+	}
+	i.printMemberEnrollment(results)
+}
+
 func DefaultOptions(env map[string]string) Options {
 	if env == nil {
 		env = environMap()
@@ -154,11 +169,15 @@ func DefaultOptions(env map[string]string) Options {
 		BootstrapUser:            "root",
 		OperatorSSHPublicKeyFile: env["SHIP_OPERATOR_SSH_PUBLIC_KEY_FILE"],
 		DeploySSHPublicKeyFile:   env["SHIP_DEPLOY_SSH_PUBLIC_KEY_FILE"],
+		MemberName:               defaultMemberName(env),
 		NarrateSetup:             true,
 	}
 }
 
 func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
+	if strings.TrimSpace(opts.MemberName) == "" {
+		opts.MemberName = defaultMemberName(environMap())
+	}
 	mode := opts.Mode
 	if mode == "auto" {
 		if opts.TargetHost != "" {
@@ -214,6 +233,7 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 		OperatorSSHPublicKeyFile: operatorKeyFile,
 		DeploySSHPublicKeyFile:   deployKeyFile,
 		DeployKeyIsShipIdentity:  opts.DeployKeyIsShipIdentity,
+		MemberName:               opts.MemberName,
 		CheckMode:                opts.CheckMode,
 		NarrateSetup:             opts.NarrateSetup,
 	}, nil
@@ -348,6 +368,7 @@ func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) (provision.InstallSumma
 	summary, err := provision.RunInstall(context.Background(), local.Runner{}, provision.InstallOptions{
 		OperatorSSHPublicKeys: keyLines(keyPlan.Operator),
 		DeploySSHPublicKeys:   keyLines(keyPlan.Deploy),
+		MemberName:            plan.MemberName,
 		ClientAddress:         plan.ClientAddress,
 		CheckMode:             plan.CheckMode,
 		HelperBinaryPath:      helperPath,
@@ -694,6 +715,9 @@ func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string,
 	if deployKeyFile != "" {
 		args = append(args, "--deploy-ssh-public-key-file", deployKeyFile)
 	}
+	if plan.MemberName != "" {
+		args = append(args, "--member-name", plan.MemberName)
+	}
 	if plan.CheckMode {
 		args = append(args, "--check")
 	}
@@ -816,6 +840,18 @@ func keyLines(keys []plannedKey) []string {
 		}
 	}
 	return out
+}
+
+func defaultMemberName(env map[string]string) string {
+	gitName := ""
+	if output, err := exec.Command("git", "config", "user.name").Output(); err == nil {
+		gitName = strings.TrimSpace(string(output))
+	}
+	user := ""
+	if env != nil {
+		user = env["USER"]
+	}
+	return shipidentity.DeriveMemberName(gitName, user)
 }
 
 func (i *Installer) printSetupNarration(plan Plan) {

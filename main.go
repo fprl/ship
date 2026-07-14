@@ -194,7 +194,7 @@ func (c logsCmd) Run() error {
 type execCmd struct {
 	projectArgs
 	Branch  string   `name:"branch" help:"Branch name to inspect."`
-	Command []string `arg:"" required:"" passthrough:"" help:"Command and arguments to run."`
+	Command []string `arg:"" required:"" passthrough:"" help:"Command and arguments to run; write -- before commands that start with a dash."`
 }
 
 func (c execCmd) Run() error {
@@ -438,20 +438,17 @@ func (c secretRmCmd) Run() error {
 }
 
 type boxCmd struct {
-	Setup     boxSetupCmd        `cmd:"" help:"Install or converge a box."`
-	Doctor    boxDoctorCmd       `cmd:"" help:"Run box diagnostics."`
-	Notify    boxNotifyCmd       `cmd:"" help:"Read or set the box notification webhook."`
-	Apps      boxAppsCmd         `cmd:"" help:"Show the box's app table."`
-	Ls        boxLsCmd           `cmd:"" hidden:""`
-	Rm        boxRmCmd           `cmd:"rm" help:"Destroy an app and all its environments on a box."`
-	Status    boxStatusCmd       `cmd:"" help:"Show helper version, disk, apps, and approvals for one box."`
-	Update    boxUpdateCmd       `cmd:"" help:"Update a box helper and version-owned artifacts."`
-	Forget    boxForgetCmd       `cmd:"" hidden:"" help:"Drop a box host-key pin."`
-	Config    boxConfigClientCmd `cmd:"" help:"Read or change box configuration."`
-	Member    boxMemberCmd       `cmd:"" help:"Manage deploy SSH members."`
-	Members   boxMembersCmd      `cmd:"" help:"List deploy SSH members."`
-	Approve   boxApproveCmd      `cmd:"" help:"Grant one pending role approval."`
-	Approvals boxApprovalsCmd    `cmd:"" help:"List pending role approvals."`
+	Setup    boxSetupCmd        `cmd:"" help:"Install or converge a box."`
+	Doctor   boxDoctorCmd       `cmd:"" help:"Run box diagnostics."`
+	Webhook  boxWebhookCmd      `cmd:"" help:"Read or set the box webhook."`
+	App      boxAppCmd          `cmd:"" help:"Manage apps on a box."`
+	Ls       boxLsCmd           `cmd:"" hidden:""`
+	Status   boxStatusCmd       `cmd:"" help:"Show helper version, disk, apps, members, approvals, and the last doctor result for one box."`
+	Update   boxUpdateCmd       `cmd:"" help:"Update a box helper and version-owned artifacts."`
+	Forget   boxForgetCmd       `cmd:"" hidden:"" help:"Drop a box host-key pin."`
+	Config   boxConfigClientCmd `cmd:"" help:"Read or change box configuration."`
+	Member   boxMemberCmd       `cmd:"" help:"Manage deploy SSH members."`
+	Approval boxApprovalCmd     `cmd:"" help:"Manage pending role approvals."`
 }
 
 type boxStatusCmd struct {
@@ -483,7 +480,7 @@ func (c boxUpdateCmd) Run() error {
 	return nil
 }
 
-type boxNotifyCmd struct {
+type boxWebhookCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
 	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	URL    string `arg:"" optional:"" name:"url" help:"Webhook URL to set."`
@@ -573,48 +570,50 @@ func parseBoxConfigArgs(args []string) (target, action, key, value string, err e
 	}
 }
 
-func (c boxNotifyCmd) Run() error {
-	target, err := boxTargetFor(c.Config, c.Target, "ship box notify <box>")
+func (c boxWebhookCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box webhook <box>")
 	if err != nil {
 		return err
 	}
-	client.CmdBoxNotify(target, c.URL, c.Remove, c.JSON)
+	client.CmdBoxWebhook(target, c.URL, c.Remove, c.JSON)
 	return nil
 }
 
 type boxMemberCmd struct {
 	Add boxMemberAddCmd `cmd:"" help:"Authorize a member's SSH public key for deploy access."`
+	Ls  boxMemberLsCmd  `cmd:"" help:"List deploy SSH members."`
 	Rm  boxMemberRmCmd  `cmd:"rm" help:"Revoke a deploy member's SSH keys."`
 }
 
 type boxMemberAddCmd struct {
-	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
-	Source string `arg:"" help:"GitHub username, SSH public key string, or path to a .pub/.pem file."`
-	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
-	Role   string `name:"role" enum:"owner,shipper,agent" default:"shipper" help:"Role recorded for newly added keys."`
+	Config  string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Source  string `arg:"" help:"HTTPS keys-URL, SSH public key string, or path to a .pub/.pem file."`
+	Target  string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
+	Name    string `name:"name" help:"Box-global member name."`
+	Role    string `name:"role" enum:"owner,shipper,agent" default:"shipper" help:"Role recorded for newly added keys."`
+	Confirm string `name:"confirm" help:"Commit a matching URL plan: <name>@sha256:<plan-digest>."`
 }
 
 func (c boxMemberAddCmd) Run() error {
-	target, err := boxTargetFor(c.Config, c.Target, "ship box member add <src> <box>")
+	target, err := boxTargetFor(c.Config, c.Target, "ship box member add <https-url|key|path> <box> --name <name>")
 	if err != nil {
 		return err
 	}
-	client.CmdBoxMemberAdd(target, c.Source, c.Role)
-	return nil
+	return client.CmdBoxMemberAdd(target, c.Source, c.Name, c.Role, c.Confirm)
 }
 
-type boxMembersCmd struct {
+type boxMemberLsCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
 	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of plain text."`
 }
 
-func (c boxMembersCmd) Run() error {
-	target, err := boxTargetFor(c.Config, c.Target, "ship box members <box>")
+func (c boxMemberLsCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box member ls <box>")
 	if err != nil {
 		return err
 	}
-	client.CmdBoxMembers(target, c.JSON)
+	client.CmdBoxMemberLs(target, c.JSON)
 	return nil
 }
 
@@ -633,58 +632,68 @@ func (c boxMemberRmCmd) Run() error {
 	return nil
 }
 
-type boxApprovalsCmd struct {
+type boxApprovalCmd struct {
+	Ls    boxApprovalLsCmd    `cmd:"" help:"List pending role approvals."`
+	Grant boxApprovalGrantCmd `cmd:"" help:"Grant one pending role approval."`
+}
+
+type boxApprovalLsCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
 	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	JSON   bool   `name:"json" help:"Emit structured JSON for the pending approval list."`
 }
 
-func (c boxApprovalsCmd) Run() error {
-	target, err := boxTargetFor(c.Config, c.Target, "ship box approvals <box>")
+func (c boxApprovalLsCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box approval ls <box>")
 	if err != nil {
 		return err
 	}
-	client.CmdBoxApprovals(target, c.JSON)
+	client.CmdBoxApprovalLs(target, c.JSON)
 	return nil
 }
 
-type boxApproveCmd struct {
+type boxApprovalGrantCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
 	ID     string `arg:"" help:"Approval id to grant."`
 	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 }
 
-func (c boxApproveCmd) Run() error {
-	target, err := boxTargetFor(c.Config, c.Target, "ship box approve <id> <box>")
+func (c boxApprovalGrantCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box approval grant <id> <box>")
 	if err != nil {
 		return err
 	}
-	client.CmdBoxApprove(target, c.ID)
+	client.CmdBoxApprovalGrant(target, c.ID)
 	return nil
 }
 
-type boxAppsCmd struct {
+type boxAppCmd struct {
+	Ls boxAppLsCmd `cmd:"" help:"Show the box's app table."`
+	Rm boxAppRmCmd `cmd:"rm" help:"Destroy an app and all its environments on a box."`
+}
+
+type boxAppLsCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
 	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of the text summary."`
 }
 
-func (c boxAppsCmd) Run() error {
-	target, err := boxTargetFor(c.Config, c.Target, "ship box apps <box>")
+func (c boxAppLsCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box app ls <box>")
 	if err != nil {
 		return err
 	}
-	client.CmdBoxApps(target, c.JSON)
+	client.CmdBoxAppLs(target, c.JSON)
 	return nil
 }
 
-// boxLsCmd reserves ls for future box listing while making the rename actionable.
+// boxLsCmd reserves ls for future box listing while pointing at the box app table.
 type boxLsCmd struct{}
 
 func (boxLsCmd) Run() error {
 	return errcat.New(errcat.CodeUsageError, errcat.Fields{
-		"detail":  "ship box ls was renamed to ship box apps",
-		"command": "ship box apps",
+		"detail":  "ship box ls does not exist; the box app table is ship box app ls",
+		"command": "ship box app ls",
 	})
 }
 
@@ -703,19 +712,19 @@ func (c boxDoctorCmd) Run() error {
 	return nil
 }
 
-type boxRmCmd struct {
+type boxAppRmCmd struct {
 	Config  string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
 	App     string `arg:"" help:"App name to destroy."`
 	Target  string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	Confirm string `name:"confirm" help:"Required app-name confirmation."`
 }
 
-func (c boxRmCmd) Run() error {
-	target, err := boxTargetFor(c.Config, c.Target, "ship box rm <box>")
+func (c boxAppRmCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, fmt.Sprintf("ship box app rm %s <box> --confirm %s", c.App, c.App))
 	if err != nil {
 		return err
 	}
-	client.CmdBoxRm(target, c.App, c.Confirm)
+	client.CmdBoxAppRm(target, c.App, c.Confirm)
 	return nil
 }
 
@@ -736,6 +745,7 @@ type boxSetupCmd struct {
 	SSHKey                   string `name:"ssh-key" help:"SSH private key for remote mode."`
 	OperatorSSHPublicKeyFile string `help:"SSH public key file for operator access."`
 	DeploySSHPublicKeyFile   string `help:"SSH public key file for deploy access. Default: your ship identity becomes the first member."`
+	MemberName               string `name:"member-name" hidden:"" help:"Setup member name."`
 	CheckMode                bool   `name:"check" help:"Plan changes without writing files or running mutating commands."`
 	SuppressSetupNarration   bool   `name:"suppress-setup-narration" hidden:""`
 }
@@ -759,6 +769,9 @@ func (c boxSetupCmd) Run() error {
 	}
 	if c.DeploySSHPublicKeyFile != "" {
 		opts.DeploySSHPublicKeyFile = c.DeploySSHPublicKeyFile
+	}
+	if c.MemberName != "" {
+		opts.MemberName = c.MemberName
 	}
 	opts.CheckMode = c.CheckMode
 	opts.NarrateSetup = !c.SuppressSetupNarration

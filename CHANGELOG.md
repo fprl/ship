@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.6.0
+
+One grammar, one webhook, previews on your own domain, and member
+onboarding you can read before you trust it. The v0.5.0 collection verbs
+die the day after they shipped — renames are free until someone depends
+on them, and now the grammar is settled: `resource + subverb`, everywhere.
+
+### Added
+
+- `[preview]` in ship.toml — put preview URLs on your own domain with one
+  wildcard DNS record: `base = "preview.example.com"` makes previews
+  `<app>-<branch>-<id>.preview.example.com`, and `aliases = true` adds a
+  stable `<branch>.preview.example.com` alias per branch — same capability
+  protection, updated on every deploy, removed with the env. Omit the
+  table and sslip.io behavior is unchanged.
+- Show-first member onboarding: `ship box member add https://github.com/alice.keys
+  <box> --name alice` fetches and prints the keys, fingerprints, and source
+  — writing nothing — then hands you the exact confirm command bound to a
+  digest of everything you just reviewed. Confirm refetches and must match
+  byte-for-byte. Literal keys and `.pub` files still write immediately.
+  `--name` is required everywhere; identity never derives from key
+  comments, filenames, or usernames again.
+- `ship box status` now counts people: `members: 2 (1 owners)` in text,
+  `members: {total, owners}` in JSON — distinct names, not keys.
+
+### Changed
+
+- One CLI grammar (breaking): `ship box member ls`, `ship box app ls`,
+  `ship box app rm`, `ship box approval ls`, `ship box approval grant`.
+  The bare-plural and standalone forms (`box members`, `box apps`,
+  `box approvals`, `box approve`, `box rm`) are deleted, not aliased.
+- The webhook is named `webhook` (breaking): manifest key `notify` →
+  `webhook`, `ship box notify` → `ship box webhook`, config key
+  `notify.url` → `webhook.url`. Same two-scope event routing.
+- Bare forge usernames are gone from `box member add`: for a command that
+  grants deploy access, the URL is the provenance — paste the keys-URL.
+- `ship exec -- <cmd>` consumes the `--` separator instead of passing it
+  into the container (found in the v0.5.0 real-box gate).
+- Every member and app-removal error now prints a runnable command with
+  your real box, name, and source filled in — no `<box>` placeholders when
+  ship knows the value.
+- `--json` list fields are always arrays, never null: `status` envs,
+  `box app ls` processes and routes included.
+- Error codes renamed with their verbs: `box_app_rm_confirmation_required`
+  (was `box_rm_confirmation_required`), `keys_url_unavailable`
+  (was `github_keys_unavailable`).
+- Member enrollment converges: re-running `box member add` repairs a
+  half-completed earlier run; `box setup` prints `enrolled you as <name>
+  (owner)` only when it actually enrolled you.
+
 ## v0.5.0
 
 The simplification arc lands: data-only backups, one box config file, one

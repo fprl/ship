@@ -113,17 +113,21 @@ ship
 
 ## 6. Add a teammate
 
-Authorize a GitHub user's public SSH keys:
+Authorize a teammate's public SSH keys from a keys-URL. The bare command
+fetches and shows the keys without writing anything, then prints the exact
+confirm command:
 
 ```bash
-ship box member add alice 203.0.113.7
+ship box member add https://github.com/alice.keys 203.0.113.7 --name alice
+ship box member add https://github.com/alice.keys 203.0.113.7 --name alice --confirm alice@sha256:...
 ```
 
-You can also pass a literal public key or a path to a `.pub` file (inside an
-app directory the box argument can be omitted — it falls back to `ship.toml`):
+You can also pass a literal public key or a path to a `.pub` file — those
+write immediately, since you supplied the exact bytes (inside an app
+directory the box argument can be omitted — it falls back to `ship.toml`):
 
 ```bash
-ship box member add ~/.ssh/alice.pub
+ship box member add ~/.ssh/alice.pub --name alice
 ```
 
 The default role is `shipper`, which covers deploys, logs, exec, rollback,
@@ -132,9 +136,9 @@ manage members and destructive box/app operations, or `--role agent` for a key
 limited to Preview deploys and reads:
 
 ```bash
-ship box member add alice --role owner
-ship box member add ~/.ssh/agent.pub --role agent
-ship box members
+ship box member add https://github.com/alice.keys --name alice --role owner
+ship box member add ~/.ssh/agent.pub --name ci-agent --role agent
+ship box member ls
 ```
 
 `box member add` prints each key's SHA256 fingerprint. After this, invite the
@@ -197,8 +201,8 @@ If an out-of-role action asks for approval, an owner or shipper can list and
 grant one retry from anywhere — the error names the exact command:
 
 ```bash
-ship box approvals 203.0.113.7
-ship box approve abc123xy 203.0.113.7
+ship box approval ls 203.0.113.7
+ship box approval grant abc123xy 203.0.113.7
 ```
 
 Approvals expire after 15 minutes; granting one refreshes the window.

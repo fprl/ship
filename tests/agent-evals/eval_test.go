@@ -563,7 +563,7 @@ func setupApprovalRecovery(t *testing.T, e *evalCase) *evalProject {
 
 	agentKeyPath := filepath.Join(e.tmp, "approval-agent")
 	e.mustRun(t, e.suite.repoRoot, nil, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "approval-agent", "-f", agentKeyPath)
-	e.mustRun(t, app, nil, nil, e.suite.shipBin, "box", "member", "add", agentKeyPath+".pub", "--role", "agent")
+	e.mustRun(t, app, nil, nil, e.suite.shipBin, "box", "member", "add", agentKeyPath+".pub", "--name", "approval-agent", "--role", "agent")
 	agentKeyCopy := filepath.Join(app, ".agent_ssh_key")
 	keyData, err := os.ReadFile(agentKeyPath)
 	if err != nil {
@@ -1191,7 +1191,7 @@ func checkApprovalRecovery(e *evalCase, p *evalProject) error {
 		!strings.Contains(second.stdout+second.stderr, "approval required") {
 		return fmt.Errorf("second agent Production ship failed without approval_required:\nstdout:%s\nstderr:%s", second.stdout, second.stderr)
 	}
-	pending := e.runShell(p.Dir, nil, nil, "ship box approvals fake-vps")
+	pending := e.runShell(p.Dir, nil, nil, "ship box approval ls fake-vps")
 	if pending.err != nil {
 		return fmt.Errorf("list pending agent approval failed: %v\nstdout:%s\nstderr:%s", pending.err, pending.stdout, pending.stderr)
 	}

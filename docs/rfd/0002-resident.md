@@ -4,6 +4,12 @@
 `notify`, doctor timer) and requires RFD-0003 (members). Does not modify
 ship v1.
 
+> Naming update July 14, 2026 (ADR-0019): `notify` is now `webhook`
+> everywhere (manifest key, `ship box webhook`, config key
+> `webhook.url`), and the approval verb is
+> `ship box approval grant <id> [<box>]`. Commands quoted below keep
+> their original spellings as a record of the design at the time.
+
 > Update July 7, 2026: the §7 substrate is now built — journal, `why`,
 > `notify` (four events with journal-grade payloads), doctor delta,
 > `ship docs`. Still missing before a resident can exist: the

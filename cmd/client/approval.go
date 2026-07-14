@@ -7,9 +7,9 @@ import (
 	"github.com/fprl/ship/internal/utils"
 )
 
-func CmdBoxApprovals(server string, jsonFlag bool) {
+func CmdBoxApprovalLs(server string, jsonFlag bool) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(invalidBoxTargetError(server, "ship box approvals"), 2)
+		utils.DieError(invalidBoxTargetError(server, "ship box approval ls"), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -31,14 +31,14 @@ func CmdBoxApprovals(server string, jsonFlag bool) {
 		if detail == "" {
 			detail = "approvals failed"
 		}
-		utils.DieError(operationError(detail, "ship box approvals "+server), 1)
+		utils.DieError(operationError(detail, "ship box approval ls "+server), 1)
 	}
 	fmt.Print(stdout)
 }
 
-func CmdBoxApprove(server, id string) {
+func CmdBoxApprovalGrant(server, id string) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(invalidBoxTargetError(server, "ship box approve "+id), 2)
+		utils.DieError(invalidBoxTargetError(server, "ship box approval grant "+id), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -60,7 +60,7 @@ func CmdBoxApprove(server, id string) {
 		if detail == "" {
 			detail = "approve failed"
 		}
-		utils.DieError(operationError(detail, "ship box approve "+id+" "+server), 1)
+		utils.DieError(operationError(detail, "ship box approval grant "+id+" "+server), 1)
 	}
 	fmt.Print(stdout)
 }

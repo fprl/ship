@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/secrets"
@@ -331,6 +332,166 @@ func TestUnknownPreviewBranchErrorText(t *testing.T) {
 	want := "preview environment lookup failed\nno preview environment is mapped for branch \"feat/x\"\nnext: git checkout feat/x && ship"
 	if !errcat.Is(err, errcat.CodeUnknownPreviewBranch) || err.Error() != want {
 		t.Fatalf("unexpected error:\nwant: %q\n got: %q", want, err.Error())
+	}
+}
+
+func TestPreviewAliasRoutesRenderWithCapabilityAndAreRemovedWhenDisabled(t *testing.T) {
+	port := 3000
+	canonical := "api-feat-x-ab12.preview.example.com"
+	alias := "feat-x.preview.example.com"
+	ctx := &config.AppContext{
+		Preview:                config.Preview{Base: "preview.example.com", Aliases: true},
+		PreviewCapabilityToken: "capability-token",
+		Processes:              map[string]config.Process{"web": {Port: &port}},
+		Routes: map[string]config.Route{
+			canonical:           {Host: canonical, Process: "web"},
+			canonical + "/docs": {Host: canonical, Path: "/docs", Process: "web"},
+		},
+	}
+	if err := addPreviewAliasRoutes("api", "feat-x-ab12", alias, ctx); err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := renderAppCaddyfileWithProcessNames("api", "feat-x-ab12", ctx, "abc123", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"` + canonical + `" {`, `"` + alias + `" {`} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered fragment missing %s:\n%s", want, rendered)
+		}
+	}
+	if got := strings.Count(rendered, "respond @ship_capability_denied 401"); got != 2 {
+		t.Fatalf("capability guard count = %d, want one per canonical and alias host:\n%s", got, rendered)
+	}
+
+	withoutAlias := &config.AppContext{
+		PreviewCapabilityToken: "capability-token",
+		Processes:              ctx.Processes,
+		Routes: map[string]config.Route{
+			canonical: {Host: canonical, Process: "web"},
+		},
+	}
+	rendered, err = renderAppCaddyfileWithProcessNames("api", "feat-x-ab12", withoutAlias, "abc123", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(rendered, alias) {
+		t.Fatalf("aliases=false deploy should remove previous alias from fragment:\n%s", rendered)
+	}
+}
+
+func TestPreviewAliasOwnerCollisionMatrix(t *testing.T) {
+	const alias = "feat-x.preview.example.com"
+	currentRoutes := map[string]config.Route{
+		"api-feat-x-ab12.preview.example.com": {Host: "api-feat-x-ab12.preview.example.com", Process: "web"},
+	}
+
+	tests := []struct {
+		name  string
+		setup func(t *testing.T)
+		kind  string
+	}{
+		{
+			name: "existing alias wins",
+			setup: func(t *testing.T) {
+				writePreviewIdentityForTest(t, "other", "feat-x-cd34", "feat/x", "feat-x", "cd34", time.Now().UTC(), false)
+				writeAppliedManifestForPreviewAliasTest(t, "other", "feat-x-cd34", `name = "other"
+box = "example.com"
+
+[preview]
+base = "preview.example.com"
+aliases = true
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"other-feat-x-cd34.preview.example.com" = "web"
+`)
+				previousRead := readCaddyFragment
+				readCaddyFragment = func(path string) ([]byte, error) {
+					if path == identity.CaddyFragmentFile("other", "feat-x-cd34") {
+						return []byte(`"feat-x.preview.example.com" {
+}
+`), nil
+					}
+					return nil, os.ErrNotExist
+				}
+				t.Cleanup(func() { readCaddyFragment = previousRead })
+			},
+			kind: "preview alias",
+		},
+		{
+			name: "configured route wins",
+			setup: func(t *testing.T) {
+				writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "site", Env: productionEnvName, InfraID: identity.InfraID("site", productionEnvName)})
+				writeAppliedManifestForPreviewAliasTest(t, "site", productionEnvName, `name = "site"
+box = "example.com"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"feat-x.preview.example.com" = "web"
+`)
+			},
+			kind: "route",
+		},
+		{
+			name: "production synthesized host wins",
+			setup: func(t *testing.T) {
+				writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "feat-x", Env: productionEnvName, InfraID: identity.InfraID("feat-x", productionEnvName)})
+				writeAppliedManifestForPreviewAliasTest(t, "feat-x", productionEnvName, `name = "feat-x"
+box = "example.com"
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"feat-x.203-0-113-7.sslip.io" = "web"
+`)
+			},
+			kind: "route",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupPreviewHostTest(t)
+			tt.setup(t)
+			candidate := alias
+			if tt.name == "production synthesized host wins" {
+				candidate = "feat-x.203-0-113-7.sslip.io"
+			}
+			owner, found, err := previewAliasOwner(candidate, "api", "feat-x-ab12", currentRoutes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !found || owner.Kind != tt.kind {
+				t.Fatalf("owner = %+v found=%v, want kind %q", owner, found, tt.kind)
+			}
+		})
+	}
+
+	owner, found, err := previewAliasOwner("api-feat-x-ab12.preview.example.com", "api", "feat-x-ab12", currentRoutes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || owner.App != "api" || owner.Env != "feat-x-ab12" {
+		t.Fatalf("canonical route must remain its own owner, got %+v found=%v", owner, found)
+	}
+	if len(currentRoutes) != 1 {
+		t.Fatalf("collision check changed canonical routes: %+v", currentRoutes)
+	}
+}
+
+func writeAppliedManifestForPreviewAliasTest(t *testing.T, app, env, body string) {
+	t.Helper()
+	path := identity.ManifestFile(app, env)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 

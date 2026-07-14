@@ -204,7 +204,7 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 	if err := appendDeployJournalEntry("api", "production", previous, nil); err != nil {
 		t.Fatal(err)
 	}
-	sink := newNotifyTestSink(t)
+	sink := newWebhookTestSink(t)
 	oldAppend := appendSanitizedDeployJournal
 	oldPrune := bestEffortPruneAfterDeploy
 	appendSanitizedDeployJournal = func(string, string, deployJournalEntry) error {
@@ -219,7 +219,7 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 	})
 
 	cmd := appApplyCmd{App: "api", Env: "production", SHA: "new222"}
-	app := &config.AppContext{Notify: sink.URL, ProductionBranch: "main"}
+	app := &config.AppContext{Webhook: sink.URL, ProductionBranch: "main"}
 	var stdout string
 	stderr := captureStderr(t, func() {
 		stdout = captureApplyStdout(t, func() {
@@ -242,7 +242,7 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 		t.Fatalf("journal entries = %+v, want only prior failure", entries)
 	}
 	payload := sink.singlePayload(t)
-	assertNotifyField(t, payload, "event", notifyEventDeployRecovered)
+	assertWebhookField(t, payload, "event", webhookEventDeployRecovered)
 }
 
 func captureApplyStdout(t *testing.T, fn func()) string {

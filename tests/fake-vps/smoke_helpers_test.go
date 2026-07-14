@@ -236,7 +236,7 @@ func (e *smokeEnv) withOwnerMemberFingerprint(command string) string {
 
 func smokeServerNamespaceAcceptsMemberFingerprint(namespace string) bool {
 	switch namespace {
-	case "app", "approval", "doctor", "key", "notify", "version", "update":
+	case "app", "approval", "doctor", "key", "webhook", "version", "update":
 		return true
 	default:
 		return false

@@ -25,6 +25,13 @@ func TestAppPreflightReportJSONUsesIssuesOnly(t *testing.T) {
 	if !strings.Contains(string(raw), `"issues":[{`) {
 		t.Fatalf("preflight payload is missing issues: %s", raw)
 	}
+	empty, err := json.Marshal(appPreflightReport{App: "api", Env: "production", Healthy: true, Issues: []appPreflightIssue{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(empty), `"issues":[]`) {
+		t.Fatalf("empty preflight issues must be an array: %s", empty)
+	}
 }
 
 func TestRunningContainerExistsRequiresRunningState(t *testing.T) {

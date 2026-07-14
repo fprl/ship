@@ -256,7 +256,7 @@ func statusFromAppList(ctx *config.AppContext, raw string) (statusPayload, error
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &list); err != nil {
 		return statusPayload{}, operationError(fmt.Sprintf("status failed: invalid app list JSON: %v", err), "ship status")
 	}
-	payload := statusPayload{App: ctx.AppName}
+	payload := statusPayload{App: ctx.AppName, Envs: []statusEnvJSON{}}
 	for _, app := range list.Apps {
 		if app.App != ctx.AppName {
 			continue
@@ -303,8 +303,15 @@ func statusEnvFromAppListItem(ctx *config.AppContext, item appListEnvJSON) statu
 		Pinned:        item.Pinned,
 		Dirty:         item.Dirty,
 		ShippedBy:     item.ShippedBy,
-		Processes:     item.Processes,
+		Processes:     nonNilProcessJSON(item.Processes),
 	}
+}
+
+func nonNilProcessJSON(processes []processJSON) []processJSON {
+	if processes == nil {
+		return []processJSON{}
+	}
+	return processes
 }
 
 func renderStatusSummary(payload statusPayload) string {
@@ -339,7 +346,7 @@ func renderStatusSummary(payload statusPayload) string {
 func renderStatusSummaryWithApprovals(payload statusPayload, pendingApprovals int, server string) string {
 	out := renderStatusSummary(payload)
 	if pendingApprovals > 0 {
-		out += fmt.Sprintf("%d approvals pending — ship box approvals %s\n", pendingApprovals, server)
+		out += fmt.Sprintf("%d approvals pending — ship box approval ls %s\n", pendingApprovals, server)
 	}
 	return out
 }
@@ -361,7 +368,7 @@ func fetchPendingApprovalCount(runner sshRunner, server string) (int, error) {
 	}
 	var payload remoteApprovalListPayload
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &payload); err != nil {
-		return 0, operationError(fmt.Sprintf("status failed: invalid approval list JSON: %v", err), "ship box approvals "+server)
+		return 0, operationError(fmt.Sprintf("status failed: invalid approval list JSON: %v", err), "ship box approval ls "+server)
 	}
 	return len(payload.Approvals), nil
 }

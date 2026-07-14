@@ -37,6 +37,9 @@ func (c appStatusCmd) Run() error {
 		utils.DieError(err, 1)
 	}
 	processes := containersToProcesses(out)
+	if processes == nil {
+		processes = []processStatus{}
+	}
 	if err := attachProcessReleaseMetadata(c.App, c.Env, processes); err != nil {
 		utils.DieError(err, 1)
 	}
@@ -47,6 +50,9 @@ func (c appStatusCmd) Run() error {
 	}
 	release := activeStatusRelease(runningProcesses(processes), static)
 	if c.JSON {
+		if static != nil && static.Routes == nil {
+			static.Routes = []string{}
+		}
 		payload := statusPayload{App: c.App, Env: c.Env, Release: release, Static: static, Processes: processes}
 		buf, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
@@ -487,6 +493,9 @@ func appListFromStatuses(statuses []appEnvStatus, now time.Time) appListPayload 
 	}
 	apps := make([]appListAppStatus, 0, len(grouped))
 	for app, envs := range grouped {
+		if envs == nil {
+			envs = []appListEnvStatus{}
+		}
 		sort.Slice(envs, func(i, j int) bool {
 			if envs[i].Class != envs[j].Class {
 				return envs[i].Class == "production"
@@ -547,6 +556,15 @@ func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 		dirty = release.Dirty
 		createdAt = release.CreatedAt
 	}
+	processes := item.Processes
+	if processes == nil {
+		processes = []processStatus{}
+	}
+	if item.Static != nil && item.Static.Routes == nil {
+		static := *item.Static
+		static.Routes = []string{}
+		item.Static = &static
+	}
 	return appListEnvStatus{
 		Class:          class,
 		Branch:         branch,
@@ -560,7 +578,7 @@ func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 		Pinned:         pinned,
 		Dirty:          dirty,
 		ShippedBy:      item.ShippedBy,
-		Processes:      item.Processes,
+		Processes:      processes,
 		Static:         item.Static,
 	}
 }
@@ -740,6 +758,9 @@ func activeStaticStatus(app, env string) (*staticStatus, error) {
 	if err != nil {
 		return nil, err
 	}
+	if routes == nil {
+		routes = []string{}
+	}
 	status := &staticStatus{Release: release, Routes: routes}
 	meta, err := readReleaseMetadata(app, env, release)
 	if err != nil {
@@ -756,7 +777,7 @@ func staticCurrentRoutes(currentTarget string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var routes []string
+	routes := []string{}
 	for _, entry := range entries {
 		if entry.IsDir() {
 			routes = append(routes, entry.Name())
@@ -825,7 +846,7 @@ func identityAppEnvs() ([]appEnvStatus, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %v", path, err)
 		}
-		out = append(out, appEnvStatus{App: file.App, Env: file.Env, Preview: file.Preview})
+		out = append(out, appEnvStatus{App: file.App, Env: file.Env, Preview: file.Preview, Processes: []processStatus{}})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].App != out[j].App {

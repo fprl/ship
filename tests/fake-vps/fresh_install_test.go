@@ -92,7 +92,7 @@ func TestFreshHostInstall(t *testing.T) {
 	teammateKeyPath := filepath.Join(env.tmp, "setup-preserved-member")
 	teammateComment := filepath.Base(teammateKeyPath)
 	env.mustRun(t, env.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", teammateComment, "-f", teammateKeyPath)
-	addedTeammate := env.ship(t, memberApp, nil, "box", "member", "add", teammateKeyPath+".pub")
+	addedTeammate := env.ship(t, memberApp, nil, "box", "member", "add", teammateKeyPath+".pub", "--name", teammateComment)
 	if !strings.HasPrefix(strings.TrimSpace(addedTeammate), "member added: "+teammateComment+" (shipper, SHA256:") {
 		t.Fatalf("unexpected member add output: %q", addedTeammate)
 	}
@@ -100,7 +100,7 @@ func TestFreshHostInstall(t *testing.T) {
 	teammateKey := strings.TrimSpace(readFile(t, teammateKeyPath+".pub"))
 	_, preserveOutput := env.installHost(t, "")
 	assertContains(t, preserveOutput, "member fake-vps-smoke already authorized")
-	preservedMembers := env.ship(t, memberApp, nil, "box", "members")
+	preservedMembers := env.ship(t, memberApp, nil, "box", "member", "ls")
 	assertContains(t, preservedMembers, "fake-vps-smoke owner ssh-ed25519 SHA256:")
 	assertContains(t, preservedMembers, teammateComment+" shipper ssh-ed25519 "+teammateFingerprint)
 	env.assertDeployAuthorizedKeysLineCount(t, identityKey, 1)
@@ -185,7 +185,7 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	e.ssh(t, "getent passwd deploy >/dev/null")
 	assertContains(t, e.ssh(t, "id -nG operator"), "sudo")
 	e.ssh(t, "grep -q 'operator ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/operator")
-	e.ssh(t, "grep -Fq 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server config *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *' /etc/sudoers.d/ship")
+	e.ssh(t, "grep -Fq 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server config *, /usr/local/bin/ship server webhook *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *' /etc/sudoers.d/ship")
 	e.ssh(t, "grep -q 'fake-vps-smoke' /home/operator/.ssh/authorized_keys")
 	e.ssh(t, "grep -q 'fake-vps-smoke' /home/deploy/.ssh/authorized_keys")
 	e.ssh(t, "test -d /etc/ship/secrets && test ! -e /etc/ship/providers && test ! -e /etc/ship/backups")
@@ -320,7 +320,7 @@ func (e *smokeEnv) shipIdentityPublicKey(t *testing.T) string {
 func (e *smokeEnv) assertSetupMemberVisible(t *testing.T) {
 	t.Helper()
 	app := e.memberListApp(t, "member-list")
-	list := e.ship(t, app, nil, "box", "members")
+	list := e.ship(t, app, nil, "box", "member", "ls")
 	assertContains(t, list, "fake-vps-smoke owner ssh-ed25519 SHA256:")
 }
 

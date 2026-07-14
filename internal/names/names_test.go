@@ -88,3 +88,18 @@ func TestSynthesizedHostLabelFallbacksAreValidDNSLabels(t *testing.T) {
 		})
 	}
 }
+
+func TestPreviewBranchSlugStripsOnlyThePersistedSuffix(t *testing.T) {
+	for _, tt := range []struct {
+		env  string
+		want string
+	}{
+		{env: "feat-new-pricing-x7q2", want: "feat-new-pricing"},
+		{env: "x-ab12", want: "x"},
+		{env: "plain", want: "plain"},
+	} {
+		if got := PreviewBranchSlug(tt.env); got != tt.want {
+			t.Fatalf("PreviewBranchSlug(%q) = %q, want %q", tt.env, got, tt.want)
+		}
+	}
+}

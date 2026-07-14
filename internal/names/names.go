@@ -77,6 +77,17 @@ func SynthesizedHostLabel(app, env string) string {
 	return synthesizedHostLabelWithSlug(app, slug, suffix)
 }
 
+// PreviewBranchSlug returns the persisted branch slug portion of a preview
+// environment name, without its random suffix. It intentionally derives from
+// the environment identity so clients and helpers agree after a branch rename
+// or a later manifest update.
+func PreviewBranchSlug(env string) string {
+	if index := strings.LastIndex(env, "-"); index > 0 {
+		return strings.Trim(env[:index], "-")
+	}
+	return strings.Trim(env, "-")
+}
+
 func synthesizedHostLabelWithSlug(app, slug, suffix string) string {
 	slug = strings.Trim(slug, "-")
 	suffix = strings.Trim(suffix, "-")

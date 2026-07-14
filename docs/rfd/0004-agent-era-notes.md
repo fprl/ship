@@ -4,7 +4,8 @@
 strategy conversation and triaged with Franco. This is a catalog and a
 compass, not a commitment: `docs/ship-spec.md` stays authoritative, and
 items here only become buildable by promotion to a spec section with
-acceptance criteria (rfd/README.md rule).
+acceptance criteria (rfd/README.md rule). (Spelling note, July 14:
+`notify` has since been renamed `webhook` — ADR-0019.)
 
 ## North star
 

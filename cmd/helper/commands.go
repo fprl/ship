@@ -20,7 +20,7 @@ type ServerCmd struct {
 	Key         keyCmd           `cmd:"" help:"Manage deploy SSH keys."`
 	Approval    approvalCmd      `cmd:"" help:"Manage one-shot role approvals."`
 	Config      boxConfigCmd     `cmd:"" help:"Manage box configuration."`
-	Notify      notifyCmd        `cmd:"" help:"Manage the box notification webhook."`
+	Webhook     webhookCmd       `cmd:"" help:"Manage the box webhook."`
 	Version     versionHelperCmd `cmd:"" help:"Print the helper version."`
 	Update      updateHelperCmd  `cmd:"" help:"Converge version-owned box artifacts."`
 	UpdateLocal updateLocalCmd   `cmd:"update-local" hidden:""`

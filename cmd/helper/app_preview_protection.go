@@ -43,6 +43,9 @@ func rerenderPreviewCapabilityLocked(appName, env string) error {
 	if err := attachPreviewProtection(appName, env, app); err != nil {
 		return err
 	}
+	if err := addConfiguredPreviewAlias(appName, env, app); err != nil {
+		return err
+	}
 	release, err := activeRelease(appName, env, app)
 	if err != nil {
 		return err

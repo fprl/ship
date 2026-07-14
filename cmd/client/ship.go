@@ -261,6 +261,7 @@ func shipApplyPhase(state *shipRunState, rebuild bool, tlsMode string) error {
 		deployIdentity(state.Root, state.Runner, state.Context.Server),
 		rebuild,
 		tlsMode,
+		state.RoutePlan.PreviewAlias,
 	)
 	_, err := runSSHRequired(state.Runner, state.Context.Server, applyCmd, "deploy failed", "ship")
 	return err
@@ -396,7 +397,11 @@ func deploymentURLForBoxIP(ctx *config.AppContext, envName string, boxIP string)
 	if url := routedDeploymentURL(ctx); url != "" {
 		return url
 	}
-	return "https://" + synthesizedSSLIPHost(ctx.AppName, envName, boxIP)
+	base := sslipBase(boxIP)
+	if envName != productionEnvName {
+		base = previewHostBase(ctx, boxIP)
+	}
+	return "https://" + synthesizedHost(ctx.AppName, envName, base)
 }
 
 func writeSourceTar(root string, dest string, dirty bool, staticDirs []string) error {

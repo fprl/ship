@@ -123,7 +123,7 @@ type BoxConfigKey struct {
 // setter is safe only because every key declares its authorization policy.
 var BoxConfigSchema = []BoxConfigKey{
 	{
-		Name:                   "notify.url",
+		Name:                   "webhook.url",
 		Type:                   BoxConfigValueTypeURLOrEmpty,
 		Default:                "",
 		WriteRole:              MemberRoleOwner,
@@ -171,7 +171,7 @@ func ValidateBoxConfigValue(key, value string) error {
 	switch spec.Type {
 	case BoxConfigValueTypeURLOrEmpty:
 		if value != "" {
-			if err := config.ValidateNotifyURL(value); err != nil {
+			if err := config.ValidateWebhookURL(value); err != nil {
 				return &BoxConfigValueError{Key: key, Detail: err.Error()}
 			}
 		}

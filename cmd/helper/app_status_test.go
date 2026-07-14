@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -110,6 +111,25 @@ func TestRenderStatusTextEmpty(t *testing.T) {
 	}
 	if !strings.Contains(out, "run `ship`") {
 		t.Fatalf("empty-state hint should point at ship:\n%s", out)
+	}
+}
+
+func TestAppStatusJSONArrayFieldsAreNonNilWhenEmpty(t *testing.T) {
+	payload := statusPayload{App: "api", Env: "production", Processes: []processStatus{}}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"processes":[]`) {
+		t.Fatalf("empty processes JSON = %s", data)
+	}
+	static := &staticStatus{Release: "abc", Routes: []string{}}
+	data, err = json.Marshal(statusPayload{App: "api", Env: "production", Processes: []processStatus{}, Static: static})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"routes":[]`) {
+		t.Fatalf("empty routes JSON = %s", data)
 	}
 }
 

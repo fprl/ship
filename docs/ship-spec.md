@@ -21,7 +21,7 @@ Every decision below optimizes those three. The end state:
    branch, streamed to backup, never locked in (RFD-0001).
 4. **The box is a teammate, not infrastructure.** It reports in, explains
    itself (`why`), and pages your agent with the diagnosis and fix
-   attached (journal + notify + doctor here; resident loop in RFD-0002).
+   attached (journal + webhook + doctor here; resident loop in RFD-0002).
 5. **Zero security decisions.** One hardened shape: public ingress,
    keys-only SSH. No topology choices at setup — never mechanisms,
    ciphers, ports, or policies (§18; tunnels return post-v1 as a single
@@ -108,7 +108,7 @@ POSTHOG_KEY  = "phc_test456"
 
 release = "npx drizzle-kit migrate" # top-level only; the [deploy] section is gone
 probe   = "/healthz"                # health check for the routed process
-notify  = "https://ntfy.sh/..."     # NEW: webhook, §7
+webhook = "https://ntfy.sh/..."     # webhook, §7
 ```
 
 Rules:
@@ -191,11 +191,16 @@ the env identity file (extend the existing identity storage).
 - A reaper runs on the box (systemd timer installed by `box setup`,
   invoking a new helper verb `server env reap`) and destroys expired
   preview envs — equivalent to the existing destroy path, secrets purged.
-  Reap events fire `notify`. Production is never reaped and `ship rm` on Production
+  Reap events fire the `webhook`. Production is never reaped and `ship rm` on Production
   requires `--confirm <name>` (existing destroy guard).
 - Preview URL: `<app>-<branch-slug>-<id>.<base-domain>` (app-first,
-  one flat label — §8/ADR-0018). Base domain: the project's wildcard
-  domain if configured; otherwise sslip.io (§8). Previews collapse to
+  one flat label — §8/ADR-0018). Base domain: `[preview].base` when
+  configured (§8, ADR-0019); otherwise sslip.io. With
+  `[preview].aliases = true`, each preview is ALSO served at the
+  stable `<branch-slug>.<base>` — derived automatically from the
+  branch, one extra route in the same env fragment, same capability
+  guard; on a slug collision the existing owner keeps the alias and
+  the newcomer warns and keeps its canonical URL. Previews collapse to
   this single URL, serving the default host's routes (paths included);
   extra hosts and redirects are production-only.
 - Preview processes run under default CPU/memory caps unless the process
@@ -221,7 +226,7 @@ ship help [verb] [--json] per-verb usage from the ship docs source (§9)
 ship status [--json]      all live envs for this app: branch, url, release,
                           who shipped, health, age, expires/pinned, dirty hint
 ship logs [process] [--follow] [--tail N]   current branch's env
-ship exec <cmd...>        run a one-off command inside the current
+ship exec -- <cmd...>     run a one-off command inside the current
                           branch's env container, with its secrets and
                           /data mounted (Heroku's `heroku run`; built
                           in Phase 2 — agents need it to inspect state
@@ -292,21 +297,25 @@ ship box setup <ssh-target>   host install — ONE shape, no topology
                           ship box member add. Members and approvals are
                           BOX-scoped (the trust boundary); secrets,
                           envs, and journals are app-scoped.
-ship box member add <github-user|key|path> [<box>]
-                          authorize a teammate's SSH key
-                          (bare word → fetches github.com/<user>.keys;
-                          prints type + SHA256 fingerprint per key
-                          added; dedupes; comment = member name, which
-                          feeds §7 attribution)
-ship box members [<box>] [--json]
+ship box member add <key|path|https-url> [<box>] --name <n>
+                          authorize a teammate's SSH key. --name is
+                          mandatory and feeds §7 attribution (never
+                          derived from key comments). Literal key/file
+                          writes immediately; an https keys-URL is
+                          show-first: prints keys + fingerprints and
+                          writes nothing until the digest-bound
+                          --confirm (ADR-0019 §4). Bare forge
+                          usernames are gone — the URL is the
+                          provenance.
+ship box member ls [<box>] [--json]
                           authorized members: name, key type, SHA256
                           fingerprint
 ship box member rm <name> [<box>]
                           revoke all of a member's keys; refuses to
                           remove the last remaining key (lockout
-                          guard). Roles arrive post-v1 (RFD-0003);
-                          until then every member has full deploy
-                          access.
+                          guard). Roles shipped in v0.4 (owner /
+                          shipper / agent, §17); RFD-0003 records the
+                          original post-v1 plan.
 ship box doctor [--json]  existing doctor, output upgraded per §9
                           BOX ADDRESSING (v0.2 polish, Franco July 8):
                           boxes are addressed by HOST only — the deploy
@@ -379,28 +388,28 @@ ship box doctor [--json]  existing doctor, output upgraded per §9
                           polluted it (a rebuilt box left 30 stale
                           entries in dev) and fought the
                           rebuild-a-box-freely ethos.
-ship box apps [--json]    the box's app table (renamed from box ls
-                          July 13 — D8, §18: `ls` names nothing, and
-                          it is reserved for listing BOXES if multi-box
-                          ever lands); --json is the box app list:
-                          per-app envs, branches, urls, releases,
+ship box app ls [<box>] [--json]   the box's app table (renamed from
+                          box ls July 13 — D8, §18: `ls` names nothing,
+                          and it is reserved for listing BOXES if
+                          multi-box ever lands); --json is the box app
+                          list: per-app envs, branches, urls, releases,
                           health, expiry
-ship box rm <app> [--confirm <app>]   destroy an app and all its envs
-                          without the repo dir (orphan cleanup; same
-                          confirm guard as prod rm; Phase 3)
+ship box app rm <app> [<box>] --confirm <app>   destroy an app and all
+                          its envs without the repo dir (orphan
+                          cleanup; same confirm guard as prod rm)
 ship box forget <box>     drop this box's host-key pin from
                           ~/.config/ship/known_hosts (decommission;
-                          pairs with box rm; box setup re-establishes)
-ship box status <box> [--json]   one-box summary: helper version vs
-                          client, update hint, disk, apps, pending
-                          approvals (§16)
-ship box update <box>     converge helper + version-owned artifacts
+                          pairs with box app rm; box setup re-establishes)
+ship box status [<box>] [--json]   one-box summary: helper version vs
+                          client, update hint, disk, apps, members,
+                          pending approvals, last doctor result (§16)
+ship box update [<box>]   converge helper + version-owned artifacts
                           to this client's version (§16)
-ship box notify <box> [<url>|--rm]   read/set/clear the box webhook
+ship box webhook <box> [<url>|--rm]  read/set/clear the box webhook
                           for box-scoped events (§17); sugar over the
-                          box config key notify.url (§19)
-ship box config <box> [--json]        print the box's effective config
-ship box config <box> set <key> <val> / unset <key>   per-key policy
+                          box config key webhook.url (§19)
+ship box config [<box>] [--json]      print the box's effective config
+ship box config [<box>] set <key> <val> / unset <key>   per-key policy
                           enforced helper-side (§19)
 ship docs                 print the agent contract (§9)
 ship version
@@ -467,7 +476,7 @@ Injected into every process (all envs): `SHIP_URL` (this env's own https
 URL), `SHIP_BRANCH`, `SHIP_ENV` (`production` | `preview`),
 `SHIP_RELEASE` (release id).
 
-## 7. Failure UX: `why` and `notify`
+## 7. Failure UX: `why` and `webhook`
 
 - The helper records a structured deploy journal per env (extend existing
   release metadata): outcome (`deployed | aborted_release | aborted_probe |
@@ -479,7 +488,9 @@ URL), `SHIP_BRANCH`, `SHIP_ENV` (`production` | `preview`),
   non-200 with body snippet, image build failure), whether traffic was
   affected (with the current engine a failed probe means the old container
   kept serving — say so explicitly), and `next:` command.
-- `notify` (manifest key): the client or helper POSTs a JSON event
+- `webhook` (manifest key; ADR-0019 renamed it from `notify` — the
+  configured object is a webhook everywhere the user has seen one):
+  the client or helper POSTs a JSON event
   (`{app, env, event, release, summary, why, remediation, ts}`) on the
   **app-scoped events**: deploy aborted, deploy succeeded after a
   previous failure, preview reaped. `why` and `remediation` carry the
@@ -504,7 +515,22 @@ production:  <app>.<box-ip-with-dashes>.sslip.io
 preview:     <app>-<branch-slug>-<id>.<box-ip-with-dashes>.sslip.io
 ```
 
-Environment names never appear in URLs. The app name is the box-global
+Environment names never appear in URLs. The base is configurable
+per app (ADR-0019):
+
+```toml
+[preview]
+base    = "preview.example.com"   # bare DNS suffix; default <ip>.sslip.io
+aliases = true                    # default false; adds <branch-slug>.<base>
+```
+
+`base` validation: no scheme, path, port, credentials, wildcard
+prefix, or trailing dot; labels must be valid DNS; the generated full
+host must fit DNS limits; lowercased. Unknown `[preview]` keys refuse.
+The table is addressing policy ONLY — `processes.<n>.preview = false`
+(runtime inclusion) and `[env.preview]` (env values) stay independent,
+and D13's always-on preview protection is not configurable here or
+anywhere. Production addressing is untouched. The app name is the box-global
 identity, which is what makes the host collision-free: two routeless
 production apps on one box synthesize different hosts (the old
 `<envname>.` scheme made them identical). Preview label budget: the
@@ -563,10 +589,10 @@ not fail, since DNS may still be propagating.
   rollback; preview create/update/reap/pin; preview secret isolation
   (prod value must not leak) and branch-value-over-shared-preview
   precedence; stdout-is-URL contract; `why` after induced release/probe
-  failures; notify webhook fired (assert against a local HTTP sink);
+  failures; webhook fired (assert against a local HTTP sink);
   sslip route synthesis; `box member add` end-to-end (newly added key can
-  ship); `behind_production` stale-checkout guard; notify payload carries
-  `why` + `remediation`; doctor timer fires notify on an induced degraded
+  ship); `behind_production` stale-checkout guard; webhook payload carries
+  `why` + `remediation`; doctor timer fires the webhook on an induced degraded
   check; attribution (who shipped) present in status and journal.
 - Unit tests: error catalogue completeness (every returned code exists in
   the catalogue), docs/CLI drift check (§9).
@@ -584,7 +610,7 @@ yields a second URL; the reaper destroys an expired preview; all §10
 mapping/preview tests green.
 
 **Phase 2 — failure UX & agent contract.** Deploy journal + `why`;
-`notify`; error catalogue + §5 shapes across every verb; `--json` on
+`webhook`; error catalogue + §5 shapes across every verb; `--json` on
 mutations; `ship exec`; `ship docs` + AGENT.md; doctor upgrade; eval
 harness with the six scenarios passing against at least one agent. *Accept when:* every
 eval scenario passes; grepping the codebase finds no error return that
@@ -594,7 +620,7 @@ bypasses the catalogue; `ship docs | wc -l` > 0 and drift test green.
 bulk import: `ship secret set --from .env [--preview|--branch <name>]`
 (merge by default; `--replace` makes the file authoritative for the
 scope and lists removed key names on stderr — never values);
-`box member add`/`box members`/`box member rm`, `box rm <app>` + the `box apps --json` app list,
+`box member add`/`box member ls`/`box member rm`, `box app rm <app>` + the `box app ls --json` app list,
 install one-liner (curl script — the only install story; a Homebrew
 tap is deliberately cut, deferred until users ask) + shell
 completions, README rewritten around the four moments (§0),
@@ -609,7 +635,7 @@ base (previews on `*.preview.yourdomain.com` instead of sslip —
 Vercel's preview-suffix equivalent); watch mode (dev-class env: source
 synced from the laptop into a container running the framework's own
 dev server — development on the box, prod images stay immutable);
-notify fan-out stays the receiver's job (single URL by design).
+webhook fan-out stays the receiver's job (single URL by design).
 
 ## 12. Engineering ground rules
 
@@ -636,12 +662,29 @@ DSL, ever.**
 Surface:
 
 ```
-ship box member add <src> [<box>] [--role owner|shipper|agent]
+ship box member ls [<box>] [--json]     members: name, role, key SHA256
+ship box member add <key|path> [<box>] --name <n> [--role owner|shipper|agent]
+                                        literal key material writes
+                                        immediately; --name is
+                                        mandatory (identity never
+                                        derives from key comments,
+                                        filenames, or git config);
                                         default role: shipper
-ship box members [<box>] [--json]       members: name, role, key SHA256
+ship box member add <https-url> <box> --name <n> [--role ...]
+                                        raw keys-URL (github.com/
+                                        <u>.keys etc. — a forge
+                                        convention): FETCHES AND
+                                        PRINTS keys, fingerprints,
+                                        source, plan; WRITES NOTHING;
+                                        emits the exact commit command
+ship box member add ... --confirm <n>@sha256:<plan-digest>
+                                        refetches, requires exact
+                                        digest match (box + source +
+                                        name + role + sorted key
+                                        material), installs atomically
 ship box member rm <name> [<box>]       revoke all of a member's keys
-ship box approvals [<box>] [--json]     list pending approvals (box-wide)
-ship box approve <id> [<box>]           grant one-shot; requests expire
+ship box approval ls [<box>] [--json]   list pending approvals (box-wide)
+ship box approval grant <id> [<box>]    grant one-shot; requests expire
                                         in 15 min (expiry is the only
                                         "deny"; no deny verb); granting
                                         refreshes the window
@@ -650,9 +693,11 @@ ship box approve <id> [<box>]           grant one-shot; requests expire
 Members and approvals are box-scoped objects, so their verbs live
 under `box` with the object-first `[<box>]` fallback every box verb
 uses (explicit target anywhere, ship.toml inside an app dir) — the
-approver is usually NOT in the requester's checkout (ADR-0018). List
-verbs are plural (`members`, `approvals`, like `apps`); mutations are
-singular.
+approver is usually NOT in the requester's checkout (ADR-0018). One
+grammar covers every collection: `resource + subverb`
+(`box member ls|add|rm`, `box approval ls|grant`, `box app ls|rm`); a
+bare noun never lists (ADR-0019, superseding ADR-0018's plural list
+forms).
 
 - `box setup` enrolls the first member as **owner**.
 - Role bundles (verb × scope, enforced helper-side):
@@ -666,10 +711,10 @@ singular.
     status/logs/why/docs everywhere. Not: prod mutations, secret read
     or set, rm, data save/restore, shell.
 - Out-of-role → errcat `approval_required` carrying the request id and
-  the FULLY RESOLVED `ship box approve <id> <box>` (approvers paste
+  the FULLY RESOLVED `ship box approval grant <id> <box>` (approvers paste
   from chat; a command that depends on cwd or a placeholder is not a
   remediation). The helper mints the request into a box-global queue;
-  a `notify` event `approval_requested` fires with the same payload
+  a webhook event `approval_requested` fires with the same payload
   (to the box webhook once v0.4.0 lands, §17). Approvals are one-shot
   and journaled. The box learns its client-routable address at
   `box setup` (recorded box-side next to members state) — remediations
@@ -698,10 +743,10 @@ singular.
   member-name nit from v0.1.1 is fixed in this arc.
 
 Acceptance (fake-vps unless noted): role matrix — agent ship to prod →
-`approval_required` with a fully resolved `ship box approve <id> <box>`
+`approval_required` with a fully resolved `ship box approval grant <id> <box>`
 → the same command succeeds exactly once; a second attempt
 re-requests; expired request refuses with a fresh-request remediation;
-`ship box approvals` lists pending with ids; a shipper cannot grant an
+`ship box approval ls` lists pending with ids; a shipper cannot grant an
 owner-gated request and NOBODY can grant their own (ADR-0018); a grant
 refreshes the expiry window; shipper denied member add; owner
 unrestricted; `box member add` default role is shipper; box setup
@@ -851,19 +896,22 @@ visible and one-command fixable instead of a surprise.
 Surface:
 
 ```
-ship box status <box> [--json]   one-box summary: helper version vs
-                                 client, disk, apps, pending approvals
-ship box update <box>            converge the box to this client's
+ship box status [<box>] [--json]  one-box summary: helper version vs
+                                 client, disk, apps, members, pending
+                                 approvals, last doctor result
+ship box update [<box>]          converge the box to this client's
                                  version (helper + version-owned
                                  artifacts)
 ```
 
 - **`ship box status`** prints a one-screen summary: helper version vs
   client version with an update hint when behind
-  (`next: ship box update <box>`), disk usage, app count, pending
+  (`next: ship box update <box>`), disk usage, app count, member count
+  (`members: N (M owners)`; `members: unknown` when the member store is
+  unreadable, with the field omitted from `--json`), pending
   approvals count, and the last doctor-timer result with its age. Any
   member may read. `--json` is the machine view (resident substrate,
-  RFD-0002). The full app table is `ship box apps` (D8, §18); the
+  RFD-0002). The full app table is `ship box app ls` (D8, §18); the
   active probe is `ship box doctor` — three verbs, three questions
   (summary / list / examine), none folded into another. Status must
   not fetch data it discards (the v0.4.0 implementation pulled the
@@ -889,7 +937,7 @@ client older than helper → `client_behind_helper`; shipper/agent
 status → update → status round-trip on the testing box. Ships in the
 v0.4.0 tag.
 
-## 17. Notify split: app events vs box events (v0.4 arc)
+## 17. Webhook split: app events vs box events (v0.4 arc)
 
 One box, one pager. Recorded honestly: v0.3.0 fans `doctor_degraded`
 and `approval_requested` to **every app's** webhook, so one disk spike
@@ -899,14 +947,14 @@ event fires exactly once, to exactly one URL.
 Surface:
 
 ```
-ship box notify <box> [--json]   print the box webhook (unset: says so;
+ship box webhook <box> [--json]  print the box webhook (unset: says so;
                                  --json: {"url":""} shape, read only)
-ship box notify <box> <url>      set it
-ship box notify <box> --rm       clear it
+ship box webhook <box> <url>     set it
+ship box webhook <box> --rm      clear it
 ```
 
 - **App events** — `deploy_aborted`, `deploy_recovered`,
-  `preview_reaped` — fire to the app's manifest `notify` URL, as today.
+  `preview_reaped` — fire to the app's manifest `webhook` URL, as today.
 - **Box events** — `doctor_degraded`, `approval_requested`, and future
   box-scoped events (drift, disk) — fire **once** to the box webhook,
   and never to app URLs. With no box webhook set, box events go nowhere
@@ -945,7 +993,7 @@ lands on the laptop (ADR-0012, amends ADR-0007) · **D2** secrets never
 backed up · **D3** scheduled off-box backup parked (RFD-0007) · **D4**
 bare `secret set` follows branch=env (§6) · **D5** `@secret:NAME`
 removed (§2) · **D6** `--include-dotenv` removed (§4) · **D7** init
-starters removed (§2) · **D8** `box status`/`box apps`/`box doctor`
+starters removed (§2) · **D8** `box status`/`box app ls`/`box doctor`
 split, `ls` renamed (§16, ADR-0016) · **D9** `box forget` stays hidden,
 discovered via remediation · **D10** one topology (§4, ADR-0013) ·
 **D11** box config foundation (§19, ADR-0014) · **D12** control plane
@@ -1005,8 +1053,8 @@ prod. `ship` on a repo with no Dockerfile and no static route →
 error (flags gone). `--include-dotenv` → usage error; a `.env` in the
 worktree never appears in the uploaded artifact (assert
 archive contents). `@secret:NAME` in a manifest → manifest error
-naming the bare-form rule. `box apps` serves the old `box ls` table;
-`box ls` → usage error suggesting `box apps`. §15 acceptance runs as
+naming the bare-form rule. `box app ls` serves the old `box ls` table;
+`box ls` → usage error suggesting `box app ls`. §15 acceptance runs as
 written. AGENT.md regenerated; error catalogue drift test green
 (removed codes gone, `dockerfile_missing` present). Real-box: data
 save/restore round-trip on the testing box.
@@ -1044,8 +1092,8 @@ ship box config <box> unset <key>       back to the default
   together with the plumbing that reads it. A declared-but-unread
   policy field is a silent no-op trap — a key marked converge would
   validate, journal, and then quietly never converge (ADR-0017).
-- **Initial keys** (deliberately few): `notify.url` (owner-set,
-  read-on-next-use) — `ship box notify` becomes sugar over it, §17
+- **Initial keys** (deliberately few): `webhook.url` (owner-set,
+  read-on-next-use) — `ship box webhook` becomes sugar over it, §17
   semantics unchanged.
 - **What this is not**: app config. `ship.toml` in the repo stays the
   only app-level config — versioned, PR-reviewed, next to the code it
@@ -1054,10 +1102,10 @@ ship box config <box> unset <key>       back to the default
   decision ship should have made itself (§0.5).
 
 Acceptance (fake-vps): `box config --json` on a fresh box shows
-`notify.url` unset with its default and source; owner `set notify.url`
-→ journaled, `box notify <box>` prints the same value, an induced box
+`webhook.url` unset with its default and source; owner `set webhook.url`
+→ journaled, `box webhook <box>` prints the same value, an induced box
 event POSTs to it; shipper `set` → `approval_required`, approve →
 succeeds once; unknown key → error listing valid keys; wrong type →
-error; `unset` restores default; `box notify <box> <url>` and
-`box config set notify.url <url>` are observably the same operation
+error; `unset` restores default; `box webhook <box> <url>` and
+`box config set webhook.url <url>` are observably the same operation
 (one storage, one journal shape). AGENT.md regenerated.

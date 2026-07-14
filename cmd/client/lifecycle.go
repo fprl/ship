@@ -2,6 +2,7 @@ package client
 
 import (
 	"fmt"
+	"github.com/fprl/ship/internal/cliargs"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/names"
@@ -78,10 +79,11 @@ var stdinIsTerminal = func() bool {
 }
 
 func CmdExec(root, branch string, command []string) {
+	command = cliargs.TrimLeadingPassthroughSeparator(command)
 	if len(command) == 0 {
 		utils.DieError(errcat.New(errcat.CodeUsageError, errcat.Fields{
 			"detail":  "ship exec requires a command",
-			"command": "ship exec <cmd> [args...]",
+			"command": "ship exec -- <cmd...>",
 		}), 2)
 	}
 	read, err := currentReadContextForBranch(root, "exec", branch)

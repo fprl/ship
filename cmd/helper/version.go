@@ -27,14 +27,20 @@ type boxStatusSummary struct {
 		Status   string `json:"status"`
 		Evidence string `json:"evidence"`
 	} `json:"disk"`
-	Apps             []boxStatusAppSummary   `json:"apps"`
-	PendingApprovals int                     `json:"pending_approvals"`
-	Doctor           *boxStatusDoctorSummary `json:"doctor,omitempty"`
+	Apps             []boxStatusAppSummary    `json:"apps"`
+	Members          *boxStatusMembersSummary `json:"members,omitempty"`
+	PendingApprovals int                      `json:"pending_approvals"`
+	Doctor           *boxStatusDoctorSummary  `json:"doctor,omitempty"`
 }
 
 type boxStatusAppSummary struct {
 	App      string `json:"app"`
 	EnvCount int    `json:"env_count"`
+}
+
+type boxStatusMembersSummary struct {
+	Total  int `json:"total"`
+	Owners int `json:"owners"`
 }
 
 type boxStatusDoctorSummary struct {
@@ -77,10 +83,11 @@ func (c versionHelperCmd) Run() error {
 			Status   string `json:"status"`
 			Evidence string `json:"evidence"`
 		} `json:"disk"`
-		Apps             []boxStatusAppSummary   `json:"apps"`
-		PendingApprovals int                     `json:"pending_approvals"`
-		Doctor           *boxStatusDoctorSummary `json:"doctor,omitempty"`
-	}{Version: payload.Version, LastClientVersion: payload.LastClientVersion, Architecture: payload.Architecture, Disk: summary.Disk, Apps: summary.Apps, PendingApprovals: summary.PendingApprovals, Doctor: summary.Doctor})
+		Apps             []boxStatusAppSummary    `json:"apps"`
+		Members          *boxStatusMembersSummary `json:"members,omitempty"`
+		PendingApprovals int                      `json:"pending_approvals"`
+		Doctor           *boxStatusDoctorSummary  `json:"doctor,omitempty"`
+	}{Version: payload.Version, LastClientVersion: payload.LastClientVersion, Architecture: payload.Architecture, Disk: summary.Disk, Apps: summary.Apps, Members: summary.Members, PendingApprovals: summary.PendingApprovals, Doctor: summary.Doctor})
 }
 
 func readBoxStatusSummary() (boxStatusSummary, error) {
@@ -101,6 +108,21 @@ func readBoxStatusSummary() (boxStatusSummary, error) {
 		summary.Apps = append(summary.Apps, boxStatusAppSummary{App: app, EnvCount: envCount})
 	}
 	sort.Slice(summary.Apps, func(i, j int) bool { return summary.Apps[i].App < summary.Apps[j].App })
+	if rows, err := readMemberRows(); err == nil {
+		names := map[string]bool{}
+		owners := map[string]bool{}
+		for _, row := range rows {
+			if row.Name == "" {
+				continue
+			}
+			names[row.Name] = true
+			if row.Role == string(store.MemberRoleOwner) {
+				owners[row.Name] = true
+			}
+		}
+		members := boxStatusMembersSummary{Total: len(names), Owners: len(owners)}
+		summary.Members = &members
+	}
 	disk := doctorDiskSpaceCheck(diskUsageForPath, "")
 	summary.Disk.Status = disk.Status
 	summary.Disk.Evidence = disk.Evidence

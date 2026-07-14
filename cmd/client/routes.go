@@ -23,6 +23,7 @@ type deployRoutePlan struct {
 	Context            *config.AppContext
 	RewritesManifest   bool
 	NoConfiguredDomain bool
+	PreviewAlias       string
 }
 
 func prepareDeployRoutes(ctx *config.AppContext, envName string, opts deployRouteOptions) (deployRoutePlan, error) {
@@ -37,15 +38,16 @@ func prepareDeployRoutes(ctx *config.AppContext, envName string, opts deployRout
 	noConfiguredDomain := false
 
 	if opts.Preview {
+		base := previewHostBase(ctx, opts.BoxIP)
 		if hadConfiguredRoutes {
-			collapsed, err := previewCollapsedRoutes(ctx, envName, opts.BoxIP)
+			collapsed, err := previewCollapsedRoutes(ctx, envName, base)
 			if err != nil {
 				return deployRoutePlan{}, err
 			}
 			routes = collapsed
 			rewritten = true
 		} else {
-			synth, err := synthesizedRoutes(ctx, envName, opts.BoxIP)
+			synth, err := synthesizedRoutes(ctx, envName, base)
 			if err != nil {
 				return deployRoutePlan{}, err
 			}
@@ -54,7 +56,7 @@ func prepareDeployRoutes(ctx *config.AppContext, envName string, opts deployRout
 			noConfiguredDomain = true
 		}
 	} else if !hadConfiguredRoutes {
-		synth, err := synthesizedRoutes(ctx, envName, opts.BoxIP)
+		synth, err := synthesizedRoutes(ctx, envName, sslipBase(opts.BoxIP))
 		if err != nil {
 			return deployRoutePlan{}, err
 		}
@@ -68,11 +70,15 @@ func prepareDeployRoutes(ctx *config.AppContext, envName string, opts deployRout
 		rewritten = true
 	}
 
-	return deployRoutePlan{
+	plan := deployRoutePlan{
 		Context:            cloneAppContextWithRoutes(ctx, routes),
 		RewritesManifest:   rewritten,
 		NoConfiguredDomain: noConfiguredDomain,
-	}, nil
+	}
+	if opts.Preview && ctx.Preview.Aliases {
+		plan.PreviewAlias = previewAliasHost(envName, previewHostBase(ctx, opts.BoxIP))
+	}
+	return plan, nil
 }
 
 func hasConfiguredRouteHost(routes map[string]config.Route) bool {
@@ -84,12 +90,12 @@ func hasConfiguredRouteHost(routes map[string]config.Route) bool {
 	return false
 }
 
-func synthesizedRoutes(ctx *config.AppContext, envName, boxIP string) (map[string]config.Route, error) {
+func synthesizedRoutes(ctx *config.AppContext, envName, base string) (map[string]config.Route, error) {
 	process, err := synthesizedRouteProcess(ctx.Processes)
 	if err != nil {
 		return nil, err
 	}
-	host := synthesizedSSLIPHost(ctx.AppName, envName, boxIP)
+	host := synthesizedHost(ctx.AppName, envName, base)
 	return map[string]config.Route{
 		host: {Host: host, Process: process},
 	}, nil
@@ -113,16 +119,14 @@ func synthesizedRouteProcess(processes map[string]config.Process) (string, error
 	})
 }
 
-func previewCollapsedRoutes(ctx *config.AppContext, envName, boxIP string) (map[string]config.Route, error) {
+func previewCollapsedRoutes(ctx *config.AppContext, envName, base string) (map[string]config.Route, error) {
 	routes := ctx.Routes
 	defaultHost := defaultRouteHost(routes)
 	if defaultHost == "" {
-		synthHost := synthesizedSSLIPHost(ctx.AppName, envName, boxIP)
+		synthHost := synthesizedHost(ctx.AppName, envName, base)
 		return nil, manifestInvalidError(fmt.Sprintf("preview routes cannot be collapsed because [routes] has no non-redirect default host; add a process or static route for %s", synthHost), "fix ship.toml")
 	}
-	// v1 previews always use sslip because the manifest has no wildcard-base knob.
-	// TODO(§3): add an explicit wildcard-base config field and use it here.
-	previewHost := synthesizedSSLIPHost(ctx.AppName, envName, boxIP)
+	previewHost := synthesizedHost(ctx.AppName, envName, base)
 	out := map[string]config.Route{}
 	for _, name := range sortedRouteNames(routes) {
 		route := routes[name]
@@ -261,11 +265,26 @@ func sortedRouteNames(routes map[string]config.Route) []string {
 	return names
 }
 
-func synthesizedSSLIPHost(app, envName, boxIP string) string {
+func synthesizedHost(app, envName, base string) string {
+	return names.SynthesizedHostLabel(app, envName) + "." + base
+}
+
+func sslipBase(boxIP string) string {
 	if boxIP == "" {
 		boxIP = "127.0.0.1"
 	}
-	return names.SynthesizedHostLabel(app, envName) + "." + strings.ReplaceAll(boxIP, ".", "-") + ".sslip.io"
+	return strings.ReplaceAll(boxIP, ".", "-") + ".sslip.io"
+}
+
+func previewHostBase(ctx *config.AppContext, boxIP string) string {
+	if ctx.Preview.Base != "" {
+		return ctx.Preview.Base
+	}
+	return sslipBase(boxIP)
+}
+
+func previewAliasHost(envName, base string) string {
+	return names.PreviewBranchSlug(envName) + "." + base
 }
 
 func resolveBoxIPv4(runner sshRunner, server string) string {

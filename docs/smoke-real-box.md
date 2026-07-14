@@ -58,7 +58,7 @@ SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  ./dist/ship box apps <IP> --json
+  ./dist/ship box app ls <IP> --json
 ```
 
 Useful host checks over root SSH:
@@ -239,12 +239,12 @@ For a reused box, remove the app and all of its environments:
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/ship/dist/ship box rm hello <IP> --confirm hello
+  /path/to/ship/dist/ship box app rm hello <IP> --confirm hello
 ```
 
 ```sh
 SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
-  /path/to/ship/dist/ship box apps <IP> --json
+  /path/to/ship/dist/ship box app ls <IP> --json
 ```
 
 ## 7. Example matrix

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/provision/host"
 	"github.com/fprl/ship/internal/store"
 )
@@ -79,6 +80,18 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	member := members.Members[summary.DeployKeyResults[0].Key.Fingerprint]
 	if member.Name != "deploy" || member.Role != store.MemberRoleOwner {
 		t.Fatalf("setup member record = %+v, want deploy owner", member)
+	}
+}
+
+func TestSetupMemberRoleOverridesUsesExplicitGitDerivedMemberName(t *testing.T) {
+	keys, err := memberkeys.Normalize(deployTestPublicKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	overrides := setupMemberRoleOverrides(keys, []memberkeys.AddResult{{Key: keys[0], Added: true}}, "Franco Pablo")
+	got := overrides[keys[0].Fingerprint]
+	if got.Name != "Franco Pablo" || got.Role != store.MemberRoleOwner {
+		t.Fatalf("setup override = %+v, want explicit owner name", got)
 	}
 }
 

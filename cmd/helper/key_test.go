@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fprl/ship/internal/errcat"
@@ -122,8 +123,103 @@ func TestAppendDeployAuthorizedKeysRejectsConflictingRoleForExistingMember(t *te
 		t.Fatal(err)
 	}
 	_, err = appendDeployAuthorizedKeys("deploy", keys, store.MemberRoleOwner)
-	if err == nil || err.Error() != "command usage failed\nmember \"shared\" already has role \"agent\"; additional keys must use that role\nnext: ship box member add <src> 203.0.113.7 --role agent" {
+	if err == nil || err.Error() != "command usage failed\nmember \"shared\" already has role \"agent\"; additional keys must use that role\nnext: ship box member add <https-url|key|path> 203.0.113.7 --name shared --role agent" {
 		t.Fatalf("conflicting member role err = %v", err)
+	}
+}
+
+func TestAppendDeployAuthorizedKeysRepairsMissingMembersStore(t *testing.T) {
+	root := t.TempDir()
+	authorizedKeysPath := filepath.Join(root, "authorized_keys")
+	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
+	t.Setenv("SHIP_STATE_DIR", root)
+	setHelperBoxClientAddress(t, "203.0.113.7")
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := os.WriteFile(authorizedKeysPath, []byte(alicePublicKey+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Default().WriteMembers(store.MembersFile{Version: store.CurrentVersion, Members: map[string]store.MemberRecord{}}); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := normalizeAuthorizedKeys(alicePublicKey, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := appendDeployAuthorizedKeys("deploy", keys, store.MemberRoleOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Added {
+		t.Fatalf("re-add results = %+v, want one already-authorized key", results)
+	}
+	members, err := store.Default().ReadMembers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := members.Members[aliceFingerprint]; got.Name != "alice" || got.Role != store.MemberRoleOwner {
+		t.Fatalf("reconciled member = %+v, want alice owner", got)
+	}
+}
+
+func TestAppendDeployAuthorizedKeysKeepsOneNameAcrossMultipleKeysAndRejectsReassignment(t *testing.T) {
+	root := t.TempDir()
+	authorizedKeysPath := filepath.Join(root, "authorized_keys")
+	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
+	t.Setenv("SHIP_STATE_DIR", root)
+	setHelperBoxClientAddress(t, "203.0.113.7")
+	if err := os.WriteFile(authorizedKeysPath, []byte(alicePublicKey+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Default().WriteMembers(store.MembersFile{
+		Version: store.CurrentVersion,
+		Members: map[string]store.MemberRecord{
+			aliceFingerprint: {Name: "shared", Role: store.MemberRoleOwner},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	bob, err := normalizeAuthorizedKeys(bobPublicKey, "shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing, err := readAuthorizedKeys(authorizedKeysPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, err := store.Default().ReadMembers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateMemberEnrollment(existing, memberkeys.EffectiveMemberRecords(existing, *members, nil), bob, store.MemberRoleOwner); err != nil {
+		t.Fatalf("adding a second key to one member = %v", err)
+	}
+	lines, results := memberkeys.Merge(existing, bob)
+	if len(results) != 1 || !results[0].Added || len(lines) != 2 {
+		t.Fatalf("multi-key merge = lines=%d results=%+v", len(lines), results)
+	}
+	next := memberkeys.ReconciledMembersFile(memberkeys.Parse(memberkeys.Content(lines)), *members, map[string]store.MemberRecord{bob[0].Fingerprint: {Name: "shared", Role: store.MemberRoleOwner}})
+	if len(next.Members) != 2 || next.Members[bob[0].Fingerprint].Name != "shared" {
+		t.Fatalf("multi-key member records = %+v, want two shared records", next.Members)
+	}
+
+	reassigned, err := normalizeAuthorizedKeys(alicePublicKey, "other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateMemberEnrollment(existing, memberkeys.EffectiveMemberRecords(existing, *members, nil), reassigned, store.MemberRoleOwner); !errcat.Is(err, errcat.CodeUsageError) || !strings.Contains(err.Error(), "already belongs to member \"shared\"") {
+		t.Fatalf("reassigning existing key error = %v, want ownership usage error", err)
+	}
+	content, err := os.ReadFile(authorizedKeysPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), bobPublicKey[:strings.Index(bobPublicKey, " ")]) {
+		t.Fatalf("authorized_keys changed unexpectedly after rejected reassignment: %s", content)
 	}
 }
 
@@ -151,8 +247,8 @@ func TestMemberRemediationsUseRecordedBoxAddress(t *testing.T) {
 		code            errcat.Code
 		wantRemediation string
 	}{
-		{name: "missing member", member: "nobody", code: errcat.CodeMemberNotFound, wantRemediation: "ship box members 203.0.113.7"},
-		{name: "last member key", member: "alice", code: errcat.CodeMemberLastKey, wantRemediation: "ship box member add <github-user|key|path> 203.0.113.7"},
+		{name: "missing member", member: "nobody", code: errcat.CodeMemberNotFound, wantRemediation: "ship box member ls 203.0.113.7"},
+		{name: "last member key", member: "alice", code: errcat.CodeMemberLastKey, wantRemediation: "ship box member add <https-url|key|path> 203.0.113.7 --name <name>"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -176,7 +272,7 @@ func TestNormalizeAuthorizedKeysUsesRecordedBoxAddress(t *testing.T) {
 		t.Fatalf("normalize error = %v, want ssh_public_key_invalid", err)
 	}
 	coded, _ := errcat.As(err)
-	if got, want := coded.Remediation(), "ship box member add <github-user|key|path> 203.0.113.7"; got != want {
+	if got, want := coded.Remediation(), "ship box member add <https-url|key|path> 203.0.113.7 --name <name>"; got != want {
 		t.Fatalf("remediation = %q, want %q", got, want)
 	}
 }

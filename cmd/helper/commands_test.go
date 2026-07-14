@@ -2,10 +2,12 @@ package helper
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/alecthomas/kong"
+	"github.com/fprl/ship/internal/cliargs"
 )
 
 func parseServerCommand(t *testing.T, args ...string) *ServerCmd {
@@ -23,6 +25,27 @@ func parseServerCommand(t *testing.T, args ...string) *ServerCmd {
 		t.Fatalf("parse %v failed: %v", args, err)
 	}
 	return cli
+}
+
+func TestServerAppExecPassthroughParserShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{name: "command without separator", args: []string{"app", "exec", "api", "production", "sh", "-c", "echo hi"}, want: []string{"sh", "-c", "echo hi"}},
+		{name: "separator before command", args: []string{"app", "exec", "api", "production", "--", "sh", "-c", "echo hi"}, want: []string{"sh", "-c", "echo hi"}},
+		{name: "separator before dash command", args: []string{"app", "exec", "api", "production", "--", "--flag-first-cmd"}, want: []string{"--flag-first-cmd"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := parseServerCommand(t, tt.args...)
+			if got := cliargs.TrimLeadingPassthroughSeparator(parsed.App.Exec.Command); !slices.Equal(got, tt.want) {
+				t.Fatalf("command = %q, want %q", got, tt.want)
+			}
+		})
+	}
 }
 
 func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
@@ -66,18 +89,18 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "logs", "--tail=50", "api", "production"},
 		{"app", "rollback", "api", "production"},
 		{"env", "reap"},
-		{"key", "add", "--comment", "alice"},
+		{"key", "add", "--name", "alice"},
 		{"key", "--member-fingerprint", aliceFingerprint, "ls"},
-		{"key", "add", "--comment", "alice", "--role", "owner"},
+		{"key", "add", "--name", "alice", "--role", "owner"},
 		{"key", "ls"},
 		{"key", "ls", "--json"},
 		{"key", "rm", "alice"},
 		{"approval", "--member-fingerprint", aliceFingerprint, "list"},
 		{"approval", "list", "--json"},
 		{"approval", "approve", "abc123xy"},
-		{"notify", "get"},
-		{"notify", "set", "https://ntfy.example/ship"},
-		{"notify", "clear"},
+		{"webhook", "get"},
+		{"webhook", "set", "https://ntfy.example/ship"},
+		{"webhook", "clear"},
 	}
 
 	for _, tt := range tests {
@@ -134,6 +157,7 @@ func TestServerCLIRejectsRemovedCompatibilityCommands(t *testing.T) {
 		{"app", "backup", "--json", "list", "api", "production"},
 		{"app", "backup", "--from", "backup-id", "restore", "api", "production"},
 		{"app", "--member", "alice", "status", "api", "production"},
+		{"notify", "get"},
 	}
 	for _, tt := range tests {
 		t.Run(strings.Join(tt, "_"), func(t *testing.T) {

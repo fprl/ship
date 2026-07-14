@@ -143,7 +143,7 @@ func authorizeHelperWithPolicy(verb helperVerb, requiredRole store.MemberRole, t
 	}
 	if minted {
 		appendApprovalJournalEntry("requested", request, member)
-		notifyApprovalRequested(request, approvalNow())
+		webhookApprovalRequested(request, approvalNow())
 	}
 	return serverMember{}, approvalRequiredError(request)
 }
@@ -469,7 +469,7 @@ func approveRequest(id string, approver serverMember) (store.ApprovalRequest, er
 		if request.Status == store.ApprovalStatusApproved {
 			return store.ApprovalRequest{}, errcat.New(errcat.CodeOperationFailed, errcat.Fields{
 				"detail":  "approval " + id + " is already approved",
-				"command": "ship box approvals " + boxClientAddress(),
+				"command": "ship box approval ls " + boxClientAddress(),
 			})
 		}
 		if err := authorizeApprovalGrantForRequest(approver, request); err != nil {
@@ -496,7 +496,7 @@ func approveRequest(id string, approver serverMember) (store.ApprovalRequest, er
 	}
 	return store.ApprovalRequest{}, errcat.New(errcat.CodeOperationFailed, errcat.Fields{
 		"detail":  "approval " + id + " was not found",
-		"command": "ship box approvals " + boxClientAddress(),
+		"command": "ship box approval ls " + boxClientAddress(),
 	})
 }
 
@@ -594,7 +594,7 @@ func approvalRequiredError(request store.ApprovalRequest) error {
 }
 
 func approvalCommand(id string) string {
-	return "ship box approve " + id + " " + boxClientAddress()
+	return "ship box approval grant " + id + " " + boxClientAddress()
 }
 
 func newApprovalID(existing []store.ApprovalRequest) string {

@@ -182,8 +182,8 @@ func boxConfigKey(key string) (store.BoxConfigKey, error) {
 
 func validateBoxConfigValue(spec store.BoxConfigKey, raw string) (string, error) {
 	value := strings.TrimSpace(raw)
-	if spec.Name == "notify.url" {
-		validated, err := validateBoxNotifyURL(value)
+	if spec.Name == "webhook.url" {
+		validated, err := validateBoxWebhookURL(value)
 		if err != nil {
 			return "", boxConfigError(&store.BoxConfigValueError{Key: spec.Name, Detail: err.Error()})
 		}
@@ -196,8 +196,8 @@ func validateBoxConfigValue(spec store.BoxConfigKey, raw string) (string, error)
 }
 
 func boxConfigTargetArg(key, value string) string {
-	if key == "notify.url" {
-		return "key=" + key + " " + boxNotifyTargetArg(value)
+	if key == "webhook.url" {
+		return "key=" + key + " " + boxWebhookTargetArg(value)
 	}
 	return "key=" + key
 }

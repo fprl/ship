@@ -45,8 +45,8 @@ const (
 	CodeBoxTargetRequired                 Code = "box_target_required"
 	CodeInvalidBoxTarget                  Code = "invalid_box_target"
 	CodeRmConfirmationRequired            Code = "rm_confirmation_required"
-	CodeBoxRmConfirmationRequired         Code = "box_rm_confirmation_required"
-	CodeGitHubKeysUnavailable             Code = "github_keys_unavailable"
+	CodeBoxAppRmConfirmationRequired      Code = "box_app_rm_confirmation_required"
+	CodeKeysURLUnavailable                Code = "keys_url_unavailable"
 	CodeSSHPublicKeyInvalid               Code = "ssh_public_key_invalid"
 	CodeMemberNotFound                    Code = "member_not_found"
 	CodeMemberLastKey                     Code = "member_last_key"
@@ -292,14 +292,14 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "target a box",
 		CauseTemplate:       "{known_boxes}",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "ship box apps <box>", "known_boxes": "known boxes (~/.config/ship/known_hosts):\n  none known yet"},
+		Defaults:            Fields{"command": "ship box app ls <box>", "known_boxes": "known boxes (~/.config/ship/known_hosts):\n  none known yet"},
 	},
 	CodeInvalidBoxTarget: {
 		Code:                CodeInvalidBoxTarget,
 		MessageTemplate:     "box target is invalid",
 		CauseTemplate:       "box target must be a host like 203.0.113.7; remove any user@ prefix",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "ship box apps 203.0.113.7"},
+		Defaults:            Fields{"command": "ship box app ls 203.0.113.7"},
 	},
 	CodeRmConfirmationRequired: {
 		Code:                CodeRmConfirmationRequired,
@@ -307,45 +307,46 @@ var catalogue = map[Code]Entry{
 		CauseTemplate:       "Production rm requires --confirm {app}",
 		RemediationTemplate: "ship rm {branch} --confirm {app}",
 	},
-	CodeBoxRmConfirmationRequired: {
-		Code:                CodeBoxRmConfirmationRequired,
-		MessageTemplate:     "box rm confirmation failed",
-		CauseTemplate:       "box rm requires --confirm {app}",
-		RemediationTemplate: "ship box rm {app} --confirm {app}",
-	},
-	CodeGitHubKeysUnavailable: {
-		Code:                CodeGitHubKeysUnavailable,
-		MessageTemplate:     "GitHub SSH key lookup failed",
-		CauseTemplate:       "no public SSH keys found for GitHub user {user}",
-		RemediationTemplate: "ship box member add <path-to-public-key> {box}",
+	CodeBoxAppRmConfirmationRequired: {
+		Code:                CodeBoxAppRmConfirmationRequired,
+		MessageTemplate:     "box app rm confirmation failed",
+		CauseTemplate:       "box app rm requires --confirm {app}",
+		RemediationTemplate: "ship box app rm {app} {box} --confirm {app}",
 		Defaults:            Fields{"box": "<box>"},
+	},
+	CodeKeysURLUnavailable: {
+		Code:                CodeKeysURLUnavailable,
+		MessageTemplate:     "remote SSH key lookup failed",
+		CauseTemplate:       "no public SSH keys found at {source}",
+		RemediationTemplate: "ship box member add {source} {box} --name {name}",
+		Defaults:            Fields{"source": "<https-url>", "box": "<box>", "name": "<name>"},
 	},
 	CodeSSHPublicKeyInvalid: {
 		Code:                CodeSSHPublicKeyInvalid,
 		MessageTemplate:     "SSH public key is invalid",
 		CauseTemplate:       "{detail}",
-		RemediationTemplate: "ship box member add <github-user|key|path> {box}",
+		RemediationTemplate: "ship box member add <https-url|key|path> {box} --name <name>",
 		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeMemberNotFound: {
 		Code:                CodeMemberNotFound,
 		MessageTemplate:     "member rm failed",
 		CauseTemplate:       "no authorized keys found for member {name}; current members: {members}",
-		RemediationTemplate: "ship box members {box}",
+		RemediationTemplate: "ship box member ls {box}",
 		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeMemberLastKey: {
 		Code:                CodeMemberLastKey,
 		MessageTemplate:     "member rm refused",
 		CauseTemplate:       "removing {name} would remove the last remaining authorized key",
-		RemediationTemplate: "ship box member add <github-user|key|path> {box}",
+		RemediationTemplate: "ship box member add <https-url|key|path> {box} --name <name>",
 		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeMemberUnknown: {
 		Code:                CodeMemberUnknown,
 		MessageTemplate:     "member identity is not authorized",
 		CauseTemplate:       "fingerprint {fingerprint} is not in authorized_keys",
-		RemediationTemplate: "ship box member add <src> {box}",
+		RemediationTemplate: "ship box member add <https-url|key|path> {box} --name <name>",
 		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeRoleDenied: {
@@ -359,7 +360,7 @@ var catalogue = map[Code]Entry{
 		Code:                CodeApprovalRequired,
 		MessageTemplate:     "approval required for {summary}",
 		CauseTemplate:       "{member} ({role}) requested {summary}; approval id {id}",
-		RemediationTemplate: "ship box approve {id} {box}",
+		RemediationTemplate: "ship box approval grant {id} {box}",
 		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeApprovalExpired: {

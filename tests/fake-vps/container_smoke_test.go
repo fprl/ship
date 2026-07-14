@@ -37,11 +37,11 @@ func TestFakeCaddyRejectsUnsupportedCommand(t *testing.T) {
 }
 
 const (
-	notifyEventDeployAborted     = "deploy_aborted"
-	notifyEventDeployRecovered   = "deploy_recovered"
-	notifyEventPreviewReaped     = "preview_reaped"
-	notifyEventDoctorDegraded    = "doctor_degraded"
-	notifyEventApprovalRequested = "approval_requested"
+	webhookEventDeployAborted     = "deploy_aborted"
+	webhookEventDeployRecovered   = "deploy_recovered"
+	webhookEventPreviewReaped     = "preview_reaped"
+	webhookEventDoctorDegraded    = "doctor_degraded"
+	webhookEventApprovalRequested = "approval_requested"
 )
 
 // TestContainerSmoke exercises the new container-deploy lifecycle (ADR-0005
@@ -62,7 +62,7 @@ func TestContainerSmoke(t *testing.T) {
 		t.Skip("set SHIP_RUN_FAKE_VPS_SMOKE=1 to run Docker-backed fake VPS smoke")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	t.Cleanup(cancel)
 
 	env := newSmokeEnv(t, ctx)
@@ -72,7 +72,7 @@ func TestContainerSmoke(t *testing.T) {
 	env.configureSSH(t, "deploy")
 	env.waitForSSH(t)
 
-	t.Run("notify webhook events", env.testNotifyWebhooks)
+	t.Run("webhook events", env.testWebhookEvents)
 	t.Run("container app reaches setup + deploy + caddy proxy", env.testContainerAppLifecycle)
 	t.Run("real Caddy validation rejects malformed fragments", env.testCaddyValidationRejectsMalformedFragment)
 	t.Run("daily verbs pin unknown host and refuse changed host", env.testDailyVerbHostKeyTOFU)
@@ -96,10 +96,11 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("preview secret scoping isolation", env.testPreviewSecretScoping)
 	t.Run("secret bulk import merge replace and preview scope", env.testSecretBulkImport)
 	t.Run("preview env overlay applies before secret resolution", env.testPreviewEnvOverlay)
+	t.Run("preview custom base aliases serve with the same capability", env.testPreviewBaseAliases)
 	t.Run("exec runs one-off commands in the release environment", env.testExec)
 	t.Run("status + logs surface deployed processes without SSHing in", env.testStatusAndLogs)
 	t.Run("box status and update converge helper version", env.testBoxStatusAndUpdate)
-	t.Run("box rm destroys an app and its environments", env.testBoxRm)
+	t.Run("box app rm destroys an app and its environments", env.testBoxAppRm)
 	t.Run("rm tears down one app environment", env.testDestroy)
 }
 
@@ -147,6 +148,9 @@ func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
 	if !regexp.MustCompile(`(?m)^apps: \d+( \(\d+ envs\))?$`).MatchString(status.stdout) {
 		t.Fatalf("box status should print an app count line:\n%s", status.stdout)
 	}
+	if !regexp.MustCompile(`(?m)^members: \d+ \(\d+ owners\)$`).MatchString(status.stdout) {
+		t.Fatalf("box status should print a member count line:\n%s", status.stdout)
+	}
 	if strings.Contains(status.stdout, "versionapi:") {
 		t.Fatalf("box status should print an app count, not an app table:\n%s", status.stdout)
 	}
@@ -168,6 +172,7 @@ func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
 	}
 	assertContains(t, clean.stdout, `"helper_version": "`+currentVersion+`"`)
 	assertContains(t, clean.stdout, `"update_available": false`)
+	assertContains(t, clean.stdout, `"members": {`)
 	// Assert the helper_version CHECK recovered — not whole-box green:
 	// in the shared smoke container earlier subtests leave unrelated
 	// degraded checks (uncertified example.com routes), so doctor's
@@ -305,44 +310,50 @@ EOF`)
 	e.dockerExec(t, "systemctl enable ship-preview-reaper.timer >/dev/null && systemctl start ship-preview-reaper.timer >/dev/null")
 }
 
-func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
+func (e *smokeEnv) testWebhookEvents(t *testing.T) {
 	e.ensureSmokeHostSeed(t)
-	sink := e.startNotifySink(t)
+	sink := e.startWebhookSink(t)
 	t.Cleanup(func() {
 		e.dockerExec(t, "systemctl enable ship-preview-reaper.timer >/dev/null && systemctl start ship-preview-reaper.timer >/dev/null")
 	})
 
-	app := filepath.Join(e.tmp, "notify-api")
+	app := filepath.Join(e.tmp, "webhook-api")
 	mustMkdir(t, app)
-	secretValue := "notify-secret-value"
-	writeNotifyFixture(t, app, sink.URL("/app-one"))
+	secretValue := "webhook-secret-value"
+	writeWebhookFixture(t, app, sink.URL("/app-one"))
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 
-	unset := e.ship(t, app, nil, "box", "notify", "fake-vps")
-	assertContains(t, unset, "box notify is unset")
-	assertContains(t, unset, "next: ship box notify fake-vps <url>")
+	unset := e.runShip(t, app, nil, "box", "webhook", "fake-vps")
+	if unset.err != nil {
+		t.Fatalf("box webhook unset read failed: %v\nstdout:\n%s\nstderr:\n%s", unset.err, unset.stdout, unset.stderr)
+	}
+	assertContains(t, unset.stderr, "box webhook is unset")
+	assertContains(t, unset.stderr, "next: ship box webhook fake-vps <url>")
+	if unset.stdout != "" {
+		t.Fatalf("unset box webhook should leave stdout empty, got %q", unset.stdout)
+	}
 	freshConfig := e.ship(t, app, nil, "box", "config", "fake-vps", "--json")
-	assertContains(t, freshConfig, `"notify.url"`)
+	assertContains(t, freshConfig, `"webhook.url"`)
 	assertContains(t, freshConfig, `"source": "default"`)
-	set := e.ship(t, app, nil, "box", "config", "fake-vps", "set", "notify.url", sink.URL("/box"))
-	assertContains(t, set, "box config set notify.url")
-	if got := e.ship(t, app, nil, "box", "notify", "fake-vps"); got != sink.URL("/box")+"\n" {
-		t.Fatalf("box notify read = %q, want %q", got, sink.URL("/box")+"\n")
+	set := e.ship(t, app, nil, "box", "config", "fake-vps", "set", "webhook.url", sink.URL("/box"))
+	assertContains(t, set, "box config set webhook.url")
+	if got := e.ship(t, app, nil, "box", "webhook", "fake-vps"); got != sink.URL("/box")+"\n" {
+		t.Fatalf("box webhook read = %q, want %q", got, sink.URL("/box")+"\n")
 	}
 	if got := e.ship(t, app, nil, "box", "config", "fake-vps", "--json"); !strings.Contains(got, `"source": "set"`) || !strings.Contains(got, sink.URL("/box")) {
 		t.Fatalf("box config set = %q", got)
 	}
-	cleared := e.ship(t, app, nil, "box", "notify", "fake-vps", "--rm")
-	assertContains(t, cleared, "box notify cleared")
+	cleared := e.ship(t, app, nil, "box", "webhook", "fake-vps", "--rm")
+	assertContains(t, cleared, "box webhook cleared")
 	if got := e.ship(t, app, nil, "box", "config", "fake-vps", "--json"); !strings.Contains(got, `"source": "default"`) {
 		t.Fatalf("box config unset = %q", got)
 	}
-	e.ship(t, app, nil, "box", "notify", "fake-vps", sink.URL("/box"))
+	e.ship(t, app, nil, "box", "webhook", "fake-vps", sink.URL("/box"))
 
-	secondApp := filepath.Join(e.tmp, "notify-second-api")
+	secondApp := filepath.Join(e.tmp, "webhook-second-api")
 	mustMkdir(t, secondApp)
-	writeNotifySecondFixture(t, secondApp, sink.URL("/app-two"))
+	writeWebhookSecondFixture(t, secondApp, sink.URL("/app-two"))
 	e.commitFixture(t, secondApp)
 	e.mustRun(t, secondApp, nil, "git", "checkout", "-B", "main")
 	e.ship(t, secondApp, nil)
@@ -358,45 +369,45 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	}
 	failingManifest := strings.Replace(string(manifest), `release = "touch /data/release-ok"`, `release = "ship-fail-release"`, 1)
 	if failingManifest == string(manifest) {
-		t.Fatal("notify fixture did not contain the success release command")
+		t.Fatal("webhook fixture did not contain the success release command")
 	}
 	mustWrite(t, manifestPath, failingManifest)
-	mustWrite(t, filepath.Join(app, "README.md"), "notify failed release\n")
+	mustWrite(t, filepath.Join(app, "README.md"), "webhook failed release\n")
 	e.commitFixture(t, app)
 	failedRelease := gitRelease(t, e, app)
 	failed := e.runShip(t, app, nil, "--tls", "internal")
 	if failed.err == nil {
 		t.Fatal("deploy with failing release command should fail")
 	}
-	aborted := sink.waitForEvent(t, notifyEventDeployAborted)
-	assertNotifySmokeField(t, aborted, "_sink_path", "/app-one")
-	assertNotifySmokeField(t, aborted, "release", failedRelease)
-	assertNotifySmokeNested(t, aborted, "why.outcome", "aborted_release")
-	assertContains(t, notifySmokeNestedString(t, aborted, "why.stderr_tail"), "fake release command failed")
-	assertNotifySmokeNested(t, aborted, "remediation.command", "ship")
-	assertNotifySmokeNested(t, aborted, "remediation.journal.failing_step", "release")
+	aborted := sink.waitForEvent(t, webhookEventDeployAborted)
+	assertWebhookSmokeField(t, aborted, "_sink_path", "/app-one")
+	assertWebhookSmokeField(t, aborted, "release", failedRelease)
+	assertWebhookSmokeNested(t, aborted, "why.outcome", "aborted_release")
+	assertContains(t, webhookSmokeNestedString(t, aborted, "why.stderr_tail"), "fake release command failed")
+	assertWebhookSmokeNested(t, aborted, "remediation.command", "ship")
+	assertWebhookSmokeNested(t, aborted, "remediation.journal.failing_step", "release")
 
 	fixedManifest := strings.Replace(failingManifest, `release = "ship-fail-release"`, `release = "touch /data/release-ok"`, 1)
 	mustWrite(t, manifestPath, fixedManifest)
-	mustWrite(t, filepath.Join(app, "README.md"), "notify recovered release\n")
+	mustWrite(t, filepath.Join(app, "README.md"), "webhook recovered release\n")
 	e.commitFixture(t, app)
 	recoveredRelease := gitRelease(t, e, app)
 	e.ship(t, app, nil, "--tls", "internal")
-	recovered := sink.waitForEvent(t, notifyEventDeployRecovered)
-	assertNotifySmokeField(t, recovered, "release", recoveredRelease)
-	assertNotifySmokeNested(t, recovered, "why.previous_failure.attempted_release", failedRelease)
-	assertNotifySmokeNested(t, recovered, "why.current.outcome", "deployed")
-	assertNotifySmokeNested(t, recovered, "remediation.command", "ship status")
+	recovered := sink.waitForEvent(t, webhookEventDeployRecovered)
+	assertWebhookSmokeField(t, recovered, "release", recoveredRelease)
+	assertWebhookSmokeNested(t, recovered, "why.previous_failure.attempted_release", failedRelease)
+	assertWebhookSmokeNested(t, recovered, "why.current.outcome", "deployed")
+	assertWebhookSmokeNested(t, recovered, "remediation.command", "ship status")
 
-	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/notify")
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/webhook")
 	e.ship(t, app, nil, "--tls", "internal")
-	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "notifyapi", "feature/notify")
-	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "notifyapi", previewEnv)
+	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "webhookapi", "feature/webhook")
+	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "webhookapi", previewEnv)
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")
-	reaped := sink.waitForEvent(t, notifyEventPreviewReaped)
-	assertNotifySmokeField(t, reaped, "env", "Preview feature/notify")
-	assertNotifySmokeNested(t, reaped, "why.branch", "feature/notify")
-	assertNotifySmokeNested(t, reaped, "remediation.command", "git checkout feature/notify && ship")
+	reaped := sink.waitForEvent(t, webhookEventPreviewReaped)
+	assertWebhookSmokeField(t, reaped, "env", "Preview feature/webhook")
+	assertWebhookSmokeNested(t, reaped, "why.branch", "feature/webhook")
+	assertWebhookSmokeNested(t, reaped, "remediation.command", "git checkout feature/webhook && ship")
 
 	// Establish a doctor baseline, then drop the events it fired: the
 	// first-ever record has no prior state, so every already-degraded
@@ -407,50 +418,50 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 	e.dockerExec(t, "rm -f "+sink.eventsPath)
 	e.dockerExec(t, "systemctl stop ship-preview-reaper.timer")
 	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
-	doctor := sink.waitForEvent(t, notifyEventDoctorDegraded)
-	assertNotifySmokeField(t, doctor, "_sink_path", "/box")
+	doctor := sink.waitForEvent(t, webhookEventDoctorDegraded)
+	assertWebhookSmokeField(t, doctor, "_sink_path", "/box")
 	if box, _ := doctor["box"].(string); box == "" {
 		t.Fatalf("doctor_degraded missing box host: %s", prettySmokeJSON(t, doctor))
 	}
-	assertNotifySmokeNested(t, doctor, "why.id", "reaper_timer")
-	assertContains(t, notifySmokeNestedString(t, doctor, "why.evidence"), "active=inactive")
-	assertContains(t, notifySmokeNestedString(t, doctor, "remediation.command"), "systemctl start ship-preview-reaper.timer")
-	if countNotifySmokeEvents(sink.rawEvents(t), notifyEventDoctorDegraded) != 1 {
+	assertWebhookSmokeNested(t, doctor, "why.id", "reaper_timer")
+	assertContains(t, webhookSmokeNestedString(t, doctor, "why.evidence"), "active=inactive")
+	assertContains(t, webhookSmokeNestedString(t, doctor, "remediation.command"), "systemctl start ship-preview-reaper.timer")
+	if countWebhookSmokeEvents(sink.rawEvents(t), webhookEventDoctorDegraded) != 1 {
 		t.Fatalf("doctor_degraded should POST once to the box webhook:\n%s", sink.rawEvents(t))
 	}
 
-	slowManifest := strings.Replace(fixedManifest, sink.URL("/app-one"), sink.URL("/slow?token=notify-url-secret"), 1)
+	slowManifest := strings.Replace(fixedManifest, sink.URL("/app-one"), sink.URL("/slow?token=webhook-url-secret"), 1)
 	if slowManifest == fixedManifest {
-		t.Fatal("notify fixture did not contain the app webhook URL")
+		t.Fatal("webhook fixture did not contain the app webhook URL")
 	}
 	slowFailing := strings.Replace(slowManifest, `release = "touch /data/release-ok"`, `release = "ship-fail-release"`, 1)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 	mustWrite(t, manifestPath, slowFailing)
-	mustWrite(t, filepath.Join(app, "README.md"), "slow notify failed release\n")
+	mustWrite(t, filepath.Join(app, "README.md"), "slow webhook failed release\n")
 	e.commitFixture(t, app)
 	if result := e.runShip(t, app, nil, "--tls", "internal"); result.err == nil {
 		t.Fatal("deploy with failing release command should fail")
 	}
 	slowFixed := strings.Replace(slowFailing, `release = "ship-fail-release"`, `release = "touch /data/release-ok"`, 1)
 	mustWrite(t, manifestPath, slowFixed)
-	mustWrite(t, filepath.Join(app, "README.md"), "slow notify recovered release\n")
+	mustWrite(t, filepath.Join(app, "README.md"), "slow webhook recovered release\n")
 	e.commitFixture(t, app)
 	start := time.Now()
 	result := e.runShip(t, app, nil, "--tls", "internal")
 	elapsed := time.Since(start)
 	if result.err != nil {
-		t.Fatalf("deploy should succeed even when notify times out: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
+		t.Fatalf("deploy should succeed even when webhook times out: %v\nstdout:\n%s\nstderr:\n%s", result.err, result.stdout, result.stderr)
 	}
 	if elapsed > 7*time.Second {
-		t.Fatalf("deploy was delayed beyond notify timeout budget: %s\nstdout:\n%s\nstderr:\n%s", elapsed, result.stdout, result.stderr)
+		t.Fatalf("deploy was delayed beyond webhook timeout budget: %s\nstdout:\n%s\nstderr:\n%s", elapsed, result.stdout, result.stderr)
 	}
-	if strings.Contains(result.stdout+result.stderr, "notify-url-secret") || strings.Contains(result.stdout+result.stderr, sink.URL("/slow")) {
-		t.Fatalf("notify timeout leaked URL/token\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+	if strings.Contains(result.stdout+result.stderr, "webhook-url-secret") || strings.Contains(result.stdout+result.stderr, sink.URL("/slow")) {
+		t.Fatalf("webhook timeout leaked URL/token\nstdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
 
 	rawEvents := sink.rawEvents(t)
 	if strings.Contains(rawEvents, secretValue) {
-		t.Fatalf("notify payload leaked secret value:\n%s", rawEvents)
+		t.Fatalf("webhook payload leaked secret value:\n%s", rawEvents)
 	}
 }
 
@@ -1202,7 +1213,7 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 
 	agentKeyPath := filepath.Join(e.tmp, "preview-protection-agent")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "preview-protection-agent", "-f", agentKeyPath)
-	e.ship(t, app, nil, "box", "member", "add", agentKeyPath+".pub", "--role", "agent")
+	e.ship(t, app, nil, "box", "member", "add", agentKeyPath+".pub", "--name", "preview-protection-agent", "--role", "agent")
 	agentKey, err := os.ReadFile(agentKeyPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1219,7 +1230,7 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 	assertContains(t, agentRotateText, "approval_required")
 	approvalID := approvalIDFromOutput(t, agentRotateText)
 	e.pathPrefix = ownerPrefix
-	e.ship(t, app, nil, "box", "approve", approvalID)
+	e.ship(t, app, nil, "box", "approval", "grant", approvalID)
 	e.pathPrefix = agentPrefix
 	agentRetry := e.runCommand(t, app, []string{"SHIP_SSH_KEY=" + string(agentKey)}, nil, e.goBin, "preview", "share", "--rotate")
 	if agentRetry.err != nil {
@@ -1255,6 +1266,63 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 	}
 }
 
+func (e *smokeEnv) testPreviewBaseAliases(t *testing.T) {
+	app := filepath.Join(e.tmp, "preview-base-alias")
+	mustMkdir(t, app)
+	writePreviewBaseAliasFixture(t, app)
+	e.commitFixture(t, app)
+	e.ship(t, app, nil)
+
+	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/base-alias")
+	mustWrite(t, filepath.Join(app, "README.md"), "custom preview base alias\n")
+	e.mustRun(t, app, nil, "git", "add", ".")
+	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "custom preview base alias")
+	previewURL := assertOnlyURL(t, e.ship(t, app, nil))
+	parsed, err := url.Parse(previewURL)
+	if err != nil || parsed.Hostname() == "" {
+		t.Fatalf("preview URL = %q, parse err = %v", previewURL, err)
+	}
+	if !strings.HasSuffix(parsed.Hostname(), ".preview.example.com") || !strings.HasPrefix(parsed.Hostname(), "basealias-feature-base-alias-") {
+		t.Fatalf("canonical preview host = %q, want app-first custom-base host", parsed.Hostname())
+	}
+	token := parsed.Query().Get("ship")
+	if token == "" {
+		t.Fatalf("preview URL missing capability token: %q", previewURL)
+	}
+	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/health")); got != "ok" {
+		t.Fatalf("canonical preview body = %q, want ok", got)
+	}
+
+	const alias = "feature-base-alias.preview.example.com"
+	if got := strings.TrimSpace(e.ssh(t, "curl -fsS -H "+h.ShellQuote("Host: "+alias)+" -H "+h.ShellQuote("x-ship-capability: "+token)+" http://127.0.0.1/health")); got != "ok" {
+		t.Fatalf("preview alias body = %q, want ok", got)
+	}
+	if got := strings.TrimSpace(e.ssh(t, "curl -sS -o /dev/null -w '%{http_code}' -H "+h.ShellQuote("Host: "+alias)+" http://127.0.0.1/health")); got != "401" {
+		t.Fatalf("anonymous preview alias status = %s, want 401", got)
+	}
+	rotatedURL := assertOnlyURL(t, e.ship(t, app, nil, "preview", "share", "--rotate"))
+	rotated, err := url.Parse(rotatedURL)
+	if err != nil || rotated.Query().Get("ship") == "" {
+		t.Fatalf("rotated preview URL = %q, parse err = %v", rotatedURL, err)
+	}
+	if got := strings.TrimSpace(e.ssh(t, "curl -fsS -H "+h.ShellQuote("Host: "+alias)+" -H "+h.ShellQuote("x-ship-capability: "+rotated.Query().Get("ship"))+" http://127.0.0.1/health")); got != "ok" {
+		t.Fatalf("preview alias body after capability rotation = %q, want ok", got)
+	}
+
+	manifestPath := filepath.Join(app, "ship.toml")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, manifestPath, strings.Replace(string(manifest), "aliases = true", "aliases = false", 1))
+	e.mustRun(t, app, nil, "git", "add", "ship.toml")
+	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "disable preview alias")
+	e.ship(t, app, nil)
+	if got := strings.TrimSpace(e.ssh(t, "curl -sS -o /dev/null -w '%{http_code}' -H "+h.ShellQuote("Host: "+alias)+" http://127.0.0.1/health")); got == "200" {
+		t.Fatalf("alias stayed routable after aliases=false deploy")
+	}
+}
+
 func (e *smokeEnv) testMemberAccess(t *testing.T) {
 	e.ensureSmokeHostSeed(t)
 	app := filepath.Join(e.tmp, "key-api")
@@ -1279,17 +1347,17 @@ web = { port = 3000 }
 	keyComment := filepath.Base(keyPath)
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", keyComment, "-f", keyPath)
 
-	out := e.ship(t, app, nil, "box", "member", "add", keyPath+".pub")
+	out := e.ship(t, app, nil, "box", "member", "add", keyPath+".pub", "--name", keyComment)
 	if !strings.HasPrefix(strings.TrimSpace(out), "member added: "+keyComment+" (shipper, SHA256:") {
 		t.Fatalf("unexpected member add output: %q", out)
 	}
 	fingerprint := fingerprintFromMemberMutation(t, out)
-	again := e.ship(t, app, nil, "box", "member", "add", keyPath+".pub")
+	again := e.ship(t, app, nil, "box", "member", "add", keyPath+".pub", "--name", keyComment)
 	assertContains(t, again, "member "+keyComment+" already authorized (shipper, "+fingerprint+")")
 	authorized := e.dockerExec(t, "cat /home/deploy/.ssh/authorized_keys")
 	assertContains(t, authorized, keyComment)
 
-	list := e.ship(t, app, nil, "box", "members")
+	list := e.ship(t, app, nil, "box", "member", "ls")
 	assertContains(t, list, keyComment+" shipper ssh-ed25519 "+fingerprint)
 	assertContains(t, list, "fake-vps-smoke owner ssh-ed25519 SHA256:")
 
@@ -1301,7 +1369,7 @@ web = { port = 3000 }
 			Fingerprint string `json:"fingerprint"`
 		} `json:"members"`
 	}
-	if err := json.Unmarshal([]byte(e.ship(t, app, nil, "box", "members", "--json")), &members); err != nil {
+	if err := json.Unmarshal([]byte(e.ship(t, app, nil, "box", "member", "ls", "--json")), &members); err != nil {
 		t.Fatal(err)
 	}
 	foundMember := false
@@ -1362,7 +1430,7 @@ web = { port = 3000 }
 
 func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	e.ensureSmokeHostSeed(t)
-	sink := e.startNotifySink(t)
+	sink := e.startWebhookSink(t)
 
 	app := filepath.Join(e.tmp, "role-approval")
 	mustMkdir(t, app)
@@ -1370,11 +1438,11 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 	e.ship(t, app, nil)
-	e.ship(t, app, nil, "box", "notify", "fake-vps", sink.URL("/box"))
+	e.ship(t, app, nil, "box", "webhook", "fake-vps", sink.URL("/box"))
 
 	agentKeyPath := filepath.Join(e.tmp, "agent-role")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "agent-role", "-f", agentKeyPath)
-	added := e.ship(t, app, nil, "box", "member", "add", agentKeyPath+".pub", "--role", "agent")
+	added := e.ship(t, app, nil, "box", "member", "add", agentKeyPath+".pub", "--name", "agent-role", "--role", "agent")
 	agentFingerprint := fingerprintFromMemberMutation(t, added)
 	assertContains(t, added, "member added: agent-role (agent, "+agentFingerprint+")")
 	authorized := e.dockerExec(t, "cat /home/deploy/.ssh/authorized_keys")
@@ -1396,7 +1464,7 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 
 	shipperKeyPath := filepath.Join(e.tmp, "shipper-role")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "shipper-role", "-f", shipperKeyPath)
-	e.ship(t, app, nil, "box", "member", "add", shipperKeyPath+".pub", "--role", "shipper")
+	e.ship(t, app, nil, "box", "member", "add", shipperKeyPath+".pub", "--name", "shipper-role", "--role", "shipper")
 	shipperKey, err := os.ReadFile(shipperKeyPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1405,56 +1473,56 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	shipperPrefix := e.configureSSHWithKey(t, shipperKeyPath)
 	setShipper := func() { e.pathPrefix = shipperPrefix }
 	setShipper()
-	configDenied := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "config", "fake-vps", "set", "notify.url", sink.URL("/shipper"))
+	configDenied := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "config", "fake-vps", "set", "webhook.url", sink.URL("/shipper"))
 	if configDenied.err == nil {
 		t.Fatal("shipper box config set should require approval")
 	}
 	configID := approvalIDFromOutput(t, configDenied.stdout+configDenied.stderr)
-	configRequested := sink.waitForEvent(t, notifyEventApprovalRequested)
-	assertNotifySmokeField(t, configRequested, "_sink_path", "/box")
-	assertNotifySmokeNested(t, configRequested, "why.target.summary", "set box config notify.url")
-	selfApprove := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "approve", configID)
+	configRequested := sink.waitForEvent(t, webhookEventApprovalRequested)
+	assertWebhookSmokeField(t, configRequested, "_sink_path", "/box")
+	assertWebhookSmokeNested(t, configRequested, "why.target.summary", "set box config webhook.url")
+	selfApprove := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "approval", "grant", configID)
 	if selfApprove.err == nil {
 		t.Fatal("shipper must not self-approve an owner-gated request")
 	}
 	assertContains(t, selfApprove.stdout+selfApprove.stderr, "requests cannot be self-approved")
 	assertContains(t, selfApprove.stdout+selfApprove.stderr, "another owner")
 	setOwner()
-	e.ship(t, app, nil, "box", "approve", configID)
+	e.ship(t, app, nil, "box", "approval", "grant", configID)
 	setShipper()
-	if retry := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "config", "fake-vps", "set", "notify.url", sink.URL("/shipper")); retry.err != nil {
+	if retry := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "config", "fake-vps", "set", "webhook.url", sink.URL("/shipper")); retry.err != nil {
 		t.Fatalf("approved shipper box config retry should succeed: %v\nstdout:\n%s\nstderr:\n%s", retry.err, retry.stdout, retry.stderr)
 	}
 	setOwner()
-	e.ship(t, app, nil, "box", "config", "fake-vps", "set", "notify.url", sink.URL("/box"))
+	e.ship(t, app, nil, "box", "config", "fake-vps", "set", "webhook.url", sink.URL("/box"))
 
 	// Clear consumed events so the next approval_requested wait sees the
-	// agent's box-notify request, not the earlier shipper box-config one.
+	// agent's box-webhook request, not the earlier shipper box-config one.
 	e.dockerExec(t, "rm -f "+sink.eventsPath)
 	setAgent()
-	notifyDenied := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "notify", "fake-vps", sink.URL("/moved"))
-	if notifyDenied.err == nil {
-		t.Fatal("agent box notify set should require approval")
+	webhookDenied := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "webhook", "fake-vps", sink.URL("/moved"))
+	if webhookDenied.err == nil {
+		t.Fatal("agent box webhook set should require approval")
 	}
-	notifyID := approvalIDFromOutput(t, notifyDenied.stdout+notifyDenied.stderr)
-	notifyRequested := sink.waitForEvent(t, notifyEventApprovalRequested)
-	assertNotifySmokeField(t, notifyRequested, "_sink_path", "/box")
-	assertNotifySmokeNested(t, notifyRequested, "why.target.summary", "set box notify")
+	webhookID := approvalIDFromOutput(t, webhookDenied.stdout+webhookDenied.stderr)
+	webhookRequested := sink.waitForEvent(t, webhookEventApprovalRequested)
+	assertWebhookSmokeField(t, webhookRequested, "_sink_path", "/box")
+	assertWebhookSmokeNested(t, webhookRequested, "why.target.summary", "box webhook set")
 	setShipper()
-	shipperApprove := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "approve", notifyID)
+	shipperApprove := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "approval", "grant", webhookID)
 	if shipperApprove.err == nil {
 		t.Fatal("shipper must not grant an owner-gated request")
 	}
 	assertContains(t, shipperApprove.stdout+shipperApprove.stderr, "request requires owner")
 	assertContains(t, shipperApprove.stdout+shipperApprove.stderr, "ask an owner")
 	setOwner()
-	e.ship(t, app, nil, "box", "approve", notifyID)
+	e.ship(t, app, nil, "box", "approval", "grant", webhookID)
 	setAgent()
-	if retry := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "notify", "fake-vps", sink.URL("/moved")); retry.err != nil {
-		t.Fatalf("approved agent box notify retry should succeed: %v\nstdout:\n%s\nstderr:\n%s", retry.err, retry.stdout, retry.stderr)
+	if retry := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "webhook", "fake-vps", sink.URL("/moved")); retry.err != nil {
+		t.Fatalf("approved agent box webhook retry should succeed: %v\nstdout:\n%s\nstderr:\n%s", retry.err, retry.stdout, retry.stderr)
 	}
 	setOwner()
-	e.ship(t, app, nil, "box", "notify", "fake-vps", sink.URL("/box"))
+	e.ship(t, app, nil, "box", "webhook", "fake-vps", sink.URL("/box"))
 	e.dockerExec(t, "rm -f "+sink.eventsPath)
 	setAgent()
 	interactive := e.run(t, e.repoRoot, nil, e.sshBin(), "fake-vps")
@@ -1513,12 +1581,12 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	assertContains(t, deniedText, "agent-role (agent) requested ship app=roleapi env=production class=production release="+prodRelease)
 	id := approvalIDFromOutput(t, deniedText)
 
-	requested := sink.waitForEvent(t, notifyEventApprovalRequested)
-	assertNotifySmokeField(t, requested, "_sink_path", "/box")
-	assertNotifySmokeNested(t, requested, "remediation.command", "ship box approve "+id+" fake-vps")
+	requested := sink.waitForEvent(t, webhookEventApprovalRequested)
+	assertWebhookSmokeField(t, requested, "_sink_path", "/box")
+	assertWebhookSmokeNested(t, requested, "remediation.command", "ship box approval grant "+id+" fake-vps")
 
 	setOwner()
-	approved := e.ship(t, app, nil, "box", "approve", id)
+	approved := e.ship(t, app, nil, "box", "approval", "grant", id)
 	assertContains(t, approved, "approved "+id+" for agent-role (ship app=roleapi env=production class=production release="+prodRelease+")")
 
 	setAgent()
@@ -1537,7 +1605,7 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 		t.Fatalf("second approval reused consumed id %s\noutput:\n%s", id, secondText)
 	}
 
-	agentApprove := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "approve", secondID)
+	agentApprove := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "approval", "grant", secondID)
 	if agentApprove.err == nil {
 		t.Fatal("agent approving should be hard-denied")
 	}
@@ -1547,9 +1615,9 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 
 	setOwner()
 	status := e.ship(t, app, nil, "status")
-	assertContains(t, status, "1 approvals pending — ship box approvals fake-vps")
+	assertContains(t, status, "1 approvals pending — ship box approval ls fake-vps")
 
-	listing := e.ship(t, app, nil, "box", "approvals")
+	listing := e.ship(t, app, nil, "box", "approval", "ls")
 	assertContains(t, listing, "ID MEMBER REQUEST EXPIRES")
 	assertContains(t, listing, secondID+" agent-role ship app=roleapi env=production class=production release="+prodRelease+" ")
 
@@ -1697,7 +1765,7 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 	e.mustRun(t, app, nil, "git", "checkout", "feature/data")
 	agentKeyPath := filepath.Join(e.tmp, "data-agent")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "data-agent", "-f", agentKeyPath)
-	added := e.ship(t, app, nil, "box", "member", "add", agentKeyPath+".pub", "--role", "agent")
+	added := e.ship(t, app, nil, "box", "member", "add", agentKeyPath+".pub", "--name", "data-agent", "--role", "agent")
 	assertContains(t, added, "member added: data-agent (agent, ")
 	agentKey, err := os.ReadFile(agentKeyPath)
 	if err != nil {
@@ -1726,7 +1794,7 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 	assertContains(t, deniedRestore.stdout+deniedRestore.stderr, "approval required for restore app=dataapi env="+previewEnv+" class=preview data=restore")
 	approvalID := approvalIDFromOutput(t, deniedText)
 	e.pathPrefix = ownerPrefix
-	approved := e.ship(t, app, nil, "box", "approve", approvalID)
+	approved := e.ship(t, app, nil, "box", "approval", "grant", approvalID)
 	assertContains(t, approved, "approved "+approvalID+" for data-agent")
 	e.pathPrefix = agentPrefix
 	retry := e.runCommand(t, app, agentEnv, nil, e.goBin, "data", "fork")
@@ -1760,7 +1828,7 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 	}
 }
 
-func (e *smokeEnv) testBoxRm(t *testing.T) {
+func (e *smokeEnv) testBoxAppRm(t *testing.T) {
 	app := filepath.Join(e.tmp, "box-rm-api")
 	mustMkdir(t, app)
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
@@ -1788,13 +1856,13 @@ web = { port = 3000 }
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "boxrmapi", "feature/box-rm")
 	e.dockerExec(t, "test -f /etc/ship/secrets/boxrmapi/"+previewEnv+"/capability-token")
 
-	missingConfirm := e.runShip(t, e.repoRoot, nil, "box", "rm", "boxrmapi", "fake-vps")
+	missingConfirm := e.runShip(t, e.repoRoot, nil, "box", "app", "rm", "boxrmapi", "fake-vps")
 	if missingConfirm.err == nil {
-		t.Fatal("box rm without confirmation should fail")
+		t.Fatal("box app rm without confirmation should fail")
 	}
-	assertContains(t, missingConfirm.stdout+missingConfirm.stderr, "box rm requires --confirm boxrmapi")
+	assertContains(t, missingConfirm.stdout+missingConfirm.stderr, "box app rm requires --confirm boxrmapi")
 
-	out := e.ship(t, e.repoRoot, nil, "box", "rm", "boxrmapi", "fake-vps", "--confirm", "boxrmapi")
+	out := e.ship(t, e.repoRoot, nil, "box", "app", "rm", "boxrmapi", "fake-vps", "--confirm", "boxrmapi")
 	assertContains(t, out, "Destroying boxrmapi (2 envs)")
 	assertContains(t, out, "Destroyed boxrmapi ("+productionEnv+")")
 	assertContains(t, out, "Destroyed boxrmapi ("+previewEnv+")")
@@ -1805,7 +1873,7 @@ web = { port = 3000 }
 		e.dockerExec(t, "test ! -e /etc/ship/secrets/boxrmapi/"+env)
 		e.dockerExec(t, "test ! -e "+identity.CaddyFragmentFile("boxrmapi", env))
 	}
-	// box rm must purge the Preview capability credential with its environment.
+	// box app rm must purge the Preview capability credential with its environment.
 	e.dockerExec(t, "test ! -e /etc/ship/secrets/boxrmapi/"+previewEnv+"/capability-token")
 	e.dockerExec(t, "test ! -e /etc/ship/secrets/boxrmapi")
 }
@@ -2010,7 +2078,7 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	assertContains(t, status, "release="+oldRelease)
 	assertContains(t, status, "health=healthy")
 
-	rawListJSON := e.ship(t, app, nil, "box", "apps", "--json")
+	rawListJSON := e.ship(t, app, nil, "box", "app", "ls", "--json")
 	var listPayload struct {
 		Apps []struct {
 			App  string `json:"app"`
@@ -2618,10 +2686,10 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 
 	// Host-level app listing is sourced from Podman labels instead
 	// of the removed apps.json/routes.json registries.
-	rawListJSON := e.ship(t, app, nil, "box", "apps", "--json")
+	rawListJSON := e.ship(t, app, nil, "box", "app", "ls", "--json")
 	legacyApps := e.runShip(t, app, nil, "box", "ls")
-	if legacyApps.err == nil || !strings.Contains(legacyApps.stderr+legacyApps.stdout, "ship box apps") {
-		t.Fatalf("box ls should fail with box apps remediation:\nstdout:\n%s\nstderr:\n%s", legacyApps.stdout, legacyApps.stderr)
+	if legacyApps.err == nil || !strings.Contains(legacyApps.stderr+legacyApps.stdout, "ship box app ls") {
+		t.Fatalf("box ls should fail with box app ls remediation:\nstdout:\n%s\nstderr:\n%s", legacyApps.stdout, legacyApps.stderr)
 	}
 	var listPayload struct {
 		Apps []struct {
@@ -2896,6 +2964,28 @@ web = { port = 3000 }
 `)
 }
 
+func writePreviewBaseAliasFixture(t *testing.T, app string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
+CMD ["/bin/sh", "-c", "sleep 3600"]
+`)
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "basealias"
+box = "fake-vps"
+production_branch = "main"
+probe = "/health"
+
+[preview]
+base = "preview.example.com"
+aliases = true
+
+[processes]
+web = { port = 3000 }
+
+[routes]
+"basealias.example.com" = "web"
+`)
+}
+
 func writeZeroDNSFixture(t *testing.T, app string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
@@ -2933,17 +3023,17 @@ web = { port = 3000 }
 	`)
 }
 
-func writeNotifyFixture(t *testing.T, app string, notifyURL string) {
+func writeWebhookFixture(t *testing.T, app string, webhookURL string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
-	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "notifyapi"
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "webhookapi"
 box = "fake-vps"
 production_branch = "main"
 release = "touch /data/release-ok"
 probe = "/health"
-notify = "`+notifyURL+`"
+webhook = "`+webhookURL+`"
 
 [env]
 API_TOKEN = "@secret"
@@ -2952,11 +3042,11 @@ API_TOKEN = "@secret"
 web = { port = 3000 }
 
 [routes]
-"notify.example.com" = "web"
+"webhook.example.com" = "web"
 `)
 }
 
-func writeRoleApprovalFixture(t *testing.T, app string, notifyURL string) {
+func writeRoleApprovalFixture(t *testing.T, app string, webhookURL string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
 CMD ["/bin/sh", "-c", "sleep 3600"]
@@ -2965,7 +3055,7 @@ CMD ["/bin/sh", "-c", "sleep 3600"]
 box = "fake-vps"
 production_branch = "main"
 probe = "/health"
-notify = "`+notifyURL+`"
+webhook = "`+webhookURL+`"
 
 [processes]
 web = { port = 3000 }
@@ -2975,26 +3065,26 @@ web = { port = 3000 }
 `)
 }
 
-// writeNotifySecondFixture is the notify test's own second app: it exists
+// writeWebhookSecondFixture is the webhook test's own second app: it exists
 // only to prove box events fire once across two apps on one box. It must
 // NOT reuse another subtest's app name (e.g. roleapi) — a leftover production
 // deploy would poison that subtest's own first ship.
-func writeNotifySecondFixture(t *testing.T, app string, notifyURL string) {
+func writeWebhookSecondFixture(t *testing.T, app string, webhookURL string) {
 	t.Helper()
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
-	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "notifysecond"
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "webhooksecond"
 box = "fake-vps"
 production_branch = "main"
 probe = "/health"
-notify = "`+notifyURL+`"
+webhook = "`+webhookURL+`"
 
 [processes]
 web = { port = 3000 }
 
 [routes]
-"notify-second.example.com" = "web"
+"webhook-second.example.com" = "web"
 `)
 }
 
@@ -3235,7 +3325,7 @@ func approvalIDFromOutput(t *testing.T, output string) string {
 	t.Helper()
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		command, ok := strings.CutPrefix(line, "next: ship box approve ")
+		command, ok := strings.CutPrefix(line, "next: ship box approval grant ")
 		if !ok {
 			continue
 		}
@@ -3254,7 +3344,7 @@ func approvalIDFromOutput(t *testing.T, output string) string {
 		if json.Unmarshal([]byte(line), &payload) != nil {
 			continue
 		}
-		if command, ok := strings.CutPrefix(payload.Error.Remediation, "ship box approve "); ok {
+		if command, ok := strings.CutPrefix(payload.Error.Remediation, "ship box approval grant "); ok {
 			fields := strings.Fields(command)
 			if len(fields) == 2 && fields[0] != "" && fields[1] == "fake-vps" {
 				return fields[0]
@@ -3432,10 +3522,10 @@ func statusEnvByBranch(t *testing.T, e *smokeEnv, app string, branch string) smo
 
 func appListPayloadForBox(t *testing.T, e *smokeEnv, app string) smokeAppListPayload {
 	t.Helper()
-	rawJSON := e.ship(t, app, nil, "box", "apps", "--json")
+	rawJSON := e.ship(t, app, nil, "box", "app", "ls", "--json")
 	var payload smokeAppListPayload
 	if err := json.Unmarshal([]byte(rawJSON), &payload); err != nil {
-		t.Fatalf("box apps --json output not parseable as JSON: %v\nraw:\n%s", err, rawJSON)
+		t.Fatalf("box app ls --json output not parseable as JSON: %v\nraw:\n%s", err, rawJSON)
 	}
 	return payload
 }
@@ -3471,21 +3561,21 @@ type previewIdentityPayload struct {
 	} `json:"preview"`
 }
 
-type smokeNotifySink struct {
+type smokeWebhookSink struct {
 	env        *smokeEnv
 	eventsPath string
 	port       string
 }
 
-func (e *smokeEnv) startNotifySink(t *testing.T) *smokeNotifySink {
+func (e *smokeEnv) startWebhookSink(t *testing.T) *smokeWebhookSink {
 	t.Helper()
-	sink := &smokeNotifySink{
+	sink := &smokeWebhookSink{
 		env:        e,
-		eventsPath: "/tmp/ship-notify-events.jsonl",
+		eventsPath: "/tmp/ship-webhook-events.jsonl",
 		port:       "18081",
 	}
-	e.dockerExec(t, `rm -f /tmp/ship-notify-events.jsonl /tmp/ship-notify-sink.pid /tmp/ship-notify-sink.log /tmp/ship-notify-sink.py`)
-	e.dockerExec(t, `cat > /tmp/ship-notify-sink.py <<'PY'
+	e.dockerExec(t, `rm -f /tmp/ship-webhook-events.jsonl /tmp/ship-webhook-sink.pid /tmp/ship-webhook-sink.log /tmp/ship-webhook-sink.py`)
+	e.dockerExec(t, `cat > /tmp/ship-webhook-sink.py <<'PY'
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -3526,10 +3616,10 @@ class Handler(BaseHTTPRequestHandler):
 server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
 server.serve_forever()
 PY
-python3 /tmp/ship-notify-sink.py /tmp/ship-notify-events.jsonl 18081 >/tmp/ship-notify-sink.log 2>&1 &
-echo $! >/tmp/ship-notify-sink.pid`)
+python3 /tmp/ship-webhook-sink.py /tmp/ship-webhook-events.jsonl 18081 >/tmp/ship-webhook-sink.log 2>&1 &
+echo $! >/tmp/ship-webhook-sink.pid`)
 	t.Cleanup(func() {
-		e.dockerExec(t, `if [ -f /tmp/ship-notify-sink.pid ]; then kill "$(cat /tmp/ship-notify-sink.pid)" 2>/dev/null || true; fi`)
+		e.dockerExec(t, `if [ -f /tmp/ship-webhook-sink.pid ]; then kill "$(cat /tmp/ship-webhook-sink.pid)" 2>/dev/null || true; fi`)
 	})
 	e.dockerExec(t, `for i in $(seq 1 50); do
   if curl -fsS http://127.0.0.1:18081/ready >/dev/null 2>&1; then
@@ -3537,21 +3627,21 @@ echo $! >/tmp/ship-notify-sink.pid`)
   fi
   sleep 0.1
 done
-cat /tmp/ship-notify-sink.log >&2
+cat /tmp/ship-webhook-sink.log >&2
 exit 1`)
 	return sink
 }
 
-func (s *smokeNotifySink) URL(path string) string {
+func (s *smokeWebhookSink) URL(path string) string {
 	return "http://127.0.0.1:" + s.port + path
 }
 
-func (s *smokeNotifySink) rawEvents(t *testing.T) string {
+func (s *smokeWebhookSink) rawEvents(t *testing.T) string {
 	t.Helper()
 	return s.env.dockerExec(t, "if [ -f "+h.ShellQuote(s.eventsPath)+" ]; then cat "+h.ShellQuote(s.eventsPath)+"; fi")
 }
 
-func (s *smokeNotifySink) waitForEvent(t *testing.T, event string) map[string]any {
+func (s *smokeWebhookSink) waitForEvent(t *testing.T, event string) map[string]any {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	var lastRaw string
@@ -3564,7 +3654,7 @@ func (s *smokeNotifySink) waitForEvent(t *testing.T, event string) map[string]an
 			}
 			var payload map[string]any
 			if err := json.Unmarshal([]byte(line), &payload); err != nil {
-				t.Fatalf("notify sink captured invalid JSON: %v\nraw:\n%s", err, line)
+				t.Fatalf("webhook sink captured invalid JSON: %v\nraw:\n%s", err, line)
 			}
 			if got, _ := payload["event"].(string); got == event {
 				return payload
@@ -3572,11 +3662,11 @@ func (s *smokeNotifySink) waitForEvent(t *testing.T, event string) map[string]an
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for notify event %s\ncaptured:\n%s", event, lastRaw)
+	t.Fatalf("timed out waiting for webhook event %s\ncaptured:\n%s", event, lastRaw)
 	return nil
 }
 
-func countNotifySmokeEvents(raw, event string) int {
+func countWebhookSmokeEvents(raw, event string) int {
 	count := 0
 	for _, line := range strings.Split(strings.TrimSpace(raw), "\n") {
 		var payload map[string]any
@@ -3587,33 +3677,33 @@ func countNotifySmokeEvents(raw, event string) int {
 	return count
 }
 
-func assertNotifySmokeField(t *testing.T, payload map[string]any, field, want string) {
+func assertWebhookSmokeField(t *testing.T, payload map[string]any, field, want string) {
 	t.Helper()
 	if got, _ := payload[field].(string); got != want {
-		t.Fatalf("notify field %s = %q, want %q\npayload:\n%s", field, got, want, prettySmokeJSON(t, payload))
+		t.Fatalf("webhook field %s = %q, want %q\npayload:\n%s", field, got, want, prettySmokeJSON(t, payload))
 	}
 }
 
-func assertNotifySmokeNested(t *testing.T, payload map[string]any, path, want string) {
+func assertWebhookSmokeNested(t *testing.T, payload map[string]any, path, want string) {
 	t.Helper()
-	if got := notifySmokeNestedString(t, payload, path); got != want {
-		t.Fatalf("notify field %s = %q, want %q\npayload:\n%s", path, got, want, prettySmokeJSON(t, payload))
+	if got := webhookSmokeNestedString(t, payload, path); got != want {
+		t.Fatalf("webhook field %s = %q, want %q\npayload:\n%s", path, got, want, prettySmokeJSON(t, payload))
 	}
 }
 
-func notifySmokeNestedString(t *testing.T, payload map[string]any, path string) string {
+func webhookSmokeNestedString(t *testing.T, payload map[string]any, path string) string {
 	t.Helper()
 	var current any = payload
 	for _, part := range strings.Split(path, ".") {
 		obj, ok := current.(map[string]any)
 		if !ok {
-			t.Fatalf("notify field %s is not an object at %s\npayload:\n%s", path, part, prettySmokeJSON(t, payload))
+			t.Fatalf("webhook field %s is not an object at %s\npayload:\n%s", path, part, prettySmokeJSON(t, payload))
 		}
 		current = obj[part]
 	}
 	got, ok := current.(string)
 	if !ok {
-		t.Fatalf("notify field %s is not a string\npayload:\n%s", path, prettySmokeJSON(t, payload))
+		t.Fatalf("webhook field %s is not a string\npayload:\n%s", path, prettySmokeJSON(t, payload))
 	}
 	return got
 }

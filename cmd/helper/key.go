@@ -34,8 +34,8 @@ func (c keyCmd) AfterApply() error {
 }
 
 type keyAddCmd struct {
-	Comment string `name:"comment" required:"" help:"Comment to stamp on appended keys."`
-	Role    string `name:"role" enum:"owner,shipper,agent" default:"shipper" help:"Role recorded for newly added keys."`
+	Name string `name:"name" required:"" help:"Box-global member name."`
+	Role string `name:"role" enum:"owner,shipper,agent" default:"shipper" help:"Role recorded for newly added keys."`
 }
 
 type keyListCmd struct {
@@ -62,26 +62,29 @@ func (c keyAddCmd) Run() error {
 }
 
 func (c keyAddCmd) run() error {
-	comment := strings.Join(strings.Fields(c.Comment), " ")
-	if comment == "" {
-		return fmt.Errorf("key comment is required")
+	name := strings.Join(strings.Fields(c.Name), " ")
+	if name == "" {
+		return errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  "member name is required",
+			"command": "ship box member add <https-url|key|path> " + boxClientAddress() + " --name <name>",
+		})
 	}
 	role := store.MemberRole(c.Role)
 	if !store.ValidMemberRole(role) {
 		return errcat.New(errcat.CodeUsageError, errcat.Fields{
 			"detail":  "role must be owner, shipper, or agent",
-			"command": "ship box member add <src> " + boxClientAddress() + " --role owner|shipper|agent",
+			"command": "ship box member add <https-url|key|path> " + boxClientAddress() + " --name " + name + " --role owner|shipper|agent",
 		})
 	}
 	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
 	if err != nil {
 		return fmt.Errorf("read public keys from stdin: %v", err)
 	}
-	keys, err := normalizeAuthorizedKeys(string(raw), comment)
+	keys, err := normalizeAuthorizedKeys(string(raw), name)
 	if err != nil {
 		return err
 	}
-	authorizeOrDie(helperVerbMember, authTargetForBox("add member comment="+comment+" role="+string(role), memberAddTargetArgs(comment, role, keys)...))
+	authorizeOrDie(helperVerbMember, authTargetForBox("add member name="+name+" role="+string(role), memberAddTargetArgs(name, role, keys)...))
 	user, err := deployAuthorizedKeysUser()
 	if err != nil {
 		return err
@@ -105,19 +108,10 @@ func (c keyListCmd) Run() error {
 
 func (c keyListCmd) run() error {
 	authorizeOrDie(helperVerbMember, authTargetForBox("list members"))
-	user, err := deployAuthorizedKeysUser()
+	rows, err := readMemberRows()
 	if err != nil {
 		return err
 	}
-	keys, err := readDeployAuthorizedKeys(user)
-	if err != nil {
-		return err
-	}
-	members, err := store.Default().ReadMembers()
-	if err != nil {
-		return err
-	}
-	rows := memberRows(keys, *members)
 	if c.JSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetEscapeHTML(false)
@@ -196,20 +190,8 @@ func appendDeployAuthorizedKeys(user string, keys []authorizedKey, role store.Me
 		return nil, err
 	}
 	existingRecords := memberkeys.EffectiveMemberRecords(existing, *members, nil)
-	for _, key := range keys {
-		for _, existingKey := range existing {
-			if existingKey.Material == "" {
-				continue
-			}
-			record := existingRecords[existingKey.Fingerprint]
-			if record.Name != key.Comment || record.Role == role {
-				continue
-			}
-			return nil, errcat.New(errcat.CodeUsageError, errcat.Fields{
-				"detail":  fmt.Sprintf("member %q already has role %q; additional keys must use that role", key.Comment, record.Role),
-				"command": "ship box member add <src> " + boxClientAddress() + " --role " + string(record.Role),
-			})
-		}
+	if err := validateMemberEnrollment(existing, existingRecords, keys, role); err != nil {
+		return nil, err
 	}
 	lines, results := memberkeys.Merge(existing, keys)
 	mergedKeys := memberkeys.Parse(memberkeys.Content(lines))
@@ -218,9 +200,6 @@ func appendDeployAuthorizedKeys(user string, keys []authorizedKey, role store.Me
 		result := &results[i]
 		overrides[result.Key.Fingerprint] = store.MemberRecord{Name: result.Key.Comment, Role: role}
 		result.Role = string(role)
-		if result.Added {
-			continue
-		}
 	}
 	records := memberkeys.EffectiveMemberRecords(mergedKeys, *members, overrides)
 	rendered := memberkeys.RenderAuthorizedKeyLines(mergedKeys, records)
@@ -231,6 +210,39 @@ func appendDeployAuthorizedKeys(user string, keys []authorizedKey, role store.Me
 		return nil, err
 	}
 	return results, nil
+}
+
+func validateMemberEnrollment(existing []authorizedKey, existingRecords map[string]store.MemberRecord, keys []authorizedKey, role store.MemberRole) error {
+	for _, key := range keys {
+		for _, existingKey := range existing {
+			if existingKey.Material == "" {
+				continue
+			}
+			record := existingRecords[existingKey.Fingerprint]
+			if existingKey.Material == key.Material {
+				if record.Name != key.Comment {
+					return errcat.New(errcat.CodeUsageError, errcat.Fields{
+						"detail":  fmt.Sprintf("key %s already belongs to member %q", key.Fingerprint, record.Name),
+						"command": "ship box member add <https-url|key|path> " + boxClientAddress() + " --name " + record.Name,
+					})
+				}
+				if record.Role != role {
+					return errcat.New(errcat.CodeUsageError, errcat.Fields{
+						"detail":  fmt.Sprintf("member %q already has role %q; additional keys must use that role", key.Comment, record.Role),
+						"command": "ship box member add <https-url|key|path> " + boxClientAddress() + " --name " + key.Comment + " --role " + string(record.Role),
+					})
+				}
+				continue
+			}
+			if record.Name == key.Comment && record.Role != role {
+				return errcat.New(errcat.CodeUsageError, errcat.Fields{
+					"detail":  fmt.Sprintf("member %q already has role %q; additional keys must use that role", key.Comment, record.Role),
+					"command": "ship box member add <https-url|key|path> " + boxClientAddress() + " --name " + key.Comment + " --role " + string(record.Role),
+				})
+			}
+		}
+	}
+	return nil
 }
 
 func removeDeployAuthorizedKeys(user, name string) (int, error) {
@@ -366,6 +378,22 @@ func memberRows(keys []authorizedKey, members store.MembersFile) []memberKeyRow 
 	return memberkeys.RowsWithMembers(keys, members)
 }
 
+func readMemberRows() ([]memberKeyRow, error) {
+	user, err := deployAuthorizedKeysUser()
+	if err != nil {
+		return nil, err
+	}
+	keys, err := readDeployAuthorizedKeys(user)
+	if err != nil {
+		return nil, err
+	}
+	members, err := store.Default().ReadMembers()
+	if err != nil {
+		return nil, err
+	}
+	return memberRows(keys, *members), nil
+}
+
 func formatKeyAddResult(result keyAddResult) string {
 	role := result.Role
 	if role == "" {
@@ -381,8 +409,8 @@ func formatMemberRow(row memberKeyRow) string {
 	return row.Name + " " + row.Role + " " + row.KeyType + " " + row.Fingerprint
 }
 
-func memberAddTargetArgs(comment string, role store.MemberRole, keys []authorizedKey) []string {
-	args := []string{"comment=" + comment, "role=" + string(role)}
+func memberAddTargetArgs(name string, role store.MemberRole, keys []authorizedKey) []string {
+	args := []string{"name=" + name, "role=" + string(role)}
 	for _, key := range keys {
 		args = append(args, "fingerprint="+key.Fingerprint)
 	}

@@ -9,8 +9,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/fprl/ship/internal/caddy"
+	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/names"
@@ -29,6 +32,7 @@ var (
 	previewSanitizedBranchRe = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,26}[a-z0-9])?$|^[a-z0-9]$`)
 	previewSuffixRe          = regexp.MustCompile(`^[a-z0-9]{4}$`)
 	newPreviewSuffix         = randomPreviewSuffix
+	readCaddyFragment        = os.ReadFile
 )
 
 type appPreviewCmd struct {
@@ -231,6 +235,144 @@ func synthesizedHostLabelOwner(label string) (appEnvStatus, bool, error) {
 		}
 	}
 	return appEnvStatus{}, false, nil
+}
+
+type previewHostOwner struct {
+	App  string
+	Env  string
+	Kind string
+}
+
+func (o previewHostOwner) String() string {
+	return fmt.Sprintf("%s (%s) %s", o.App, o.Env, o.Kind)
+}
+
+// previewAliasForContext derives alias state from the applied manifest and
+// identity instead of persisting a second copy of it. The canonical host in
+// the route overlay supplies the sslip fallback base when [preview].base is
+// omitted.
+func previewAliasForContext(app, env string, ctx *config.AppContext) (string, bool) {
+	if env == productionEnvName || !ctx.Preview.Aliases {
+		return "", false
+	}
+	label := names.SynthesizedHostLabel(app, env) + "."
+	for _, route := range ctx.Routes {
+		if !strings.HasPrefix(route.Host, label) {
+			continue
+		}
+		base := strings.TrimPrefix(route.Host, label)
+		if base == "" {
+			continue
+		}
+		return names.PreviewBranchSlug(env) + "." + base, true
+	}
+	return "", false
+}
+
+// previewAliasOwner is the box-global host authority. It sees configured
+// routes and generated canonical hosts in each applied route overlay, plus
+// aliases that are actually rendered in Caddy fragments. The caller holds the
+// existing preview host-label lock while checking and rendering.
+func previewAliasOwner(host, currentApp, currentEnv string, incoming map[string]config.Route) (previewHostOwner, bool, error) {
+	for _, route := range incoming {
+		if route.Host == host {
+			return previewHostOwner{App: currentApp, Env: currentEnv, Kind: "route"}, true, nil
+		}
+	}
+
+	envs, err := identityAppEnvs()
+	if err != nil {
+		return previewHostOwner{}, false, err
+	}
+	for _, item := range envs {
+		if item.App == currentApp && item.Env == currentEnv {
+			continue
+		}
+		if _, err := os.Stat(identity.ManifestFile(item.App, item.Env)); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return previewHostOwner{}, false, fmt.Errorf("stat applied manifest for %s (%s): %w", item.App, item.Env, err)
+		}
+		manifest, err := config.ReadManifest(identity.EnvRoot(item.App, item.Env))
+		if err != nil {
+			return previewHostOwner{}, false, fmt.Errorf("read applied manifest for %s (%s): %w", item.App, item.Env, err)
+		}
+		for _, route := range manifest.Routes {
+			if route.Host == host {
+				return previewHostOwner{App: item.App, Env: item.Env, Kind: "route"}, true, nil
+			}
+		}
+		owns, err := caddyFragmentOwnsHost(item.App, item.Env, host)
+		if err != nil {
+			return previewHostOwner{}, false, err
+		}
+		if owns {
+			return previewHostOwner{App: item.App, Env: item.Env, Kind: "preview alias"}, true, nil
+		}
+	}
+	return previewHostOwner{}, false, nil
+}
+
+func caddyFragmentOwnsHost(app, env, host string) (bool, error) {
+	data, err := readCaddyFragment(identity.CaddyFragmentFile(app, env))
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read Caddy fragment for %s (%s): %w", app, env, err)
+	}
+	quotedHost, err := caddy.CaddyQuote(host)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(string(data), quotedHost+" {\n"), nil
+}
+
+func addPreviewAliasRoutes(app, env, alias string, ctx *config.AppContext) error {
+	if !config.ValidateHost(alias) {
+		return fmt.Errorf("invalid preview alias host %q", alias)
+	}
+	canonicalPrefix := names.SynthesizedHostLabel(app, env) + "."
+	aliases := make(map[string]config.Route)
+	for _, route := range ctx.Routes {
+		if !strings.HasPrefix(route.Host, canonicalPrefix) {
+			continue
+		}
+		copy := route
+		copy.Host = alias
+		aliases[alias+copy.Path] = copy
+	}
+	if len(aliases) == 0 {
+		return fmt.Errorf("preview alias %q has no canonical preview route", alias)
+	}
+	for name, route := range aliases {
+		ctx.Routes[name] = route
+	}
+	return nil
+}
+
+// addConfiguredPreviewAlias keeps every render path (deploy, capability
+// rotation, and rollback) on the same ownership authority. A conflict is a
+// successful deploy without the optional alias; canonical routes stay intact.
+func addConfiguredPreviewAlias(app, env string, ctx *config.AppContext) error {
+	alias, ok := previewAliasForContext(app, env, ctx)
+	if !ok {
+		return nil
+	}
+	hostLock, err := acquirePreviewHostLabelLock()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = hostLock.Release() }()
+	owner, found, err := previewAliasOwner(alias, app, env, ctx.Routes)
+	if err != nil {
+		return err
+	}
+	if found {
+		fmt.Fprintf(os.Stderr, "warning: preview alias %s for %s (%s) skipped; already owned by %s\n", alias, app, env, owner)
+		return nil
+	}
+	return addPreviewAliasRoutes(app, env, alias, ctx)
 }
 
 func ensurePreviewCapability(app, env string) (string, error) {

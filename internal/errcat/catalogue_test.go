@@ -64,6 +64,47 @@ func TestShareOnProductionRender(t *testing.T) {
 	}
 }
 
+func TestBoxGrammarRemediations(t *testing.T) {
+	tests := []struct {
+		name   string
+		code   Code
+		fields Fields
+		want   string
+	}{
+		{
+			name: "app list target",
+			code: CodeBoxTargetRequired,
+			want: "ship box app ls <box>",
+		},
+		{
+			name:   "app remove confirmation",
+			code:   CodeBoxAppRmConfirmationRequired,
+			fields: Fields{"app": "api", "box": "203.0.113.7"},
+			want:   "ship box app rm api 203.0.113.7 --confirm api",
+		},
+		{
+			name:   "member list",
+			code:   CodeMemberNotFound,
+			fields: Fields{"name": "alice", "members": "none", "box": "203.0.113.7"},
+			want:   "ship box member ls 203.0.113.7",
+		},
+		{
+			name:   "approval grant",
+			code:   CodeApprovalRequired,
+			fields: Fields{"member": "agent", "role": "agent", "summary": "ship app=api", "id": "abc123xy", "box": "203.0.113.7"},
+			want:   "ship box approval grant abc123xy 203.0.113.7",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := New(tt.code, tt.fields).Remediation(); got != tt.want {
+				t.Fatalf("remediation = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseJSONUnknownCodeDegradesToOperationFailed(t *testing.T) {
 	input := `{"error":{"code":"helper_new_failure","message":"new helper failure","cause":"new cause","remediation":"ship retry"}}`
 	err, ok := ParseJSON(input)

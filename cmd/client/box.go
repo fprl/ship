@@ -1,6 +1,8 @@
 package client
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/fprl/ship/internal/config"
@@ -13,9 +15,9 @@ import (
 	"github.com/fprl/ship/internal/version"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,9 +32,9 @@ func BoxTarget(root string) (string, error) {
 	return ctx.Server, nil
 }
 
-func CmdBoxApps(server string, jsonFlag bool) {
+func CmdBoxAppLs(server string, jsonFlag bool) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(invalidBoxTargetError(server, "ship box apps"), 2)
+		utils.DieError(invalidBoxTargetError(server, "ship box app ls"), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -40,7 +42,7 @@ func CmdBoxApps(server string, jsonFlag bool) {
 	}
 	defer runner.Close()
 
-	out := runSSHChecked(runner, server, serverAppListCommand(jsonFlag), "app list failed", "ship box apps "+server)
+	out := runSSHChecked(runner, server, serverAppListCommand(jsonFlag), "app list failed", "ship box app ls "+server)
 	fmt.Print(out)
 }
 
@@ -51,9 +53,10 @@ type boxVersionPayload struct {
 		Status   string `json:"status"`
 		Evidence string `json:"evidence"`
 	} `json:"disk"`
-	Apps             []boxStatusApp   `json:"apps"`
-	PendingApprovals int              `json:"pending_approvals"`
-	Doctor           *boxStatusDoctor `json:"doctor,omitempty"`
+	Apps             []boxStatusApp    `json:"apps"`
+	Members          *boxStatusMembers `json:"members,omitempty"`
+	PendingApprovals int               `json:"pending_approvals"`
+	Doctor           *boxStatusDoctor  `json:"doctor,omitempty"`
 }
 
 type boxStatusPayload struct {
@@ -66,14 +69,20 @@ type boxStatusPayload struct {
 		Status   string `json:"status"`
 		Evidence string `json:"evidence"`
 	} `json:"disk"`
-	Apps             []boxStatusApp   `json:"apps"`
-	PendingApprovals int              `json:"pending_approvals"`
-	Doctor           *boxStatusDoctor `json:"doctor,omitempty"`
+	Apps             []boxStatusApp    `json:"apps"`
+	Members          *boxStatusMembers `json:"members,omitempty"`
+	PendingApprovals int               `json:"pending_approvals"`
+	Doctor           *boxStatusDoctor  `json:"doctor,omitempty"`
 }
 
 type boxStatusApp struct {
 	App      string `json:"app"`
 	EnvCount int    `json:"env_count"`
+}
+
+type boxStatusMembers struct {
+	Total  int `json:"total"`
+	Owners int `json:"owners"`
 }
 
 type boxStatusDoctor struct {
@@ -127,6 +136,11 @@ func renderBoxStatus(payload boxStatusPayload, server string, now time.Time) str
 		}
 		fmt.Fprintf(&b, "apps: %d (%d envs)\n", appCount, envCount)
 	}
+	if payload.Members == nil {
+		fmt.Fprintln(&b, "members: unknown")
+	} else {
+		fmt.Fprintf(&b, "members: %d (%d owners)\n", payload.Members.Total, payload.Members.Owners)
+	}
 	fmt.Fprintf(&b, "pending approvals: %d\n", payload.PendingApprovals)
 	if payload.Doctor == nil || payload.Doctor.RecordedAt == "" {
 		fmt.Fprintln(&b, "doctor: never run")
@@ -166,6 +180,7 @@ func readBoxStatus(runner sshRunner, server string) (boxStatusPayload, error) {
 	if payload.Apps == nil {
 		payload.Apps = []boxStatusApp{}
 	}
+	payload.Members = versionPayload.Members
 	payload.PendingApprovals = versionPayload.PendingApprovals
 	payload.Doctor = versionPayload.Doctor
 	return payload, nil
@@ -284,43 +299,90 @@ func isGitDescribeVersion(value string) bool {
 	return err == nil
 }
 
-func CmdBoxMemberAdd(server, source string, role string) {
+func CmdBoxMemberAdd(server, source, name, role, confirm string) error {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(invalidBoxTargetError(server, "ship box member add "+source), 2)
+		return invalidBoxTargetError(server, "ship box member add "+source)
 	}
-	input, err := resolveMemberAddSource(source)
+	return runBoxMemberAdd(server, source, name, role, confirm)
+}
+
+func runBoxMemberAdd(server, source, name, role, confirm string) error {
+	name = strings.Join(strings.Fields(name), " ")
+	if name == "" {
+		return errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  "--name is required for box member add",
+			"command": memberAddCommand(source, server, name, role),
+		})
+	}
+	if role != "owner" && role != "shipper" && role != "agent" {
+		return errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  "role must be owner, shipper, or agent",
+			"command": "ship box member add <https-url|key|path> " + server + " --name " + utils.ShellEscape(name) + " --role owner|shipper|agent",
+		})
+	}
+	parsedConfirm, err := parseMemberConfirm(confirm, source, server, name, role)
 	if err != nil {
-		utils.DieError(err, 1)
+		return err
+	}
+	remote, err := isHTTPSMemberSource(source, server, name, role)
+	if err != nil {
+		return err
+	}
+	if parsedConfirm != "" && !remote {
+		return errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  "--confirm is only valid with an HTTPS keys-URL; literal keys and files write immediately",
+			"command": memberAddCommand(source, server, name, role),
+		})
+	}
+
+	input, err := resolveMemberAddSource(server, source, name, role)
+	if err != nil {
+		return err
+	}
+	if remote {
+		plan := newMemberAddPlan(server, source, input, name, role)
+		if parsedConfirm == "" {
+			fmt.Print(renderMemberAddPlan(plan))
+			return nil
+		}
+		if parsedConfirm != name+"@sha256:"+plan.Digest {
+			fmt.Print(renderMemberAddPlan(plan))
+			return errcat.New(errcat.CodeOperationFailed, errcat.Fields{
+				"detail":  "member add confirmation does not match the freshly fetched plan",
+				"command": memberAddCommitCommand(source, server, name, role, plan.Digest),
+			})
+		}
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
-		utils.DieError(err, 1)
+		return err
 	}
 	defer runner.Close()
 
 	stdin := []byte(strings.Join(input.Keys, "\n") + "\n")
-	stdout, stderr, code, err := runner.RunSSHWithStdin(server, serverKeyAddCommand(input.Comment, role), stdin)
+	stdout, stderr, code, err := runner.RunSSHWithStdin(server, serverKeyAddCommand(name, role), stdin)
 	if err != nil || code != 0 {
 		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
 		if outcome.TransportCoded != nil {
-			utils.DieError(outcome.TransportCoded, 1)
+			return outcome.TransportCoded
 		}
 		if outcome.RemoteCoded != nil {
 			writeRemoteStderr(outcome)
-			utils.DieError(outcome.RemoteCoded, 1)
+			return outcome.RemoteCoded
 		}
 		detail := outcome.Detail
 		if detail == "" {
 			detail = "member add failed"
 		}
-		utils.DieError(operationError(detail, "ship box member add "+source+" "+server), 1)
+		return operationError(detail, "ship box member add "+source+" "+server)
 	}
 	fmt.Print(stdout)
+	return nil
 }
 
-func CmdBoxMembers(server string, jsonFlag bool) {
+func CmdBoxMemberLs(server string, jsonFlag bool) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(invalidBoxTargetError(server, "ship box members"), 2)
+		utils.DieError(invalidBoxTargetError(server, "ship box member ls"), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -338,17 +400,13 @@ func CmdBoxMembers(server string, jsonFlag bool) {
 			writeRemoteStderr(outcome)
 			utils.DieError(outcome.RemoteCoded, 1)
 		}
-		detail := boxMembersFailureDetail(outcome.Detail)
-		utils.DieError(operationError(detail, "ship box members "+server), 1)
+		detail := outcome.Detail
+		if detail == "" {
+			detail = "box member ls failed"
+		}
+		utils.DieError(operationError(detail, "ship box member ls "+server), 1)
 	}
 	fmt.Print(stdout)
-}
-
-func boxMembersFailureDetail(detail string) string {
-	if detail == "" {
-		return "box members failed"
-	}
-	return detail
 }
 
 func CmdBoxMemberRm(server, name string) {
@@ -380,18 +438,18 @@ func CmdBoxMemberRm(server, name string) {
 	fmt.Print(stdout)
 }
 
-func CmdBoxRm(server, app, confirm string) {
+func CmdBoxAppRm(server, app, confirm string) {
 	if !names.AppRe.MatchString(app) {
 		utils.DieError(errcat.New(errcat.CodeUsageError, errcat.Fields{
 			"detail":  fmt.Sprintf("invalid app name %q: must match %s", app, names.AppPattern),
-			"command": "ship box rm <app> --confirm <app>",
+			"command": "ship box app rm " + utils.ShellEscape(app) + " " + utils.ShellEscape(server) + " --confirm " + utils.ShellEscape(app),
 		}), 2)
 	}
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(invalidBoxTargetError(server, "ship box rm "+app), 2)
+		utils.DieError(invalidBoxTargetError(server, "ship box app rm "+app), 2)
 	}
 	if confirm != app {
-		utils.DieError(errcat.New(errcat.CodeBoxRmConfirmationRequired, errcat.Fields{"app": app}), 1)
+		utils.DieError(errcat.New(errcat.CodeBoxAppRmConfirmationRequired, errcat.Fields{"app": app, "box": server}), 1)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -399,7 +457,7 @@ func CmdBoxRm(server, app, confirm string) {
 	}
 	defer runner.Close()
 
-	out := runSSHChecked(runner, server, serverAppDestroyCommand(app), "box rm failed", "ship box rm "+server+" "+app+" --confirm "+app)
+	out := runSSHChecked(runner, server, serverAppDestroyCommand(app), "box app rm failed", "ship box app rm "+app+" "+server+" --confirm "+app)
 	fmt.Print(out)
 }
 
@@ -450,9 +508,9 @@ func CmdBoxDoctor(server string, jsonFlag bool) {
 	fmt.Print(stdout)
 }
 
-func CmdBoxNotify(server, url string, remove, jsonFlag bool) {
+func CmdBoxWebhook(server, url string, remove, jsonFlag bool) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(invalidBoxTargetError(server, "ship box notify"), 2)
+		utils.DieError(invalidBoxTargetError(server, "ship box webhook"), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -460,7 +518,7 @@ func CmdBoxNotify(server, url string, remove, jsonFlag bool) {
 	}
 	defer runner.Close()
 
-	stdout, err := runBoxNotify(runner, server, url, remove, jsonFlag)
+	stdout, err := runBoxWebhook(runner, server, url, remove, jsonFlag)
 	if err != nil {
 		if errcat.Is(err, errcat.CodeUsageError) {
 			utils.DieError(err, 2)
@@ -470,17 +528,17 @@ func CmdBoxNotify(server, url string, remove, jsonFlag bool) {
 	fmt.Print(stdout)
 }
 
-func runBoxNotify(runner sshRunner, server, url string, remove, jsonFlag bool) (string, error) {
+func runBoxWebhook(runner sshRunner, server, url string, remove, jsonFlag bool) (string, error) {
 	if remove && strings.TrimSpace(url) != "" {
 		return "", errcat.New(errcat.CodeUsageError, errcat.Fields{
 			"detail":  "--rm cannot be combined with a webhook URL",
-			"command": "ship box notify <box> --rm",
+			"command": "ship box webhook <box> --rm",
 		})
 	}
 	if jsonFlag && (remove || strings.TrimSpace(url) != "") {
 		return "", errcat.New(errcat.CodeUsageError, errcat.Fields{
-			"detail":  "--json is only valid when reading box notify",
-			"command": "ship box notify <box> --json",
+			"detail":  "--json is only valid when reading box webhook",
+			"command": "ship box webhook <box> --json",
 		})
 	}
 	if jsonFlag {
@@ -490,18 +548,18 @@ func runBoxNotify(runner sshRunner, server, url string, remove, jsonFlag bool) (
 		}
 		data, err := json.Marshal(struct {
 			URL string `json:"url"`
-		}{URL: payload.Config["notify.url"].Value})
+		}{URL: payload.Config["webhook.url"].Value})
 		if err != nil {
 			return "", err
 		}
 		return string(data) + "\n", nil
 	}
 
-	command := serverBoxNotifyGetCommand()
+	command := serverBoxWebhookGetCommand()
 	if remove {
-		command = serverBoxNotifyClearCommand()
+		command = serverBoxWebhookClearCommand()
 	} else if strings.TrimSpace(url) != "" {
-		command = serverBoxNotifySetCommand(url)
+		command = serverBoxWebhookSetCommand(url)
 	}
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
@@ -515,13 +573,15 @@ func runBoxNotify(runner sshRunner, server, url string, remove, jsonFlag bool) (
 		}
 		detail := outcome.Detail
 		if detail == "" {
-			detail = "box notify failed"
+			detail = "box webhook failed"
 		}
-		return "", operationError(detail, "ship box notify "+server)
+		return "", operationError(detail, "ship box webhook "+server)
 	}
-	if strings.TrimSpace(stderr) != "" {
-		fmt.Fprint(os.Stderr, stderr)
+	forwardStderr := strings.TrimSpace(stderr) != ""
+	if _, stderrIsErrorJSON := errcat.ParseJSON(stderr); stderrIsErrorJSON {
+		forwardStderr = false
 	}
+	writeRemoteStderr(remoteOutcome{Stderr: stderr, ForwardStderr: forwardStderr})
 	return stdout, nil
 }
 
@@ -656,52 +716,78 @@ func invalidBoxTargetError(target string, prefix string) error {
 }
 
 type memberAddInput struct {
-	Comment string
-	Keys    []string
+	Keys     []string
+	FinalURL string
 }
 
-var githubUserRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
+const (
+	memberFetchTimeout    = 10 * time.Second
+	memberMaxResponseSize = 1 << 20
+	memberMaxKeyCount     = 64
+	memberMaxRedirects    = 10
+)
 
-func resolveMemberAddSource(source string) (memberAddInput, error) {
+var memberURLFetcher = fetchHTTPSMemberKeys
+var memberURLTransport http.RoundTripper
+
+func resolveMemberAddSource(server, source, name, role string) (memberAddInput, error) {
 	source = strings.TrimSpace(source)
 	if source == "" {
-		return memberAddInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "key source is empty"})
+		return memberAddInput{}, memberAddSourceError(errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "key source is empty"}), source, server, name, role)
 	}
 	if strings.ContainsAny(source, "\r\n") {
-		return memberAddInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "key source must be a single key, GitHub user, or .pub/.pem path"})
+		return memberAddInput{}, memberAddSourceError(errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": "key source must be a single key or .pub/.pem path"}), source, server, name, role)
 	}
 	if looksLikeSSHPublicKey(source) {
-		keys, err := normalizeSSHPublicKeys(source, "")
-		return memberAddInput{Comment: keyComment(keys), Keys: keys}, err
+		keys, err := normalizeSSHPublicKeys(source)
+		if err != nil {
+			return memberAddInput{}, memberAddSourceError(err, source, server, name, role)
+		}
+		return memberAddInput{Keys: canonicalMemberKeyLines(keys)}, nil
+	}
+	remote, err := isHTTPSMemberSource(source, server, name, role)
+	if err != nil {
+		return memberAddInput{}, err
+	}
+	if remote {
+		input, err := memberURLFetcher(source, server, name, role)
+		if err != nil {
+			return memberAddInput{}, memberAddSourceError(err, source, server, name, role)
+		}
+		return input, nil
 	}
 	if path, isPath := resolvePublicKeyPath(source); isPath {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return memberAddInput{}, operationError(fmt.Sprintf("read public key file %s: %v", source, err), "ship box member add "+source+" <box>")
+			return memberAddInput{}, memberAddSourceError(fmt.Errorf("read public key file %s: %v", source, err), source, server, name, role)
 		}
-		comment := memberNameFromPath(path)
-		keys, err := normalizeSSHPublicKeys(string(data), comment)
-		return memberAddInput{Comment: comment, Keys: keys}, err
+		keys, err := normalizeSSHPublicKeys(string(data))
+		if err != nil {
+			return memberAddInput{}, memberAddSourceError(err, source, server, name, role)
+		}
+		return memberAddInput{Keys: canonicalMemberKeyLines(keys)}, nil
 	}
-	if !githubUserRe.MatchString(source) {
-		return memberAddInput{}, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{"detail": fmt.Sprintf("%q is not a valid GitHub user, SSH public key, or .pub/.pem path", source)})
-	}
-	keys, err := fetchGitHubPublicKeys(source)
-	if err != nil {
-		return memberAddInput{}, err
-	}
-	normalized, err := normalizeSSHPublicKeys(keys, source)
-	return memberAddInput{Comment: source, Keys: normalized}, err
+	return memberAddInput{}, remoteMemberSourceUsageError(source, server, name, role)
 }
 
-func memberNameFromPath(path string) string {
-	name := filepath.Base(path)
-	ext := filepath.Ext(name)
-	switch strings.ToLower(ext) {
-	case ".pub", ".pem":
-		return strings.TrimSuffix(name, ext)
+func isHTTPSMemberSource(source, server, name, role string) (bool, error) {
+	parsed, err := url.Parse(strings.TrimSpace(source))
+	if err != nil {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(source)), "http") {
+			return false, remoteMemberSourceUsageError(source, server, name, role)
+		}
+		return false, nil
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "https":
+		if parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+			return false, remoteMemberSourceUsageError(source, server, name, role)
+		}
+		return true, nil
+	case "http":
+		return false, remoteMemberSourceUsageError(source, server, name, role)
 	default:
-		return name
+		return false, nil
 	}
 }
 
@@ -722,28 +808,66 @@ func resolvePublicKeyPath(source string) (string, bool) {
 	return "", false
 }
 
-func fetchGitHubPublicKeys(user string) (string, error) {
-	url := "https://github.com/" + user + ".keys"
-	client := http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url)
+func fetchHTTPSMemberKeys(source, server, name, role string) (memberAddInput, error) {
+	parsed, err := url.Parse(source)
+	if err != nil || strings.ToLower(parsed.Scheme) != "https" || parsed.Host == "" {
+		return memberAddInput{}, remoteMemberSourceUsageError(source, server, name, role)
+	}
+	client := http.Client{
+		Timeout: memberFetchTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= memberMaxRedirects {
+				return fmt.Errorf("too many redirects")
+			}
+			if strings.ToLower(req.URL.Scheme) != "https" {
+				return fmt.Errorf("insecure HTTP redirect is not allowed")
+			}
+			return nil
+		},
+	}
+	if memberURLTransport != nil {
+		client.Transport = memberURLTransport
+	}
+	resp, err := client.Get(source)
 	if err != nil {
-		return "", operationError(fmt.Sprintf("fetch %s: %v", url, err), "ship box member add "+user+" <box>")
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		return memberAddInput{}, memberAddSourceError(fmt.Errorf("fetch %s: %v", source, err), source, server, name, role)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return "", errcat.New(errcat.CodeGitHubKeysUnavailable, errcat.Fields{"user": user})
+		return memberAddInput{}, memberAddSourceError(errcat.New(errcat.CodeKeysURLUnavailable, errcat.Fields{"source": source}), source, server, name, role)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return "", operationError(fmt.Sprintf("fetch %s: HTTP %d", url, resp.StatusCode), "ship box member add "+user+" <box>")
+		return memberAddInput{}, memberAddSourceError(fmt.Errorf("fetch %s: HTTP %d", source, resp.StatusCode), source, server, name, role)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, memberMaxResponseSize+1))
 	if err != nil {
-		return "", operationError(fmt.Sprintf("read %s: %v", url, err), "ship box member add "+user+" <box>")
+		return memberAddInput{}, memberAddSourceError(fmt.Errorf("read %s: %v", source, err), source, server, name, role)
 	}
-	if strings.TrimSpace(string(data)) == "" {
-		return "", errcat.New(errcat.CodeGitHubKeysUnavailable, errcat.Fields{"user": user})
+	if len(data) > memberMaxResponseSize {
+		return memberAddInput{}, memberAddSourceError(fmt.Errorf("response from %s exceeds %d bytes", source, memberMaxResponseSize), source, server, name, role)
 	}
-	return string(data), nil
+	keys, err := memberkeys.Normalize(string(data), "")
+	if err != nil {
+		return memberAddInput{}, memberAddSourceError(err, source, server, name, role)
+	}
+	if len(keys) > memberMaxKeyCount {
+		return memberAddInput{}, memberAddSourceError(fmt.Errorf("response from %s contains more than %d keys", source, memberMaxKeyCount), source, server, name, role)
+	}
+	finalURL := source
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	finalParsed, err := url.Parse(finalURL)
+	if err != nil || strings.ToLower(finalParsed.Scheme) != "https" {
+		return memberAddInput{}, memberAddSourceError(fmt.Errorf("final URL for %s was not HTTPS", source), source, server, name, role)
+	}
+	return memberAddInput{
+		Keys:     canonicalMemberKeyLinesFromAuthorized(keys),
+		FinalURL: finalURL,
+	}, nil
 }
 
 func looksLikeSSHPublicKey(value string) bool {
@@ -751,8 +875,8 @@ func looksLikeSSHPublicKey(value string) bool {
 	return len(fields) >= 2 && memberkeys.SupportedType(fields[0])
 }
 
-func normalizeSSHPublicKeys(raw, comment string) ([]string, error) {
-	keys, err := memberkeys.Normalize(raw, comment)
+func normalizeSSHPublicKeys(raw string) ([]string, error) {
+	keys, err := memberkeys.Normalize(raw, "")
 	if err != nil {
 		return nil, err
 	}
@@ -763,13 +887,157 @@ func normalizeSSHPublicKeys(raw, comment string) ([]string, error) {
 	return lines, nil
 }
 
-func keyComment(keys []string) string {
-	if len(keys) == 0 {
-		return "ship-member"
+func canonicalMemberKeyLines(lines []string) []string {
+	keys, err := memberkeys.Normalize(strings.Join(lines, "\n"), "")
+	if err != nil {
+		return lines
 	}
-	fields := strings.Fields(keys[0])
-	if len(fields) < 3 {
-		return "ship-member"
+	return canonicalMemberKeyLinesFromAuthorized(keys)
+}
+
+func canonicalMemberKeyLinesFromAuthorized(keys []memberkeys.AuthorizedKey) []string {
+	seen := map[string]bool{}
+	canonical := make([]string, 0, len(keys))
+	for _, key := range keys {
+		material := key.Type + " " + key.Body
+		if seen[material] {
+			continue
+		}
+		seen[material] = true
+		canonical = append(canonical, material)
 	}
-	return strings.Join(fields[2:], " ")
+	sort.Strings(canonical)
+	return canonical
+}
+
+func remoteMemberSourceUsageError(source, server, name, role string) error {
+	return errcat.New(errcat.CodeUsageError, errcat.Fields{
+		"detail":  fmt.Sprintf("%q is not an SSH public key, a key file path, or an HTTPS keys-URL; for a forge account use its keys URL, e.g. https://github.com/<user>.keys.", source),
+		"command": memberAddCommand(source, server, name, role),
+	})
+}
+
+func parseMemberConfirm(confirm, source, server, name, role string) (string, error) {
+	confirm = strings.TrimSpace(confirm)
+	if confirm == "" {
+		return "", nil
+	}
+	confirmedName, digest, ok := strings.Cut(confirm, "@sha256:")
+	if !ok || strings.TrimSpace(confirmedName) == "" || len(digest) != sha256.Size*2 {
+		return "", errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  "--confirm must match <name>@sha256:<plan-digest>",
+			"command": memberAddCommand(source, server, name, role) + " --confirm <name>@sha256:<plan-digest>",
+		})
+	}
+	if _, err := hex.DecodeString(digest); err != nil {
+		return "", errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  "--confirm must match <name>@sha256:<plan-digest>",
+			"command": memberAddCommand(source, server, name, role) + " --confirm <name>@sha256:<plan-digest>",
+		})
+	}
+	return strings.Join(strings.Fields(confirmedName), " ") + "@sha256:" + digest, nil
+}
+
+type memberAddPlan struct {
+	Box       string
+	SourceURL string
+	FinalURL  string
+	Name      string
+	Role      string
+	Keys      []memberkeys.AuthorizedKey
+	Digest    string
+}
+
+func newMemberAddPlan(box, source string, input memberAddInput, name, role string) memberAddPlan {
+	keys, _ := memberkeys.Normalize(strings.Join(input.Keys, "\n"), "")
+	plan := memberAddPlan{
+		Box:       box,
+		SourceURL: source,
+		FinalURL:  input.FinalURL,
+		Name:      name,
+		Role:      role,
+		Keys:      keys,
+	}
+	plan.Digest = digestMemberAddPlan(plan)
+	return plan
+}
+
+func digestMemberAddPlan(plan memberAddPlan) string {
+	materials := canonicalMemberKeyLinesFromAuthorized(plan.Keys)
+	var encoded strings.Builder
+	encoded.WriteString("ship-member-plan-v1\n")
+	for _, field := range []string{plan.Box, plan.SourceURL, plan.FinalURL, plan.Name, plan.Role} {
+		bytes := []byte(field)
+		fmt.Fprintf(&encoded, "%d:", len(bytes))
+		encoded.Write(bytes)
+		encoded.WriteByte('\n')
+	}
+	fmt.Fprintf(&encoded, "%d\n", len(materials))
+	for _, material := range materials {
+		bytes := []byte(material)
+		fmt.Fprintf(&encoded, "%d:", len(bytes))
+		encoded.Write(bytes)
+		encoded.WriteByte('\n')
+	}
+	sum := sha256.Sum256([]byte(encoded.String()))
+	return hex.EncodeToString(sum[:])
+}
+
+func renderMemberAddPlan(plan memberAddPlan) string {
+	var out strings.Builder
+	fmt.Fprintf(&out, "source: %s\n", plan.SourceURL)
+	fmt.Fprintf(&out, "final source: %s\n", plan.FinalURL)
+	fmt.Fprintf(&out, "name: %s\nrole: %s\n", plan.Name, plan.Role)
+	for index, key := range plan.Keys {
+		fmt.Fprintf(&out, "key %d: %s\n", index+1, key.Type)
+		fmt.Fprintf(&out, "  material: %s\n", key.Type+" "+key.Body)
+		fmt.Fprintf(&out, "  fingerprint: %s\n", key.Fingerprint)
+	}
+	fmt.Fprintf(&out, "plan digest: sha256:%s\n", plan.Digest)
+	fmt.Fprintf(&out, "next: %s\n", memberAddCommitCommand(plan.SourceURL, plan.Box, plan.Name, plan.Role, plan.Digest))
+	return out.String()
+}
+
+func memberAddCommitCommand(source, box, name, role, digest string) string {
+	return "ship box member add " + utils.ShellEscape(source) + " " + utils.ShellEscape(box) +
+		" --name " + utils.ShellEscape(name) + " --role " + utils.ShellEscape(role) +
+		" --confirm " + utils.ShellEscape(name+"@sha256:"+digest)
+}
+
+func memberAddCommand(source, box, name, role string) string {
+	renderedName := "<name>"
+	if name != "" {
+		renderedName = utils.ShellEscape(name)
+	}
+	command := "ship box member add " + utils.ShellEscape(source) + " " + utils.ShellEscape(box) + " --name " + renderedName
+	if role != "" && role != "shipper" {
+		command += " --role " + utils.ShellEscape(role)
+	}
+	return command
+}
+
+func memberAddSourceError(err error, source, server, name, role string) error {
+	command := memberAddCommand(source, server, name, role)
+	if coded, ok := errcat.As(err); ok {
+		fields := errcat.Fields{
+			"detail":  coded.Cause(),
+			"source":  source,
+			"box":     server,
+			"name":    name,
+			"command": command,
+		}
+		switch coded.Code() {
+		case errcat.CodeKeysURLUnavailable:
+			return errcat.New(errcat.CodeKeysURLUnavailable, fields)
+		case errcat.CodeSSHPublicKeyInvalid:
+			return errcat.New(errcat.CodeSSHPublicKeyInvalid, fields)
+		case errcat.CodeUsageError:
+			return errcat.New(errcat.CodeUsageError, fields)
+		case errcat.CodeOperationFailed:
+			return errcat.New(errcat.CodeOperationFailed, fields)
+		default:
+			return operationError(coded.Cause(), command)
+		}
+	}
+	return operationError(err.Error(), command)
 }

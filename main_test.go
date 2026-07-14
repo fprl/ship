@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -84,24 +85,24 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"box", "setup", "root@example.com"},
 		{"box", "doctor", "example.com"},
 		{"box", "doctor", "example.com", "--json"},
-		{"box", "notify", "example.com"},
-		{"box", "notify", "example.com", "--json"},
-		{"box", "notify", "example.com", "https://ntfy.example/ship"},
-		{"box", "notify", "example.com", "--rm"},
-		{"box", "apps", "example.com"},
-		{"box", "apps", "example.com", "--json"},
-		{"box", "member", "add", "alice"},
-		{"box", "member", "add", "alice", "example.com", "--role", "owner"},
-		{"box", "members"},
-		{"box", "members", "example.com", "--json"},
+		{"box", "webhook", "example.com"},
+		{"box", "webhook", "example.com", "--json"},
+		{"box", "webhook", "example.com", "https://ntfy.example/ship"},
+		{"box", "webhook", "example.com", "--rm"},
+		{"box", "app", "ls", "example.com"},
+		{"box", "app", "ls", "example.com", "--json"},
+		{"box", "member", "add", "./alice.pub", "--name", "alice"},
+		{"box", "member", "add", "./alice.pub", "example.com", "--name", "alice", "--role", "owner"},
+		{"box", "member", "ls"},
+		{"box", "member", "ls", "example.com", "--json"},
 		{"box", "member", "rm", "alice"},
 		{"box", "member", "rm", "alice", "example.com"},
-		{"box", "approvals"},
-		{"box", "approvals", "example.com", "--json"},
-		{"box", "approve", "abc123xy"},
-		{"box", "approve", "abc123xy", "example.com"},
-		{"box", "rm", "api", "--confirm", "api"},
-		{"box", "rm", "api", "example.com", "--confirm", "api"},
+		{"box", "approval", "ls"},
+		{"box", "approval", "ls", "example.com", "--json"},
+		{"box", "approval", "grant", "abc123xy"},
+		{"box", "approval", "grant", "abc123xy", "example.com"},
+		{"box", "app", "rm", "api", "--confirm", "api"},
+		{"box", "app", "rm", "api", "example.com", "--confirm", "api"},
 		{"box", "forget", "example.com"},
 		{"docs"},
 		{"help"},
@@ -123,9 +124,63 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 	}
 }
 
+func TestPublicCLIRequiresMemberName(t *testing.T) {
+	ctx, err := newTestParser(t).Parse([]string{"box", "member", "add", "./alice.pub", "203.0.113.7"})
+	if err != nil {
+		t.Fatalf("member add without --name should parse for product validation: %v", err)
+	}
+	if err := ctx.Run(); err == nil || !strings.Contains(err.Error(), "--name") {
+		t.Fatalf("member add without --name error = %v, want --name usage error", err)
+	}
+}
+
+func TestExecPassthroughRetainsSeparatorForClientNormalization(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{name: "command without separator", args: []string{"exec", "sh", "-c", "echo hi"}, want: []string{"sh", "-c", "echo hi"}},
+		{name: "separator before command", args: []string{"exec", "--", "sh", "-c", "echo hi"}, want: []string{"--", "sh", "-c", "echo hi"}},
+		{name: "separator before dash command", args: []string{"exec", "--", "--flag-first-cmd"}, want: []string{"--", "--flag-first-cmd"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := &cli{}
+			parser, err := kong.New(parsed, kong.Name("ship"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parser.Parse(tt.args); err != nil {
+				t.Fatalf("parse %v: %v", tt.args, err)
+			}
+			if got := parsed.Exec.Command; !slices.Equal(got, tt.want) {
+				t.Fatalf("command = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPublicCLIRejectsRemovedDataRmVerb(t *testing.T) {
 	if _, err := newTestParser(t).Parse([]string{"data", "rm"}); err == nil {
 		t.Fatal("data rm should be rejected after the reset rename")
+	}
+}
+
+func TestPublicCLIRejectsDeletedBoxGrammar(t *testing.T) {
+	for _, args := range [][]string{
+		{"box", "members"},
+		{"box", "apps"},
+		{"box", "rm", "api", "--confirm", "api"},
+		{"box", "approvals"},
+		{"box", "approve", "abc123xy"},
+	} {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			if _, err := newTestParser(t).Parse(args); err == nil {
+				t.Fatalf("parse %v unexpectedly succeeded", args)
+			}
+		})
 	}
 }
 
@@ -189,8 +244,8 @@ func TestParseBoxConfigArgs(t *testing.T) {
 		wantKey, wantValue     string
 	}{
 		{args: []string{"example.com"}, wantTarget: "example.com"},
-		{args: []string{"example.com", "set", "notify.url", "https://ntfy.example/ship"}, wantTarget: "example.com", wantAction: "set", wantKey: "notify.url", wantValue: "https://ntfy.example/ship"},
-		{args: []string{"unset", "notify.url"}, wantAction: "unset", wantKey: "notify.url"},
+		{args: []string{"example.com", "set", "webhook.url", "https://ntfy.example/ship"}, wantTarget: "example.com", wantAction: "set", wantKey: "webhook.url", wantValue: "https://ntfy.example/ship"},
+		{args: []string{"unset", "webhook.url"}, wantAction: "unset", wantKey: "webhook.url"},
 	}
 	for _, tt := range tests {
 		target, action, key, value, err := parseBoxConfigArgs(tt.args)
@@ -201,7 +256,7 @@ func TestParseBoxConfigArgs(t *testing.T) {
 			t.Fatalf("parseBoxConfigArgs(%v) = (%q, %q, %q, %q)", tt.args, target, action, key, value)
 		}
 	}
-	if _, _, _, _, err := parseBoxConfigArgs([]string{"example.com", "set", "notify.url"}); err == nil {
+	if _, _, _, _, err := parseBoxConfigArgs([]string{"example.com", "set", "webhook.url"}); err == nil {
 		t.Fatal("parseBoxConfigArgs accepted set without a value")
 	}
 }
@@ -244,6 +299,7 @@ func TestPublicCLIRejectsRemovedCompatibilityForms(t *testing.T) {
 		{"host", "status"},
 		{"box", "add-key", "alice"},
 		{"box", "init", "deploy@example.com"},
+		{"box", "notify", "example.com"},
 		{"member", "add", "alice"},
 		{"member", "ls"},
 		{"member", "rm", "alice"},
@@ -281,7 +337,7 @@ func TestBoxWithoutSubcommandShowsSubcommandHelp(t *testing.T) {
 	if strings.Contains(text, "--server") {
 		t.Fatalf("box without subcommand should not mention removed --server: %v", err)
 	}
-	for _, want := range []string{"setup", "doctor", "notify", "apps", "rm"} {
+	for _, want := range []string{"setup", "doctor", "webhook", "app"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("box parse error should mention %q subcommand, got: %v", want, err)
 		}
@@ -366,13 +422,14 @@ func TestBoxTargetRequiredRefusalListsKnownBoxes(t *testing.T) {
 func TestBoxVerbHelpUsesBoxPlaceholder(t *testing.T) {
 	for _, args := range [][]string{
 		{"box", "doctor", "--help"},
-		{"box", "notify", "--help"},
-		{"box", "apps", "--help"},
+		{"box", "webhook", "--help"},
+		{"box", "app", "ls", "--help"},
+		{"box", "app", "rm", "--help"},
 		{"box", "member", "add", "--help"},
-		{"box", "members", "--help"},
-		{"box", "approve", "--help"},
-		{"box", "approvals", "--help"},
-		{"box", "rm", "--help"},
+		{"box", "member", "ls", "--help"},
+		{"box", "member", "rm", "--help"},
+		{"box", "approval", "ls", "--help"},
+		{"box", "approval", "grant", "--help"},
 	} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
@@ -399,14 +456,25 @@ func TestBoxVerbHelpUsesBoxPlaceholder(t *testing.T) {
 	}
 }
 
-func TestBoxLsRedirectsToApps(t *testing.T) {
+func TestBoxLsRedirectsToAppLs(t *testing.T) {
 	ctx, err := newTestParser(t).Parse([]string{"box", "ls"})
 	if err != nil {
 		t.Fatalf("parse box ls: %v", err)
 	}
 	err = ctx.Run()
-	if !errcat.Is(err, errcat.CodeUsageError) || !strings.Contains(err.Error(), "ship box apps") {
-		t.Fatalf("box ls error = %v, want usage remediation for box apps", err)
+	if !errcat.Is(err, errcat.CodeUsageError) || !strings.Contains(err.Error(), "ship box app ls") {
+		t.Fatalf("box ls error = %v, want usage remediation for box app ls", err)
+	}
+}
+
+func TestBoxAppRmTargetRequiredShowsFullCommand(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	err := (boxAppRmCmd{Config: filepath.Join(t.TempDir(), "ship.toml"), App: "api"}).Run()
+	if err == nil {
+		t.Fatal("box app rm without a target unexpectedly succeeded")
+	}
+	if got, want := err.Error(), "target a box\nknown boxes (~/.config/ship/known_hosts):\n  none known yet\nnext: ship box app rm api <box> --confirm api"; got != want {
+		t.Fatalf("target remediation = %q, want %q", got, want)
 	}
 }
 

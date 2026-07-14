@@ -81,7 +81,7 @@ const (
 )
 
 func appPreflightIssues(app, env string, requiredSecrets []string) []appPreflightIssue {
-	var issues []appPreflightIssue
+	issues := []appPreflightIssue{}
 	addIssue := func(code, message string) {
 		issues = append(issues, appPreflightIssue{Code: code, Message: message})
 	}

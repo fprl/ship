@@ -127,7 +127,7 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 		t.Fatalf("unexpected members state: %+v", membersState)
 	}
 
-	if err := store.WriteBoxConfig(BoxConfigFile{Version: CurrentVersion, Values: map[string]string{"notify.url": "https://ntfy.example/ship"}}); err != nil {
+	if err := store.WriteBoxConfig(BoxConfigFile{Version: CurrentVersion, Values: map[string]string{"webhook.url": "https://ntfy.example/ship"}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := store.BoxConfigPath(); got != filepath.Join(root, "box-config.json") {
@@ -138,8 +138,8 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if boxConfig.Values["notify.url"] != "https://ntfy.example/ship" {
-		t.Fatalf("box config notify.url = %q", boxConfig.Values["notify.url"])
+	if boxConfig.Values["webhook.url"] != "https://ntfy.example/ship" {
+		t.Fatalf("box config webhook.url = %q", boxConfig.Values["webhook.url"])
 	}
 
 	if err := store.WriteApprovals(ApprovalsFile{
@@ -218,7 +218,7 @@ func TestBoxConfigRefusesUnknownKeysAndWrongTypes(t *testing.T) {
 	if _, err := state.ReadBoxConfig(); err == nil {
 		t.Fatal("ReadBoxConfig accepted an unknown key")
 	}
-	if err := os.WriteFile(state.BoxConfigPath(), []byte(`{"version":1,"values":{"notify.url":123}}`), 0600); err != nil {
+	if err := os.WriteFile(state.BoxConfigPath(), []byte(`{"version":1,"values":{"webhook.url":123}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := state.ReadBoxConfig(); err == nil {

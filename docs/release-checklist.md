@@ -61,17 +61,17 @@ pointing at the box.
 Confirm the box app list before teardown:
 
 ```bash
-./dist/ship box apps <IP> --json
+./dist/ship box app ls <IP> --json
 ```
 
 Clean up each example app from the box:
 
 ```bash
-./dist/ship box rm hono-api <IP> --confirm hono-api
-./dist/ship box rm php-plain <IP> --confirm php-plain
-./dist/ship box rm django-sqlite <IP> --confirm django-sqlite
-./dist/ship box rm astro-site <IP> --confirm astro-site
-./dist/ship box rm mixed-app <IP> --confirm mixed-app
+./dist/ship box app rm hono-api <IP> --confirm hono-api
+./dist/ship box app rm php-plain <IP> --confirm php-plain
+./dist/ship box app rm django-sqlite <IP> --confirm django-sqlite
+./dist/ship box app rm astro-site <IP> --confirm astro-site
+./dist/ship box app rm mixed-app <IP> --confirm mixed-app
 ```
 
 ## Real VPS Smoke

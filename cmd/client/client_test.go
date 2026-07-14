@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,7 +37,7 @@ func readClientManifest(t *testing.T, root string) *config.Manifest {
 	return manifest
 }
 
-func TestResolveMemberAddSourceStripsPublicKeyPathExtensions(t *testing.T) {
+func TestResolveMemberAddSourceCanonicalizesPublicKeyMaterial(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"alice.pub", "cami.pem"} {
 		t.Run(name, func(t *testing.T) {
@@ -43,19 +45,167 @@ func TestResolveMemberAddSourceStripsPublicKeyPathExtensions(t *testing.T) {
 			if err := os.WriteFile(path, []byte(clientAlicePublicKey+"\n"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			input, err := resolveMemberAddSource(path)
+			input, err := resolveMemberAddSource("203.0.113.7", path, "alice", "shipper")
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := strings.TrimSuffix(name, filepath.Ext(name))
-			if input.Comment != want {
-				t.Fatalf("comment = %q, want %q", input.Comment, want)
-			}
-			if len(input.Keys) != 1 || !strings.HasSuffix(input.Keys[0], " "+want) {
-				t.Fatalf("normalized key did not use stripped comment: %+v", input.Keys)
+			want := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/"
+			if len(input.Keys) != 1 || input.Keys[0] != want {
+				t.Fatalf("normalized key material = %+v, want %q", input.Keys, want)
 			}
 		})
 	}
+}
+
+func TestResolveMemberAddSourceAcceptsOnlyDocumentedSourceShapes(t *testing.T) {
+	for _, source := range []string{"alice", "github:alice", "http://github.com/alice.keys"} {
+		t.Run(source, func(t *testing.T) {
+			_, err := resolveMemberAddSource("203.0.113.7", source, "alice", "shipper")
+			if !errcat.Is(err, errcat.CodeUsageError) || !strings.Contains(err.Error(), "HTTPS keys-URL") {
+				t.Fatalf("error = %v, want HTTPS keys-URL usage error", err)
+			}
+		})
+	}
+}
+
+func TestFetchHTTPSMemberKeysFollowsOnlyHTTPSAndRecordsFinalURL(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/final", http.StatusFound)
+			return
+		}
+		_, _ = io.WriteString(w, clientAlicePublicKey+"\n")
+	}))
+	defer server.Close()
+	oldTransport := memberURLTransport
+	memberURLTransport = server.Client().Transport
+	t.Cleanup(func() { memberURLTransport = oldTransport })
+
+	input, err := fetchHTTPSMemberKeys(server.URL+"/start", "203.0.113.7", "alice", "shipper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.FinalURL != server.URL+"/final" {
+		t.Fatalf("final URL = %q, want %q", input.FinalURL, server.URL+"/final")
+	}
+	if got, want := input.Keys, []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/"}; !slicesEqual(got, want) {
+		t.Fatalf("canonical keys = %q, want %q", got, want)
+	}
+}
+
+func TestFetchHTTPSMemberKeysRejectsInsecureRedirect(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://"+r.Host+"/insecure", http.StatusFound)
+	}))
+	defer server.Close()
+	oldTransport := memberURLTransport
+	memberURLTransport = server.Client().Transport
+	t.Cleanup(func() { memberURLTransport = oldTransport })
+
+	_, err := fetchHTTPSMemberKeys(server.URL, "203.0.113.7", "alice", "shipper")
+	if err == nil || !strings.Contains(err.Error(), "insecure HTTP redirect") {
+		t.Fatalf("error = %v, want insecure redirect rejection", err)
+	}
+}
+
+func TestFetchHTTPSMemberKeysBoundsResponseAndKeyCount(t *testing.T) {
+	t.Run("response size", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, strings.Repeat("x", memberMaxResponseSize+1))
+		}))
+		defer server.Close()
+		oldTransport := memberURLTransport
+		memberURLTransport = server.Client().Transport
+		t.Cleanup(func() { memberURLTransport = oldTransport })
+		_, err := fetchHTTPSMemberKeys(server.URL, "203.0.113.7", "alice", "shipper")
+		if !errcat.Is(err, errcat.CodeOperationFailed) || !strings.Contains(err.Error(), "exceeds") {
+			t.Fatalf("error = %v, want bounded response error", err)
+		}
+	})
+
+	t.Run("key count", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, strings.Repeat(clientAlicePublicKey+"\n", memberMaxKeyCount+1))
+		}))
+		defer server.Close()
+		oldTransport := memberURLTransport
+		memberURLTransport = server.Client().Transport
+		t.Cleanup(func() { memberURLTransport = oldTransport })
+		_, err := fetchHTTPSMemberKeys(server.URL, "203.0.113.7", "alice", "shipper")
+		if !errcat.Is(err, errcat.CodeOperationFailed) || !strings.Contains(err.Error(), "more than") {
+			t.Fatalf("error = %v, want bounded key count error", err)
+		}
+	})
+}
+
+func TestMemberAddPlanDigestUsesStableSortedMaterialAndAllPlanInputs(t *testing.T) {
+	input := memberAddInput{
+		FinalURL: serverURLForTest("alice.keys"),
+		Keys: []string{
+			"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/",
+		},
+	}
+	plan := newMemberAddPlan("203.0.113.7", "https://github.com/alice.keys", input, "alice", "shipper")
+	reordered := input
+	reordered.Keys = append([]string(nil), input.Keys...)
+	if plan.Digest != newMemberAddPlan("203.0.113.7", "https://github.com/alice.keys", reordered, "alice", "shipper").Digest {
+		t.Fatal("digest changed when normalized key order stayed the same")
+	}
+	for name, changed := range map[string]memberAddPlan{
+		"box":    func() memberAddPlan { p := plan; p.Box = "203.0.113.8"; return p }(),
+		"source": func() memberAddPlan { p := plan; p.SourceURL = "https://example.com/alice.keys"; return p }(),
+		"final":  func() memberAddPlan { p := plan; p.FinalURL = "https://example.com/alice.keys"; return p }(),
+		"name":   func() memberAddPlan { p := plan; p.Name = "bob"; return p }(),
+		"role":   func() memberAddPlan { p := plan; p.Role = "agent"; return p }(),
+	} {
+		if digestMemberAddPlan(changed) == plan.Digest {
+			t.Fatalf("digest did not change when %s changed", name)
+		}
+	}
+	rendered := renderMemberAddPlan(plan)
+	for _, want := range []string{
+		"final source: " + input.FinalURL,
+		"name: alice",
+		"role: shipper",
+		"material: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/",
+		"fingerprint: SHA256:DUvOnIMvzMmJVSD+t9uB9yD7f8nYIQt2y1vGztKOWTg",
+		"next: ship box member add https://github.com/alice.keys 203.0.113.7 --name alice --role shipper --confirm alice@sha256:" + plan.Digest,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("plan output missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestParseMemberConfirmRequiresExactShape(t *testing.T) {
+	for _, value := range []string{"alice", "alice@sha256:not-hex", "@sha256:"} {
+		if _, err := parseMemberConfirm(value, "https://github.com/alice.keys", "203.0.113.7", "alice", "shipper"); !errcat.Is(err, errcat.CodeUsageError) || !strings.Contains(err.Error(), "<name>@sha256:<plan-digest>") {
+			t.Fatalf("confirm %q error = %v, want shape usage error", value, err)
+		}
+	}
+}
+
+func TestRunBoxMemberAddRejectsConfirmForLiteralSource(t *testing.T) {
+	err := runBoxMemberAdd("203.0.113.7", clientAlicePublicKey, "alice", "shipper", "alice@sha256:"+strings.Repeat("0", 64))
+	if !errcat.Is(err, errcat.CodeUsageError) || !strings.Contains(err.Error(), "only valid with an HTTPS keys-URL") {
+		t.Fatalf("literal confirm error = %v, want usage error", err)
+	}
+}
+
+func serverURLForTest(path string) string {
+	return "https://example.test/" + path
+}
+
+func slicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestDecodeRemoteOutcome(t *testing.T) {
@@ -113,13 +263,21 @@ func TestRunSSHRequiredUsesCallerRemediation(t *testing.T) {
 	}
 }
 
+func TestRenderStatusSummaryWithApprovalsUsesApprovalLs(t *testing.T) {
+	got := renderStatusSummaryWithApprovals(statusPayload{App: "api"}, 1, "203.0.113.7")
+	want := "No live envs for api\n1 approvals pending — ship box approval ls 203.0.113.7\n"
+	if got != want {
+		t.Fatalf("status summary = %q, want %q", got, want)
+	}
+}
+
 func TestResolveMemberAddSourceRejectsInvalidPublicKeys(t *testing.T) {
 	t.Run("invalid line", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "invalid.pub")
 		if err := os.WriteFile(path, []byte("ssh-ed25519\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := resolveMemberAddSource(path)
+		_, err := resolveMemberAddSource("203.0.113.7", path, "alice", "shipper")
 		coded, ok := errcat.As(err)
 		if !ok || coded.Code() != errcat.CodeSSHPublicKeyInvalid {
 			t.Fatalf("code = %v, want %s", err, errcat.CodeSSHPublicKeyInvalid)
@@ -130,7 +288,7 @@ func TestResolveMemberAddSourceRejectsInvalidPublicKeys(t *testing.T) {
 	})
 
 	t.Run("garbage base64 body", func(t *testing.T) {
-		_, err := resolveMemberAddSource("ssh-ed25519 not-base64")
+		_, err := resolveMemberAddSource("203.0.113.7", "ssh-ed25519 not-base64", "alice", "shipper")
 		coded, ok := errcat.As(err)
 		if !ok || coded.Code() != errcat.CodeSSHPublicKeyInvalid {
 			t.Fatalf("code = %v, want %s", err, errcat.CodeSSHPublicKeyInvalid)
@@ -496,6 +654,49 @@ func TestPrepareDeployRoutesCollapsesPreviewToSSLIPHost(t *testing.T) {
 	}
 	if docs.Host != "api-feat-x-ab12.203-0-113-7.sslip.io" || docs.Path != "/docs" || docs.Serve != "dist" || docs.TLS != "internal" {
 		t.Fatalf("unexpected preview docs route: %+v", docs)
+	}
+}
+
+func TestPrepareDeployRoutesUsesPreviewBaseAndDerivesAlias(t *testing.T) {
+	port := 3000
+	ctx := &config.AppContext{
+		AppName: "api",
+		EnvName: "feat-new-pricing-x7q2",
+		Preview: config.Preview{Base: "preview.example.com", Aliases: true},
+		Processes: map[string]config.Process{
+			"web": {Port: &port},
+		},
+	}
+	plan, err := prepareDeployRoutes(ctx, "feat-new-pricing-x7q2", deployRouteOptions{Preview: true, BoxIP: "203.0.113.7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := plan.Context.Routes["api-feat-new-pricing-x7q2.preview.example.com"].Host, "api-feat-new-pricing-x7q2.preview.example.com"; got != want {
+		t.Fatalf("canonical preview host = %q, want %q", got, want)
+	}
+	if got, want := plan.PreviewAlias, "feat-new-pricing.preview.example.com"; got != want {
+		t.Fatalf("preview alias = %q, want %q", got, want)
+	}
+	if got, want := deploymentURLForBoxIP(ctx, "feat-new-pricing-x7q2", "203.0.113.7"), "https://api-feat-new-pricing-x7q2.preview.example.com"; got != want {
+		t.Fatalf("preview fallback URL = %q, want %q", got, want)
+	}
+}
+
+func TestPrepareDeployRoutesKeepsProductionOnSSLIPWhenPreviewBaseExists(t *testing.T) {
+	port := 3000
+	ctx := &config.AppContext{
+		AppName: "api",
+		Preview: config.Preview{Base: "preview.example.com", Aliases: true},
+		Processes: map[string]config.Process{
+			"web": {Port: &port},
+		},
+	}
+	plan, err := prepareDeployRoutes(ctx, "production", deployRouteOptions{BoxIP: "203.0.113.7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := plan.Context.Routes["api.203-0-113-7.sslip.io"].Host, "api.203-0-113-7.sslip.io"; got != want {
+		t.Fatalf("production host = %q, want %q", got, want)
 	}
 }
 
@@ -1126,7 +1327,7 @@ func captureClientStderr(t *testing.T, fn func()) string {
 func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", false)
 	actor := testDeployIdentity()
-	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, false, "internal")
+	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, false, "internal", "")
 	want := "sudo -n /usr/local/bin/ship server app apply --tls internal --client-version dev --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
@@ -1136,10 +1337,18 @@ func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 func TestServerAppApplyCommandSupportsRebuild(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", true)
 	actor := testDeployIdentity()
-	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, "")
+	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, "", "")
 	want := "sudo -n /usr/local/bin/ship server app apply --rebuild --dirty --client-version dev --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
+	}
+}
+
+func TestServerAppApplyCommandPassesPreviewAlias(t *testing.T) {
+	plan := testLocalDeployPlan("abc1234", false)
+	got := serverAppApplyCommand("api", "feat-x-ab12", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, testDeployIdentity(), false, "", "feat-x.preview.example.com")
+	if !strings.Contains(got, "--preview-alias feat-x.preview.example.com") {
+		t.Fatalf("apply command did not include preview alias: %s", got)
 	}
 }
 
@@ -1167,7 +1376,7 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "doctor json", command: serverDoctorCommand("example.com", true)},
 		{name: "setup env", command: serverAppSetupEnvCommand("api", "production")},
 		{name: "preflight json", command: serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})},
-		{name: "apply", command: serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, "auto")},
+		{name: "apply", command: serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, "auto", "")},
 		{name: "status json", command: serverAppStatusCommand("api", "production")},
 		{name: "list text", command: serverAppListCommand(false)},
 		{name: "list json", command: serverAppListCommand(true)},
@@ -1201,12 +1410,12 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "approval list text", command: serverApprovalListCommand(false)},
 		{name: "approval list json", command: serverApprovalListCommand(true)},
 		{name: "approval approve", command: serverApprovalApproveCommand("abc123xy")},
-		{name: "box notify get", command: serverBoxNotifyGetCommand()},
-		{name: "box notify set", command: serverBoxNotifySetCommand("https://ntfy.example/ship")},
-		{name: "box notify clear", command: serverBoxNotifyClearCommand()},
+		{name: "box webhook get", command: serverBoxWebhookGetCommand()},
+		{name: "box webhook set", command: serverBoxWebhookSetCommand("https://ntfy.example/ship")},
+		{name: "box webhook clear", command: serverBoxWebhookClearCommand()},
 		{name: "box config get", command: serverBoxConfigGetCommand()},
-		{name: "box config set", command: serverBoxConfigSetCommand("notify.url", "https://ntfy.example/ship")},
-		{name: "box config unset", command: serverBoxConfigUnsetCommand("notify.url")},
+		{name: "box config set", command: serverBoxConfigSetCommand("webhook.url", "https://ntfy.example/ship")},
+		{name: "box config unset", command: serverBoxConfigUnsetCommand("webhook.url")},
 	}
 
 	for _, tt := range commands {
@@ -1295,7 +1504,7 @@ func serverSubcommandCoveredBySudoers(subcommand string) bool {
 		strings.HasPrefix(subcommand, "key ") ||
 		strings.HasPrefix(subcommand, "approval ") ||
 		strings.HasPrefix(subcommand, "config ") ||
-		strings.HasPrefix(subcommand, "notify ")
+		strings.HasPrefix(subcommand, "webhook ")
 }
 
 func TestServerAppSetupEnvCommand(t *testing.T) {
@@ -1505,6 +1714,23 @@ func TestStatusFromAppListIncludesShippedBy(t *testing.T) {
 	text := renderStatusSummary(payload)
 	if !strings.Contains(text, `shipped_by="Smoke <smoke@example.com>"`) || !strings.Contains(text, `ssh_key="fake-vps-smoke"`) {
 		t.Fatalf("human status missing attribution:\n%s", text)
+	}
+}
+
+func TestStatusFromAppListEmptyAppsUsesEmptyEnvsArray(t *testing.T) {
+	payload, err := statusFromAppList(&config.AppContext{AppName: "api"}, `{"apps":[]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.Envs == nil {
+		t.Fatal("status envs should be a non-nil empty slice")
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `{"app":"api","envs":[]}` {
+		t.Fatalf("empty status JSON = %s", data)
 	}
 }
 
@@ -1775,7 +2001,7 @@ type fakeSSHResult struct {
 	err    error
 }
 
-func TestRunBoxNotifyJSON(t *testing.T) {
+func TestRunBoxWebhookJSON(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		response string
@@ -1783,18 +2009,18 @@ func TestRunBoxNotifyJSON(t *testing.T) {
 	}{
 		{
 			name:     "set URL",
-			response: `{"config":{"notify.url":{"value":"https://ntfy.example/ship","default":"","source":"set"}}}`,
+			response: `{"config":{"webhook.url":{"value":"https://ntfy.example/ship","default":"","source":"set"}}}`,
 			want:     "{\"url\":\"https://ntfy.example/ship\"}\n",
 		},
 		{
 			name:     "unset URL",
-			response: `{"config":{"notify.url":{"value":"","default":"","source":"default"}}}`,
+			response: `{"config":{"webhook.url":{"value":"","default":"","source":"default"}}}`,
 			want:     "{\"url\":\"\"}\n",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			runner := &fakeSSHRunner{responses: map[string]string{serverBoxConfigGetCommand(): tt.response}}
-			got, err := runBoxNotify(runner, "example.com", "", false, true)
+			got, err := runBoxWebhook(runner, "example.com", "", false, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1808,7 +2034,7 @@ func TestRunBoxNotifyJSON(t *testing.T) {
 	}
 }
 
-func TestRunBoxNotifyRejectsJSONMutations(t *testing.T) {
+func TestRunBoxWebhookRejectsJSONMutations(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		url    string
@@ -1818,11 +2044,11 @@ func TestRunBoxNotifyRejectsJSONMutations(t *testing.T) {
 		{name: "remove", remove: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := runBoxNotify(&fakeSSHRunner{}, "example.com", tt.url, tt.remove, true)
+			_, err := runBoxWebhook(&fakeSSHRunner{}, "example.com", tt.url, tt.remove, true)
 			if !errcat.Is(err, errcat.CodeUsageError) {
 				t.Fatalf("error = %v, want usage error", err)
 			}
-			for _, want := range []string{"--json is only valid when reading box notify", "ship box notify <box> --json"} {
+			for _, want := range []string{"--json is only valid when reading box webhook", "ship box webhook <box> --json"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Fatalf("error missing %q:\n%v", want, err)
 				}
@@ -1845,20 +2071,20 @@ func TestSuccessfulRemoteStderrIsForwarded(t *testing.T) {
 		}
 
 		configRunner := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
-			serverBoxConfigSetCommand("notify.url", "https://ntfy.example/ship"): {{stdout: "configured\n", stderr: "warning: config journal\n"}},
+			serverBoxConfigSetCommand("webhook.url", "https://ntfy.example/ship"): {{stdout: "configured\n", stderr: "warning: config journal\n"}},
 		}}
-		if _, err := runBoxConfigMutation(configRunner, "example.com", serverBoxConfigSetCommand("notify.url", "https://ntfy.example/ship"), "ship box config example.com set notify.url"); err != nil {
+		if _, err := runBoxConfigMutation(configRunner, "example.com", serverBoxConfigSetCommand("webhook.url", "https://ntfy.example/ship"), "ship box config example.com set webhook.url"); err != nil {
 			t.Fatal(err)
 		}
 
-		notifyRunner := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
-			serverBoxNotifySetCommand("https://ntfy.example/ship"): {{stdout: "configured\n", stderr: "warning: notify journal\n"}},
+		webhookRunner := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
+			serverBoxWebhookSetCommand("https://ntfy.example/ship"): {{stdout: "configured\n", stderr: "warning: webhook journal\n"}},
 		}}
-		if _, err := runBoxNotify(notifyRunner, "example.com", "https://ntfy.example/ship", false, false); err != nil {
+		if _, err := runBoxWebhook(webhookRunner, "example.com", "https://ntfy.example/ship", false, false); err != nil {
 			t.Fatal(err)
 		}
 	})
-	for _, want := range []string{"warning: detail\n", "warning: required\n", "warning: config journal\n", "warning: notify journal\n"} {
+	for _, want := range []string{"warning: detail\n", "warning: required\n", "warning: config journal\n", "warning: webhook journal\n"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("stderr missing %q:\n%s", want, stderr)
 		}
@@ -2123,14 +2349,14 @@ func TestReadBoxVersionMapsPreUpdateBoxesToSetupRequired(t *testing.T) {
 func TestReadBoxStatusUsesVersionSummaryOnly(t *testing.T) {
 	command := serverBoxStatusCommand()
 	runner := &fakeSSHRunner{responses: map[string]string{
-		command: `{"version":"v0.4.1","disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"pending_approvals":1,"doctor":{"status":"degraded","recorded_at":"2026-07-14T08:00:00Z"}}`,
+		command: `{"version":"v0.4.1","disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"members":{"total":3,"owners":1},"pending_approvals":1,"doctor":{"status":"degraded","recorded_at":"2026-07-14T08:00:00Z"}}`,
 	}}
 
 	payload, err := readBoxStatus(runner, "203.0.113.7")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if payload.Disk.Evidence != "/: used=10.0%" || len(payload.Apps) != 1 || payload.Apps[0] != (boxStatusApp{App: "api", EnvCount: 2}) || payload.PendingApprovals != 1 || payload.Doctor == nil || payload.Doctor.Status != "degraded" || payload.Doctor.RecordedAt != "2026-07-14T08:00:00Z" {
+	if payload.Disk.Evidence != "/: used=10.0%" || len(payload.Apps) != 1 || payload.Apps[0] != (boxStatusApp{App: "api", EnvCount: 2}) || payload.Members == nil || *payload.Members != (boxStatusMembers{Total: 3, Owners: 1}) || payload.PendingApprovals != 1 || payload.Doctor == nil || payload.Doctor.Status != "degraded" || payload.Doctor.RecordedAt != "2026-07-14T08:00:00Z" {
 		t.Fatalf("summary = %+v", payload)
 	}
 	if len(runner.commands) != 1 || runner.commands[0] != command {
@@ -2153,6 +2379,9 @@ func TestReadBoxStatusKeepsEmptyAppsAsJSONArray(t *testing.T) {
 	if !strings.Contains(string(data), `"apps":[]`) {
 		t.Fatalf("box status JSON = %s, want apps array", data)
 	}
+	if strings.Contains(string(data), `"members"`) {
+		t.Fatalf("box status JSON = %s, want members omitted", data)
+	}
 }
 
 func TestRenderBoxStatusIncludesDoctorAge(t *testing.T) {
@@ -2166,10 +2395,16 @@ func TestRenderBoxStatusIncludesDoctorAge(t *testing.T) {
 }
 
 func TestRenderBoxStatusPrintsAppCount(t *testing.T) {
-	payload := boxStatusPayload{Apps: []boxStatusApp{{App: "api", EnvCount: 2}, {App: "web", EnvCount: 1}}}
+	payload := boxStatusPayload{Apps: []boxStatusApp{{App: "api", EnvCount: 2}, {App: "web", EnvCount: 1}}, Members: &boxStatusMembers{Total: 3, Owners: 1}}
 	out := renderBoxStatus(payload, "203.0.113.7", time.Now())
 	if !strings.Contains(out, "apps: 2 (3 envs)\n") {
 		t.Fatalf("app count = %q", out)
+	}
+	if !strings.Contains(out, "members: 3 (1 owners)\n") {
+		t.Fatalf("member count = %q", out)
+	}
+	if strings.Index(out, "apps:") > strings.Index(out, "members:") || strings.Index(out, "members:") > strings.Index(out, "pending approvals:") {
+		t.Fatalf("member count should follow apps and precede approvals:\n%s", out)
 	}
 	if strings.Contains(out, "api:") || strings.Contains(out, "web:") {
 		t.Fatalf("status should not include app table:\n%s", out)
@@ -2184,19 +2419,30 @@ func TestRenderBoxStatusShowsDoctorNeverRun(t *testing.T) {
 }
 
 func TestBoxStatusPayloadJSONIncludesDoctor(t *testing.T) {
-	payload := boxStatusPayload{Doctor: &boxStatusDoctor{Status: "degraded", RecordedAt: "2026-07-14T08:00:00Z"}}
+	payload := boxStatusPayload{Members: &boxStatusMembers{Total: 3, Owners: 1}, Doctor: &boxStatusDoctor{Status: "degraded", RecordedAt: "2026-07-14T08:00:00Z"}}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var decoded struct {
-		Doctor *boxStatusDoctor `json:"doctor"`
+		Members *boxStatusMembers `json:"members"`
+		Doctor  *boxStatusDoctor  `json:"doctor"`
 	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
 	if decoded.Doctor == nil || *decoded.Doctor != *payload.Doctor {
 		t.Fatalf("doctor JSON = %s", data)
+	}
+	if decoded.Members == nil || *decoded.Members != *payload.Members {
+		t.Fatalf("members JSON = %s", data)
+	}
+}
+
+func TestRenderBoxStatusShowsUnknownMembers(t *testing.T) {
+	out := renderBoxStatus(boxStatusPayload{}, "203.0.113.7", time.Now())
+	if !strings.Contains(out, "members: unknown\n") {
+		t.Fatalf("unknown member count = %q", out)
 	}
 }
 

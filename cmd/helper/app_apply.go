@@ -38,6 +38,7 @@ type appApplyCmd struct {
 	CreatedAt     string `name:"created-at" required:"" help:"Release creation time in RFC3339."`
 	Rebuild       bool   `name:"rebuild" help:"Pass --no-cache --pull=always to podman build."`
 	TLS           string `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode stamped by the client for this deploy."`
+	PreviewAlias  string `name:"preview-alias" hidden:"" help:"Preview branch alias host derived by the client."`
 	SSHKeyComment string `name:"ssh-key-comment" help:"SSH public key comment for the deploying key."`
 	GitAuthor     string `name:"git-author" help:"Git author configured by the deploying client."`
 	ClientVersion string `name:"client-version" hidden:"" help:"Client version contacting the helper."`
@@ -125,7 +126,7 @@ func (c appApplyCmd) recordDeployFailure(app *config.AppContext, previousRelease
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
 	}
 	if app != nil && isAbortedJournalOutcome(entry.Outcome) {
-		notifyDeployAborted(app.Notify, app, entry, time.Now().UTC())
+		webhookDeployAborted(app.Webhook, app, entry, time.Now().UTC())
 	}
 	return err
 }
@@ -235,7 +236,7 @@ func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRel
 		fmt.Fprintf(os.Stderr, "warning: deployed but failed to write deploy journal: %v; run ship box doctor\n", err)
 	}
 	if previousJournalErr == nil && isAbortedJournalOutcome(previousJournal.Outcome) {
-		notifyDeployRecovered(app.Notify, app, previousJournal, entry, time.Now().UTC())
+		webhookDeployRecovered(app.Webhook, app, previousJournal, entry, time.Now().UTC())
 	}
 
 	fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, c.SHA)
@@ -370,6 +371,25 @@ func (c appApplyCmd) applyRelease(ctxDir string, app *config.AppContext) (applyR
 }
 
 func (c appApplyCmd) switchTraffic(app *config.AppContext, result applyReleaseResult) error {
+	if c.PreviewAlias != "" {
+		if c.Env == productionEnvName {
+			return fmt.Errorf("production deploys cannot set a preview alias")
+		}
+		if !app.Preview.Aliases {
+			return fmt.Errorf("preview alias was supplied but [preview].aliases is false")
+		}
+		expected, ok := previewAliasForContext(c.App, c.Env, app)
+		if !ok {
+			return fmt.Errorf("preview alias was supplied but no canonical preview host was rendered")
+		}
+		if c.PreviewAlias != expected {
+			return fmt.Errorf("preview alias %q does not match derived alias %q", c.PreviewAlias, expected)
+		}
+		if err := addConfiguredPreviewAlias(c.App, c.Env, app); err != nil {
+			return err
+		}
+	}
+
 	// 6. Write the per-app Caddyfile fragment (`reverse_proxy
 	// http://<container>:<process-port>`), validate the full Caddyfile
 	// inside the Caddy container, then reload Caddy in place. The

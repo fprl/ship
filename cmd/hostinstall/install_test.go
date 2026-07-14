@@ -11,6 +11,7 @@ import (
 
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/knownhosts"
+	"github.com/fprl/ship/internal/memberkeys"
 )
 
 const (
@@ -97,6 +98,24 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 		if !strings.Contains(command, want) {
 			t.Fatalf("expected command to contain %q:\n%s", want, command)
 		}
+	}
+}
+
+func TestBuildPlanCarriesSetupMemberNameIntoRemoteLocalInstall(t *testing.T) {
+	opts := DefaultOptions(nil)
+	opts.Mode = "remote"
+	opts.TargetHost = "203.0.113.10"
+	opts.MemberName = "Franco Pablo"
+	plan, err := BuildPlan(opts, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.MemberName != "Franco Pablo" {
+		t.Fatalf("member name = %q, want explicit setup name", plan.MemberName)
+	}
+	command := remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/operator.pub", "/tmp/deploy.pub")
+	if !strings.Contains(command, "--member-name 'Franco Pablo'") {
+		t.Fatalf("remote setup command omitted member name: %s", command)
 	}
 }
 
@@ -337,6 +356,30 @@ func TestSetupNarrationPrintsFixedTopology(t *testing.T) {
 		"admin: SSH keys only\n"
 	if out.String() != want {
 		t.Fatalf("setup narration mismatch\nwant:\n%s\ngot:\n%s", want, out.String())
+	}
+}
+
+func TestLocalMemberEnrollmentNarratesOnlyNewIdentity(t *testing.T) {
+	var out bytes.Buffer
+	installer := NewInstaller()
+	installer.Stderr = &out
+	result := memberkeys.AddResult{
+		Key:  memberkeys.AuthorizedKey{Comment: "alice", Fingerprint: "SHA256:alice"},
+		Role: "owner",
+	}
+	installer.printLocalMemberEnrollment("alice", []memberkeys.AddResult{result})
+	if strings.Contains(out.String(), "enrolled you as") {
+		t.Fatalf("converge printed new-enrollment narration:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "member alice already authorized") {
+		t.Fatalf("converge should still report the existing key:\n%s", out.String())
+	}
+
+	out.Reset()
+	result.Added = true
+	installer.printLocalMemberEnrollment("alice", []memberkeys.AddResult{result})
+	if !strings.Contains(out.String(), "enrolled you as alice (owner)") || !strings.Contains(out.String(), "member added: alice") {
+		t.Fatalf("new enrollment output = %q", out.String())
 	}
 }
 

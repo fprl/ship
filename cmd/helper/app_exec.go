@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/fprl/ship/internal/cliargs"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
@@ -39,14 +40,11 @@ func (c appExecCmd) run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		return err
 	}
-	command := c.Command
-	if len(command) > 0 && command[0] == "--" {
-		command = command[1:]
-	}
+	command := cliargs.TrimLeadingPassthroughSeparator(c.Command)
 	if len(command) == 0 {
 		return errcat.New(errcat.CodeUsageError, errcat.Fields{
 			"detail":  "server app exec requires a command",
-			"command": "ship exec <cmd> [args...]",
+			"command": "ship exec -- <cmd...>",
 		})
 	}
 	authorizeOrDie(helperVerbExec, authTargetForAppEnv(c.App, c.Env, "exec", append([]string{"cmd"}, command...)...))

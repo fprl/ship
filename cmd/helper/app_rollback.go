@@ -172,6 +172,12 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 		}
 	}
 	caddyPath := caddyfilePath(c.App, c.Env)
+	if err := addConfiguredPreviewAlias(c.App, c.Env, app); err != nil {
+		cleanupStarted()
+		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
+		_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
+		return rollbackPayload{}, err
+	}
 	prevFragment, prevExisted, err := snapshotCaddyFragment(caddyPath)
 	if err != nil {
 		cleanupStarted()

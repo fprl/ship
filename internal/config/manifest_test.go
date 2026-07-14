@@ -28,7 +28,7 @@ box = "example.com"
 production_branch = "stable"
 release = "bun run migrate"
 probe = "/health"
-notify = "https://ntfy.sh/api"
+webhook = "https://ntfy.sh/api"
 
 [env]
 LOG_LEVEL = "info"
@@ -93,8 +93,8 @@ func TestCheckManifestAcceptsContainerV2(t *testing.T) {
 	if ctx.SecretRefs["DATABASE_URL"] != "DATABASE_URL" || ctx.SecretRefs["SMTP_URL"] != "SMTP_URL" {
 		t.Fatalf("@secret refs not loaded: %+v", ctx.SecretRefs)
 	}
-	if ctx.Release != "bun run migrate" || ctx.Probe != "/health" || ctx.Notify != "https://ntfy.sh/api" {
-		t.Fatalf("top-level release/probe/notify not loaded: release=%q probe=%q notify=%q", ctx.Release, ctx.Probe, ctx.Notify)
+	if ctx.Release != "bun run migrate" || ctx.Probe != "/health" || ctx.Webhook != "https://ntfy.sh/api" {
+		t.Fatalf("top-level release/probe/webhook not loaded: release=%q probe=%q webhook=%q", ctx.Release, ctx.Probe, ctx.Webhook)
 	}
 }
 
@@ -245,6 +245,71 @@ release = "bun run migrate"
 		if !strings.Contains(msg, field) {
 			t.Fatalf("expected error to mention %q, got %v", field, err)
 		}
+	}
+}
+
+func TestReadManifestValidatesPreviewTable(t *testing.T) {
+	tooLongBase := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 60)
+	tests := []struct {
+		name    string
+		preview string
+		want    string
+	}{
+		{name: "scheme", preview: `base = "https://preview.example.com"`, want: "bare DNS suffix"},
+		{name: "path", preview: `base = "preview.example.com/path"`, want: "path, port, or credentials"},
+		{name: "port", preview: `base = "preview.example.com:443"`, want: "path, port, or credentials"},
+		{name: "credentials", preview: `base = "user@preview.example.com"`, want: "path, port, or credentials"},
+		{name: "wildcard", preview: `base = "*.preview.example.com"`, want: "must not start with *."},
+		{name: "trailing dot", preview: `base = "preview.example.com."`, want: "must not end with a dot"},
+		{name: "invalid label", preview: `base = "preview_.example.com"`, want: "valid DNS suffix"},
+		{name: "full generated host", preview: `base = "` + tooLongBase + `"`, want: "253-character DNS name limit"},
+		{name: "aliases must be boolean", preview: `aliases = "true"`, want: "type bool"},
+		{name: "unknown key", preview: `base = "preview.example.com"` + "\nextra = true", want: `preview.extra`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeManifest(t, root, "name = \"api\"\nbox = \"example.com\"\n\n[preview]\n"+tt.preview+"\n\n[processes]\nweb = { port = 3000 }\n")
+			_, err := ReadManifest(root)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("ReadManifest error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadManifestNormalizesPreviewBaseAndDefaultsAliases(t *testing.T) {
+	root := t.TempDir()
+	writeManifest(t, root, `name = "api"
+box = "example.com"
+
+[preview]
+base = "PREVIEW.Example.COM"
+
+[processes]
+web = { port = 3000 }
+`)
+	manifest, err := ReadManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Preview.Base != "preview.example.com" || manifest.Preview.Aliases {
+		t.Fatalf("preview config = %+v, want lowercased base and aliases=false", manifest.Preview)
+	}
+
+	root = t.TempDir()
+	writeManifest(t, root, `name = "api"
+box = "example.com"
+
+[processes]
+web = { port = 3000 }
+`)
+	manifest, err = ReadManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Preview != (Preview{}) {
+		t.Fatalf("omitted preview table = %+v, want zero value", manifest.Preview)
 	}
 }
 
@@ -592,14 +657,14 @@ web = { port = 3000 }
 	}
 }
 
-func TestCheckManifestRejectsBadEnvProbeNotifyAndBranch(t *testing.T) {
+func TestCheckManifestRejectsBadEnvProbeWebhookAndBranch(t *testing.T) {
 	root := t.TempDir()
 	writeDockerfile(t, root, "FROM alpine\n")
 	writeManifest(t, root, `name = "api"
 box = "example.com"
 production_branch = "bad branch"
 probe = "health"
-notify = "ftp://example.com/hook"
+webhook = "ftp://example.com/hook"
 
 [env]
 DEBUG = true
@@ -616,7 +681,7 @@ web = { port = 3000 }
 	wants := []string{
 		`production_branch must be a valid git branch name`,
 		`probe must start with /`,
-		`notify must use http or https`,
+		`webhook must use http or https`,
 		`[env].DEBUG must be a string; if you want "true", write it as a quoted string`,
 		`[env].BAD_REF uses @secret:NAME aliasing, which was removed; name the secret after the variable and use "@secret"`,
 	}
@@ -624,5 +689,18 @@ web = { port = 3000 }
 		if !slices.Contains(errors, want) {
 			t.Fatalf("expected %q in %v", want, errors)
 		}
+	}
+}
+
+func TestReadManifestRejectsUnknownNotifyKey(t *testing.T) {
+	root := t.TempDir()
+	writeManifest(t, root, `name = "api"
+box = "example.com"
+notify = "https://ntfy.example/ship"
+`)
+
+	_, err := ReadManifest(root)
+	if err == nil || !strings.Contains(err.Error(), `unknown field "notify"`) {
+		t.Fatalf("unknown notify key error = %v", err)
 	}
 }

@@ -57,13 +57,16 @@ type deployIdentityJSON struct {
 	GitAuthor     string `json:"git_author"`
 }
 
-func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, plan localDeployPlan, actor deployIdentityJSON, rebuild bool, tlsMode string) string {
+func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, plan localDeployPlan, actor deployIdentityJSON, rebuild bool, tlsMode string, previewAlias string) string {
 	args := []string{"app", "apply"}
 	if rebuild {
 		args = append(args, "--rebuild")
 	}
 	if tlsMode != "" {
 		args = append(args, "--tls", tlsMode)
+	}
+	if previewAlias != "" {
+		args = append(args, "--preview-alias", previewAlias)
 	}
 	if plan.Dirty {
 		args = append(args, "--dirty")
@@ -97,8 +100,8 @@ func serverAppDestroyCommand(appName string) string {
 	return serverCommand("app", "destroy", appName)
 }
 
-func serverKeyAddCommand(comment string, role string) string {
-	return serverCommand("key", "add", "--comment", comment, "--role", role)
+func serverKeyAddCommand(name string, role string) string {
+	return serverCommand("key", "add", "--name", name, "--role", role)
 }
 
 func serverKeyListCommand(jsonFlag bool) string {
@@ -123,16 +126,16 @@ func serverApprovalApproveCommand(id string) string {
 	return serverCommand("approval", "approve", id)
 }
 
-func serverBoxNotifyGetCommand() string {
-	return serverCommand("notify", "get")
+func serverBoxWebhookGetCommand() string {
+	return serverCommand("webhook", "get")
 }
 
-func serverBoxNotifySetCommand(url string) string {
-	return serverCommand("notify", "set", url)
+func serverBoxWebhookSetCommand(url string) string {
+	return serverCommand("webhook", "set", url)
 }
 
-func serverBoxNotifyClearCommand() string {
-	return serverCommand("notify", "clear")
+func serverBoxWebhookClearCommand() string {
+	return serverCommand("webhook", "clear")
 }
 
 func serverBoxConfigGetCommand() string {

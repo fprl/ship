@@ -1,8 +1,11 @@
 # RFD-0003: Members — humans and agents as identities with roles
 
-**Status: draft, post-v1.** Extends the shipped `ship member add|ls|rm` identity surface
-and §7 attribution. Prerequisite for RFD-0002 (resident). Does not modify
-ship v1.
+**Status: shipped in essentials.** Roles (owner/shipper/agent), one-shot
+approvals, and the pinned agent tier shipped in v0.4–v0.6; the current
+surface is `ship box member add|ls|rm` with mandatory `--name` and
+digest-confirmed keys-URLs, plus `ship box approval ls|grant`
+(ADR-0016/0018/0019). This document records the original design;
+unshipped remainders (integration sugar below) stay demand-driven.
 
 > Update July 7, 2026: §7 attribution is built (the journal records SSH
 > key comment + git author on every mutation that writes one). This RFD

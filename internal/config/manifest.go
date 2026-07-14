@@ -68,18 +68,26 @@ type Route struct {
 	TLS string `toml:"-"`
 }
 
+// Preview configures addressing for preview environments only. Production
+// routes always retain their existing addressing policy.
+type Preview struct {
+	Base    string `toml:"base"`
+	Aliases bool   `toml:"aliases"`
+}
+
 type Manifest struct {
 	Name             string             `toml:"name"`
 	Box              string             `toml:"box"`
 	ProductionBranch string             `toml:"production_branch"`
 	Processes        map[string]Process `toml:"processes"`
 	Routes           map[string]Route   `toml:"routes"`
+	Preview          Preview            `toml:"preview"`
 	Env              map[string]any     `toml:"env"`
 	EnvPreview       map[string]any     `toml:"-"`
 	envSubtables     []string
 	Release          string `toml:"release"`
 	Probe            string `toml:"probe"`
-	Notify           string `toml:"notify"`
+	Webhook          string `toml:"webhook"`
 }
 
 type rawManifest struct {
@@ -88,10 +96,11 @@ type rawManifest struct {
 	ProductionBranch string         `toml:"production_branch"`
 	Processes        map[string]any `toml:"processes"`
 	Routes           map[string]any `toml:"routes"`
+	Preview          Preview        `toml:"preview"`
 	Env              map[string]any `toml:"env"`
 	Release          string         `toml:"release"`
 	Probe            string         `toml:"probe"`
-	Notify           string         `toml:"notify"`
+	Webhook          string         `toml:"webhook"`
 }
 
 type AppContext struct {
@@ -105,9 +114,10 @@ type AppContext struct {
 	Dockerfile       string
 	Processes        map[string]Process
 	Routes           map[string]Route
+	Preview          Preview
 	Release          string
 	Probe            string
-	Notify           string
+	Webhook          string
 	// Vars holds resolved non-secret env values for this env.
 	Vars map[string]string
 	// SecretRefs maps env-var key -> secret key name. The helper resolves
@@ -374,14 +384,48 @@ func ReadManifest(root string) (*Manifest, error) {
 		ProductionBranch: raw.ProductionBranch,
 		Processes:        processes,
 		Routes:           hydrateRouteKeys(routes),
+		Preview:          raw.Preview,
 		Env:              env,
 		EnvPreview:       envPreview,
 		envSubtables:     envSubtables,
 		Release:          raw.Release,
 		Probe:            raw.Probe,
-		Notify:           raw.Notify,
+		Webhook:          raw.Webhook,
+	}
+	if err := validatePreview(manifest.Name, &manifest.Preview); err != nil {
+		return nil, manifestError(err.Error())
 	}
 	return &manifest, nil
+}
+
+func validatePreview(app string, preview *Preview) error {
+	if preview.Base == "" {
+		return nil
+	}
+	base := strings.ToLower(preview.Base)
+	switch {
+	case strings.Contains(base, "://"):
+		return errors.New("[preview].base must be a bare DNS suffix, not a URL")
+	case strings.ContainsAny(base, "/:@"):
+		return errors.New("[preview].base must not contain a path, port, or credentials")
+	case strings.HasPrefix(base, "*."):
+		return errors.New("[preview].base must not start with *.")
+	case strings.HasSuffix(base, "."):
+		return errors.New("[preview].base must not end with a dot")
+	case !ValidateHost(base):
+		return errors.New("[preview].base must be a valid DNS suffix")
+	}
+
+	// Check the longest label this app can generate, not a particular branch.
+	// This keeps an overlong host from reaching deploy time on a later branch.
+	if AppRe.MatchString(app) {
+		label := names.SynthesizedHostLabel(app, strings.Repeat("a", 28)+"-abcd")
+		if len(label)+1+len(base) > 253 {
+			return fmt.Errorf("[preview].base makes generated preview hosts exceed the 253-character DNS name limit")
+		}
+	}
+	preview.Base = base
+	return nil
 }
 
 func splitEnvTables(raw map[string]any) (map[string]any, map[string]any, []string) {
@@ -651,7 +695,7 @@ func CheckLoadedManifest(root string, envName string, manifest *Manifest) ([]str
 	validateEnvSubtables(manifest.envSubtables, &errors)
 	validateVarsBlock("[env.preview]", manifest.EnvPreview, false, &errors)
 	validateProbe(manifest.Probe, &errors)
-	validateNotify(manifest.Notify, &errors)
+	validateWebhook(manifest.Webhook, &errors)
 
 	routes := manifest.Routes
 	processes := applyProcessPortDefaults(root, manifest.Processes, routes)
@@ -710,9 +754,10 @@ func LoadAppContextFromManifest(root string, envName string, manifest *Manifest)
 		Dockerfile:       dockerfile,
 		Processes:        processes,
 		Routes:           routes,
+		Preview:          manifest.Preview,
 		Release:          manifest.Release,
 		Probe:            manifest.Probe,
-		Notify:           manifest.Notify,
+		Webhook:          manifest.Webhook,
 		Vars:             vars,
 		SecretRefs:       secretRefs,
 	}, nil
@@ -839,23 +884,23 @@ func validateProbe(probe string, errors *[]string) {
 	}
 }
 
-func validateNotify(raw string, errors *[]string) {
+func validateWebhook(raw string, errors *[]string) {
 	if raw == "" {
 		return
 	}
-	if err := ValidateNotifyURL(raw); err != nil {
+	if err := ValidateWebhookURL(raw); err != nil {
 		*errors = append(*errors, err.Error())
 	}
 }
 
-// ValidateNotifyURL validates a notification webhook URL for all callers.
-func ValidateNotifyURL(raw string) error {
+// ValidateWebhookURL validates a webhook URL for all callers.
+func ValidateWebhookURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		return errors.New("notify must be a valid URL")
+		return errors.New("webhook must be a valid URL")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return errors.New("notify must use http or https")
+		return errors.New("webhook must use http or https")
 	}
 	return nil
 }

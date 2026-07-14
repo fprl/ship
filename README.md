@@ -188,23 +188,26 @@ next: ship secret set api_token [--preview|--branch <name>]
 
 ## Teammates
 
-Authorize a teammate by GitHub username:
+Authorize a teammate from their forge keys-URL. The bare command fetches and
+shows the keys — fingerprints, source, name, and role — without writing
+anything, then prints the exact confirm command:
 
 ```bash
-ship box member add alice <box>
+ship box member add https://github.com/alice.keys <box> --name alice
+ship box member add https://github.com/alice.keys <box> --name alice --confirm alice@sha256:...
 ```
 
-You can also pass a literal public key or a `.pub` file:
+A literal public key or a `.pub` file writes immediately — you supplied the
+exact bytes:
 
 ```bash
-ship box member add ~/.ssh/alice.pub <box>
-ship box members <box>
+ship box member add ~/.ssh/alice.pub <box> --name alice
+ship box member ls <box>
 ```
 
-`box member add` defaults to the `shipper` role. Bare GitHub usernames fetch
-`https://github.com/<user>.keys` and print SHA256 fingerprints for every key
-added or already authorized. Onboarding is intentionally small: run
-`ship box member add <user> <box>`, invite them to the repo, and their first `ship` works.
+`box member add` defaults to the `shipper` role and names are explicit —
+`--name` is always required. Onboarding stays two commands: review, confirm;
+then invite them to the repo and their first `ship` works.
 
 | Role | What it can do |
 | --- | --- |
@@ -242,7 +245,7 @@ shipped by: Name <name@example.com> (ssh key: alice)
 next: fix the process port or probe path in ship.toml, then ship
 ```
 
-If `notify` is set in `ship.toml`, ship posts failure and recovery events:
+If `webhook` is set in `ship.toml`, ship posts failure and recovery events:
 
 ```json
 {
@@ -309,13 +312,13 @@ ship box update 203.0.113.7
 Boxes set up before v0.4.0 need one `ship box setup <ssh-target>` before they
 can use `status` or `update`.
 
-App `notify` URLs receive deploy and Preview reaper events. Put disk, doctor,
+App `webhook` URLs receive deploy and Preview reaper events. Put disk, doctor,
 and approval alerts on the one box pager URL:
 
 ```bash
-ship box notify 203.0.113.7 https://ntfy.sh/ship-box
-ship box notify 203.0.113.7
-ship box notify 203.0.113.7 --rm
+ship box webhook 203.0.113.7 https://ntfy.sh/ship-box
+ship box webhook 203.0.113.7
+ship box webhook 203.0.113.7 --rm
 ```
 
 ## Agents
@@ -333,7 +336,7 @@ ship help secret set --json
 ```
 
 The agent contract covers the mental model, every public verb, JSON schemas,
-the output contract, deploy journals, notify payloads, and the error catalogue.
+the output contract, deploy journals, webhook payloads, and the error catalogue.
 Operational reads expose `--json`, and `ship --json` gives agents a structured
 deploy result.
 
@@ -342,11 +345,11 @@ the exact command an approver should paste — from any machine, no checkout
 needed:
 
 ```bash
-ship box approvals 203.0.113.7
-ship box approve abc123xy 203.0.113.7
+ship box approval ls 203.0.113.7
+ship box approval grant abc123xy 203.0.113.7
 ```
 
-`ship box approvals` lists pending requests. `ship box approve <id> <box>`
+`ship box approval ls` lists pending requests. `ship box approval grant <id> <box>`
 grants one retry by the original member, expires after 15 minutes, and can be
 run by an `owner` or `shipper`. This is the safety valve for agent-role keys:
 agents can ask for a specific risky action without receiving broader
@@ -383,9 +386,13 @@ SMTP_URL     = "@secret"
 LOG_LEVEL    = "debug"
 POSTHOG_KEY  = "phc_test456"
 
+[preview]                           # optional; previews on your own domain
+base    = "preview.taskflow.app"    # default: <box-ip>.sslip.io
+aliases = true                      # stable <branch-slug>.<base> per branch
+
 release = "npx drizzle-kit migrate" # top-level only; the [deploy] section is gone
 probe   = "/healthz"                # health check for the routed process
-notify  = "https://ntfy.sh/..."     # NEW: webhook, §7
+webhook  = "https://ntfy.sh/..."     # NEW: webhook, §7
 ```
 
 Previews are always protected. `ship` prints a capability URL when it deploys
@@ -401,9 +408,10 @@ replaces it. No `ship.toml` setting is required.
 | `[routes]` | Host or host/path routes to a process, static directory, or redirect. |
 | `[env]` | Committed non-secret env plus `@secret` references. |
 | `[env.preview]` | Preview-only overlay; Production ignores it. |
+| `[preview]` | Preview addressing: `base` puts preview hosts on your own domain (one wildcard DNS record); `aliases = true` adds a stable `<branch-slug>.<base>` alias per branch behind the same capability. |
 | `release` | Command run after build and before traffic moves. |
 | `probe` | Health path for the routed process. |
-| `notify` | Webhook URL for this app's deploy and Preview reaper events. |
+| `webhook` | Webhook URL for this app's deploy and Preview reaper events. |
 
 ## Secrets
 

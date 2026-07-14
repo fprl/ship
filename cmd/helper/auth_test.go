@@ -30,7 +30,7 @@ func TestApprovalFlowIsOneShotAndJournaled(t *testing.T) {
 	if !strings.Contains(coded.Message(), target.Summary) {
 		t.Fatalf("approval_required message should carry summary, got %q", coded.Message())
 	}
-	if !strings.HasPrefix(coded.Remediation(), "ship box approve ") || !strings.HasSuffix(coded.Remediation(), " 203.0.113.7") {
+	if !strings.HasPrefix(coded.Remediation(), "ship box approval grant ") || !strings.HasSuffix(coded.Remediation(), " 203.0.113.7") {
 		t.Fatalf("approval remediation = %q, want fully resolved box approval command", coded.Remediation())
 	}
 	id := approvalIDFromRemediation(t, coded.Remediation())
@@ -278,7 +278,7 @@ func TestUnknownFingerprintRefusesWithMemberAddRemediation(t *testing.T) {
 		t.Fatalf("unknown fingerprint err = %v, want member_unknown", err)
 	}
 	coded, _ := errcat.As(err)
-	if coded.Remediation() != "ship box member add <src> 203.0.113.7" {
+	if coded.Remediation() != "ship box member add <https-url|key|path> 203.0.113.7 --name <name>" {
 		t.Fatalf("unknown remediation = %q", coded.Remediation())
 	}
 }
@@ -408,6 +408,9 @@ func TestApprovalListHumanTable(t *testing.T) {
 func TestApprovalRequiredHumanErrorShape(t *testing.T) {
 	t.Setenv("SHIP_STATE_DIR", t.TempDir())
 	writeValidHost(t, store.Default().HostPath())
+	if err := store.Default().WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{ClientAddress: "203.0.113.7"}); err != nil {
+		t.Fatal(err)
+	}
 	request := store.ApprovalRequest{
 		ID: "abc123xy",
 		Member: store.ApprovalMember{
@@ -421,7 +424,7 @@ func TestApprovalRequiredHumanErrorShape(t *testing.T) {
 	got := approvalRequiredError(request).Error()
 	want := "approval required for ship app=api env=production class=production release=abc123\n" +
 		"alice (agent) requested ship app=api env=production class=production release=abc123; approval id abc123xy\n" +
-		"next: ship box approve abc123xy <box>"
+		"next: ship box approval grant abc123xy 203.0.113.7"
 	if got != want {
 		t.Fatalf("approval_required error:\nwant:\n%s\n got:\n%s", want, got)
 	}
@@ -459,10 +462,10 @@ func setupAuthTest(t *testing.T, members map[string]store.MemberRecord) string {
 func approvalIDFromRemediation(t *testing.T, remediation string) string {
 	t.Helper()
 	fields := strings.Fields(remediation)
-	if len(fields) != 5 || fields[0] != "ship" || fields[1] != "box" || fields[2] != "approve" || fields[3] == "" || fields[4] != "203.0.113.7" {
-		t.Fatalf("approval remediation = %q, want ship box approve <id> 203.0.113.7", remediation)
+	if len(fields) != 6 || fields[0] != "ship" || fields[1] != "box" || fields[2] != "approval" || fields[3] != "grant" || fields[4] == "" || fields[5] != "203.0.113.7" {
+		t.Fatalf("approval remediation = %q, want ship box approval grant <id> 203.0.113.7", remediation)
 	}
-	return fields[3]
+	return fields[4]
 }
 
 func setApprovalNowForTest(t *testing.T, now time.Time) {

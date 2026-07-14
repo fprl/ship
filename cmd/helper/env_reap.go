@@ -73,10 +73,10 @@ func reapExpiredPreviewsWithLock(now time.Time, destroy destroyEnvFunc, acquire 
 			continue
 		}
 		file = refreshed
-		notifyURL := ""
+		webhookURL := ""
 		release := latestSuccessfulRelease(file.App, file.Env)
 		if ctx, cleanup, err := loadAppliedAppContext(file.App, file.Env); err == nil {
-			notifyURL = ctx.Notify
+			webhookURL = ctx.Webhook
 			cleanup()
 		}
 		_, destroyErr := destroy(file.App, file.Env, true)
@@ -94,7 +94,7 @@ func reapExpiredPreviewsWithLock(now time.Time, destroy destroyEnvFunc, acquire 
 			file.Preview.Branch,
 			file.Preview.ExpiresAt.UTC().Format(time.RFC3339),
 		)
-		notifyPreviewReaped(notifyURL, file, release, now)
+		webhookPreviewReaped(webhookURL, file, release, now)
 	}
 	return reaped, nil
 }

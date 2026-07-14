@@ -32,6 +32,7 @@ type InstallOptions struct {
 	CheckMode             bool
 	StateRoot             string
 	HelperBinaryPath      string
+	MemberName            string
 	ApplyID               string
 	Now                   func() time.Time
 }
@@ -68,7 +69,7 @@ func RunVersionConverge(ctx context.Context, runner host.Runner, opts VersionCon
 	var ops []operation
 	installOpts := InstallOptions{HelperBinaryPath: opts.HelperBinaryPath}
 	addHelper(&ops, installOpts)
-	addDeployMembersStore(&ops, stateStore, defaultDeployUser, &summary)
+	addDeployMembersStore(&ops, stateStore, defaultDeployUser, &summary, "")
 	addPreviewReaper(&ops)
 	addDoctorTimer(&ops)
 
@@ -196,7 +197,7 @@ func installOperations(opts InstallOptions, stateStore store.Store, summary *Ins
 	addAuthorizedKeys(&ops, defaultDeployUser, opts.DeploySSHPublicKeys, func(results []memberkeys.AddResult) {
 		summary.DeployKeyResults = results
 	})
-	addDeployMembersStore(&ops, stateStore, defaultDeployUser, summary)
+	addDeployMembersStore(&ops, stateStore, defaultDeployUser, summary, opts.MemberName)
 
 	add("timezone", func(apply host.Apply) (bool, error) {
 		return host.EnsureTimezone(apply, defaultTimezone)
@@ -249,7 +250,7 @@ func addAuthorizedKeys(ops *[]operation, user string, keyLines []string, capture
 	}})
 }
 
-func addDeployMembersStore(ops *[]operation, stateStore store.Store, deployUser string, summary *InstallSummary) {
+func addDeployMembersStore(ops *[]operation, stateStore store.Store, deployUser string, summary *InstallSummary, memberName string) {
 	path := filepath.Join("/home", deployUser, ".ssh", "authorized_keys")
 	*ops = append(*ops, operation{name: "members store", run: func(apply host.Apply) (bool, error) {
 		current, err := apply.Runner.ReadFile(apply.ContextOrBackground(), path)
@@ -261,7 +262,7 @@ func addDeployMembersStore(ops *[]operation, stateStore store.Store, deployUser 
 		if err != nil {
 			return false, err
 		}
-		overrides := setupMemberRoleOverrides(keys, summary.DeployKeyResults)
+		overrides := setupMemberRoleOverrides(keys, summary.DeployKeyResults, memberName)
 		next := memberkeys.ReconciledMembersFile(keys, *members, overrides)
 		for i := range summary.DeployKeyResults {
 			fingerprint := summary.DeployKeyResults[i].Key.Fingerprint
@@ -280,7 +281,7 @@ func addDeployMembersStore(ops *[]operation, stateStore store.Store, deployUser 
 	}})
 }
 
-func setupMemberRoleOverrides(keys []memberkeys.AuthorizedKey, results []memberkeys.AddResult) map[string]store.MemberRecord {
+func setupMemberRoleOverrides(keys []memberkeys.AuthorizedKey, results []memberkeys.AddResult, memberName string) map[string]store.MemberRecord {
 	parseableCount := 0
 	for _, key := range keys {
 		if key.Material != "" {
@@ -306,6 +307,9 @@ func setupMemberRoleOverrides(keys []memberkeys.AuthorizedKey, results []memberk
 		overrides[result.Key.Fingerprint] = store.MemberRecord{
 			Name: result.Key.Comment,
 			Role: role,
+		}
+		if strings.TrimSpace(memberName) != "" {
+			overrides[result.Key.Fingerprint] = store.MemberRecord{Name: strings.Join(strings.Fields(memberName), " "), Role: role}
 		}
 	}
 	return overrides
@@ -432,7 +436,7 @@ func addHelper(ops *[]operation, opts InstallOptions) {
 		return host.EnsureFile(apply, host.File{Path: "/usr/local/bin/ship", Content: data, Owner: "root", Group: "root", Mode: 0755})
 	}})
 	*ops = append(*ops, operation{name: "ship sudoers", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureSudoersFile(apply, "ship", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server config *, /usr/local/bin/ship server notify *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *\n", defaultDeployUser)))
+		return host.EnsureSudoersFile(apply, "ship", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server config *, /usr/local/bin/ship server webhook *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *\n", defaultDeployUser)))
 	}})
 }
 

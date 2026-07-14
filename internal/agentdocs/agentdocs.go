@@ -584,7 +584,7 @@ var verbs = []Verb{
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"manifest_invalid", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
-		Notes:     []string{"capability_url is optional and appears only for Preview environments. pinned and dirty are omitted when false."},
+		Notes:     []string{"capability_url is optional and appears only for Preview environments. pinned and dirty are omitted when false. envs is always an array; it is [] when nothing is live."},
 	},
 	{
 		Verb:    "logs",
@@ -659,7 +659,7 @@ var verbs = []Verb{
 		Errors:    []string{"data_fork_on_production", "no_preview_env", "approval_required", "host_key_changed", "missing_tool", "operation_failed"},
 		Notes: []string{
 			"Run from a Preview branch whose environment already exists. Production branches are refused.",
-			"Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship box approve <id> <box>`, retry the same command.",
+			"Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship box approval grant <id> <box>`, retry the same command.",
 			"SQLite files are copied on the box with `VACUUM INTO`; other files copy with `cp -a` using reflink when supported. The client never receives data contents.",
 			"stdout is exactly the Preview URL; the fork report and PII note are stderr. If the fork landed but the URL lookup fails, exit stays 0 with a stderr warning and `next: ship status`.",
 		},
@@ -673,7 +673,7 @@ var verbs = []Verb{
 		Errors:    []string{"data_fork_on_production", "no_preview_env", "approval_required", "host_key_changed", "operation_failed"},
 		Notes: []string{
 			"Run from a Preview branch whose environment already exists. Production branches are refused.",
-			"Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship box approve <id> <box>`, retry the same command.",
+			"Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship box approval grant <id> <box>`, retry the same command.",
 			"stdout is exactly the Preview URL; the reset confirmation is stderr. If the reset landed but the URL lookup fails, exit stays 0 with a stderr warning and `next: ship status`.",
 		},
 	},
@@ -831,20 +831,22 @@ var verbs = []Verb{
 	{
 		Verb:    "box member add",
 		Purpose: "Authorize SSH public key access for a deploy member.",
-		Usage:   "ship box member add <github-user|key|path> [<box>] [--role owner|shipper|agent]",
+		Usage:   "ship box member add <key|path|https-url> [<box>] --name <n> [--role owner|shipper|agent] [--confirm <name>@sha256:<digest>]",
 		Flags: []Flag{
-			{Name: "github-user|key|path", Purpose: "A GitHub username, literal SSH public key, or path to a .pub/.pem file."},
+			{Name: "key|path|https-url", Purpose: "A literal SSH public key, a path to a .pub/.pem file, or an HTTPS keys-URL such as https://github.com/alice.keys."},
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
+			{Name: "--name", Value: "<n>", Purpose: "Box-global member name recorded for the keys. Always required; identity never derives from key comments or filenames."},
 			{Name: "--role", Value: "owner|shipper|agent", Default: "shipper", Purpose: "Role recorded for newly added keys."},
+			{Name: "--confirm", Value: "<name>@sha256:<digest>", Purpose: "Commit a previously printed keys-URL plan. The digest binds box, source, name, role, and key material."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"box_target_required", "invalid_box_target", "github_keys_unavailable", "ssh_public_key_invalid", "approval_required", "member_unknown", "host_key_changed", "operation_failed"},
-		Notes:     []string{"Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or already authorized, with role and SHA256 fingerprint. Existing keys are deduplicated by key material. Agent-role keys are installed with a forced `agent-shell` command; owner and shipper keys remain plain authorized_keys entries."},
+		Errors:    []string{"box_target_required", "invalid_box_target", "keys_url_unavailable", "ssh_public_key_invalid", "approval_required", "member_unknown", "host_key_changed", "operation_failed"},
+		Notes:     []string{"Literal keys and local files write immediately. An HTTPS keys-URL alone fetches and prints every key with its SHA256 fingerprint, the source URL, and the proposed name and role — it writes nothing — then emits the exact `--confirm <name>@sha256:<digest>` command. Confirm refetches the URL and requires a byte-identical match, so what was reviewed is exactly what installs. Existing keys are deduplicated by key material. Agent-role keys are installed with a forced `agent-shell` command; owner and shipper keys remain plain authorized_keys entries."},
 	},
 	{
-		Verb:    "box members",
+		Verb:    "box member ls",
 		Purpose: "List deploy members from authorized_keys.",
-		Usage:   "ship box members [<box>] [--json]",
+		Usage:   "ship box member ls [<box>] [--json]",
 		Flags: []Flag{
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 			{Name: "--json", Purpose: "Emit structured JSON."},
@@ -868,9 +870,9 @@ var verbs = []Verb{
 		Notes:     []string{"Removes every key whose comment equals the member name. Refuses to remove the last remaining authorized key."},
 	},
 	{
-		Verb:    "box approvals",
+		Verb:    "box approval ls",
 		Purpose: "List pending one-shot approvals for out-of-role requests.",
-		Usage:   "ship box approvals [<box>] [--json]",
+		Usage:   "ship box approval ls [<box>] [--json]",
 		Flags: []Flag{
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 			{Name: "--json", Purpose: "Emit structured pending approvals."},
@@ -883,31 +885,31 @@ var verbs = []Verb{
 		Notes:     []string{"Listing prunes expired entries. Approvals are box-scoped: run from anywhere by naming the box."},
 	},
 	{
-		Verb:    "box approve",
+		Verb:    "box approval grant",
 		Purpose: "Grant one pending out-of-role approval.",
-		Usage:   "ship box approve <id> [<box>]",
+		Usage:   "ship box approval grant <id> [<box>]",
 		Flags: []Flag{
 			{Name: "id", Purpose: "Approval id to grant."},
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 		},
 		ExitCodes: normalExit,
 		Errors:    []string{"box_target_required", "invalid_box_target", "approval_expired", "member_unknown", "role_denied", "host_key_changed", "operation_failed"},
-		Notes:     []string{"Each request records the role the denied action requires; the approver's role must cover it (owner covers everything, shipper covers shipper-gated requests only) and nobody can grant their own request. Granting refreshes the 15-minute expiry window and gives one retry by the original member. Remediations always print the fully resolved command (`ship box approve <id> <box>`) so it can be pasted from anywhere."},
+		Notes:     []string{"Each request records the role the denied action requires; the approver's role must cover it (owner covers everything, shipper covers shipper-gated requests only) and nobody can grant their own request. Granting refreshes the 15-minute expiry window and gives one retry by the original member. Remediations always print the fully resolved command (`ship box approval grant <id> <box>`) so it can be pasted from anywhere."},
 	},
 	{
 		Verb:    "box status",
-		Purpose: "Show helper version, disk use, apps, pending approvals, and the last doctor result for one box.",
+		Purpose: "Show helper version, disk use, apps, members, pending approvals, and the last doctor result for one box.",
 		Usage:   "ship box status [<box>] [--json]",
 		Flags: []Flag{
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
-			{Name: "--json", Purpose: "Emit {helper_version,client_version,last_client_version,update_available,helper_ahead,disk:{status,evidence},apps:[{app,env_count}],pending_approvals,doctor:{status,recorded_at}}. doctor is omitted until the daily timer records a run."},
+			{Name: "--json", Purpose: "Emit {helper_version,client_version,last_client_version,update_available,helper_ahead,disk:{status,evidence},apps:[{app,env_count}],members:{total,owners},pending_approvals,doctor:{status,recorded_at}}. doctor is omitted until the daily timer records a run."},
 		},
 		JSONSchema: schema(
-			`{"helper_version":"v0.4.0","client_version":"v0.4.1","last_client_version":"v0.4.1","update_available":true,"helper_ahead":false,"disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"pending_approvals":1,"doctor":{"status":"ok","recorded_at":"2026-07-14T06:00:00Z"}}`,
+			`{"helper_version":"v0.4.0","client_version":"v0.4.1","last_client_version":"v0.4.1","update_available":true,"helper_ahead":false,"disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"members":{"total":2,"owners":1},"pending_approvals":1,"doctor":{"status":"ok","recorded_at":"2026-07-14T06:00:00Z"}}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
-		Notes:     []string{"Any member may read. When the helper is behind, text output includes `next: ship box update <box>`. Text output prints an app count (`apps: 2 (3 envs)`) — the full table is `ship box apps` — and ends with the last doctor-timer result and its age (`doctor: ok (2h ago)`, or `doctor: never run`)."},
+		Notes:     []string{"Any member may read. When the helper is behind, text output includes `next: ship box update <box>`. Text output prints an app count (`apps: 2 (3 envs)`) — the full table is `ship box app ls` — a member count of distinct member names (`members: 2 (1 owners)`; `members: unknown` and no JSON members field when the member store is unreadable), and ends with the last doctor-timer result and its age (`doctor: ok (2h ago)`, or `doctor: never run`)."},
 	},
 	{
 		Verb:    "box update",
@@ -943,7 +945,7 @@ var verbs = []Verb{
 			{Name: "--json", Purpose: "Emit stable effective config JSON."},
 		},
 		JSONSchema: schema(
-			`{"config":{"notify.url":{"value":"https://ntfy.example/ship","default":"","source":"set"}}}`,
+			`{"config":{"webhook.url":{"value":"https://ntfy.example/ship","default":"","source":"set"}}}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"box_config_key_unknown", "box_config_value_invalid", "box_target_required", "invalid_box_target", "host_key_changed", "operation_failed"},
@@ -955,12 +957,12 @@ var verbs = []Verb{
 		Usage:   "ship box config [<box>] set <key> <value>",
 		Flags: []Flag{
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
-			{Name: "key", Purpose: "Configuration key. Current key: notify.url."},
+			{Name: "key", Purpose: "Configuration key. Current key: webhook.url."},
 			{Name: "value", Purpose: "Value validated by the key schema."},
 		},
 		ExitCodes: normalExit,
 		Errors:    []string{"approval_required", "box_config_key_unknown", "box_config_value_invalid", "box_target_required", "invalid_box_target", "host_key_changed", "operation_failed"},
-		Notes:     []string{"Authorization is declared by the key schema. notify.url is owner-set; an out-of-role request mints one approval and succeeds once after ship box approve <id> <box>."},
+		Notes:     []string{"Authorization is declared by the key schema. webhook.url is owner-set; an out-of-role request mints one approval and succeeds once after ship box approval grant <id> <box>."},
 	},
 	{
 		Verb:    "box config unset",
@@ -968,16 +970,16 @@ var verbs = []Verb{
 		Usage:   "ship box config [<box>] unset <key>",
 		Flags: []Flag{
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
-			{Name: "key", Purpose: "Configuration key. Current key: notify.url."},
+			{Name: "key", Purpose: "Configuration key. Current key: webhook.url."},
 		},
 		ExitCodes: normalExit,
 		Errors:    []string{"approval_required", "box_config_key_unknown", "box_target_required", "invalid_box_target", "host_key_changed", "operation_failed"},
 		Notes:     []string{"Unset removes the explicit value and restores the schema default."},
 	},
 	{
-		Verb:    "box notify",
-		Purpose: "Read, set, or clear the box notification webhook.",
-		Usage:   "ship box notify <box> [url] [--rm] [--json]",
+		Verb:    "box webhook",
+		Purpose: "Read, set, or clear the box webhook.",
+		Usage:   "ship box webhook <box> [url] [--rm] [--json]",
 		Flags: []Flag{
 			{Name: "box", Purpose: "Box host. Omit only for a read in an app directory, which uses ship.toml box."},
 			{Name: "url", Purpose: "Webhook URL to set. Omit to print the current URL."},
@@ -987,15 +989,15 @@ var verbs = []Verb{
 		ExitCodes: normalExit,
 		Errors:    []string{"usage_error", "box_config_value_invalid", "box_target_required", "invalid_box_target", "approval_required", "host_key_changed", "operation_failed"},
 		Notes: []string{
-			"Any member may read. Only owners may set or clear; other roles receive approval_required and retry after ship box approve <id> <box>.",
-			"This is sugar over box config key notify.url; both paths share one value and journal shape.",
-			"When unset, the command prints an unset notice and next: ship box notify <box> <url>.",
+			"Any member may read. Only owners may set or clear; other roles receive approval_required and retry after ship box approval grant <id> <box>.",
+			"This is sugar over box config key webhook.url; both paths share one value and journal shape.",
+			"When unset, the command prints an unset notice and next: ship box webhook <box> <url> on stderr; stdout stays empty.",
 		},
 	},
 	{
-		Verb:    "box apps",
+		Verb:    "box app ls",
 		Purpose: "Show the box's app table.",
-		Usage:   "ship box apps [<box>] [--json]",
+		Usage:   "ship box app ls [<box>] [--json]",
 		Flags: []Flag{
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 			{Name: "--json", Purpose: "Emit the box app/environment list as JSON."},
@@ -1007,16 +1009,16 @@ var verbs = []Verb{
 		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
 	},
 	{
-		Verb:    "box rm",
+		Verb:    "box app rm",
 		Purpose: "Destroy an app and all of its environments on a box.",
-		Usage:   "ship box rm <app> [<box>] --confirm <app>",
+		Usage:   "ship box app rm <app> [<box>] --confirm <app>",
 		Flags: []Flag{
 			{Name: "app", Purpose: "App name to destroy."},
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 			{Name: "--confirm", Value: "<app>", Purpose: "Required app-name confirmation."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"box_rm_confirmation_required", "box_target_required", "invalid_box_target", "host_key_changed", "operation_failed"},
+		Errors:    []string{"box_app_rm_confirmation_required", "box_target_required", "invalid_box_target", "host_key_changed", "operation_failed"},
 	},
 	{
 		Verb:      "docs",
@@ -1099,15 +1101,20 @@ Preview lifecycle:
 - ` + "`ship preview pin <branch>`" + ` clears expiry; ` + "`ship preview unpin <branch>`" + ` restores it.
 - The box reaper destroys expired previews and purges their secrets.
 - Production is never reaped. ` + "`ship rm`" + ` on Production requires ` + "`--confirm <app>`" + `.
-- Preview URLs are the preview env host, usually a synthesized sslip.io host
-  unless a later wildcard-domain feature exists.
+- Preview URLs default to a synthesized sslip.io host. A manifest ` + "`[preview]`" + `
+  table with ` + "`base = \"preview.example.com\"`" + ` addresses previews on your own
+  domain instead; ` + "`aliases = true`" + ` additionally serves a stable
+  ` + "`<branch-slug>.<base>`" + ` alias per branch behind the same Preview capability,
+  updated on each deploy and removed with the env. On alias collision the
+  existing owner keeps the name and the newcomer keeps its canonical URL with
+  a warning.
 
 Truth stores:
 
 - Manifest truth is the repo ` + "`ship.toml`" + ` plus the manifest snapshot stored with each
   release under the env release directory on the box.
 - Box truth is host state: env identity files, preview mapping metadata,
-  release metadata, deploy journals, members, roles, box notification settings,
+  release metadata, deploy journals, members, roles, box webhook settings,
   secrets, Podman labels, Caddy fragments, and doctor state.
 - Members and approvals belong to the box; secrets, envs, and journals belong
   to the app.
@@ -1185,15 +1192,15 @@ Each env has an append-only ` + "`journal.jsonl`" + `. Each line is:
 {"schema_version":1,"app":"api","env":"production","outcome":"deployed | aborted_build | aborted_release | aborted_probe | rolled_back","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","failing_step":"build | release | probe","stderr_tail":"last scrubbed stderr lines","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
 ` + "```" + `
 
-## Notify payload schemas
+## Webhook payload schemas
 
 All events POST ` + "`{\"app\",\"env\",\"event\",\"release\",\"summary\",\"why\",\"remediation\",\"ts\"}`" + ` and never fail the operation. Box events also include ` + "`box`" + ` (the box hostname).
 
-App events go only to the affected app manifest ` + "`notify`" + ` URL: ` + "`deploy_aborted`" + `, ` + "`deploy_recovered`" + `, and ` + "`preview_reaped`" + `. Box events go once to the box URL configured by ` + "`ship box notify`" + `, never to app URLs: ` + "`doctor_degraded`" + ` and ` + "`approval_requested`" + `. No configured box URL silently drops box events; journals and doctor state are still recorded.
+App events go only to the affected app manifest ` + "`webhook`" + ` URL: ` + "`deploy_aborted`" + `, ` + "`deploy_recovered`" + `, and ` + "`preview_reaped`" + `. Box events go once to the box URL configured by ` + "`ship box webhook`" + `, never to app URLs: ` + "`doctor_degraded`" + ` and ` + "`approval_requested`" + `. With no configured box URL, box events are dropped without failing anything; journals and doctor state are still recorded.
 
 - ` + "`deploy_aborted`" + `: ` + "`why`" + ` is a deploy journal entry; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship\",\"journal\":\"<entry>\"}`" + `.
 - ` + "`deploy_recovered`" + `: ` + "`why`" + ` is ` + "`{\"previous_failure\":\"<entry>\",\"current\":\"<entry>\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship status\",\"journal\":\"<current>\",\"previous_failure\":\"<previous>\"}`" + `.
 - ` + "`preview_reaped`" + `: ` + "`why`" + ` is ` + "`{\"branch\":\"feature/x\",\"env\":\"Preview feature/x\",\"expired_at\":\"...\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"git checkout feature/x && ship\",\"branch\":\"feature/x\",\"env\":\"Preview feature/x\"}`" + `.
 - ` + "`doctor_degraded`" + `: box event; ` + "`why`" + ` is a doctor check ` + "`{\"id\",\"status\",\"evidence\",\"remediation\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"<check.remediation>\",\"check\":\"<doctor check>\"}`" + `.
-- ` + "`approval_requested`" + `: box event; ` + "`why`" + ` is ` + "`{\"id\",\"member\",\"verb\",\"target\",\"expires\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship box approve <id> <box>\",\"request\":\"<approval request>\"}`" + `. The request target retains the affected app and env when present; box-target approvals have empty app/env.
+- ` + "`approval_requested`" + `: box event; ` + "`why`" + ` is ` + "`{\"id\",\"member\",\"verb\",\"target\",\"expires\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship box approval grant <id> <box>\",\"request\":\"<approval request>\"}`" + `. The request target retains the affected app and env when present; box-target approvals have empty app/env.
 `

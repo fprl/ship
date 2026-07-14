@@ -19,19 +19,19 @@ import (
 )
 
 const (
-	notifyEventDeployAborted     = "deploy_aborted"
-	notifyEventDeployRecovered   = "deploy_recovered"
-	notifyEventPreviewReaped     = "preview_reaped"
-	notifyEventDoctorDegraded    = "doctor_degraded"
-	notifyEventApprovalRequested = "approval_requested"
+	webhookEventDeployAborted     = "deploy_aborted"
+	webhookEventDeployRecovered   = "deploy_recovered"
+	webhookEventPreviewReaped     = "preview_reaped"
+	webhookEventDoctorDegraded    = "doctor_degraded"
+	webhookEventApprovalRequested = "approval_requested"
 )
 
 var (
-	notifyTimeout           = 2 * time.Second
-	notifyStderr  io.Writer = os.Stderr
+	webhookTimeout           = 2 * time.Second
+	webhookStderr  io.Writer = os.Stderr
 )
 
-type notifyPayload struct {
+type webhookPayload struct {
 	Box         string `json:"box,omitempty"`
 	App         string `json:"app"`
 	Env         string `json:"env"`
@@ -48,30 +48,30 @@ type deployRecoveryWhy struct {
 	Current         deployJournalEntry `json:"current"`
 }
 
-type deployNotifyRemediation struct {
+type deployWebhookRemediation struct {
 	Command         string              `json:"command"`
 	Journal         deployJournalEntry  `json:"journal"`
 	PreviousFailure *deployJournalEntry `json:"previous_failure,omitempty"`
 }
 
-type reapNotifyWhy struct {
+type reapWebhookWhy struct {
 	Branch    string `json:"branch"`
 	Env       string `json:"env"`
 	ExpiredAt string `json:"expired_at,omitempty"`
 }
 
-type reapNotifyRemediation struct {
+type reapWebhookRemediation struct {
 	Command string `json:"command"`
 	Branch  string `json:"branch"`
 	Env     string `json:"env"`
 }
 
-type doctorNotifyRemediation struct {
+type doctorWebhookRemediation struct {
 	Command string            `json:"command"`
 	Check   store.DoctorCheck `json:"check"`
 }
 
-type approvalNotifyWhy struct {
+type approvalWebhookWhy struct {
 	ID      string               `json:"id"`
 	Member  store.ApprovalMember `json:"member"`
 	Verb    string               `json:"verb"`
@@ -79,57 +79,57 @@ type approvalNotifyWhy struct {
 	Expires string               `json:"expires"`
 }
 
-type approvalNotifyRemediation struct {
+type approvalWebhookRemediation struct {
 	Command string                `json:"command"`
 	Request store.ApprovalRequest `json:"request"`
 }
 
-func notifyDeployAborted(url string, ctx *config.AppContext, entry deployJournalEntry, now time.Time) {
+func webhookDeployAborted(url string, ctx *config.AppContext, entry deployJournalEntry, now time.Time) {
 	if strings.TrimSpace(url) == "" {
 		return
 	}
-	payload := notifyPayload{
+	payload := webhookPayload{
 		App:     entry.App,
-		Env:     notifyEnvLabel(entry.App, entry.Env, ctx),
-		Event:   notifyEventDeployAborted,
+		Env:     webhookEnvLabel(entry.App, entry.Env, ctx),
+		Event:   webhookEventDeployAborted,
 		Release: entry.AttemptedRelease,
-		Summary: fmt.Sprintf("Deploy aborted for %s at release %s.", notifyEnvLabel(entry.App, entry.Env, ctx), dashNotify(entry.AttemptedRelease)),
+		Summary: fmt.Sprintf("Deploy aborted for %s at release %s.", webhookEnvLabel(entry.App, entry.Env, ctx), dashWebhook(entry.AttemptedRelease)),
 		Why:     entry,
-		Remediation: deployNotifyRemediation{
+		Remediation: deployWebhookRemediation{
 			Command: "ship",
 			Journal: entry,
 		},
 		TS: now.UTC().Format(time.RFC3339Nano),
 	}
-	postNotify(url, payload)
+	postWebhook(url, payload)
 }
 
-func notifyDeployRecovered(url string, ctx *config.AppContext, previousFailure, current deployJournalEntry, now time.Time) {
+func webhookDeployRecovered(url string, ctx *config.AppContext, previousFailure, current deployJournalEntry, now time.Time) {
 	if strings.TrimSpace(url) == "" {
 		return
 	}
 	previous := previousFailure
-	payload := notifyPayload{
+	payload := webhookPayload{
 		App:     current.App,
-		Env:     notifyEnvLabel(current.App, current.Env, ctx),
-		Event:   notifyEventDeployRecovered,
+		Env:     webhookEnvLabel(current.App, current.Env, ctx),
+		Event:   webhookEventDeployRecovered,
 		Release: current.AttemptedRelease,
-		Summary: fmt.Sprintf("Deploy recovered for %s at release %s.", notifyEnvLabel(current.App, current.Env, ctx), dashNotify(current.AttemptedRelease)),
+		Summary: fmt.Sprintf("Deploy recovered for %s at release %s.", webhookEnvLabel(current.App, current.Env, ctx), dashWebhook(current.AttemptedRelease)),
 		Why: deployRecoveryWhy{
 			PreviousFailure: previousFailure,
 			Current:         current,
 		},
-		Remediation: deployNotifyRemediation{
+		Remediation: deployWebhookRemediation{
 			Command:         "ship status",
 			Journal:         current,
 			PreviousFailure: &previous,
 		},
 		TS: now.UTC().Format(time.RFC3339Nano),
 	}
-	postNotify(url, payload)
+	postWebhook(url, payload)
 }
 
-func notifyPreviewReaped(url string, file identity.EnvIdentity, release string, now time.Time) {
+func webhookPreviewReaped(url string, file identity.EnvIdentity, release string, now time.Time) {
 	if strings.TrimSpace(url) == "" || file.Preview == nil {
 		return
 	}
@@ -138,49 +138,49 @@ func notifyPreviewReaped(url string, file identity.EnvIdentity, release string, 
 	if file.Preview.ExpiresAt != nil {
 		expiredAt = file.Preview.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	payload := notifyPayload{
+	payload := webhookPayload{
 		App:     file.App,
 		Env:     envLabel,
-		Event:   notifyEventPreviewReaped,
+		Event:   webhookEventPreviewReaped,
 		Release: release,
 		Summary: fmt.Sprintf("Preview %s was reaped.", file.Preview.Branch),
-		Why: reapNotifyWhy{
+		Why: reapWebhookWhy{
 			Branch:    file.Preview.Branch,
 			Env:       envLabel,
 			ExpiredAt: expiredAt,
 		},
-		Remediation: reapNotifyRemediation{
+		Remediation: reapWebhookRemediation{
 			Command: "git checkout " + utils.ShellEscape(file.Preview.Branch) + " && ship",
 			Branch:  file.Preview.Branch,
 			Env:     envLabel,
 		},
 		TS: now.UTC().Format(time.RFC3339Nano),
 	}
-	postNotify(url, payload)
+	postWebhook(url, payload)
 }
 
-func notifyDoctorDegraded(box string, checks []store.DoctorCheck, now time.Time) {
+func webhookDoctorDegraded(box string, checks []store.DoctorCheck, now time.Time) {
 	if len(checks) == 0 {
 		return
 	}
-	url := boxNotifyURL()
+	url := boxWebhookURL()
 	for _, check := range checks {
-		payload := notifyPayload{
+		payload := webhookPayload{
 			Box:     box,
-			Event:   notifyEventDoctorDegraded,
-			Summary: fmt.Sprintf("Doctor check %s is %s for box %s.", check.ID, check.Status, dashNotify(box)),
+			Event:   webhookEventDoctorDegraded,
+			Summary: fmt.Sprintf("Doctor check %s is %s for box %s.", check.ID, check.Status, dashWebhook(box)),
 			Why:     check,
-			Remediation: doctorNotifyRemediation{
+			Remediation: doctorWebhookRemediation{
 				Command: check.Remediation,
 				Check:   check,
 			},
 			TS: now.UTC().Format(time.RFC3339Nano),
 		}
-		postNotify(url, payload)
+		postWebhook(url, payload)
 	}
 }
 
-func notifyApprovalRequested(request store.ApprovalRequest, now time.Time) {
+func webhookApprovalRequested(request store.ApprovalRequest, now time.Time) {
 	command := approvalCommand(request.ID)
 	box := boxClientAddress()
 	app := strings.TrimSpace(request.Target.App)
@@ -193,33 +193,33 @@ func notifyApprovalRequested(request store.ApprovalRequest, now time.Time) {
 			defer cleanup()
 		}
 	}
-	payload := notifyPayload{
+	payload := webhookPayload{
 		Box:     box,
 		App:     app,
-		Env:     notifyEnvLabel(app, env, ctx),
-		Event:   notifyEventApprovalRequested,
+		Env:     webhookEnvLabel(app, env, ctx),
+		Event:   webhookEventApprovalRequested,
 		Release: latestSuccessfulRelease(app, env),
 		Summary: fmt.Sprintf("%s requested approval for %s.", request.Member.Name, request.Target.Summary),
-		Why: approvalNotifyWhy{
+		Why: approvalWebhookWhy{
 			ID:      request.ID,
 			Member:  request.Member,
 			Verb:    request.Verb,
 			Target:  request.Target,
 			Expires: request.ExpiresAt,
 		},
-		Remediation: approvalNotifyRemediation{
+		Remediation: approvalWebhookRemediation{
 			Command: command,
 			Request: request,
 		},
 		TS: now.UTC().Format(time.RFC3339Nano),
 	}
-	postNotify(boxNotifyURL(), payload)
+	postWebhook(boxWebhookURL(), payload)
 }
 
-func boxNotifyURL() string {
-	url, err := boxConfigValueFor("notify.url")
+func boxWebhookURL() string {
+	url, err := boxConfigValueFor("webhook.url")
 	if err != nil {
-		fmt.Fprintf(notifyStderr, "warning: failed to read box-config.json for notifications: %v\n", err)
+		fmt.Fprintf(webhookStderr, "warning: failed to read box-config.json for webhook: %v\n", err)
 		return ""
 	}
 	return url
@@ -233,7 +233,7 @@ func boxClientAddress() string {
 	return strings.TrimSpace(hostFile.Meta.ClientAddress)
 }
 
-func notifyEnvLabel(app, env string, ctx *config.AppContext) string {
+func webhookEnvLabel(app, env string, ctx *config.AppContext) string {
 	if strings.TrimSpace(app) == "" || strings.TrimSpace(env) == "" {
 		return ""
 	}
@@ -262,28 +262,28 @@ func isAbortedJournalOutcome(outcome string) bool {
 	return strings.HasPrefix(outcome, "aborted_")
 }
 
-func postNotify(url string, payload notifyPayload) {
+func postWebhook(url string, payload webhookPayload) {
 	if strings.TrimSpace(url) == "" {
 		return
 	}
-	if err := doPostNotify(url, payload); err != nil {
-		fmt.Fprintf(notifyStderr, "notify webhook failed: %s\n", err)
+	if err := doPostWebhook(url, payload); err != nil {
+		fmt.Fprintf(webhookStderr, "webhook delivery failed: %s\n", err)
 	}
 }
 
-func doPostNotify(url string, payload notifyPayload) error {
+func doPostWebhook(url string, payload webhookPayload) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return errors.New("payload encode failed")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), webhookTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return errors.New("request setup failed")
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: notifyTimeout}
+	client := &http.Client{Timeout: webhookTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return errors.New("request failed")
@@ -296,7 +296,7 @@ func doPostNotify(url string, payload notifyPayload) error {
 	return nil
 }
 
-func dashNotify(value string) string {
+func dashWebhook(value string) string {
 	if value == "" {
 		return "-"
 	}
