@@ -134,6 +134,130 @@ func TestPublicCLIRequiresMemberName(t *testing.T) {
 	}
 }
 
+func TestMissingPositionalArgumentsRunShipErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "member rm", args: []string{"box", "member", "rm"}, want: "next: ship box member ls [<box>]"},
+		{name: "approval grant", args: []string{"box", "approval", "grant"}, want: "next: ship box approval ls [<box>]"},
+		{name: "app rm", args: []string{"box", "app", "rm"}, want: "next: ship box app ls [<box>]"},
+		{name: "member add", args: []string{"box", "member", "add"}, want: "next: ship box member add <https-url|key|path> <box> --name <name>"},
+		{name: "rm", args: []string{"rm"}, want: "next: ship status"},
+		{name: "preview pin", args: []string{"preview", "pin"}, want: "next: ship status"},
+		{name: "preview unpin", args: []string{"preview", "unpin"}, want: "next: ship status"},
+		{name: "data restore", args: []string{"data", "restore"}, want: "next: ship data ls"},
+		{name: "secret rm", args: []string{"secret", "rm"}, want: "next: ship secret ls"},
+		{name: "completion", args: []string{"completion"}, want: "next: ship completion <bash|zsh|fish>"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := &cli{}
+			parser, err := kong.New(
+				parsed,
+				kong.Name("ship"),
+				kong.ExplicitGroups(cliCommandGroups()),
+				kong.ConfigureHelp(kong.HelpOptions{NoExpandSubcommands: true}),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, err := parser.Parse(tt.args)
+			if err != nil {
+				t.Fatalf("parse %v failed: %v", tt.args, err)
+			}
+			err = ctx.Run()
+			if !errcat.Is(err, errcat.CodeUsageError) {
+				t.Fatalf("run %v error = %v, want usage_error", tt.args, err)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("run %v error = %v, want %q", tt.args, err, tt.want)
+			}
+			if strings.Contains(err.Error(), "next: ship help") {
+				t.Fatalf("run %v fell back to generic help: %v", tt.args, err)
+			}
+		})
+	}
+}
+
+func TestMissingBoxTargetsUseKnownBoxRemediation(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	knownDir := filepath.Join(configHome, "ship")
+	if err := os.MkdirAll(knownDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(knownDir, "known_hosts"), []byte("203.0.113.7 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICtppnbbz76teU3iU6BguTmo//WITtYN35e4gSER6UNt\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "setup", args: []string{"box", "setup"}, want: "target a box to set up\nknown boxes (~/.config/ship/known_hosts):\n  203.0.113.7\nnext: ship box setup <ssh-target>"},
+		{name: "forget", args: []string{"box", "forget"}, want: "target a box\nknown boxes (~/.config/ship/known_hosts):\n  203.0.113.7\nnext: ship box forget <box>"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsed := &cli{}
+			parser, err := kong.New(parsed, kong.Name("ship"), kong.ExplicitGroups(cliCommandGroups()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, err := parser.Parse(tt.args)
+			if err != nil {
+				t.Fatalf("parse %v failed: %v", tt.args, err)
+			}
+			err = ctx.Run()
+			if !errcat.Is(err, errcat.CodeBoxTargetRequired) {
+				t.Fatalf("run %v error = %v, want box_target_required", tt.args, err)
+			}
+			if got := err.Error(); got != tt.want {
+				t.Fatalf("run %v error = %q, want %q", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMissingBoxArgumentRemediationUsesManifestBox(t *testing.T) {
+	root := t.TempDir()
+	config := filepath.Join(root, "ship.toml")
+	if err := os.Mkdir(filepath.Join(root, "dist"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte("name = \"api\"\nbox = \"203.0.113.7\"\n\n[routes]\n\"api.example.com\" = { static = \"dist\" }\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		run  func() error
+		want string
+	}{
+		{name: "member rm", run: func() error { return (boxMemberRmCmd{Config: config}).Run() }, want: "next: ship box member ls 203.0.113.7"},
+		{name: "approval grant", run: func() error { return (boxApprovalGrantCmd{Config: config}).Run() }, want: "next: ship box approval ls 203.0.113.7"},
+		{name: "app rm", run: func() error { return (boxAppRmCmd{Config: config}).Run() }, want: "next: ship box app ls 203.0.113.7"},
+		{name: "member add", run: func() error { return (boxMemberAddCmd{Config: config}).Run() }, want: "next: ship box member add <https-url|key|path> 203.0.113.7 --name <name>"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.run()
+			if !errcat.Is(err, errcat.CodeUsageError) {
+				t.Fatalf("error = %v, want usage_error", err)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestExecPassthroughRetainsSeparatorForClientNormalization(t *testing.T) {
 	tests := []struct {
 		name string
@@ -507,7 +631,7 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	}
 	_, _ = parser.Parse([]string{"--help"})
 	text := stdout.String() + stderr.String()
-	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "data <command>", "preview <command>", "ssh", "secret <command>", "box <command>", "docs", "help", "version"} {
+	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm [<branch>]", "data <command>", "preview <command>", "ssh", "secret <command>", "box <command>", "docs", "help", "version"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("top-level help should mention %q, got:\n%s", want, text)
 		}

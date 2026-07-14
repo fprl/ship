@@ -194,10 +194,13 @@ func (c logsCmd) Run() error {
 type execCmd struct {
 	projectArgs
 	Branch  string   `name:"branch" help:"Branch name to inspect."`
-	Command []string `arg:"" required:"" passthrough:"" help:"Command and arguments to run; write -- before commands that start with a dash."`
+	Command []string `arg:"" optional:"" passthrough:"" help:"Command and arguments to run; write -- before commands that start with a dash."`
 }
 
 func (c execCmd) Run() error {
+	if len(c.Command) == 0 {
+		return cliUsageError("ship exec requires a command", "ship exec -- <cmd...>")
+	}
 	root, err := c.projectRoot()
 	if err != nil {
 		return err
@@ -223,10 +226,13 @@ func (c whyCmd) Run() error {
 
 type previewPinCmd struct {
 	projectArgs
-	Branch string `arg:"" help:"Branch name to pin."`
+	Branch string `arg:"" optional:"" help:"Branch name to pin."`
 }
 
 func (c previewPinCmd) Run() error {
+	if c.Branch == "" {
+		return cliUsageError("preview pin requires <branch>", "ship status")
+	}
 	root, err := c.projectRoot()
 	if err != nil {
 		return err
@@ -237,7 +243,7 @@ func (c previewPinCmd) Run() error {
 
 type previewUnpinCmd struct {
 	projectArgs
-	Branch string `arg:"" help:"Branch name to unpin."`
+	Branch string `arg:"" optional:"" help:"Branch name to unpin."`
 }
 
 type previewCmd struct {
@@ -261,6 +267,9 @@ func (c previewShareCmd) Run() error {
 }
 
 func (c previewUnpinCmd) Run() error {
+	if c.Branch == "" {
+		return cliUsageError("preview unpin requires <branch>", "ship status")
+	}
 	root, err := c.projectRoot()
 	if err != nil {
 		return err
@@ -285,11 +294,14 @@ func (c rollbackCmd) Run() error {
 
 type rmCmd struct {
 	projectArgs
-	Branch  string `arg:"" help:"Branch name whose environment should be removed."`
+	Branch  string `arg:"" optional:"" help:"Branch name whose environment should be removed."`
 	Confirm string `name:"confirm" help:"Required app-name confirmation for Production."`
 }
 
 func (c rmCmd) Run() error {
+	if c.Branch == "" {
+		return cliUsageError("ship rm requires <branch>", "ship status")
+	}
 	root, err := c.projectRoot()
 	if err != nil {
 		return err
@@ -348,11 +360,14 @@ func (c dataSaveCmd) Run() error {
 
 type dataRestoreCmd struct {
 	projectArgs
-	Snapshot string `arg:"" help:"Local snapshot ID or path."`
+	Snapshot string `arg:"" optional:"" help:"Local snapshot ID or path."`
 	Confirm  string `name:"confirm" help:"Required app-name confirmation for Production."`
 }
 
 func (c dataRestoreCmd) Run() error {
+	if c.Snapshot == "" {
+		return cliUsageError("data restore requires <id|path>", "ship data ls")
+	}
 	root, err := c.projectRoot()
 	if err != nil {
 		return err
@@ -425,10 +440,13 @@ type secretRmCmd struct {
 	projectArgs
 	Preview bool   `name:"preview" help:"Remove from the shared Preview scope."`
 	Branch  string `name:"branch" help:"Remove from one branch Preview scope."`
-	Key     string `arg:"" help:"Env-var name to remove."`
+	Key     string `arg:"" optional:"" help:"Env-var name to remove."`
 }
 
 func (c secretRmCmd) Run() error {
+	if c.Key == "" {
+		return cliUsageError("secret rm requires <KEY>", "ship secret ls")
+	}
 	root, err := c.projectRoot()
 	if err != nil {
 		return err
@@ -587,7 +605,7 @@ type boxMemberCmd struct {
 
 type boxMemberAddCmd struct {
 	Config  string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
-	Source  string `arg:"" help:"HTTPS keys-URL, SSH public key string, or path to a .pub/.pem file."`
+	Source  string `arg:"" optional:"" help:"HTTPS keys-URL, SSH public key string, or path to a .pub/.pem file."`
 	Target  string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	Name    string `name:"name" help:"Box-global member name."`
 	Role    string `name:"role" enum:"owner,shipper,agent" default:"shipper" help:"Role recorded for newly added keys."`
@@ -595,6 +613,10 @@ type boxMemberAddCmd struct {
 }
 
 func (c boxMemberAddCmd) Run() error {
+	if c.Source == "" {
+		box := boxTargetForRemediation(c.Config, c.Target)
+		return cliUsageError("box member add requires <https-url|key|path>", "ship box member add <https-url|key|path> "+box+" --name <name>")
+	}
 	target, err := boxTargetFor(c.Config, c.Target, "ship box member add <https-url|key|path> <box> --name <name>")
 	if err != nil {
 		return err
@@ -619,11 +641,14 @@ func (c boxMemberLsCmd) Run() error {
 
 type boxMemberRmCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
-	Name   string `arg:"" help:"Member name to revoke."`
+	Name   string `arg:"" optional:"" help:"Member name to revoke."`
 	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 }
 
 func (c boxMemberRmCmd) Run() error {
+	if c.Name == "" {
+		return cliUsageError("box member rm requires <name>", optionalBoxCommand(c.Config, c.Target, "ship box member ls"))
+	}
 	target, err := boxTargetFor(c.Config, c.Target, "ship box member rm <name> <box>")
 	if err != nil {
 		return err
@@ -654,11 +679,14 @@ func (c boxApprovalLsCmd) Run() error {
 
 type boxApprovalGrantCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
-	ID     string `arg:"" help:"Approval id to grant."`
+	ID     string `arg:"" optional:"" help:"Approval id to grant."`
 	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 }
 
 func (c boxApprovalGrantCmd) Run() error {
+	if c.ID == "" {
+		return cliUsageError("box approval grant requires <id>", optionalBoxCommand(c.Config, c.Target, "ship box approval ls"))
+	}
 	target, err := boxTargetFor(c.Config, c.Target, "ship box approval grant <id> <box>")
 	if err != nil {
 		return err
@@ -714,12 +742,15 @@ func (c boxDoctorCmd) Run() error {
 
 type boxAppRmCmd struct {
 	Config  string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
-	App     string `arg:"" help:"App name to destroy."`
+	App     string `arg:"" optional:"" help:"App name to destroy."`
 	Target  string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	Confirm string `name:"confirm" help:"Required app-name confirmation."`
 }
 
 func (c boxAppRmCmd) Run() error {
+	if c.App == "" {
+		return cliUsageError("box app rm requires <app>", optionalBoxCommand(c.Config, c.Target, "ship box app ls"))
+	}
 	target, err := boxTargetFor(c.Config, c.Target, fmt.Sprintf("ship box app rm %s <box> --confirm %s", c.App, c.App))
 	if err != nil {
 		return err
@@ -729,16 +760,19 @@ func (c boxAppRmCmd) Run() error {
 }
 
 type boxForgetCmd struct {
-	Target string `arg:"" name:"box" help:"Box host to forget."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host to forget."`
 }
 
 func (c boxForgetCmd) Run() error {
+	if c.Target == "" {
+		return boxTargetRequiredError("ship box forget <box>")
+	}
 	client.CmdBoxForget(c.Target)
 	return nil
 }
 
 type boxSetupCmd struct {
-	Target                   string `arg:"" name:"ssh-target" help:"Bootstrap SSH target like root@example.com or example.com."`
+	Target                   string `arg:"" optional:"" name:"ssh-target" help:"Bootstrap SSH target like root@example.com or example.com."`
 	ClientAddress            string `name:"client-address" hidden:""`
 	Mode                     string `enum:"auto,local,remote" default:"auto" help:"Execution mode."`
 	BootstrapUser            string `help:"SSH user for remote bootstrap."`
@@ -751,6 +785,9 @@ type boxSetupCmd struct {
 }
 
 func (c boxSetupCmd) Run() error {
+	if c.Target == "" {
+		return errcat.WithMessage(boxTargetRequiredError("ship box setup <ssh-target>"), "target a box to set up")
+	}
 	opts := hostinstall.DefaultOptions(nil)
 	opts.TargetHost = c.Target
 	opts.ClientAddress = c.ClientAddress
@@ -835,6 +872,36 @@ func boxTargetRequiredError(command string) error {
 		"command":     command,
 		"known_boxes": knownhosts.KnownBoxesCause(boxes),
 	})
+}
+
+func cliUsageError(detail, command string) error {
+	return errcat.New(errcat.CodeUsageError, errcat.Fields{
+		"detail":  detail,
+		"command": command,
+	})
+}
+
+func optionalBoxCommand(configPath, target, command string) string {
+	box := boxTargetForRemediation(configPath, target)
+	if box == "<box>" {
+		return command + " [<box>]"
+	}
+	return command + " " + box
+}
+
+func boxTargetForRemediation(configPath, target string) string {
+	if target != "" {
+		return target
+	}
+	root, err := projectAppRoot(configPath)
+	if err != nil {
+		return "<box>"
+	}
+	box, err := client.BoxTarget(root)
+	if err != nil || box == "" {
+		return "<box>"
+	}
+	return box
 }
 
 func main() {

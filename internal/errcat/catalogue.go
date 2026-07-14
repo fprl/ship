@@ -735,6 +735,16 @@ func WithCause(err error, cause string) error {
 	return &next
 }
 
+func WithMessage(err error, message string) error {
+	coded, ok := As(err)
+	if !ok {
+		return err
+	}
+	next := *coded
+	next.message = message
+	return &next
+}
+
 func mergeFields(defaults, fields Fields) Fields {
 	out := Fields{}
 	for key, value := range defaults {

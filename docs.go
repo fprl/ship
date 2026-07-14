@@ -75,10 +75,16 @@ func unknownHelpVerb(verb string) error {
 }
 
 type completionCmd struct {
-	Shell string `arg:"" enum:"bash,zsh,fish" help:"Shell to generate completions for. Install: bash: ship completion bash > /etc/bash_completion.d/ship; zsh: ship completion zsh > ~/.zsh/completions/_ship; fish: ship completion fish > ~/.config/fish/completions/ship.fish."`
+	Shell string `arg:"" optional:"" help:"Shell to generate completions for: bash, zsh, or fish. Install: bash: ship completion bash > /etc/bash_completion.d/ship; zsh: ship completion zsh > ~/.zsh/completions/_ship; fish: ship completion fish > ~/.config/fish/completions/ship.fish."`
 }
 
 func (c completionCmd) Run() error {
+	if c.Shell == "" {
+		return errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  "completion requires one of bash|zsh|fish",
+			"command": "ship completion <bash|zsh|fish>",
+		})
+	}
 	script, ok := agentdocs.CompletionScript(c.Shell)
 	if !ok {
 		return errcat.New(errcat.CodeUsageError, errcat.Fields{
