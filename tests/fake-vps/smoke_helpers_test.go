@@ -370,6 +370,10 @@ func (e *smokeEnv) commandEnv(dir string, extra []string) []string {
 	env := os.Environ()
 	env = h.SetEnv(env, "SHIP_HELPER_DIR", e.binDir)
 	env = h.SetEnv(env, "HOME", e.shipHome)
+	// CI runners export XDG_CONFIG_HOME, which knownhosts.Path honors
+	// before HOME — unpinned, host-key pins leak between suites through
+	// the runner's real config dir.
+	env = h.SetEnv(env, "XDG_CONFIG_HOME", "")
 	env = h.SetEnv(env, "USER", "fake-vps-smoke")
 	if !hasLocalGitConfig(dir) {
 		env = h.SetEnv(env, "GIT_CONFIG_COUNT", "1")
