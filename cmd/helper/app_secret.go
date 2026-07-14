@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/secrets"
@@ -36,19 +37,20 @@ func (c appSecretSetCmd) Run() error {
 		return errcat.New(errcat.CodeInvalidSecretKey, errcat.Fields{"key": fmt.Sprintf("%q", c.Key)})
 	}
 	authorizeOrDie(helperVerbSecretSet, authTargetForAppEnv(c.App, c.Env, "key="+c.Key))
-	// stdin only — never argv. The client SSHes the value over the
-	// helper's stdin so the value never lands in the host's process
-	// table or shell history.
+	// stdin only — never argv. The client owns the single trailing
+	// TTY-newline trim before SSHing the value here; the helper stores
+	// these bytes verbatim so the value never lands in the host's
+	// process table or shell history.
 	value, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		utils.Die(fmt.Sprintf("read secret value: %v", err), 1)
 	}
-	// Strip exactly one trailing newline if present — a TTY `read`
-	// will tack one on, and most users don't actually want it as part
-	// of the secret. Preserves intentional newlines elsewhere in the
-	// value (so a heredoc with multiple lines comes through intact).
-	if n := len(value); n > 0 && value[n-1] == '\n' {
-		value = value[:n-1]
+	valueWithoutTrailingNewline := value
+	if len(valueWithoutTrailingNewline) > 0 && valueWithoutTrailingNewline[len(valueWithoutTrailingNewline)-1] == '\n' {
+		valueWithoutTrailingNewline = valueWithoutTrailingNewline[:len(valueWithoutTrailingNewline)-1]
+	}
+	if strings.Contains(string(valueWithoutTrailingNewline), "\n") {
+		return errcat.New(errcat.CodeSecretInvalid, errcat.Fields{"detail": "secret values cannot contain embedded newlines; encode multi-line material (for example base64) and decode it in the app"})
 	}
 	withAppEnvLock(c.App, c.Env, func() {
 		if err := secrets.Put(c.App, c.Env, c.Key, value); err != nil {

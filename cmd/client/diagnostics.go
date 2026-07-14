@@ -43,7 +43,7 @@ func manifestDiagnostics(errors, warnings []string) diagnostics {
 		if err == config.DockerfileMissingDetail {
 			kind = diagnosticKindDockerfileMissing
 		}
-		out = append(out, diagnostic{Kind: kind, Level: diagnosticError, Message: err, Hint: manifestHint(err)})
+		out = append(out, diagnostic{Kind: kind, Level: diagnosticError, Message: err})
 	}
 	return out
 }
@@ -94,18 +94,5 @@ func (d diagnostics) printTo(w io.Writer) {
 			}
 			fmt.Fprintf(w, "  %s\n", line)
 		}
-	}
-}
-
-func manifestHint(message string) string {
-	switch {
-	case strings.Contains(message, "missing a Dockerfile"):
-		return "Add a Dockerfile next to ship.toml, or remove process routes for a static-only app."
-	case strings.Contains(message, ".serve directory"):
-		return "Run the framework build that creates the configured static directory, then retry."
-	case strings.Contains(message, "env not found"):
-		return "Check ship.toml and retry from the branch you want to ship."
-	default:
-		return ""
 	}
 }

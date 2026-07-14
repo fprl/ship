@@ -110,20 +110,12 @@ const (
 	BoxConfigValueTypeURLOrEmpty BoxConfigValueType = "url_or_empty"
 )
 
-type BoxConfigApplyMode string
-
-const (
-	BoxConfigApplyNone     BoxConfigApplyMode = "none"
-	BoxConfigApplyConverge BoxConfigApplyMode = "converge"
-)
-
 type BoxConfigKey struct {
 	Name                   string
 	Type                   BoxConfigValueType
 	Default                string
 	WriteRole              MemberRole
 	OutOfRoleNeedsApproval bool
-	Apply                  BoxConfigApplyMode
 }
 
 // BoxConfigSchema is the complete box-config authority boundary. A generic
@@ -135,7 +127,6 @@ var BoxConfigSchema = []BoxConfigKey{
 		Default:                "",
 		WriteRole:              MemberRoleOwner,
 		OutOfRoleNeedsApproval: true,
-		Apply:                  BoxConfigApplyNone,
 	},
 }
 

@@ -41,6 +41,25 @@ func TestRunInitWritesOnlyShipToml(t *testing.T) {
 	}
 }
 
+func TestRunInitWithoutHostOmitsRoutes(t *testing.T) {
+	root := t.TempDir()
+	if _, err := RunInit(root, InitOptions{Name: "api", Server: "example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(root, ManifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "[routes]") {
+		t.Fatalf("manifest should omit routes without --host:\n%s", body)
+	}
+	for _, want := range []string{`name = "api"`, `box = "example.com"`, "[processes]", "web = {}"} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("manifest missing %q:\n%s", want, body)
+		}
+	}
+}
+
 func TestRunInitUsesPackageJSONName(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"name":"@scope/My_App"}`), 0644); err != nil {

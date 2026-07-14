@@ -53,6 +53,11 @@ type applyReleaseResult struct {
 	staticReleaseNew   bool
 }
 
+var (
+	appendSanitizedDeployJournal = appendSanitizedDeployJournalEntry
+	bestEffortPruneAfterDeploy   = bestEffortPruneReleaseImagesAfterDeploy
+)
+
 func (c appApplyCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
@@ -113,6 +118,18 @@ func applyExitError(err error) error {
 	}
 }
 
+func (c appApplyCmd) recordDeployFailure(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
+	entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, err)
+	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
+	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
+	}
+	if app != nil && isAbortedJournalOutcome(entry.Outcome) {
+		notifyDeployAborted(app.Notify, app, entry, time.Now().UTC())
+	}
+	return err
+}
+
 func (c appApplyCmd) runLockedE() (err error) {
 	startedAt := time.Now().UTC()
 	previousRelease := currentActiveReleaseBestEffort(c.App, c.Env)
@@ -121,15 +138,7 @@ func (c appApplyCmd) runLockedE() (err error) {
 		if err == nil {
 			return
 		}
-		entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, err)
-		entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
-		if appendErr := appendSanitizedDeployJournalEntry(c.App, c.Env, entry); appendErr != nil {
-			err = fmt.Errorf("%v; additionally failed to write deploy journal: %v", err, appendErr)
-			return
-		}
-		if app != nil && isAbortedJournalOutcome(entry.Outcome) {
-			notifyDeployAborted(app.Notify, app, entry, time.Now().UTC())
-		}
+		err = c.recordDeployFailure(app, previousRelease, startedAt, err)
 	}()
 
 	ctxDir, err := c.prepareApplyContext()
@@ -203,6 +212,10 @@ func (c appApplyCmd) runLockedE() (err error) {
 	}
 	releaseSnapshotActive = true
 	deployCommitted = true
+	return c.completeCommittedDeploy(app, previousRelease, startedAt, result)
+}
+
+func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRelease string, startedAt time.Time, result applyReleaseResult) error {
 	removeContainers(result.containersToRemove)
 	previousJournal, previousJournalErr := readLatestDeployJournalEntry(c.App, c.Env)
 	entry := sanitizeDeployJournalEntry(c.App, c.Env, deployJournalEntry{
@@ -217,9 +230,9 @@ func (c appApplyCmd) runLockedE() (err error) {
 		Identity:         c.actor(),
 		Member:           currentServerMemberForJournal(),
 	}, nil)
-	entry.ImagePrune = bestEffortPruneReleaseImagesAfterDeploy(c.App, c.Env, c.SHA, entry)
-	if err := appendSanitizedDeployJournalEntry(c.App, c.Env, entry); err != nil {
-		return err
+	entry.ImagePrune = bestEffortPruneAfterDeploy(c.App, c.Env, c.SHA, entry)
+	if err := appendSanitizedDeployJournal(c.App, c.Env, entry); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: deployed but failed to write deploy journal: %v; run ship box doctor\n", err)
 	}
 	if previousJournalErr == nil && isAbortedJournalOutcome(previousJournal.Outcome) {
 		notifyDeployRecovered(app.Notify, app, previousJournal, entry, time.Now().UTC())
@@ -394,13 +407,15 @@ func removeContainers(names []string) {
 	}
 }
 
-func stopContainers(names []string) error {
+func stopContainers(names []string) ([]string, error) {
+	var stopped []string
 	for _, name := range names {
 		if _, err := utils.RunChecked("podman", []string{"stop", name}, ""); err != nil {
-			return fmt.Errorf("stop %s: %v", name, err)
+			return stopped, fmt.Errorf("stop %s: %v", name, err)
 		}
+		stopped = append(stopped, name)
 	}
-	return nil
+	return stopped, nil
 }
 
 func startContainers(names []string) error {
@@ -416,9 +431,9 @@ func startContainers(names []string) error {
 	return nil
 }
 
-// warnOnRestartFailure restarts stopped containers after a data-directory
-// swap. The swap is the point of no return, so a restart failure is a warning
-// the operator must see, not a reason to report the completed swap as failed.
+// warnOnRestartFailure restarts containers after an operation stops them. A
+// restart failure must not hide the original operation outcome, but the
+// operator still needs a visible recovery path.
 func warnOnRestartFailure(stopped []string) {
 	if err := startContainers(stopped); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v; run ship box doctor\n", err)
@@ -507,11 +522,12 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 				return nil
 			}
 			old := processContainers(existing, processName, "")
-			if err := stopContainers(old); err != nil {
-				startContainers(stopped)
+			stoppedNow, err := stopContainers(old)
+			if err != nil {
+				warnOnRestartFailure(uniqueContainerNames(append(stopped, stoppedNow...)))
 				return err
 			}
-			stopped = append(stopped, old...)
+			stopped = append(stopped, stoppedNow...)
 			containersToRemove = append(containersToRemove, old...)
 			return nil
 		},
@@ -526,8 +542,8 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		}
 		var startErr processStartError
 		if errors.As(err, &startErr) {
-			startContainers(stopped)
-			step := "release"
+			warnOnRestartFailure(stopped)
+			step := "apply"
 			var probe *journalProbe
 			var probeErr *probeFailureError
 			if strings.Contains(startErr.Err.Error(), "health check failed") {

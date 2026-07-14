@@ -568,7 +568,7 @@ var verbs = []Verb{
 			configFlag,
 			{Name: "--name", Value: "<app>", Purpose: "App name. Defaults to package.json name or the directory name."},
 			{Name: "--box", Value: "<box>", Default: "203.0.113.7", Purpose: "Box host written to the manifest."},
-			{Name: "--host", Value: "<host>", Purpose: "Route host. Defaults to <app>.example.com."},
+			{Name: "--host", Value: "<host>", Purpose: "Optional route host. Omitted: the manifest has no [routes] and the first deploy prints the automatic sslip.io URL."},
 		},
 		ExitCodes: normalExit,
 		Errors:    []string{"usage_error", "manifest_invalid"},
@@ -661,6 +661,7 @@ var verbs = []Verb{
 			"Run from a Preview branch whose environment already exists. Production branches are refused.",
 			"Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command.",
 			"SQLite files are copied on the box with `VACUUM INTO`; other files copy with `cp -a` using reflink when supported. The client never receives data contents.",
+			"stdout is exactly the Preview URL; the fork report and PII note are stderr. If the fork landed but the URL lookup fails, exit stays 0 with a stderr warning and `next: ship status`.",
 		},
 	},
 	{
@@ -673,6 +674,7 @@ var verbs = []Verb{
 		Notes: []string{
 			"Run from a Preview branch whose environment already exists. Production branches are refused.",
 			"Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command.",
+			"stdout is exactly the Preview URL; the reset confirmation is stderr. If the reset landed but the URL lookup fails, exit stays 0 with a stderr warning and `next: ship status`.",
 		},
 	},
 	{
@@ -766,6 +768,7 @@ var verbs = []Verb{
 		Errors:    []string{"usage_error", "invalid_secret_key", "dotenv_malformed", "secret_scope_conflict", "unknown_preview_branch", "host_key_changed", "operation_failed"},
 		Notes: []string{
 			"Single-value mode reads the value from stdin. Bulk mode reads values from the file path; values are never echoed, placed in argv, or written into the repo.",
+			"Values keep exactly one trailing newline if piped with one; embedded newlines are refused (`secret_invalid`) because the container env-file format cannot carry them — encode multi-line material (for example base64) and decode it in the app.",
 			"Without --preview or --branch, the current branch selects the secret scope: Production on the production branch, otherwise that branch's Preview.",
 			"Bulk dotenv rules: blank lines and full-line # comments are ignored; an `export ` prefix is accepted; unquoted values are trimmed; matching single or double quotes around the whole value are stripped; inline # is treated as value text.",
 			"Bulk merge is the default. `--replace` removes scope keys absent from the file and reports removed key names on stderr. Bulk stdout is empty.",
@@ -882,18 +885,18 @@ var verbs = []Verb{
 	},
 	{
 		Verb:    "box status",
-		Purpose: "Show helper version, disk use, apps, and pending approvals for one box.",
+		Purpose: "Show helper version, disk use, apps, pending approvals, and the last doctor result for one box.",
 		Usage:   "ship box status [<box>] [--json]",
 		Flags: []Flag{
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
-			{Name: "--json", Purpose: "Emit {helper_version,client_version,last_client_version,update_available,helper_ahead,disk:{status,evidence},apps:[{app,env_count}],pending_approvals}."},
+			{Name: "--json", Purpose: "Emit {helper_version,client_version,last_client_version,update_available,helper_ahead,disk:{status,evidence},apps:[{app,env_count}],pending_approvals,doctor:{status,recorded_at}}. doctor is omitted until the daily timer records a run."},
 		},
 		JSONSchema: schema(
-			`{"helper_version":"v0.4.0","client_version":"v0.4.1","last_client_version":"v0.4.1","update_available":true,"helper_ahead":false,"disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"pending_approvals":1}`,
+			`{"helper_version":"v0.4.0","client_version":"v0.4.1","last_client_version":"v0.4.1","update_available":true,"helper_ahead":false,"disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"pending_approvals":1,"doctor":{"status":"ok","recorded_at":"2026-07-14T06:00:00Z"}}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
-		Notes:     []string{"Any member may read. When the helper is behind, text output includes `next: ship box update <box>`."},
+		Notes:     []string{"Any member may read. When the helper is behind, text output includes `next: ship box update <box>`. Text output prints an app count (`apps: 2 (3 envs)`) — the full table is `ship box apps` — and ends with the last doctor-timer result and its age (`doctor: ok (2h ago)`, or `doctor: never run`)."},
 	},
 	{
 		Verb:    "box update",
@@ -963,11 +966,12 @@ var verbs = []Verb{
 	{
 		Verb:    "box notify",
 		Purpose: "Read, set, or clear the box notification webhook.",
-		Usage:   "ship box notify <box> [url] [--rm]",
+		Usage:   "ship box notify <box> [url] [--rm] [--json]",
 		Flags: []Flag{
 			{Name: "box", Purpose: "Box host. Omit only for a read in an app directory, which uses ship.toml box."},
 			{Name: "url", Purpose: "Webhook URL to set. Omit to print the current URL."},
 			{Name: "--rm", Purpose: "Clear the box webhook."},
+			{Name: "--json", Purpose: "Read only: emit {\"url\":\"...\"} with an empty string when unset. Rejected on set and --rm."},
 		},
 		ExitCodes: normalExit,
 		Errors:    []string{"usage_error", "box_config_value_invalid", "box_target_required", "invalid_box_target", "approval_required", "host_key_changed", "operation_failed"},

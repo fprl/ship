@@ -45,16 +45,15 @@ func CmdBoxApps(server string, jsonFlag bool) {
 }
 
 type boxVersionPayload struct {
-	Version               string `json:"version"`
-	RecordedClientVersion string `json:"recorded_client_version"`
-	LastClientVersion     string `json:"last_client_version"`
-	Architecture          string `json:"architecture"`
-	Disk                  struct {
+	Version           string `json:"version"`
+	LastClientVersion string `json:"last_client_version"`
+	Disk              struct {
 		Status   string `json:"status"`
 		Evidence string `json:"evidence"`
 	} `json:"disk"`
-	Apps             []boxStatusApp `json:"apps"`
-	PendingApprovals int            `json:"pending_approvals"`
+	Apps             []boxStatusApp   `json:"apps"`
+	PendingApprovals int              `json:"pending_approvals"`
+	Doctor           *boxStatusDoctor `json:"doctor,omitempty"`
 }
 
 type boxStatusPayload struct {
@@ -67,13 +66,19 @@ type boxStatusPayload struct {
 		Status   string `json:"status"`
 		Evidence string `json:"evidence"`
 	} `json:"disk"`
-	Apps             []boxStatusApp `json:"apps"`
-	PendingApprovals int            `json:"pending_approvals"`
+	Apps             []boxStatusApp   `json:"apps"`
+	PendingApprovals int              `json:"pending_approvals"`
+	Doctor           *boxStatusDoctor `json:"doctor,omitempty"`
 }
 
 type boxStatusApp struct {
 	App      string `json:"app"`
 	EnvCount int    `json:"env_count"`
+}
+
+type boxStatusDoctor struct {
+	Status     string `json:"status"`
+	RecordedAt string `json:"recorded_at"`
 }
 
 func CmdBoxStatus(server string, jsonFlag bool) {
@@ -97,25 +102,50 @@ func CmdBoxStatus(server string, jsonFlag bool) {
 		fmt.Println(string(data))
 		return
 	}
-	fmt.Printf("helper: %s\nclient: %s\n", payload.HelperVersion, payload.ClientVersion)
+	fmt.Print(renderBoxStatus(payload, server, time.Now()))
+}
+
+func renderBoxStatus(payload boxStatusPayload, server string, now time.Time) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "helper: %s\nclient: %s\n", payload.HelperVersion, payload.ClientVersion)
 	if payload.LastClientVersion != "" {
-		fmt.Printf("last client: %s\n", payload.LastClientVersion)
+		fmt.Fprintf(&b, "last client: %s\n", payload.LastClientVersion)
 	}
 	if payload.UpdateAvailable {
-		fmt.Printf("helper is behind\nnext: ship box update %s\n", server)
+		fmt.Fprintf(&b, "helper is behind\nnext: ship box update %s\n", server)
 	} else if payload.HelperAhead {
-		fmt.Println("client is behind helper")
+		fmt.Fprintln(&b, "client is behind helper")
 	}
-	fmt.Printf("disk: %s\n", payload.Disk.Evidence)
-	if len(payload.Apps) == 0 {
-		fmt.Println("apps: 0")
+	fmt.Fprintf(&b, "disk: %s\n", payload.Disk.Evidence)
+	appCount := len(payload.Apps)
+	if appCount == 0 {
+		fmt.Fprintln(&b, "apps: 0")
 	} else {
-		fmt.Println("apps:")
+		envCount := 0
 		for _, app := range payload.Apps {
-			fmt.Printf("  %s: %d envs\n", app.App, app.EnvCount)
+			envCount += app.EnvCount
+		}
+		fmt.Fprintf(&b, "apps: %d (%d envs)\n", appCount, envCount)
+	}
+	fmt.Fprintf(&b, "pending approvals: %d\n", payload.PendingApprovals)
+	if payload.Doctor == nil || payload.Doctor.RecordedAt == "" {
+		fmt.Fprintln(&b, "doctor: never run")
+		return b.String()
+	}
+	age := "just now"
+	if recordedAt, err := time.Parse(time.RFC3339Nano, payload.Doctor.RecordedAt); err == nil {
+		elapsed := now.Sub(recordedAt)
+		switch {
+		case elapsed >= 24*time.Hour:
+			age = fmt.Sprintf("%dd ago", int(elapsed.Hours()/24))
+		case elapsed >= time.Hour:
+			age = fmt.Sprintf("%dh ago", int(elapsed.Hours()))
+		case elapsed >= time.Minute:
+			age = fmt.Sprintf("%dm ago", int(elapsed.Minutes()))
 		}
 	}
-	fmt.Printf("pending approvals: %d\n", payload.PendingApprovals)
+	fmt.Fprintf(&b, "doctor: %s (%s)\n", payload.Doctor.Status, age)
+	return b.String()
 }
 
 func readBoxStatus(runner sshRunner, server string) (boxStatusPayload, error) {
@@ -133,14 +163,17 @@ func readBoxStatus(runner sshRunner, server string) (boxStatusPayload, error) {
 
 	payload.Disk = versionPayload.Disk
 	payload.Apps = versionPayload.Apps
+	if payload.Apps == nil {
+		payload.Apps = []boxStatusApp{}
+	}
 	payload.PendingApprovals = versionPayload.PendingApprovals
+	payload.Doctor = versionPayload.Doctor
 	return payload, nil
 }
 
-// readBoxVersion probes the helper version. A box provisioned before the
-// version/update verbs existed fails in one of two shapes — sudoers denies
-// the verb, or an old helper rejects it as usage — and both mean the same
-// thing: converge once with `ship box setup`, the day-0 and recovery path.
+// readBoxVersion probes the helper version. A box whose sudoers fragment
+// denies the verb has never completed `ship box setup` — map that shape to
+// the day-0 recovery path instead of surfacing a raw sudo error.
 func readBoxVersion(runner sshRunner, server string) (boxVersionPayload, error) {
 	return readBoxVersionCommand(runner, server, serverVersionCommand(true))
 }
@@ -157,9 +190,6 @@ func readBoxVersionCommand(runner sshRunner, server, command string) (boxVersion
 			return boxVersionPayload{}, outcome.TransportCoded
 		}
 		if outcome.RemoteCoded != nil {
-			if outcome.RemoteCoded.Code() == errcat.CodeUsageError {
-				return boxVersionPayload{}, errcat.New(errcat.CodeBoxSetupRequired, errcat.Fields{"server": server})
-			}
 			writeRemoteStderr(outcome)
 			return boxVersionPayload{}, outcome.RemoteCoded
 		}
@@ -416,21 +446,52 @@ func CmdBoxDoctor(server string, jsonFlag bool) {
 	fmt.Print(stdout)
 }
 
-func CmdBoxNotify(server, url string, remove bool) {
+func CmdBoxNotify(server, url string, remove, jsonFlag bool) {
 	if !config.ValidateBoxHost(server) {
 		utils.DieError(invalidBoxTargetError(server, "ship box notify"), 2)
-	}
-	if remove && strings.TrimSpace(url) != "" {
-		utils.DieError(errcat.New(errcat.CodeUsageError, errcat.Fields{
-			"detail":  "--rm cannot be combined with a webhook URL",
-			"command": "ship box notify <box> --rm",
-		}), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
 		utils.DieError(err, 1)
 	}
 	defer runner.Close()
+
+	stdout, err := runBoxNotify(runner, server, url, remove, jsonFlag)
+	if err != nil {
+		if errcat.Is(err, errcat.CodeUsageError) {
+			utils.DieError(err, 2)
+		}
+		utils.DieError(err, 1)
+	}
+	fmt.Print(stdout)
+}
+
+func runBoxNotify(runner sshRunner, server, url string, remove, jsonFlag bool) (string, error) {
+	if remove && strings.TrimSpace(url) != "" {
+		return "", errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  "--rm cannot be combined with a webhook URL",
+			"command": "ship box notify <box> --rm",
+		})
+	}
+	if jsonFlag && (remove || strings.TrimSpace(url) != "") {
+		return "", errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  "--json is only valid when reading box notify",
+			"command": "ship box notify <box> --json",
+		})
+	}
+	if jsonFlag {
+		payload, err := readBoxConfig(runner, server)
+		if err != nil {
+			return "", err
+		}
+		data, err := json.Marshal(struct {
+			URL string `json:"url"`
+		}{URL: payload.Config["notify.url"].Value})
+		if err != nil {
+			return "", err
+		}
+		return string(data) + "\n", nil
+	}
 
 	command := serverBoxNotifyGetCommand()
 	if remove {
@@ -442,19 +503,22 @@ func CmdBoxNotify(server, url string, remove bool) {
 	if err != nil || code != 0 {
 		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
 		if outcome.TransportCoded != nil {
-			utils.DieError(outcome.TransportCoded, 1)
+			return "", outcome.TransportCoded
 		}
 		if outcome.RemoteCoded != nil {
 			writeRemoteStderr(outcome)
-			utils.DieError(outcome.RemoteCoded, 1)
+			return "", outcome.RemoteCoded
 		}
 		detail := outcome.Detail
 		if detail == "" {
 			detail = "box notify failed"
 		}
-		utils.DieError(operationError(detail, "ship box notify "+server), 1)
+		return "", operationError(detail, "ship box notify "+server)
 	}
-	fmt.Print(stdout)
+	if strings.TrimSpace(stderr) != "" {
+		fmt.Fprint(os.Stderr, stderr)
+	}
+	return stdout, nil
 }
 
 type boxConfigValue struct {
@@ -522,23 +586,34 @@ func CmdBoxConfigMutation(server, command, remediation string) {
 		utils.DieError(err, 1)
 	}
 	defer runner.Close()
+	stdout, err := runBoxConfigMutation(runner, server, command, remediation)
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	fmt.Print(stdout)
+}
+
+func runBoxConfigMutation(runner sshRunner, server, command, remediation string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
 		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
 		if outcome.TransportCoded != nil {
-			utils.DieError(outcome.TransportCoded, 1)
+			return "", outcome.TransportCoded
 		}
 		if outcome.RemoteCoded != nil {
 			writeRemoteStderr(outcome)
-			utils.DieError(outcome.RemoteCoded, 1)
+			return "", outcome.RemoteCoded
 		}
 		detail := outcome.Detail
 		if detail == "" {
 			detail = "box config failed"
 		}
-		utils.DieError(operationError(detail, remediation), 1)
+		return "", operationError(detail, remediation)
 	}
-	fmt.Print(stdout)
+	if strings.TrimSpace(stderr) != "" {
+		fmt.Fprint(os.Stderr, stderr)
+	}
+	return stdout, nil
 }
 
 func readBoxConfig(runner sshRunner, server string) (boxConfigPayload, error) {

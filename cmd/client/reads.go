@@ -197,7 +197,10 @@ func renderWhy(entry whyJournalEntry, read readContext) string {
 func whyRemediation(entry whyJournalEntry) string {
 	switch entry.Outcome {
 	case "aborted_release":
-		return "fix the release command in ship.toml, then ship"
+		if entry.FailingStep == "release" {
+			return "fix the release command in ship.toml, then ship"
+		}
+		return "ship"
 	case "aborted_probe":
 		return "fix the process port or probe path in ship.toml, then ship"
 	default:

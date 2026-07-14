@@ -1,13 +1,39 @@
 package helper
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fprl/ship/internal/errcat"
 )
+
+func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
+	startedAt := time.Date(2026, time.July, 14, 10, 0, 0, 0, time.UTC)
+	entry, _ := deployJournalFailureEntry("api", "prod", "old111", "new222", deployIdentity{}, startedAt, errors.New("corrupt upload tar"))
+	if entry.FailingStep != "apply" || entry.Outcome != "aborted_release" || entry.StderrTail != "corrupt upload tar" {
+		t.Fatalf("unwrapped journal entry = %+v", entry)
+	}
+
+	for _, tt := range []struct {
+		step    string
+		outcome string
+	}{
+		{step: "build", outcome: "aborted_build"},
+		{step: "probe", outcome: "aborted_probe"},
+		{step: "release", outcome: "aborted_release"},
+	} {
+		t.Run(tt.step, func(t *testing.T) {
+			entry, _ := deployJournalFailureEntry("api", "prod", "old111", "new222", deployIdentity{}, startedAt, newJournalStepError(tt.step, errors.New(tt.step+" failed"), nil, nil))
+			if entry.FailingStep != tt.step || entry.Outcome != tt.outcome {
+				t.Fatalf("wrapped journal entry = %+v", entry)
+			}
+		})
+	}
+}
 
 func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {
 	setupJournalHostTest(t)

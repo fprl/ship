@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/fprl/ship/internal/store"
@@ -25,13 +27,19 @@ type boxStatusSummary struct {
 		Status   string `json:"status"`
 		Evidence string `json:"evidence"`
 	} `json:"disk"`
-	Apps             []boxStatusAppSummary `json:"apps"`
-	PendingApprovals int                   `json:"pending_approvals"`
+	Apps             []boxStatusAppSummary   `json:"apps"`
+	PendingApprovals int                     `json:"pending_approvals"`
+	Doctor           *boxStatusDoctorSummary `json:"doctor,omitempty"`
 }
 
 type boxStatusAppSummary struct {
 	App      string `json:"app"`
 	EnvCount int    `json:"env_count"`
+}
+
+type boxStatusDoctorSummary struct {
+	Status     string `json:"status"`
+	RecordedAt string `json:"recorded_at"`
 }
 
 func (c versionHelperCmd) BeforeApply() error { return requireRoot() }
@@ -45,18 +53,15 @@ func (c versionHelperCmd) Run() error {
 		fmt.Println(version.Version)
 		return nil
 	}
-	recorded := ""
 	lastClient := ""
 	if hostFile, err := store.Default().ReadHost(); err == nil {
-		recorded = strings.TrimSpace(hostFile.Meta.ShipVersion)
 		lastClient = strings.TrimSpace(hostFile.Meta.LastClientVersion)
 	}
 	payload := struct {
-		Version               string `json:"version"`
-		RecordedClientVersion string `json:"recorded_client_version"`
-		LastClientVersion     string `json:"last_client_version"`
-		Architecture          string `json:"architecture"`
-	}{Version: version.Version, RecordedClientVersion: recorded, LastClientVersion: lastClient, Architecture: runtime.GOARCH}
+		Version           string `json:"version"`
+		LastClientVersion string `json:"last_client_version"`
+		Architecture      string `json:"architecture"`
+	}{Version: version.Version, LastClientVersion: lastClient, Architecture: runtime.GOARCH}
 	if !c.Summary {
 		return json.NewEncoder(os.Stdout).Encode(payload)
 	}
@@ -65,31 +70,37 @@ func (c versionHelperCmd) Run() error {
 		utils.DieError(err, 1)
 	}
 	return json.NewEncoder(os.Stdout).Encode(struct {
-		Version               string `json:"version"`
-		RecordedClientVersion string `json:"recorded_client_version"`
-		LastClientVersion     string `json:"last_client_version"`
-		Architecture          string `json:"architecture"`
-		Disk                  struct {
+		Version           string `json:"version"`
+		LastClientVersion string `json:"last_client_version"`
+		Architecture      string `json:"architecture"`
+		Disk              struct {
 			Status   string `json:"status"`
 			Evidence string `json:"evidence"`
 		} `json:"disk"`
-		Apps             []boxStatusAppSummary `json:"apps"`
-		PendingApprovals int                   `json:"pending_approvals"`
-	}{Version: payload.Version, RecordedClientVersion: payload.RecordedClientVersion, LastClientVersion: payload.LastClientVersion, Architecture: payload.Architecture, Disk: summary.Disk, Apps: summary.Apps, PendingApprovals: summary.PendingApprovals})
+		Apps             []boxStatusAppSummary   `json:"apps"`
+		PendingApprovals int                     `json:"pending_approvals"`
+		Doctor           *boxStatusDoctorSummary `json:"doctor,omitempty"`
+	}{Version: payload.Version, LastClientVersion: payload.LastClientVersion, Architecture: payload.Architecture, Disk: summary.Disk, Apps: summary.Apps, PendingApprovals: summary.PendingApprovals, Doctor: summary.Doctor})
 }
 
 func readBoxStatusSummary() (boxStatusSummary, error) {
-	var summary boxStatusSummary
-	apps, err := appListStatuses()
+	summary := boxStatusSummary{Apps: []boxStatusAppSummary{}}
+	paths, err := filepath.Glob(identityGlob())
 	if err != nil {
 		return summary, err
 	}
-	for _, app := range apps {
-		if len(summary.Apps) == 0 || summary.Apps[len(summary.Apps)-1].App != app.App {
-			summary.Apps = append(summary.Apps, boxStatusAppSummary{App: app.App})
+	appEnvCounts := make(map[string]int)
+	for _, path := range paths {
+		file, err := readEnvIdentityFile(path)
+		if err != nil {
+			continue
 		}
-		summary.Apps[len(summary.Apps)-1].EnvCount++
+		appEnvCounts[file.App]++
 	}
+	for app, envCount := range appEnvCounts {
+		summary.Apps = append(summary.Apps, boxStatusAppSummary{App: app, EnvCount: envCount})
+	}
+	sort.Slice(summary.Apps, func(i, j int) bool { return summary.Apps[i].App < summary.Apps[j].App })
 	disk := doctorDiskSpaceCheck(diskUsageForPath, "")
 	summary.Disk.Status = disk.Status
 	summary.Disk.Evidence = disk.Evidence
@@ -98,5 +109,15 @@ func readBoxStatusSummary() (boxStatusSummary, error) {
 		return summary, err
 	}
 	summary.PendingApprovals = len(pending)
+	doctor, err := store.Default().ReadDoctor()
+	if err == nil {
+		status := doctorStatusDegraded
+		if doctorChecksOK(doctor.Checks) {
+			status = doctorStatusOK
+		}
+		summary.Doctor = &boxStatusDoctorSummary{Status: status, RecordedAt: doctor.RecordedAt}
+	} else if !os.IsNotExist(err) {
+		return summary, err
+	}
 	return summary, nil
 }

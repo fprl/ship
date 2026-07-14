@@ -113,7 +113,7 @@ type initCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
 	Name   string `name:"name" help:"App name. Defaults to package.json name or directory name."`
 	Box    string `name:"box" help:"Box host."`
-	Host   string `name:"host" help:"Route host. Defaults to <app>.example.com."`
+	Host   string `name:"host" help:"Optional route host."`
 }
 
 func (c initCmd) Run() error {
@@ -486,6 +486,7 @@ type boxNotifyCmd struct {
 	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	URL    string `arg:"" optional:"" name:"url" help:"Webhook URL to set."`
 	Remove bool   `name:"rm" help:"Clear the box webhook."`
+	JSON   bool   `name:"json" help:"Emit structured JSON when reading the webhook."`
 }
 
 type boxConfigClientCmd struct {
@@ -575,7 +576,7 @@ func (c boxNotifyCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdBoxNotify(target, c.URL, c.Remove)
+	client.CmdBoxNotify(target, c.URL, c.Remove, c.JSON)
 	return nil
 }
 

@@ -841,7 +841,8 @@ event fires exactly once, to exactly one URL.
 Surface:
 
 ```
-ship box notify <box>            print the box webhook (unset: says so)
+ship box notify <box> [--json]   print the box webhook (unset: says so;
+                                 --json: {"url":""} shape, read only)
 ship box notify <box> <url>      set it
 ship box notify <box> --rm       clear it
 ```
@@ -962,8 +963,10 @@ discipline, ship-grade authorization.
 ```
 ship box config <box> [--json]          effective config: value, default,
                                         source (default|set), per key
-ship box config <box> set <key> <val>   validate → authorize → journal →
-                                        apply
+ship box config <box> set <key> <val>   validate → authorize → apply →
+                                        journal (a journal entry records
+                                        a change that happened; a failed
+                                        append warns, never lies)
 ship box config <box> unset <key>       back to the default
 ```
 
@@ -972,17 +975,20 @@ ship box config <box> unset <key>       back to the default
   **unknown keys refuse** (the error lists valid keys). A version
   field for future migration.
 - **The schema declares, per key**: type, default, write role
-  (owner/shipper), whether out-of-role requests mint an approval
-  (§13), and an apply mode — `none` (value is read on next use) or
-  `converge` (side effects; reuses the bounded-converge machinery of
-  ADR-0011). Authorization lives **in the schema**, which is what
+  (owner/shipper), and whether out-of-role requests mint an approval
+  (§13). Authorization lives **in the schema**, which is what
   makes a generic setter safe here when it would be a hole anywhere
   else — every key has a declared owner, or it doesn't exist.
+- **Apply mode stays a spec-level concept, not a schema field**: every
+  current key is read on next use. The first `converge` key (side
+  effects; reuses the bounded-converge machinery of ADR-0011 — future:
+  `harden.tailscale`, `backup.*` per RFD-0007) adds the schema field
+  together with the plumbing that reads it. A declared-but-unread
+  policy field is a silent no-op trap — a key marked converge would
+  validate, journal, and then quietly never converge (ADR-0017).
 - **Initial keys** (deliberately few): `notify.url` (owner-set,
-  apply=none) — `ship box notify` becomes sugar over it, §17 semantics
-  unchanged. No converge-mode key exists yet, so no converge plumbing
-  is built yet — the schema field reserves the concept (future:
-  `harden.tailscale`, `backup.*` per RFD-0007).
+  read-on-next-use) — `ship box notify` becomes sugar over it, §17
+  semantics unchanged.
 - **What this is not**: app config. `ship.toml` in the repo stays the
   only app-level config — versioned, PR-reviewed, next to the code it
   configures. The box config holds box-scoped operational settings

@@ -180,6 +180,48 @@ func TestForkAppDataFailureBeforeSwapLeavesPreviewDataIntact(t *testing.T) {
 	}
 }
 
+func TestResetAppDataRestartsContainersStoppedBeforeStopFailure(t *testing.T) {
+	setupDataHostTest(t)
+	app := "dataapi"
+	env := "feature-data-abcd"
+	writeDataPreviewIdentity(t, app, env, "feature/data")
+	bin := strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))[0]
+	logPath := filepath.Join(t.TempDir(), "podman.log")
+	t.Setenv("PODMAN_LOG", logPath)
+	writeFakeCommand(t, bin, "podman", `#!/usr/bin/env sh
+printf '%s %s\n' "$1" "$2" >> "$PODMAN_LOG"
+case "$1" in
+  ps)
+    printf '%s\n' '[{"Names":["web-a"],"State":"running","Labels":{"ship.process":"web"}},{"Names":["web-b"],"State":"running","Labels":{"ship.process":"web"}}]'
+    exit 0
+    ;;
+  stop)
+    if [ "$2" = "web-b" ]; then
+      echo "forced stop failure" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  start) exit 0 ;;
+esac
+exit 0
+`)
+
+	err := resetAppData(app, env)
+	if err == nil || !strings.Contains(err.Error(), "stop web-b") {
+		t.Fatalf("reset data error = %v", err)
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"stop web-a", "stop web-b", "start web-a"} {
+		if !strings.Contains(string(log), want) {
+			t.Fatalf("podman calls missing %q:\n%s", want, log)
+		}
+	}
+}
+
 func setupDataHostTest(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()

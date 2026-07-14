@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -140,6 +141,15 @@ func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
 	}
 	assertContains(t, status.stdout, "helper: "+oldVersion)
 	assertContains(t, status.stdout, "last client: "+currentVersion)
+	// The smoke container is shared across subtests, so the box carries
+	// however many apps earlier subtests deployed — assert the count-line
+	// shape, not a count.
+	if !regexp.MustCompile(`(?m)^apps: \d+( \(\d+ envs\))?$`).MatchString(status.stdout) {
+		t.Fatalf("box status should print an app count line:\n%s", status.stdout)
+	}
+	if strings.Contains(status.stdout, "versionapi:") {
+		t.Fatalf("box status should print an app count, not an app table:\n%s", status.stdout)
+	}
 	assertContains(t, status.stdout, "next: ship box update fake-vps")
 	doctor := e.runCommand(t, e.repoRoot, clientEnv, nil, clientBinary, "box", "doctor", "fake-vps", "--json")
 	if doctor.err == nil {
@@ -1556,16 +1566,21 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 	previewURL := assertOnlyURL(t, e.ship(t, app, nil))
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "dataapi", "feature/data")
 
-	forkOut := e.ship(t, app, nil, "data", "fork")
+	forkOut := e.runShip(t, app, nil, "data", "fork")
+	if forkOut.err != nil {
+		t.Fatalf("data fork failed: %v\nstdout:\n%s\nstderr:\n%s", forkOut.err, forkOut.stdout, forkOut.stderr)
+	}
+	if forkOut.stdout != previewURL+"\n" {
+		t.Fatalf("data fork stdout = %q, want only preview URL", forkOut.stdout)
+	}
 	for _, want := range []string{
 		"Forked data for Preview feature/data\n",
 		"app.db ",
 		"(sqlite)",
 		"uploads/file.txt",
-		"preview: " + previewURL + "\n",
 		"note: Production data, including any PII, now exists in this less-guarded Preview.\n",
 	} {
-		assertContains(t, forkOut, want)
+		assertContains(t, forkOut.stderr, want)
 	}
 	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/data-count")); got != "3" {
 		t.Fatalf("preview row count after fork = %q, want 3", got)
@@ -1617,9 +1632,14 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 		t.Fatalf("prod data changed after refresh:\nbefore:\n%s\nafter:\n%s", prodHash, got)
 	}
 
-	rmOut := e.ship(t, app, nil, "data", "rm")
-	assertContains(t, rmOut, "Reset data for Preview feature/data\n")
-	assertContains(t, rmOut, "preview: "+previewURL+"\n")
+	rmOut := e.runShip(t, app, nil, "data", "rm")
+	if rmOut.err != nil {
+		t.Fatalf("data rm failed: %v\nstdout:\n%s\nstderr:\n%s", rmOut.err, rmOut.stdout, rmOut.stderr)
+	}
+	if rmOut.stdout != previewURL+"\n" {
+		t.Fatalf("data rm stdout = %q, want only preview URL", rmOut.stdout)
+	}
+	assertContains(t, rmOut.stderr, "Reset data for Preview feature/data\n")
 	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/data-count")); got != "missing" {
 		t.Fatalf("preview row count after data rm = %q, want missing", got)
 	}
@@ -1702,9 +1722,14 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 	e.mustRun(t, uploadsOnly, nil, "git", "add", ".")
 	e.mustRun(t, uploadsOnly, nil, "git", "commit", "-q", "-m", "uploads preview")
 	uploadsURL := assertOnlyURL(t, e.ship(t, uploadsOnly, nil))
-	noSQLiteOut := e.ship(t, uploadsOnly, nil, "data", "fork")
-	assertContains(t, noSQLiteOut, "note: No SQLite files found; copied non-database files from /data only.\n")
-	assertContains(t, noSQLiteOut, "preview: "+uploadsURL+"\n")
+	noSQLiteOut := e.runShip(t, uploadsOnly, nil, "data", "fork")
+	if noSQLiteOut.err != nil {
+		t.Fatalf("uploads-only data fork failed: %v\nstdout:\n%s\nstderr:\n%s", noSQLiteOut.err, noSQLiteOut.stdout, noSQLiteOut.stderr)
+	}
+	if noSQLiteOut.stdout != uploadsURL+"\n" {
+		t.Fatalf("uploads-only data fork stdout = %q, want only preview URL", noSQLiteOut.stdout)
+	}
+	assertContains(t, noSQLiteOut.stderr, "note: No SQLite files found; copied non-database files from /data only.\n")
 	if got := strings.TrimSpace(e.urlBody(t, uploadsURL, "/upload-file")); got != "only-upload" {
 		t.Fatalf("uploads-only forked file = %q, want only-upload", got)
 	}

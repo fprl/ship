@@ -100,7 +100,7 @@ Secret scoping:
 ### `init`
 - Purpose: Create a ship.toml manifest.
 - Usage: `ship init [--name <app>] [--box <box>] [--host <host>] [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--name <app>`: App name. Defaults to package.json name or the directory name; `--box <box>` default `203.0.113.7`: Box host written to the manifest; `--host <host>`: Route host. Defaults to <app>.example.com.
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--name <app>`: App name. Defaults to package.json name or the directory name; `--box <box>` default `203.0.113.7`: Box host written to the manifest; `--host <host>`: Optional route host. Omitted: the manifest has no [routes] and the first deploy prints the automatic sslip.io URL.
 - Notes: Never overwrites existing files; kept files are reported on stdout.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `usage_error`, `manifest_invalid`
@@ -156,7 +156,7 @@ Secret scoping:
 - Purpose: Fork Production /data into the current branch Preview.
 - Usage: `ship data fork [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest.
-- Notes: Run from a Preview branch whose environment already exists. Production branches are refused. Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command. SQLite files are copied on the box with `VACUUM INTO`; other files copy with `cp -a` using reflink when supported. The client never receives data contents.
+- Notes: Run from a Preview branch whose environment already exists. Production branches are refused. Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command. SQLite files are copied on the box with `VACUUM INTO`; other files copy with `cp -a` using reflink when supported. The client never receives data contents. stdout is exactly the Preview URL; the fork report and PII note are stderr. If the fork landed but the URL lookup fails, exit stays 0 with a stderr warning and `next: ship status`.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `data_fork_on_production`, `no_preview_env`, `approval_required`, `host_key_changed`, `missing_tool`, `operation_failed`
 
@@ -164,7 +164,7 @@ Secret scoping:
 - Purpose: Reset the current branch Preview /data to empty.
 - Usage: `ship data rm [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest.
-- Notes: Run from a Preview branch whose environment already exists. Production branches are refused. Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command.
+- Notes: Run from a Preview branch whose environment already exists. Production branches are refused. Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command. stdout is exactly the Preview URL; the reset confirmation is stderr. If the reset landed but the URL lookup fails, exit stays 0 with a stderr warning and `next: ship status`.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `data_fork_on_production`, `no_preview_env`, `approval_required`, `host_key_changed`, `operation_failed`
 
@@ -225,7 +225,7 @@ Secret scoping:
 - Purpose: Read one secret value from stdin or bulk-import dotenv KEY=VALUE pairs.
 - Usage: `ship secret set (<KEY>|--from <path> [--replace]) [--preview|--branch <name>] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `KEY`: Environment variable name, matching ^[A-Za-z_][A-Za-z0-9_]*$; `--preview`: Store the shared Preview value; `--branch <name>`: Store the value for one branch Preview environment; `--from <path>`: Bulk import dotenv KEY=VALUE pairs from a file. Cannot be combined with KEY; `--replace`: With --from, make the file authoritative for the selected scope and remove omitted keys.
-- Notes: Single-value mode reads the value from stdin. Bulk mode reads values from the file path; values are never echoed, placed in argv, or written into the repo. Without --preview or --branch, the current branch selects the secret scope: Production on the production branch, otherwise that branch's Preview. Bulk dotenv rules: blank lines and full-line # comments are ignored; an `export ` prefix is accepted; unquoted values are trimmed; matching single or double quotes around the whole value are stripped; inline # is treated as value text. Bulk merge is the default. `--replace` removes scope keys absent from the file and reports removed key names on stderr. Bulk stdout is empty.
+- Notes: Single-value mode reads the value from stdin. Bulk mode reads values from the file path; values are never echoed, placed in argv, or written into the repo. Values keep exactly one trailing newline if piped with one; embedded newlines are refused (`secret_invalid`) because the container env-file format cannot carry them — encode multi-line material (for example base64) and decode it in the app. Without --preview or --branch, the current branch selects the secret scope: Production on the production branch, otherwise that branch's Preview. Bulk dotenv rules: blank lines and full-line # comments are ignored; an `export ` prefix is accepted; unquoted values are trimmed; matching single or double quotes around the whole value are stripped; inline # is treated as value text. Bulk merge is the default. `--replace` removes scope keys absent from the file and reports removed key names on stderr. Bulk stdout is empty.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `usage_error`, `invalid_secret_key`, `dotenv_malformed`, `secret_scope_conflict`, `unknown_preview_branch`, `host_key_changed`, `operation_failed`
 
@@ -287,11 +287,11 @@ Secret scoping:
 - Common error codes: `approval_expired`, `member_unknown`, `role_denied`, `host_key_changed`, `operation_failed`
 
 ### `box status`
-- Purpose: Show helper version, disk use, apps, and pending approvals for one box.
+- Purpose: Show helper version, disk use, apps, pending approvals, and the last doctor result for one box.
 - Usage: `ship box status [<box>] [--json]`
-- Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit {helper_version,client_version,last_client_version,update_available,helper_ahead,disk:{status,evidence},apps:[{app,env_count}],pending_approvals}.
-- `--json` stdout schema: `{"helper_version":"v0.4.0","client_version":"v0.4.1","last_client_version":"v0.4.1","update_available":true,"helper_ahead":false,"disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"pending_approvals":1}`
-- Notes: Any member may read. When the helper is behind, text output includes `next: ship box update <box>`.
+- Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit {helper_version,client_version,last_client_version,update_available,helper_ahead,disk:{status,evidence},apps:[{app,env_count}],pending_approvals,doctor:{status,recorded_at}}. doctor is omitted until the daily timer records a run.
+- `--json` stdout schema: `{"helper_version":"v0.4.0","client_version":"v0.4.1","last_client_version":"v0.4.1","update_available":true,"helper_ahead":false,"disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"pending_approvals":1,"doctor":{"status":"ok","recorded_at":"2026-07-14T06:00:00Z"}}`
+- Notes: Any member may read. When the helper is behind, text output includes `next: ship box update <box>`. Text output prints an app count (`apps: 2 (3 envs)`) — the full table is `ship box apps` — and ends with the last doctor-timer result and its age (`doctor: ok (2h ago)`, or `doctor: never run`).
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_target_required`, `invalid_box_target`, `ssh_unreachable`, `box_not_initialized`, `host_key_changed`, `operation_failed`
 
@@ -338,8 +338,8 @@ Secret scoping:
 
 ### `box notify`
 - Purpose: Read, set, or clear the box notification webhook.
-- Usage: `ship box notify <box> [url] [--rm]`
-- Arguments and flags: `box`: Box host. Omit only for a read in an app directory, which uses ship.toml box; `url`: Webhook URL to set. Omit to print the current URL; `--rm`: Clear the box webhook.
+- Usage: `ship box notify <box> [url] [--rm] [--json]`
+- Arguments and flags: `box`: Box host. Omit only for a read in an app directory, which uses ship.toml box; `url`: Webhook URL to set. Omit to print the current URL; `--rm`: Clear the box webhook; `--json`: Read only: emit {"url":"..."} with an empty string when unset. Rejected on set and --rm.
 - Notes: Any member may read. Only owners may set or clear; other roles receive approval_required and retry after ship approve <id>. This is sugar over box config key notify.url; both paths share one value and journal shape. When unset, the command prints an unset notice and next: ship box notify <box> <url>.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `usage_error`, `box_config_value_invalid`, `box_target_required`, `invalid_box_target`, `approval_required`, `host_key_changed`, `operation_failed`

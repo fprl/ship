@@ -99,10 +99,11 @@ git switch -c feature/billing
 ship
 ```
 
-The stdout URL is the Preview for that branch:
+The stdout URL is the Preview for that branch — a capability URL that
+works as printed:
 
 ```text
-https://feature-billing-x7q2.203-0-113-7.sslip.io
+https://feature-billing-x7q2.203-0-113-7.sslip.io/?ship=<token>
 ```
 
 Every Preview is protected by a capability URL printed by `ship`. CI and

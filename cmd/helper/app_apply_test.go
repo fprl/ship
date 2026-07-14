@@ -3,6 +3,7 @@ package helper
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,6 +165,159 @@ func TestCaddyStageActionErrorPassesThroughOtherErrors(t *testing.T) {
 	original := errors.New("unrelated failure")
 	if got := caddyStageActionError(original, "deploy", "/etc/caddy/conf.d/api.production.caddy"); got != original {
 		t.Fatalf("pass-through error = %v, want original", got)
+	}
+}
+
+func TestRecordDeployFailureKeepsProbeErrorWhenJournalAppendFails(t *testing.T) {
+	t.Setenv("SHIP_APPS_DIR", t.TempDir())
+	journalPath := identity.DeployJournalFile("api", "prod")
+	if err := os.MkdirAll(journalPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	probeErr := newJournalStepError("probe", errors.New("health check failed"), nil, nil)
+	cmd := appApplyCmd{App: "api", Env: "prod", SHA: "abc1234"}
+	var got error
+	stderr := captureStderr(t, func() {
+		got = cmd.recordDeployFailure(nil, "", time.Now().UTC(), probeErr)
+	})
+	if got != probeErr {
+		t.Fatalf("returned error = %v, want original probe error %v", got, probeErr)
+	}
+	if !errcat.Is(applyExitError(got), errcat.CodeProbeFailed) {
+		t.Fatalf("apply exit error = %v, want probe_failed", applyExitError(got))
+	}
+	if !strings.Contains(stderr, "warning: failed to write deploy journal:") || !strings.Contains(stderr, "run ship box doctor") {
+		t.Fatalf("journal append warning = %q", stderr)
+	}
+}
+
+func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *testing.T) {
+	setupJournalHostTest(t)
+	previous := deployJournalEntry{
+		Outcome:          "aborted_probe",
+		StartedAt:        "2026-07-14T09:59:00Z",
+		EndedAt:          "2026-07-14T09:59:01Z",
+		AttemptedRelease: "old111",
+		FailingStep:      "probe",
+	}
+	if err := appendDeployJournalEntry("api", "prod", previous, nil); err != nil {
+		t.Fatal(err)
+	}
+	sink := newNotifyTestSink(t)
+	oldAppend := appendSanitizedDeployJournal
+	oldPrune := bestEffortPruneAfterDeploy
+	appendSanitizedDeployJournal = func(string, string, deployJournalEntry) error {
+		return errors.New("journal disk is read-only")
+	}
+	bestEffortPruneAfterDeploy = func(string, string, string, deployJournalEntry) string {
+		return "pruned 0 old images"
+	}
+	t.Cleanup(func() {
+		appendSanitizedDeployJournal = oldAppend
+		bestEffortPruneAfterDeploy = oldPrune
+	})
+
+	cmd := appApplyCmd{App: "api", Env: "prod", SHA: "new222"}
+	app := &config.AppContext{Notify: sink.URL, ProductionBranch: "main"}
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureApplyStdout(t, func() {
+			if err := cmd.completeCommittedDeploy(app, "old111", time.Now().UTC(), applyReleaseResult{}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	})
+	if !strings.Contains(stdout, "Deployed api (prod) at new222\n") {
+		t.Fatalf("stdout = %q", stdout)
+	}
+	if !strings.Contains(stderr, "warning: deployed but failed to write deploy journal: journal disk is read-only; run ship box doctor\n") {
+		t.Fatalf("stderr = %q", stderr)
+	}
+	entries, err := readDeployJournalEntries("api", "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Outcome != "aborted_probe" {
+		t.Fatalf("journal entries = %+v, want only prior failure", entries)
+	}
+	payload := sink.singlePayload(t)
+	assertNotifyField(t, payload, "event", notifyEventDeployRecovered)
+}
+
+func captureApplyStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestApplyContainerRestartsContainersStoppedBeforeStopFailure(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(root, "podman.log")
+	t.Setenv("PODMAN_LOG", logPath)
+	writeFakeCommand(t, bin, "id", `#!/usr/bin/env sh
+if [ "$1" = "-u" ] || [ "$1" = "-g" ]; then
+  printf '1000\n'
+  exit 0
+fi
+exit 1
+`)
+	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
+	writeFakeCommand(t, bin, "podman", `#!/usr/bin/env sh
+printf '%s %s\n' "$1" "$2" >> "$PODMAN_LOG"
+case "$1" in
+  build|start) exit 0 ;;
+  stop)
+    if [ "$2" = "worker-b" ]; then
+      echo "forced stop failure" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+esac
+exit 0
+`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	cmd := appApplyCmd{App: "api", Env: "prod", SHA: "abc1234"}
+	_, err := cmd.applyContainer(t.TempDir(), &config.AppContext{
+		Processes: map[string]config.Process{"worker": {Command: "run worker"}},
+	}, []containerEntry{
+		{Names: []string{"worker-a"}, Labels: map[string]string{"ship.process": "worker"}},
+		{Names: []string{"worker-b"}, Labels: map[string]string{"ship.process": "worker"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "stop worker-b") {
+		t.Fatalf("apply container error = %v", err)
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"stop worker-a", "stop worker-b", "start worker-a"} {
+		if !strings.Contains(string(log), want) {
+			t.Fatalf("podman calls missing %q:\n%s", want, log)
+		}
 	}
 }
 

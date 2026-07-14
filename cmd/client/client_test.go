@@ -1091,6 +1091,29 @@ func captureClientStdout(t *testing.T, fn func()) string {
 	return string(data)
 }
 
+func captureClientStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() {
+		os.Stderr = oldStderr
+	}()
+
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", false)
 	actor := testDeployIdentity()
@@ -1372,6 +1395,31 @@ func TestRenderWhyReleaseFailure(t *testing.T) {
 	}
 }
 
+func TestRenderWhyApplyFailureDoesNotPrescribeReleaseCommand(t *testing.T) {
+	read := readContext{
+		AppContext: &config.AppContext{ProductionBranch: "main"},
+		Address:    readAddress{ProductionBranch: true},
+	}
+	entry := whyJournalEntry{
+		Outcome:          "aborted_release",
+		EndedAt:          "2026-07-07T10:00:01Z",
+		PreviousRelease:  "aaa111",
+		AttemptedRelease: "bbb222",
+		FailingStep:      "apply",
+		StderrTail:       "source tar is corrupt",
+		Identity:         testDeployIdentity(),
+	}
+	got := renderWhy(entry, read)
+	for _, want := range []string{"failing step: apply\n", "probable cause: deploy failed before traffic switched.\n", "source tar is corrupt\n", "next: ship\n"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("why output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "fix the release command") {
+		t.Fatalf("apply failure prescribed release command:\n%s", got)
+	}
+}
+
 func TestRenderWhyProbeFailure(t *testing.T) {
 	read := readContext{
 		AppContext: &config.AppContext{ProductionBranch: "main"},
@@ -1575,7 +1623,7 @@ func TestServerAppDataCommands(t *testing.T) {
 }
 
 func TestRenderDataForkSummaryIncludesStableNotes(t *testing.T) {
-	got := renderDataForkSummary("feature/data", "https://feat.example.com", dataForkSummary{
+	got := renderDataForkSummary("feature/data", dataForkSummary{
 		Files: []dataForkFile{
 			{Path: "uploads/avatar.txt", Size: 11},
 			{Path: "app.db", Size: 8192, SQLite: true},
@@ -1586,7 +1634,6 @@ func TestRenderDataForkSummaryIncludesStableNotes(t *testing.T) {
 		"Forked data for Preview feature/data\n",
 		"  app.db 8192 bytes (sqlite)\n",
 		"  uploads/avatar.txt 11 bytes\n",
-		"preview: https://feat.example.com\n",
 		DataForkPIINote + "\n",
 	} {
 		if !strings.Contains(got, want) {
@@ -1597,11 +1644,39 @@ func TestRenderDataForkSummaryIncludesStableNotes(t *testing.T) {
 		t.Fatalf("SQLite summary should not include no-SQLite note:\n%s", got)
 	}
 
-	noSQLite := renderDataForkSummary("feature/uploads", "https://uploads.example.com", dataForkSummary{
+	noSQLite := renderDataForkSummary("feature/uploads", dataForkSummary{
 		Files: []dataForkFile{{Path: "uploads/avatar.txt", Size: 1}},
 	})
 	if !strings.Contains(noSQLite, DataForkNoSQLiteNote+"\n") {
 		t.Fatalf("no-SQLite summary missing note:\n%s", noSQLite)
+	}
+}
+
+func TestPreviewShareRotateKeepsCapabilityWhenURLLookupFails(t *testing.T) {
+	runner := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
+		serverAppPreviewShareCommand("api", "preview", true): {{stdout: "new-capability\n"}},
+		serverAppListCommand(true):                           {{stderr: "status lookup failed", code: 1}},
+	}}
+	result, err := runPreviewShare(previewShareContext{
+		AppContext: &config.AppContext{AppName: "api", Server: "example.com"},
+		EnvName:    "preview",
+		Runner:     runner,
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Capability != "new-capability" || result.URLLookupErr == nil {
+		t.Fatalf("result = %+v, want new capability and URL lookup failure", result)
+	}
+	stdout, stderr, err := renderPreviewShareOutput(result, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout != "new-capability\n" {
+		t.Fatalf("stdout = %q, want capability", stdout)
+	}
+	if !strings.Contains(stderr, "warning: preview URL lookup failed: ") || !strings.Contains(stderr, "next: ship status\n") {
+		t.Fatalf("stderr = %q", stderr)
 	}
 }
 
@@ -1689,6 +1764,96 @@ type fakeSSHResult struct {
 	stderr string
 	code   int
 	err    error
+}
+
+func TestRunBoxNotifyJSON(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		response string
+		want     string
+	}{
+		{
+			name:     "set URL",
+			response: `{"config":{"notify.url":{"value":"https://ntfy.example/ship","default":"","source":"set"}}}`,
+			want:     "{\"url\":\"https://ntfy.example/ship\"}\n",
+		},
+		{
+			name:     "unset URL",
+			response: `{"config":{"notify.url":{"value":"","default":"","source":"default"}}}`,
+			want:     "{\"url\":\"\"}\n",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeSSHRunner{responses: map[string]string{serverBoxConfigGetCommand(): tt.response}}
+			got, err := runBoxNotify(runner, "example.com", "", false, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("JSON output = %q, want %q", got, tt.want)
+			}
+			if strings.Join(runner.commands, "\n") != serverBoxConfigGetCommand() {
+				t.Fatalf("commands = %v, want box config get", runner.commands)
+			}
+		})
+	}
+}
+
+func TestRunBoxNotifyRejectsJSONMutations(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		url    string
+		remove bool
+	}{
+		{name: "set URL", url: "https://ntfy.example/ship"},
+		{name: "remove", remove: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := runBoxNotify(&fakeSSHRunner{}, "example.com", tt.url, tt.remove, true)
+			if !errcat.Is(err, errcat.CodeUsageError) {
+				t.Fatalf("error = %v, want usage error", err)
+			}
+			for _, want := range []string{"--json is only valid when reading box notify", "ship box notify <box> --json"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error missing %q:\n%v", want, err)
+				}
+			}
+		})
+	}
+}
+
+func TestSuccessfulRemoteStderrIsForwarded(t *testing.T) {
+	stderr := captureClientStderr(t, func() {
+		runner := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
+			"detail":   {{stdout: "detail output", stderr: "warning: detail\n"}},
+			"required": {{stdout: "required output", stderr: "warning: required\n"}},
+		}}
+		if _, err := runSSHDetail(runner, "example.com", "detail"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := runSSHRequired(runner, "example.com", "required", "required failed", "ship status"); err != nil {
+			t.Fatal(err)
+		}
+
+		configRunner := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
+			serverBoxConfigSetCommand("notify.url", "https://ntfy.example/ship"): {{stdout: "configured\n", stderr: "warning: config journal\n"}},
+		}}
+		if _, err := runBoxConfigMutation(configRunner, "example.com", serverBoxConfigSetCommand("notify.url", "https://ntfy.example/ship"), "ship box config example.com set notify.url"); err != nil {
+			t.Fatal(err)
+		}
+
+		notifyRunner := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
+			serverBoxNotifySetCommand("https://ntfy.example/ship"): {{stdout: "configured\n", stderr: "warning: notify journal\n"}},
+		}}
+		if _, err := runBoxNotify(notifyRunner, "example.com", "https://ntfy.example/ship", false, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, want := range []string{"warning: detail\n", "warning: required\n", "warning: config journal\n", "warning: notify journal\n"} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr)
+		}
+	}
 }
 
 func (f *fakeSSHRunner) RunSSH(_ string, command string) (string, string, int, error) {
@@ -1928,13 +2093,13 @@ func TestReadBoxVersionMapsPreUpdateBoxesToSetupRequired(t *testing.T) {
 		t.Fatalf("remediation should name box setup, got %q", coded.Remediation())
 	}
 
-	oldHelper := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
+	usageError := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
 		version: {{stdout: `{"error":{"code":"usage_error","message":"command usage failed","cause":"unexpected argument version","remediation":"ship help"}}`, code: 2}},
 	}}
-	_, err = readBoxVersion(oldHelper, "203.0.113.7")
+	_, err = readBoxVersion(usageError, "203.0.113.7")
 	coded, ok = errcat.As(err)
-	if !ok || coded.Code() != errcat.CodeBoxSetupRequired {
-		t.Fatalf("old-helper usage error should map to box_setup_required, got %v", err)
+	if !ok || coded.Code() != errcat.CodeUsageError {
+		t.Fatalf("a remote usage error should surface as usage_error, got %v", err)
 	}
 
 	healthy := &fakeSSHRunner{responses: map[string]string{
@@ -1949,18 +2114,80 @@ func TestReadBoxVersionMapsPreUpdateBoxesToSetupRequired(t *testing.T) {
 func TestReadBoxStatusUsesVersionSummaryOnly(t *testing.T) {
 	command := serverBoxStatusCommand()
 	runner := &fakeSSHRunner{responses: map[string]string{
-		command: `{"version":"v0.4.1","disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"pending_approvals":1}`,
+		command: `{"version":"v0.4.1","disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"pending_approvals":1,"doctor":{"status":"degraded","recorded_at":"2026-07-14T08:00:00Z"}}`,
 	}}
 
 	payload, err := readBoxStatus(runner, "203.0.113.7")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if payload.Disk.Evidence != "/: used=10.0%" || len(payload.Apps) != 1 || payload.Apps[0] != (boxStatusApp{App: "api", EnvCount: 2}) || payload.PendingApprovals != 1 {
+	if payload.Disk.Evidence != "/: used=10.0%" || len(payload.Apps) != 1 || payload.Apps[0] != (boxStatusApp{App: "api", EnvCount: 2}) || payload.PendingApprovals != 1 || payload.Doctor == nil || payload.Doctor.Status != "degraded" || payload.Doctor.RecordedAt != "2026-07-14T08:00:00Z" {
 		t.Fatalf("summary = %+v", payload)
 	}
 	if len(runner.commands) != 1 || runner.commands[0] != command {
 		t.Fatalf("box status commands = %v, want only %q", runner.commands, command)
+	}
+}
+
+func TestReadBoxStatusKeepsEmptyAppsAsJSONArray(t *testing.T) {
+	runner := &fakeSSHRunner{responses: map[string]string{
+		serverBoxStatusCommand(): `{"version":"v0.4.1","disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":null}`,
+	}}
+	payload, err := readBoxStatus(runner, "203.0.113.7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"apps":[]`) {
+		t.Fatalf("box status JSON = %s, want apps array", data)
+	}
+}
+
+func TestRenderBoxStatusIncludesDoctorAge(t *testing.T) {
+	now := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+	payload := boxStatusPayload{Doctor: &boxStatusDoctor{Status: "ok", RecordedAt: "2026-07-14T08:00:00Z"}}
+
+	out := renderBoxStatus(payload, "203.0.113.7", now)
+	if !strings.Contains(out, "doctor: ok (2h ago)\n") {
+		t.Fatalf("doctor status = %q", out)
+	}
+}
+
+func TestRenderBoxStatusPrintsAppCount(t *testing.T) {
+	payload := boxStatusPayload{Apps: []boxStatusApp{{App: "api", EnvCount: 2}, {App: "web", EnvCount: 1}}}
+	out := renderBoxStatus(payload, "203.0.113.7", time.Now())
+	if !strings.Contains(out, "apps: 2 (3 envs)\n") {
+		t.Fatalf("app count = %q", out)
+	}
+	if strings.Contains(out, "api:") || strings.Contains(out, "web:") {
+		t.Fatalf("status should not include app table:\n%s", out)
+	}
+}
+
+func TestRenderBoxStatusShowsDoctorNeverRun(t *testing.T) {
+	out := renderBoxStatus(boxStatusPayload{}, "203.0.113.7", time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC))
+	if !strings.Contains(out, "doctor: never run\n") {
+		t.Fatalf("doctor status = %q", out)
+	}
+}
+
+func TestBoxStatusPayloadJSONIncludesDoctor(t *testing.T) {
+	payload := boxStatusPayload{Doctor: &boxStatusDoctor{Status: "degraded", RecordedAt: "2026-07-14T08:00:00Z"}}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Doctor *boxStatusDoctor `json:"doctor"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Doctor == nil || *decoded.Doctor != *payload.Doctor {
+		t.Fatalf("doctor JSON = %s", data)
 	}
 }
 

@@ -474,6 +474,9 @@ func runSSHRequired(runner sshRunner, server string, command string, errMsg stri
 		}
 		return "", operationError(errMsg, remediation)
 	}
+	if strings.TrimSpace(stderr) != "" {
+		fmt.Fprint(os.Stderr, stderr)
+	}
 	return stdout, nil
 }
 
@@ -489,6 +492,9 @@ func runSSHDetail(runner sshRunner, server string, command string) (string, erro
 			return "", outcome.RemoteCoded
 		}
 		return "", operationError(outcome.Detail, "ship box doctor")
+	}
+	if strings.TrimSpace(stderr) != "" {
+		fmt.Fprint(os.Stderr, stderr)
 	}
 	return stdout, nil
 }

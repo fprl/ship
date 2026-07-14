@@ -72,3 +72,74 @@ func TestBoxConfigValidationErrorsAreCoded(t *testing.T) {
 		t.Fatalf("empty value error = %v", err)
 	}
 }
+
+func TestBoxConfigWriteFailureDoesNotJournal(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("SHIP_STATE_DIR", stateDir)
+	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
+	setServerMemberFingerprint("")
+	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"notify.url": "https://ntfy.example/old"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(stateDir, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stateDir, 0755) })
+
+	err := setBoxConfig("notify.url", "https://ntfy.example/new", "box config set notify.url")
+	if err == nil {
+		t.Fatal("expected box config write failure")
+	}
+	if got, err := boxConfigValueFor("notify.url"); err != nil || got != "https://ntfy.example/old" {
+		t.Fatalf("notify.url after failed write = %q, %v", got, err)
+	}
+	if _, err := os.Stat(store.Default().UpdatesJournalPath()); !os.IsNotExist(err) {
+		t.Fatalf("updates journal should not exist after failed write, stat err = %v", err)
+	}
+}
+
+func TestBoxConfigSuccessfulWriteAppendsExactlyOneJournalEntry(t *testing.T) {
+	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
+	setServerMemberFingerprint("")
+	if err := setBoxConfig("notify.url", "https://ntfy.example/ship", "box config set notify.url"); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(store.Default().UpdatesJournalPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("journal entries = %d, want 1: %s", len(lines), data)
+	}
+	var entry updateJournalEntry
+	if err := json.Unmarshal([]byte(lines[0]), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry.Event != "config_set" || entry.Key != "notify.url" {
+		t.Fatalf("journal entry = %+v", entry)
+	}
+}
+
+func TestBoxConfigJournalFailureDoesNotFailSuccessfulWrite(t *testing.T) {
+	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
+	setServerMemberFingerprint("")
+	if err := os.MkdirAll(store.Default().UpdatesJournalPath(), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	stderr := captureStderr(t, func() {
+		if err := setBoxConfig("notify.url", "https://ntfy.example/ship", "box config set notify.url"); err != nil {
+			t.Fatalf("set box config = %v", err)
+		}
+	})
+	if got, err := boxConfigValueFor("notify.url"); err != nil || got != "https://ntfy.example/ship" {
+		t.Fatalf("notify.url = %q, %v", got, err)
+	}
+	if !strings.Contains(stderr, "warning: failed to write update journal:") || !strings.Contains(stderr, "run ship box doctor") {
+		t.Fatalf("journal append warning = %q", stderr)
+	}
+}

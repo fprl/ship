@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -123,9 +124,6 @@ func setBoxConfig(key, rawValue, summary string) error {
 	if _, err := authorizeBoxConfigMutation(spec, authTargetForBox(summary, boxConfigTargetArg(key, value))); err != nil {
 		return err
 	}
-	if err := appendUpdateJournal(updateJournalEntry{Event: "config_set", Key: key, Actor: currentServerMemberForJournal()}); err != nil {
-		return err
-	}
 	lock, err := acquireBoxConfigLock()
 	if err != nil {
 		return err
@@ -137,7 +135,13 @@ func setBoxConfig(key, rawValue, summary string) error {
 		return boxConfigError(err)
 	}
 	file.Values[key] = value
-	return boxConfigError(store.Default().WriteBoxConfig(*file))
+	if err := boxConfigError(store.Default().WriteBoxConfig(*file)); err != nil {
+		return err
+	}
+	if err := appendUpdateJournal(updateJournalEntry{Event: "config_set", Key: key, Actor: currentServerMemberForJournal()}); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to write update journal: %v; run ship box doctor\n", err)
+	}
+	return nil
 }
 
 func unsetBoxConfig(key, summary string) error {
@@ -146,9 +150,6 @@ func unsetBoxConfig(key, summary string) error {
 		return err
 	}
 	if _, err := authorizeBoxConfigMutation(spec, authTargetForBox(summary, boxConfigTargetArg(key, ""))); err != nil {
-		return err
-	}
-	if err := appendUpdateJournal(updateJournalEntry{Event: "config_unset", Key: key, Actor: currentServerMemberForJournal()}); err != nil {
 		return err
 	}
 	lock, err := acquireBoxConfigLock()
@@ -162,7 +163,13 @@ func unsetBoxConfig(key, summary string) error {
 		return boxConfigError(err)
 	}
 	delete(file.Values, key)
-	return boxConfigError(store.Default().WriteBoxConfig(*file))
+	if err := boxConfigError(store.Default().WriteBoxConfig(*file)); err != nil {
+		return err
+	}
+	if err := appendUpdateJournal(updateJournalEntry{Event: "config_unset", Key: key, Actor: currentServerMemberForJournal()}); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to write update journal: %v; run ship box doctor\n", err)
+	}
+	return nil
 }
 
 func boxConfigKey(key string) (store.BoxConfigKey, error) {

@@ -209,7 +209,7 @@ func noDeployJournalError(app, env string) error {
 }
 
 func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease string, actor deployIdentity, startedAt time.Time, err error) (deployJournalEntry, []string) {
-	step := "release"
+	step := "apply"
 	tail := commandErrorTail(err)
 	var probe *journalProbe
 	var scrubValues []string

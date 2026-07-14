@@ -47,10 +47,20 @@ func (c appPreviewShareCmd) Run() error {
 			utils.DieError(err, 1)
 		}
 		if err := rerenderPreviewCapabilityLocked(c.App, c.Env); err != nil {
-			_ = secrets.PutPreviewCapability(c.App, c.Env, []byte(previous))
-			utils.DieError(err, 1)
+			rollbackErr := secrets.PutPreviewCapability(c.App, c.Env, []byte(previous))
+			utils.DieError(previewCapabilityRotationError(err, rollbackErr), 1)
 		}
 	}
 	fmt.Println(token)
 	return nil
+}
+
+func previewCapabilityRotationError(rerenderErr, rollbackErr error) error {
+	if rollbackErr == nil {
+		return rerenderErr
+	}
+	return errcat.New(errcat.CodeOperationFailed, errcat.Fields{
+		"detail":  fmt.Sprintf("preview capability rotation failed: %v; rollback failed: %v; preview capability state is ambiguous", rerenderErr, rollbackErr),
+		"command": "ship preview share --rotate",
+	})
 }

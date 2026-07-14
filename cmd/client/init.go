@@ -111,12 +111,11 @@ func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error)
 	}
 
 	host := strings.ToLower(strings.TrimSpace(opts.Host))
-	if host == "" {
-		host = name + ".example.com"
-	}
-	host = strings.TrimSuffix(host, ".")
-	if !config.ValidateHost(host) {
-		return normalizedInit{}, usageError("--host must be a valid hostname", "ship init --host api.example.com")
+	if host != "" {
+		host = strings.TrimSuffix(host, ".")
+		if !config.ValidateHost(host) {
+			return normalizedInit{}, usageError("--host must be a valid hostname", "ship init --host api.example.com")
+		}
 	}
 
 	return normalizedInit{name: name, server: server, host: host}, nil
@@ -161,15 +160,19 @@ func writeNewInitFile(path string, body string) error {
 }
 
 func initManifest(init normalizedInit) string {
-	return fmt.Sprintf(`name = "%s"
+	manifest := fmt.Sprintf(`name = "%s"
 box = "%s"
 
 [processes]
 web = {}
-
+`, init.name, init.server)
+	if init.host == "" {
+		return manifest
+	}
+	return fmt.Sprintf(`%s
 [routes]
 "%s" = "web"
-`, init.name, init.server, init.host)
+`, manifest, init.host)
 }
 
 func renderInitResult(result InitResult) {

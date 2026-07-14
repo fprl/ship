@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,7 +39,34 @@ type dataContext struct {
 	AppContext    *config.AppContext
 	PreviewBranch string
 	EnvName       string
-	Runner        *CommandRunner
+	Runner        dataRunner
+}
+
+type dataRunner interface {
+	sshRunner
+	Close()
+}
+
+type dataRestoreRunner interface {
+	sshRunner
+	Upload(local, remote, server string) error
+}
+
+type dataRestoreContext struct {
+	AppContext *config.AppContext
+	Address    readAddress
+	EnvName    string
+	Runner     dataRestoreRunner
+}
+
+type dataSaveRunner interface {
+	RunSSHToFile(server, command, path string) (string, string, int, error)
+}
+
+type dataSaveContext struct {
+	AppContext *config.AppContext
+	EnvName    string
+	Runner     dataSaveRunner
 }
 
 type dataSnapshotMetadata struct {
@@ -58,6 +86,17 @@ type dataSnapshotInfo struct {
 	Release string `json:"release"`
 }
 
+type dataForkResult struct {
+	Summary      dataForkSummary
+	URL          string
+	URLLookupErr error
+}
+
+type dataRmResult struct {
+	URL          string
+	URLLookupErr error
+}
+
 func CmdDataFork(root string) {
 	data, err := currentDataContext(root)
 	if err != nil {
@@ -65,19 +104,13 @@ func CmdDataFork(root string) {
 	}
 	defer data.Runner.Close()
 
-	out, err := runSSHDetail(data.Runner, data.AppContext.Server, serverAppDataForkCommand(data.AppContext.AppName, productionEnvName, data.EnvName))
+	result, err := runDataFork(data)
 	if err != nil {
 		utils.DieError(err, 1)
 	}
-	var summary dataForkSummary
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &summary); err != nil {
-		utils.DieError(operationError(fmt.Sprintf("data fork failed: invalid helper JSON: %v", err), "ship data fork"), 1)
-	}
-	url, err := dataPreviewURL(data)
-	if err != nil {
-		utils.DieError(err, 1)
-	}
-	fmt.Print(renderDataForkSummary(data.PreviewBranch, url, summary))
+	stdout, stderr := renderDataForkOutput(data.PreviewBranch, result)
+	fmt.Fprint(os.Stderr, stderr)
+	fmt.Print(stdout)
 }
 
 func CmdDataRm(root string) {
@@ -87,14 +120,13 @@ func CmdDataRm(root string) {
 	}
 	defer data.Runner.Close()
 
-	if _, err := runSSHDetail(data.Runner, data.AppContext.Server, serverAppDataRmCommand(data.AppContext.AppName, data.EnvName)); err != nil {
-		utils.DieError(err, 1)
-	}
-	url, err := dataPreviewURL(data)
+	result, err := runDataRm(data)
 	if err != nil {
 		utils.DieError(err, 1)
 	}
-	fmt.Printf("Reset data for Preview %s\npreview: %s\n", data.PreviewBranch, url)
+	stdout, stderr := renderDataRmOutput(data.PreviewBranch, result)
+	fmt.Fprint(os.Stderr, stderr)
+	fmt.Print(stdout)
 }
 
 func CmdDataSave(root, outPath string) {
@@ -103,104 +135,133 @@ func CmdDataSave(root, outPath string) {
 		utils.DieError(err, 1)
 	}
 	defer read.Runner.Close()
-	outPath, err = resolveDataSaveOutputPath(read, outPath, time.Now().UTC())
+	savedPath, err := runDataSave(dataSaveContext{AppContext: read.AppContext, EnvName: read.EnvName, Runner: read.Runner}, outPath, time.Now().UTC())
 	if err != nil {
 		utils.DieError(err, 1)
 	}
+	fmt.Println(savedPath)
+}
+
+func runDataSave(data dataSaveContext, outPath string, now time.Time) (string, error) {
 	dir := filepath.Dir(outPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		utils.DieError(operationError(fmt.Sprintf("create snapshot directory: %v", err), "ship data save"), 1)
+	if outPath == "" {
+		var err error
+		dir, err = dataSnapshotDir(data.AppContext.AppName)
+		if err != nil {
+			return "", err
+		}
 	}
-	// Stream into a temporary file and rename on success so a failed or
-	// interrupted save can never truncate an existing snapshot at outPath,
-	// and a partial file (which does not end in .data.tar.gz) never shows
-	// up in `data ls`.
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", operationError(fmt.Sprintf("create snapshot directory: %v", err), "ship data save")
+	}
+	// Stream into a temporary file, then hard-link the completed archive to a
+	// unique final name so a save never replaces an existing snapshot.
 	tmp, err := os.CreateTemp(dir, ".ship-data-save-*.partial")
 	if err != nil {
-		utils.DieError(operationError(fmt.Sprintf("create snapshot temp file: %v", err), "ship data save"), 1)
+		return "", operationError(fmt.Sprintf("create snapshot temp file: %v", err), "ship data save")
 	}
 	tmpPath := tmp.Name()
 	_ = tmp.Close()
-	failure, stderr, code, runErr := read.Runner.RunSSHToFile(read.AppContext.Server, serverAppDataSaveCommand(read.AppContext.AppName, read.EnvName), tmpPath)
+	failure, stderr, code, runErr := data.Runner.RunSSHToFile(data.AppContext.Server, serverAppDataSaveCommand(data.AppContext.AppName, data.EnvName), tmpPath)
 	if runErr != nil || code != 0 {
 		_ = os.Remove(tmpPath)
 		outcome := decodeRemoteOutcome(failure, stderr, code, runErr, "data save failed")
 		if outcome.TransportCoded != nil {
-			utils.DieError(outcome.TransportCoded, 1)
+			return "", outcome.TransportCoded
 		}
 		if outcome.RemoteCoded != nil {
 			writeRemoteStderr(outcome)
-			utils.DieError(outcome.RemoteCoded, 1)
+			return "", outcome.RemoteCoded
 		}
-		utils.DieError(operationError("data save failed: "+outcome.Detail, "ship data save"), 1)
+		return "", operationError("data save failed: "+outcome.Detail, "ship data save")
 	}
-	if err := os.Rename(tmpPath, outPath); err != nil {
+	if outPath == "" {
+		meta, err := readDataSnapshotMetadata(tmpPath)
+		if err != nil {
+			_ = os.Remove(tmpPath)
+			return "", operationError(fmt.Sprintf("read snapshot metadata: %v", err), "ship data save")
+		}
+		outPath, err = defaultDataSnapshotPath(data.AppContext.AppName, meta.Env, meta.Release, now)
+		if err != nil {
+			_ = os.Remove(tmpPath)
+			return "", err
+		}
+	}
+	finalPath, err := claimDataSnapshotPath(tmpPath, outPath)
+	if err != nil {
 		_ = os.Remove(tmpPath)
-		utils.DieError(operationError(fmt.Sprintf("finalize snapshot: %v", err), "ship data save"), 1)
+		return "", operationError(fmt.Sprintf("finalize snapshot: %v", err), "ship data save")
 	}
 	if strings.TrimSpace(stderr) != "" {
 		fmt.Fprint(os.Stderr, stderr)
 	}
-	fmt.Println(outPath)
-}
-
-func resolveDataSaveOutputPath(read readContext, outPath string, now time.Time) (string, error) {
-	if outPath != "" {
-		return outPath, nil
-	}
-	release, err := currentDataSnapshotRelease(read)
-	if err != nil {
-		return "", err
-	}
-	return defaultDataSnapshotPath(read.AppContext.AppName, read.EnvName, release, now)
+	return finalPath, nil
 }
 
 func CmdDataRestore(root, idOrPath, confirm string) {
+	if err := RunDataRestore(root, idOrPath, confirm); err != nil {
+		utils.DieError(err, 1)
+	}
+}
+
+func RunDataRestore(root, idOrPath, confirm string) error {
 	read, err := currentReadContext(root, "data restore")
 	if err != nil {
-		utils.DieError(err, 1)
+		return err
 	}
 	defer read.Runner.Close()
-	if read.Address.ProductionBranch && confirm != read.AppContext.AppName {
-		utils.DieError(errcat.New(errcat.CodeRmConfirmationRequired, errcat.Fields{
-			"app": read.AppContext.AppName, "branch": read.AppContext.ProductionBranch,
-		}), 1)
+	return runDataRestore(dataRestoreContext{
+		AppContext: read.AppContext,
+		Address:    read.Address,
+		EnvName:    read.EnvName,
+		Runner:     read.Runner,
+	}, idOrPath, confirm)
+}
+
+func runDataRestore(data dataRestoreContext, idOrPath, confirm string) error {
+	if data.Address.ProductionBranch && confirm != data.AppContext.AppName {
+		return errcat.New(errcat.CodeRmConfirmationRequired, errcat.Fields{
+			"app": data.AppContext.AppName, "branch": data.AppContext.ProductionBranch,
+		})
 	}
-	path, err := resolveDataSnapshotPath(read.AppContext.AppName, idOrPath)
+	path, err := resolveDataSnapshotPath(data.AppContext.AppName, idOrPath)
 	if err != nil {
-		utils.DieError(err, 1)
+		return err
 	}
 	if _, err := os.Stat(path); err != nil {
-		utils.DieError(operationError(fmt.Sprintf("read snapshot %s: %v", path, err), "ship data ls"), 1)
+		return operationError(fmt.Sprintf("read snapshot %s: %v", path, err), "ship data ls")
 	}
 	// Stage under a unique subdir with the same mkdir+chmod+rm-rf shape the
 	// deploy path uses, so an agent member's forced shell allows it (a bare
 	// mkdir on the parent, or rm -f on a file, is outside the agent allowlist).
-	remoteDir := fmt.Sprintf("%s/data-restore-%s-%d", RemoteDeployTmpDir, read.EnvName, time.Now().UnixNano())
+	remoteDir := fmt.Sprintf("%s/data-restore-%s-%d", RemoteDeployTmpDir, data.EnvName, time.Now().UnixNano())
 	remote := remoteDir + "/snapshot.data.tar.gz"
 	mkdirCmd := fmt.Sprintf("mkdir -p %s && chmod 0700 %s", utils.ShellEscape(remoteDir), utils.ShellEscape(remoteDir))
-	if _, err := runSSHRequired(read.Runner, read.AppContext.Server, mkdirCmd, "create snapshot staging failed", "ship data restore"); err != nil {
-		utils.DieError(err, 1)
+	defer func() {
+		_, _, _, _ = data.Runner.RunSSH(data.AppContext.Server, "rm -rf "+utils.ShellEscape(remoteDir))
+	}()
+	if _, err := runSSHRequired(data.Runner, data.AppContext.Server, mkdirCmd, "create snapshot staging failed", "ship data restore"); err != nil {
+		return err
 	}
-	defer func() { _, _, _, _ = read.Runner.RunSSH(read.AppContext.Server, "rm -rf "+utils.ShellEscape(remoteDir)) }()
-	if err := read.Runner.Upload(path, remote, read.AppContext.Server); err != nil {
-		utils.DieError(operationError(fmt.Sprintf("upload snapshot: %v", err), "ship data restore"), 1)
+	if err := data.Runner.Upload(path, remote, data.AppContext.Server); err != nil {
+		return operationError(fmt.Sprintf("upload snapshot: %v", err), "ship data restore")
 	}
-	stdout, stderr, code, runErr := read.Runner.RunSSH(read.AppContext.Server, serverAppDataRestoreCommand(read.AppContext.AppName, read.EnvName, remote))
+	stdout, stderr, code, runErr := data.Runner.RunSSH(data.AppContext.Server, serverAppDataRestoreCommand(data.AppContext.AppName, data.EnvName, remote))
 	if runErr != nil || code != 0 {
 		outcome := decodeRemoteOutcome(stdout, stderr, code, runErr, "data restore failed")
 		if outcome.TransportCoded != nil {
-			utils.DieError(outcome.TransportCoded, 1)
+			return outcome.TransportCoded
 		}
 		if outcome.RemoteCoded != nil {
 			writeRemoteStderr(outcome)
-			utils.DieError(outcome.RemoteCoded, 1)
+			return outcome.RemoteCoded
 		}
-		utils.DieError(operationError("data restore failed: "+outcome.Detail, "ship data ls"), 1)
+		return operationError("data restore failed: "+outcome.Detail, "ship data ls")
 	}
 	if strings.TrimSpace(stderr) != "" {
 		fmt.Fprint(os.Stderr, stderr)
 	}
+	return nil
 }
 
 func CmdDataLs(root string, jsonFlag bool) {
@@ -227,28 +288,6 @@ func CmdDataLs(root string, jsonFlag bool) {
 	}
 }
 
-func currentDataSnapshotRelease(read readContext) (string, error) {
-	out, err := runSSHDetail(read.Runner, read.AppContext.Server, serverAppListCommand(true))
-	if err != nil {
-		return "", err
-	}
-	var payload appListJSON
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &payload); err != nil {
-		return "", operationError("data save failed: invalid app list JSON", "ship status")
-	}
-	for _, app := range payload.Apps {
-		if app.App != read.AppContext.AppName {
-			continue
-		}
-		for _, env := range app.Envs {
-			if env.Env == read.EnvName && env.CurrentRelease != "" {
-				return env.CurrentRelease, nil
-			}
-		}
-	}
-	return "", operationError("data save failed: no active release", "ship status")
-}
-
 func dataSnapshotDir(app string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -262,7 +301,31 @@ func defaultDataSnapshotPath(app, env, release string, now time.Time) (string, e
 	if err != nil {
 		return "", err
 	}
+	// Collision suffixes are allocated by claimDataSnapshotPath at link
+	// time — the only claim that can actually reserve a name.
 	return filepath.Join(dir, fmt.Sprintf("%s-%s-%s.data.tar.gz", env, release, now.UTC().Format("20060102T150405Z"))), nil
+}
+
+func claimDataSnapshotPath(tmpPath, path string) (string, error) {
+	const extension = ".data.tar.gz"
+	base, suffixExtension := path, ""
+	if strings.HasSuffix(path, extension) {
+		base, suffixExtension = strings.TrimSuffix(path, extension), extension
+	}
+	for suffix := 1; ; suffix++ {
+		candidate := base + suffixExtension
+		if suffix > 1 {
+			candidate = base + "-" + strconv.Itoa(suffix) + suffixExtension
+		}
+		if err := os.Link(tmpPath, candidate); err == nil {
+			if err := os.Remove(tmpPath); err != nil {
+				return "", err
+			}
+			return candidate, nil
+		} else if !os.IsExist(err) {
+			return "", err
+		}
+	}
 }
 
 func resolveDataSnapshotPath(app, idOrPath string) (string, error) {
@@ -294,7 +357,7 @@ func listDataSnapshots(app string) ([]dataSnapshotInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	var items []dataSnapshotInfo
+	items := []dataSnapshotInfo{}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".data.tar.gz") {
 			continue
@@ -388,7 +451,11 @@ func noPreviewEnvError(branch string) error {
 }
 
 func dataPreviewURL(data dataContext) (string, error) {
-	if url, err := liveEnvURL(data.Runner, data.AppContext.Server, data.AppContext.AppName, data.EnvName); err == nil && url != "" {
+	url, err := liveEnvURL(data.Runner, data.AppContext.Server, data.AppContext.AppName, data.EnvName)
+	if err != nil {
+		return "", err
+	}
+	if url != "" {
 		return url, nil
 	}
 	boxIP := resolveBoxIPv4(data.Runner, data.AppContext.Server)
@@ -401,6 +468,27 @@ func dataPreviewURL(data dataContext) (string, error) {
 		return "", err
 	}
 	return deploymentURLForBoxIP(plan.Context, data.EnvName, boxIP), nil
+}
+
+func runDataFork(data dataContext) (dataForkResult, error) {
+	out, err := runSSHDetail(data.Runner, data.AppContext.Server, serverAppDataForkCommand(data.AppContext.AppName, productionEnvName, data.EnvName))
+	if err != nil {
+		return dataForkResult{}, err
+	}
+	var summary dataForkSummary
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &summary); err != nil {
+		return dataForkResult{}, operationError(fmt.Sprintf("data fork failed: invalid helper JSON: %v", err), "ship data fork")
+	}
+	url, err := dataPreviewURL(data)
+	return dataForkResult{Summary: summary, URL: url, URLLookupErr: err}, nil
+}
+
+func runDataRm(data dataContext) (dataRmResult, error) {
+	if _, err := runSSHDetail(data.Runner, data.AppContext.Server, serverAppDataRmCommand(data.AppContext.AppName, data.EnvName)); err != nil {
+		return dataRmResult{}, err
+	}
+	url, err := dataPreviewURL(data)
+	return dataRmResult{URL: url, URLLookupErr: err}, nil
 }
 
 func liveEnvURL(runner sshRunner, server, app, env string) (string, error) {
@@ -428,7 +516,7 @@ func liveEnvURL(runner sshRunner, server, app, env string) (string, error) {
 	return "", nil
 }
 
-func renderDataForkSummary(branch, url string, summary dataForkSummary) string {
+func renderDataForkSummary(branch string, summary dataForkSummary) string {
 	sort.Slice(summary.Files, func(i, j int) bool {
 		return summary.Files[i].Path < summary.Files[j].Path
 	})
@@ -450,10 +538,25 @@ func renderDataForkSummary(branch, url string, summary dataForkSummary) string {
 		b.WriteString(DataForkNoSQLiteNote)
 		b.WriteByte('\n')
 	}
-	fmt.Fprintf(&b, "preview: %s\n", url)
 	b.WriteString(DataForkPIINote)
 	b.WriteByte('\n')
 	return b.String()
+}
+
+func renderDataForkOutput(branch string, result dataForkResult) (string, string) {
+	stderr := renderDataForkSummary(branch, result.Summary)
+	if result.URLLookupErr != nil {
+		return "", stderr + fmt.Sprintf("warning: preview URL lookup failed: %v\nnext: ship status\n", result.URLLookupErr)
+	}
+	return result.URL + "\n", stderr
+}
+
+func renderDataRmOutput(branch string, result dataRmResult) (string, string) {
+	stderr := fmt.Sprintf("Reset data for Preview %s\n", branch)
+	if result.URLLookupErr != nil {
+		return "", stderr + fmt.Sprintf("warning: preview URL lookup failed: %v\nnext: ship status\n", result.URLLookupErr)
+	}
+	return result.URL + "\n", stderr
 }
 
 func formatDataSize(size int64) string {

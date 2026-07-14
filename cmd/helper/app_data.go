@@ -211,6 +211,7 @@ func forkAppData(app, prodEnv, previewEnv string, opts dataForkOptions) (summary
 
 	stopped, err := stopRunningAppContainers(app, previewEnv)
 	if err != nil {
+		warnOnRestartFailure(stopped)
 		return dataForkSummary{}, err
 	}
 	defer warnOnRestartFailure(stopped)
@@ -241,6 +242,7 @@ func resetAppData(app, previewEnv string) error {
 	}
 	stopped, err := stopRunningAppContainers(app, previewEnv)
 	if err != nil {
+		warnOnRestartFailure(stopped)
 		return err
 	}
 	defer warnOnRestartFailure(stopped)
@@ -402,7 +404,7 @@ func stopRunningAppContainers(app, env string) ([]string, error) {
 		names = append(names, entry.Names[0])
 	}
 	names = uniqueContainerNames(names)
-	return names, stopContainers(names)
+	return stopContainers(names)
 }
 
 func emptyDirContents(dir string) error {
@@ -633,6 +635,7 @@ func restoreAppData(app, env, archive string) (dataSnapshotMetadata, error) {
 
 	stopped, err := stopRunningAppContainers(app, env)
 	if err != nil {
+		warnOnRestartFailure(stopped)
 		return dataSnapshotMetadata{}, err
 	}
 	defer warnOnRestartFailure(stopped)

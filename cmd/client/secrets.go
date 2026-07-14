@@ -16,9 +16,8 @@ import (
 
 // secretValueFromStdin reads the secret value from this process's
 // stdin and trims at most one trailing newline (the kind a tty `read`
-// or an `echo` tacks on). Returns the bytes verbatim past that — so
-// a multi-line heredoc with intentional newlines comes through
-// intact.
+// or an `echo` tacks on). Embedded newlines are rejected by the helper
+// because Podman's env-file format cannot represent them safely.
 func secretValueFromStdin() ([]byte, error) {
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {

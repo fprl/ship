@@ -83,6 +83,7 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"box", "doctor", "example.com"},
 		{"box", "doctor", "example.com", "--json"},
 		{"box", "notify", "example.com"},
+		{"box", "notify", "example.com", "--json"},
 		{"box", "notify", "example.com", "https://ntfy.example/ship"},
 		{"box", "notify", "example.com", "--rm"},
 		{"box", "apps", "example.com"},
