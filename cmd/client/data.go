@@ -92,7 +92,7 @@ type dataForkResult struct {
 	URLLookupErr error
 }
 
-type dataRmResult struct {
+type dataResetResult struct {
 	URL          string
 	URLLookupErr error
 }
@@ -113,18 +113,18 @@ func CmdDataFork(root string) {
 	fmt.Print(stdout)
 }
 
-func CmdDataRm(root string) {
+func CmdDataReset(root string) {
 	data, err := currentDataContext(root)
 	if err != nil {
 		utils.DieError(err, 1)
 	}
 	defer data.Runner.Close()
 
-	result, err := runDataRm(data)
+	result, err := runDataReset(data)
 	if err != nil {
 		utils.DieError(err, 1)
 	}
-	stdout, stderr := renderDataRmOutput(data.PreviewBranch, result)
+	stdout, stderr := renderDataResetOutput(data.PreviewBranch, result)
 	fmt.Fprint(os.Stderr, stderr)
 	fmt.Print(stdout)
 }
@@ -483,12 +483,12 @@ func runDataFork(data dataContext) (dataForkResult, error) {
 	return dataForkResult{Summary: summary, URL: url, URLLookupErr: err}, nil
 }
 
-func runDataRm(data dataContext) (dataRmResult, error) {
-	if _, err := runSSHDetail(data.Runner, data.AppContext.Server, serverAppDataRmCommand(data.AppContext.AppName, data.EnvName)); err != nil {
-		return dataRmResult{}, err
+func runDataReset(data dataContext) (dataResetResult, error) {
+	if _, err := runSSHDetail(data.Runner, data.AppContext.Server, serverAppDataResetCommand(data.AppContext.AppName, data.EnvName)); err != nil {
+		return dataResetResult{}, err
 	}
 	url, err := dataPreviewURL(data)
-	return dataRmResult{URL: url, URLLookupErr: err}, nil
+	return dataResetResult{URL: url, URLLookupErr: err}, nil
 }
 
 func liveEnvURL(runner sshRunner, server, app, env string) (string, error) {
@@ -551,7 +551,7 @@ func renderDataForkOutput(branch string, result dataForkResult) (string, string)
 	return result.URL + "\n", stderr
 }
 
-func renderDataRmOutput(branch string, result dataRmResult) (string, string) {
+func renderDataResetOutput(branch string, result dataResetResult) (string, string) {
 	stderr := fmt.Sprintf("Reset data for Preview %s\n", branch)
 	if result.URLLookupErr != nil {
 		return "", stderr + fmt.Sprintf("warning: preview URL lookup failed: %v\nnext: ship status\n", result.URLLookupErr)

@@ -39,7 +39,7 @@ func (c appRollbackCmd) Run() error {
 	if c.Release != "" {
 		args = append(args, "release="+c.Release)
 	}
-	authorizeOrDie(helperVerbRollback, authTargetForAppEnv(c.App, c.Env, args...))
+	authorizeOrDie(helperVerbRollback, authTargetForAppEnv(c.App, c.Env, "rollback", args...))
 	withAppEnvLock(c.App, c.Env, func() {
 		c.runLocked()
 	})

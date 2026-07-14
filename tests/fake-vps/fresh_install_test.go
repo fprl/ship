@@ -92,7 +92,7 @@ func TestFreshHostInstall(t *testing.T) {
 	teammateKeyPath := filepath.Join(env.tmp, "setup-preserved-member")
 	teammateComment := filepath.Base(teammateKeyPath)
 	env.mustRun(t, env.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", teammateComment, "-f", teammateKeyPath)
-	addedTeammate := env.ship(t, memberApp, nil, "member", "add", teammateKeyPath+".pub")
+	addedTeammate := env.ship(t, memberApp, nil, "box", "member", "add", teammateKeyPath+".pub")
 	if !strings.HasPrefix(strings.TrimSpace(addedTeammate), "member added: "+teammateComment+" (shipper, SHA256:") {
 		t.Fatalf("unexpected member add output: %q", addedTeammate)
 	}
@@ -100,7 +100,7 @@ func TestFreshHostInstall(t *testing.T) {
 	teammateKey := strings.TrimSpace(readFile(t, teammateKeyPath+".pub"))
 	_, preserveOutput := env.installHost(t, "")
 	assertContains(t, preserveOutput, "member fake-vps-smoke already authorized")
-	preservedMembers := env.ship(t, memberApp, nil, "member", "ls")
+	preservedMembers := env.ship(t, memberApp, nil, "box", "members")
 	assertContains(t, preservedMembers, "fake-vps-smoke owner ssh-ed25519 SHA256:")
 	assertContains(t, preservedMembers, teammateComment+" shipper ssh-ed25519 "+teammateFingerprint)
 	env.assertDeployAuthorizedKeysLineCount(t, identityKey, 1)
@@ -212,7 +212,8 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 			} `json:"features"`
 		} `json:"desired"`
 		Meta struct {
-			LastApply struct {
+			ClientAddress string `json:"client_address"`
+			LastApply     struct {
 				Status            string `json:"status"`
 				OperationsChanged int    `json:"operations_changed"`
 			} `json:"last_apply"`
@@ -235,6 +236,9 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	}
 	if state.Meta.LastApply.Status != "ok" || state.Meta.LastApply.OperationsChanged <= 0 {
 		t.Fatalf("unexpected last apply meta: %+v", state.Meta.LastApply)
+	}
+	if state.Meta.ClientAddress != "fake-vps" {
+		t.Fatalf("client address = %q, want fake-vps", state.Meta.ClientAddress)
 	}
 
 	assertContains(t, e.ssh(t, "cat /run/ship-fresh-host/systemctl.log"), "restart ssh.service")
@@ -316,7 +320,7 @@ func (e *smokeEnv) shipIdentityPublicKey(t *testing.T) string {
 func (e *smokeEnv) assertSetupMemberVisible(t *testing.T) {
 	t.Helper()
 	app := e.memberListApp(t, "member-list")
-	list := e.ship(t, app, nil, "member", "ls")
+	list := e.ship(t, app, nil, "box", "members")
 	assertContains(t, list, "fake-vps-smoke owner ssh-ed25519 SHA256:")
 }
 

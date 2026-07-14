@@ -24,13 +24,13 @@ func TestBoxConfigSetUnsetAndJournal(t *testing.T) {
 	}
 
 	const url = "https://ntfy.example/ship"
-	if err := setBoxConfig("notify.url", url, "box config set notify.url"); err != nil {
+	if err := setBoxConfig("notify.url", url, "set box config notify.url"); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := boxConfigValueFor("notify.url"); err != nil || got != url {
 		t.Fatalf("notify.url = %q, %v", got, err)
 	}
-	if err := unsetBoxConfig("notify.url", "box config unset notify.url"); err != nil {
+	if err := unsetBoxConfig("notify.url", "unset box config notify.url"); err != nil {
 		t.Fatal(err)
 	}
 	after, err := readBoxConfig()
@@ -62,13 +62,18 @@ func TestBoxConfigValidationErrorsAreCoded(t *testing.T) {
 	t.Setenv("SHIP_STATE_DIR", t.TempDir())
 	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
 	setServerMemberFingerprint("")
-	if err := setBoxConfig("unknown.key", "value", "box config set unknown.key"); !errcat.Is(err, errcat.CodeBoxConfigKeyUnknown) {
+	setHelperBoxClientAddress(t, "203.0.113.7")
+	if err := setBoxConfig("unknown.key", "value", "set box config unknown.key"); !errcat.Is(err, errcat.CodeBoxConfigKeyUnknown) {
 		t.Fatalf("unknown key error = %v", err)
+	} else if coded, _ := errcat.As(err); coded.Remediation() != "ship box config 203.0.113.7" {
+		t.Fatalf("unknown key remediation = %q", coded.Remediation())
 	}
-	if err := setBoxConfig("notify.url", "not a URL", "box config set notify.url"); !errcat.Is(err, errcat.CodeBoxConfigValueInvalid) {
+	if err := setBoxConfig("notify.url", "not a URL", "set box config notify.url"); !errcat.Is(err, errcat.CodeBoxConfigValueInvalid) {
 		t.Fatalf("invalid value error = %v", err)
+	} else if coded, _ := errcat.As(err); coded.Remediation() != "ship box config 203.0.113.7 set notify.url <value>" {
+		t.Fatalf("invalid value remediation = %q", coded.Remediation())
 	}
-	if err := setBoxConfig("notify.url", "", "box config set notify.url"); !errcat.Is(err, errcat.CodeBoxConfigValueInvalid) {
+	if err := setBoxConfig("notify.url", "", "set box config notify.url"); !errcat.Is(err, errcat.CodeBoxConfigValueInvalid) {
 		t.Fatalf("empty value error = %v", err)
 	}
 }
@@ -86,7 +91,7 @@ func TestBoxConfigWriteFailureDoesNotJournal(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(stateDir, 0755) })
 
-	err := setBoxConfig("notify.url", "https://ntfy.example/new", "box config set notify.url")
+	err := setBoxConfig("notify.url", "https://ntfy.example/new", "set box config notify.url")
 	if err == nil {
 		t.Fatal("expected box config write failure")
 	}
@@ -102,7 +107,7 @@ func TestBoxConfigSuccessfulWriteAppendsExactlyOneJournalEntry(t *testing.T) {
 	t.Setenv("SHIP_STATE_DIR", t.TempDir())
 	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
 	setServerMemberFingerprint("")
-	if err := setBoxConfig("notify.url", "https://ntfy.example/ship", "box config set notify.url"); err != nil {
+	if err := setBoxConfig("notify.url", "https://ntfy.example/ship", "set box config notify.url"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -132,7 +137,7 @@ func TestBoxConfigJournalFailureDoesNotFailSuccessfulWrite(t *testing.T) {
 	}
 
 	stderr := captureStderr(t, func() {
-		if err := setBoxConfig("notify.url", "https://ntfy.example/ship", "box config set notify.url"); err != nil {
+		if err := setBoxConfig("notify.url", "https://ntfy.example/ship", "set box config notify.url"); err != nil {
 			t.Fatalf("set box config = %v", err)
 		}
 	})

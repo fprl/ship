@@ -19,21 +19,28 @@ func TestApprovalFlowIsOneShotAndJournaled(t *testing.T) {
 	})
 	now := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
 	setApprovalNowForTest(t, now)
-	target := authTargetForAppEnv("api", productionEnvName, "release=abc123")
+	target := authTargetForAppEnv("api", productionEnvName, "ship", "release=abc123")
 
 	setServerMemberFingerprint(aliceFingerprint)
 	_, err := authorizeHelper(helperVerbShip, target)
 	if !errcat.Is(err, errcat.CodeApprovalRequired) {
-		t.Fatalf("agent prod ship err = %v, want approval_required", err)
+		t.Fatalf("agent production ship err = %v, want approval_required", err)
 	}
 	coded, _ := errcat.As(err)
 	if !strings.Contains(coded.Message(), target.Summary) {
 		t.Fatalf("approval_required message should carry summary, got %q", coded.Message())
 	}
-	if !strings.HasPrefix(coded.Remediation(), "ship approve ") {
-		t.Fatalf("approval remediation = %q, want ship approve <id>", coded.Remediation())
+	if !strings.HasPrefix(coded.Remediation(), "ship box approve ") || !strings.HasSuffix(coded.Remediation(), " 203.0.113.7") {
+		t.Fatalf("approval remediation = %q, want fully resolved box approval command", coded.Remediation())
 	}
-	id := strings.TrimPrefix(coded.Remediation(), "ship approve ")
+	id := approvalIDFromRemediation(t, coded.Remediation())
+	requests, err := store.Default().ReadApprovals()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests.Requests) != 1 || requests.Requests[0].RequiredRole != store.MemberRoleShipper {
+		t.Fatalf("minted request required role = %+v, want shipper", requests.Requests)
+	}
 
 	setServerMemberFingerprint(aliceFingerprint)
 	if _, err := authorizeApprovalGrant(id); !errcat.Is(err, errcat.CodeRoleDenied) {
@@ -81,12 +88,98 @@ func TestApprovalFlowIsOneShotAndJournaled(t *testing.T) {
 	assertApprovalJournalEvent(t, events, "consumed", "alice", "agent")
 }
 
+func TestApprovalGrantRequiresCoveredRoleAndDifferentFingerprint(t *testing.T) {
+	setupAuthTest(t, map[string]store.MemberRecord{
+		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
+		bobFingerprint:   {Name: "bob", Role: store.MemberRoleShipper},
+	})
+	setServerMemberFingerprint(aliceFingerprint)
+	_, err := authorizeHelper(helperVerbMember, authTargetForBox("add member", "name=teammate"))
+	if !errcat.Is(err, errcat.CodeApprovalRequired) {
+		t.Fatalf("agent member add err = %v, want approval_required", err)
+	}
+	coded, _ := errcat.As(err)
+	id := approvalIDFromRemediation(t, coded.Remediation())
+
+	requests, err := store.Default().ReadApprovals()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requests.Requests) != 1 || requests.Requests[0].RequiredRole != store.MemberRoleOwner {
+		t.Fatalf("minted request required role = %+v, want owner", requests.Requests)
+	}
+
+	setServerMemberFingerprint(bobFingerprint)
+	if _, err := authorizeApprovalGrant(id); !errcat.Is(err, errcat.CodeRoleDenied) {
+		t.Fatalf("shipper owner-gated approval err = %v, want role_denied", err)
+	} else if !strings.Contains(err.Error(), "request requires owner") || !strings.Contains(err.Error(), "ask an owner") {
+		t.Fatalf("shipper owner-gated approval error = %q", err)
+	}
+	if _, err := approveRequest(id, serverMember{Fingerprint: bobFingerprint, Name: "bob", Role: store.MemberRoleShipper}); !errcat.Is(err, errcat.CodeRoleDenied) {
+		t.Fatalf("locked shipper owner-gated approval err = %v, want role_denied", err)
+	}
+
+	setServerMemberFingerprint(aliceFingerprint)
+	if _, err := authorizeApprovalGrant(id); !errcat.Is(err, errcat.CodeRoleDenied) {
+		t.Fatalf("self approval err = %v, want role_denied", err)
+	} else if !strings.Contains(err.Error(), "requests cannot be self-approved") || !strings.Contains(err.Error(), "another owner") {
+		t.Fatalf("self approval error = %q", err)
+	}
+	if _, err := approveRequest(id, serverMember{Fingerprint: aliceFingerprint, Name: "alice", Role: store.MemberRoleAgent}); !errcat.Is(err, errcat.CodeRoleDenied) {
+		t.Fatalf("locked self approval err = %v, want role_denied", err)
+	}
+}
+
+func TestApprovalGrantRefreshesExpiryWindow(t *testing.T) {
+	setupAuthTest(t, map[string]store.MemberRecord{
+		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
+		bobFingerprint:   {Name: "bob", Role: store.MemberRoleOwner},
+	})
+	now := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
+	setApprovalNowForTest(t, now)
+	target := authTargetForAppEnv("api", productionEnvName, "ship", "release=abc123")
+
+	setServerMemberFingerprint(aliceFingerprint)
+	_, err := authorizeHelper(helperVerbShip, target)
+	if !errcat.Is(err, errcat.CodeApprovalRequired) {
+		t.Fatalf("agent production ship err = %v, want approval_required", err)
+	}
+	coded, _ := errcat.As(err)
+	id := approvalIDFromRemediation(t, coded.Remediation())
+
+	grantedAt := now.Add(14 * time.Minute)
+	setApprovalNowForTest(t, grantedAt)
+	setServerMemberFingerprint(bobFingerprint)
+	approver, err := authorizeApprovalGrant(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := approveRequest(id, approver); err != nil {
+		t.Fatal(err)
+	}
+
+	requests, err := store.Default().ReadApprovals()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantExpiry := grantedAt.Add(approvalTTL).Format(time.RFC3339Nano)
+	if len(requests.Requests) != 1 || requests.Requests[0].ExpiresAt != wantExpiry {
+		t.Fatalf("granted expiry = %+v, want %q", requests.Requests, wantExpiry)
+	}
+
+	setApprovalNowForTest(t, now.Add(28*time.Minute))
+	setServerMemberFingerprint(aliceFingerprint)
+	if _, err := authorizeHelper(helperVerbShip, target); err != nil {
+		t.Fatalf("retry inside refreshed window failed: %v", err)
+	}
+}
+
 func TestPreviewShareRotationRequiresApprovalForAgents(t *testing.T) {
 	setupAuthTest(t, map[string]store.MemberRecord{
 		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
 	})
 	setServerMemberFingerprint(aliceFingerprint)
-	_, err := authorizeHelper(helperVerbShare, authTargetForPreviewBranch("api", "feat/protected", "preview-share"))
+	_, err := authorizeHelper(helperVerbShare, authTargetForPreviewBranch("api", "feat/protected", "share", "preview-share"))
 	if !errcat.Is(err, errcat.CodeApprovalRequired) {
 		t.Fatalf("agent preview share rotation err = %v, want approval_required", err)
 	}
@@ -97,7 +190,7 @@ func TestShareAllowsShippersAndRequiresApprovalForAgents(t *testing.T) {
 		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
 		bobFingerprint:   {Name: "bob", Role: store.MemberRoleShipper},
 	})
-	target := authTargetForPreviewBranch("api", "feat/protected", "share")
+	target := authTargetForPreviewBranch("api", "feat/protected", "share", "share")
 	setServerMemberFingerprint(bobFingerprint)
 	if _, err := authorizeHelper(helperVerbShare, target); err != nil {
 		t.Fatalf("shipper share authorization: %v", err)
@@ -115,7 +208,7 @@ func TestExpiredApprovedRequestFailsConsumptionWithFreshRetryRemediation(t *test
 	})
 	now := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
 	setApprovalNowForTest(t, now)
-	target := authTargetForAppEnv("api", productionEnvName, "release=abc123")
+	target := authTargetForAppEnv("api", productionEnvName, "ship", "release=abc123")
 
 	setServerMemberFingerprint(aliceFingerprint)
 	_, err := authorizeHelper(helperVerbShip, target)
@@ -123,7 +216,7 @@ func TestExpiredApprovedRequestFailsConsumptionWithFreshRetryRemediation(t *test
 		t.Fatalf("request err = %v, want approval_required", err)
 	}
 	coded, _ := errcat.As(err)
-	id := strings.TrimPrefix(coded.Remediation(), "ship approve ")
+	id := approvalIDFromRemediation(t, coded.Remediation())
 
 	setServerMemberFingerprint(bobFingerprint)
 	approver, err := authorizeApprovalGrant(id)
@@ -153,7 +246,7 @@ func TestPendingApprovalsListPrunesExpired(t *testing.T) {
 	now := time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC)
 	setApprovalNowForTest(t, now)
 	setServerMemberFingerprint(aliceFingerprint)
-	_, err := authorizeHelper(helperVerbShip, authTargetForAppEnv("api", productionEnvName, "release=abc123"))
+	_, err := authorizeHelper(helperVerbShip, authTargetForAppEnv("api", productionEnvName, "ship", "release=abc123"))
 	if !errcat.Is(err, errcat.CodeApprovalRequired) {
 		t.Fatalf("request err = %v, want approval_required", err)
 	}
@@ -185,8 +278,15 @@ func TestUnknownFingerprintRefusesWithMemberAddRemediation(t *testing.T) {
 		t.Fatalf("unknown fingerprint err = %v, want member_unknown", err)
 	}
 	coded, _ := errcat.As(err)
-	if coded.Remediation() != "ship member add" {
+	if coded.Remediation() != "ship box member add <src> 203.0.113.7" {
 		t.Fatalf("unknown remediation = %q", coded.Remediation())
+	}
+}
+
+func TestPreviewResolveAuthorizationSummaryDoesNotRepeatResolve(t *testing.T) {
+	target := authTargetForPreviewBranch("api", "feat/x", "resolve")
+	if got, want := target.Summary, "resolve app=api class=preview branch=feat/x"; got != want {
+		t.Fatalf("preview resolve summary = %q, want %q", got, want)
 	}
 }
 
@@ -196,7 +296,7 @@ func TestFingerprintResolutionRejectsSameNameRoleCollision(t *testing.T) {
 		bobFingerprint:   {Name: "shared", Role: store.MemberRoleOwner},
 	})
 	setServerMemberFingerprint(aliceFingerprint)
-	member, err := authorizeHelper(helperVerbShip, authTargetForPreviewBranch("api", "feat/pin", "release=abc123"))
+	member, err := authorizeHelper(helperVerbShip, authTargetForPreviewBranch("api", "feat/pin", "ship", "release=abc123"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +310,7 @@ func TestAuthorizedKeyMissingFromMembersUsesEffectiveShipperRole(t *testing.T) {
 		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
 	})
 	setServerMemberFingerprint(bobFingerprint)
-	member, err := authorizeHelper(helperVerbShip, authTargetForAppEnv("api", productionEnvName, "release=abc123"))
+	member, err := authorizeHelper(helperVerbShip, authTargetForAppEnv("api", productionEnvName, "ship", "release=abc123"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,18 +326,18 @@ func TestRoleMatrixShipperDeniedMemberOwnerUnrestricted(t *testing.T) {
 	})
 
 	setServerMemberFingerprint(aliceFingerprint)
-	if _, err := authorizeHelper(helperVerbShip, authTargetForAppEnv("api", productionEnvName, "release=abc123")); err != nil {
-		t.Fatalf("shipper prod ship should be allowed: %v", err)
+	if _, err := authorizeHelper(helperVerbShip, authTargetForAppEnv("api", productionEnvName, "ship", "release=abc123")); err != nil {
+		t.Fatalf("shipper production ship should be allowed: %v", err)
 	}
-	if _, err := authorizeHelper(helperVerbMember, authTargetForBox("member add", "name=teammate")); !errcat.Is(err, errcat.CodeApprovalRequired) {
+	if _, err := authorizeHelper(helperVerbMember, authTargetForBox("add member", "name=teammate")); !errcat.Is(err, errcat.CodeApprovalRequired) {
 		t.Fatalf("shipper member add err = %v, want approval_required", err)
 	}
 
 	setServerMemberFingerprint(bobFingerprint)
-	if _, err := authorizeHelper(helperVerbMember, authTargetForBox("member add", "name=teammate")); err != nil {
+	if _, err := authorizeHelper(helperVerbMember, authTargetForBox("add member", "name=teammate")); err != nil {
 		t.Fatalf("owner member add should be allowed: %v", err)
 	}
-	if _, err := authorizeHelper(helperVerbData, authTargetForAppEnv("api", productionEnvName, "data=restore")); err != nil {
+	if _, err := authorizeHelper(helperVerbData, authTargetForAppEnv("api", productionEnvName, "restore", "data=restore")); err != nil {
 		t.Fatalf("owner restore should be allowed: %v", err)
 	}
 }
@@ -247,7 +347,7 @@ func TestDataForkRequiresShipperOwnerAndAgentsRequestApproval(t *testing.T) {
 		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
 		bobFingerprint:   {Name: "bob", Role: store.MemberRoleShipper},
 	})
-	target := authTargetForAppEnv("api", "feat-x-abcd", "data=fork", "from=prod")
+	target := authTargetForAppEnv("api", "feat-x-abcd", "fork", "data=fork", "from=production")
 
 	setServerMemberFingerprint(aliceFingerprint)
 	if _, err := authorizeHelper(helperVerbData, target); !errcat.Is(err, errcat.CodeApprovalRequired) {
@@ -265,7 +365,7 @@ func TestDataRestoreProductionRequiresOwnerAfterDataAuthorization(t *testing.T) 
 		aliceFingerprint: {Name: "alice", Role: store.MemberRoleShipper},
 		bobFingerprint:   {Name: "bob", Role: store.MemberRoleOwner},
 	})
-	target := authTargetForAppEnv("api", productionEnvName, "data=restore")
+	target := authTargetForAppEnv("api", productionEnvName, "restore", "data=restore")
 
 	setServerMemberFingerprint(aliceFingerprint)
 	if _, err := authorizeHelper(helperVerbData, target); err != nil {
@@ -293,19 +393,21 @@ func TestApprovalListHumanTable(t *testing.T) {
 			Role:        store.MemberRoleAgent,
 		},
 		Target: store.ApprovalTarget{
-			Summary: "app=api env=prod class=production release=abc123",
+			Summary: "ship app=api env=production class=production release=abc123",
 		},
 		ExpiresAt: "2026-07-08T10:15:00Z",
 	}}
 	rows := approvalRows(requests)
 	got := "ID MEMBER REQUEST EXPIRES\n" + formatApprovalRow(rows[0]) + "\n"
-	want := "ID MEMBER REQUEST EXPIRES\nabc123xy alice app=api env=prod class=production release=abc123 2026-07-08T10:15:00Z\n"
+	want := "ID MEMBER REQUEST EXPIRES\nabc123xy alice ship app=api env=production class=production release=abc123 2026-07-08T10:15:00Z\n"
 	if got != want {
 		t.Fatalf("approval listing:\nwant: %s\n got: %s", want, got)
 	}
 }
 
 func TestApprovalRequiredHumanErrorShape(t *testing.T) {
+	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	writeValidHost(t, store.Default().HostPath())
 	request := store.ApprovalRequest{
 		ID: "abc123xy",
 		Member: store.ApprovalMember{
@@ -313,13 +415,13 @@ func TestApprovalRequiredHumanErrorShape(t *testing.T) {
 			Role: store.MemberRoleAgent,
 		},
 		Target: store.ApprovalTarget{
-			Summary: "app=api env=prod class=production release=abc123",
+			Summary: "ship app=api env=production class=production release=abc123",
 		},
 	}
 	got := approvalRequiredError(request).Error()
-	want := "approval required for app=api env=prod class=production release=abc123\n" +
-		"alice (agent) requested app=api env=prod class=production release=abc123; approval id abc123xy\n" +
-		"next: ship approve abc123xy"
+	want := "approval required for ship app=api env=production class=production release=abc123\n" +
+		"alice (agent) requested ship app=api env=production class=production release=abc123; approval id abc123xy\n" +
+		"next: ship box approve abc123xy <box>"
 	if got != want {
 		t.Fatalf("approval_required error:\nwant:\n%s\n got:\n%s", want, got)
 	}
@@ -333,6 +435,11 @@ func setupAuthTest(t *testing.T, members map[string]store.MemberRecord) string {
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
 	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
 	t.Setenv("SUDO_USER", "")
+	stateStore := store.Default()
+	writeValidHost(t, stateStore.HostPath())
+	if err := stateStore.WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{ClientAddress: "203.0.113.7"}); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		setServerMemberFingerprint("")
 		serverAuthorizedMember = nil
@@ -347,6 +454,15 @@ func setupAuthTest(t *testing.T, members map[string]store.MemberRecord) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+func approvalIDFromRemediation(t *testing.T, remediation string) string {
+	t.Helper()
+	fields := strings.Fields(remediation)
+	if len(fields) != 5 || fields[0] != "ship" || fields[1] != "box" || fields[2] != "approve" || fields[3] == "" || fields[4] != "203.0.113.7" {
+		t.Fatalf("approval remediation = %q, want ship box approve <id> 203.0.113.7", remediation)
+	}
+	return fields[3]
 }
 
 func setApprovalNowForTest(t *testing.T, now time.Time) {

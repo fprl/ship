@@ -396,7 +396,7 @@ func deploymentURLForBoxIP(ctx *config.AppContext, envName string, boxIP string)
 	if url := routedDeploymentURL(ctx); url != "" {
 		return url
 	}
-	return "https://" + sslipHost(envName, boxIP)
+	return "https://" + synthesizedSSLIPHost(ctx.AppName, envName, boxIP)
 }
 
 func writeSourceTar(root string, dest string, dirty bool, staticDirs []string) error {

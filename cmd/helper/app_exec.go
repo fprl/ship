@@ -49,7 +49,7 @@ func (c appExecCmd) run() error {
 			"command": "ship exec <cmd> [args...]",
 		})
 	}
-	authorizeOrDie(helperVerbExec, authTargetForAppEnv(c.App, c.Env, append([]string{"cmd"}, command...)...))
+	authorizeOrDie(helperVerbExec, authTargetForAppEnv(c.App, c.Env, "exec", append([]string{"cmd"}, command...)...))
 
 	target, err := resolveExecTarget(c.App, c.Env)
 	if err != nil {

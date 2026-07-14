@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,6 +142,80 @@ func TestResolveOrCreatePreviewRetriesSuffixCollision(t *testing.T) {
 	}
 	if env != "feat-x-cd34" {
 		t.Fatalf("expected suffix collision retry to choose feat-x-cd34, got %s", env)
+	}
+}
+
+func TestResolveOrCreatePreviewRetriesBoxGlobalHostLabelCollision(t *testing.T) {
+	setupPreviewHostTest(t)
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	writePreviewIdentityForTest(t, "api-foo", "xxxx-ab12", "xxxx", "xxxx", "ab12", now, false)
+
+	suffixes := []string{"ab12", "cd34"}
+	previous := newPreviewSuffix
+	newPreviewSuffix = func() (string, error) {
+		if len(suffixes) == 0 {
+			t.Fatal("suffix generator called too many times")
+		}
+		next := suffixes[0]
+		suffixes = suffixes[1:]
+		return next, nil
+	}
+	t.Cleanup(func() { newPreviewSuffix = previous })
+
+	env, err := resolveOrCreatePreview("api", "foo/xxxx", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env != "foo-xxxx-cd34" {
+		t.Fatalf("host-label collision should retry, got %s", env)
+	}
+}
+
+func TestWriteEnvIdentityRefusesProductionHostLabelCollisionWithPreview(t *testing.T) {
+	setupPreviewHostTest(t)
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	writePreviewIdentityForTest(t, "api", "foo-ab12", "foo", "foo", "ab12", now, false)
+
+	err := writeEnvIdentity("api-foo-ab12", productionEnvName)
+	if !errcat.Is(err, errcat.CodeHostLabelConflict) {
+		t.Fatalf("write production identity error = %v, want host_label_conflict", err)
+	}
+	coded, _ := errcat.As(err)
+	if got, want := coded.Cause(), "app api-foo-ab12 (production) generates host label api-foo-ab12, already used by api (foo-ab12)"; got != want {
+		t.Fatalf("collision cause = %q, want %q", got, want)
+	}
+	if got, want := coded.Remediation(), "rename app api-foo-ab12 and deploy again"; got != want {
+		t.Fatalf("collision remediation = %q, want %q", got, want)
+	}
+	if envIdentityExists("api-foo-ab12", productionEnvName) {
+		t.Fatal("production identity was created despite a host-label collision")
+	}
+}
+
+func TestResolveOrCreatePreviewRetriesTruncatedHostLabelCollision(t *testing.T) {
+	setupPreviewHostTest(t)
+	now := time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)
+	app := strings.Repeat("a", 40)
+	writePreviewIdentityForTest(t, app, "abcdefghijklmnop-foo-ab12", "abcdefghijklmnop/foo", "abcdefghijklmnop-foo", "ab12", now, false)
+
+	suffixes := []string{"ab12", "cd34"}
+	previous := newPreviewSuffix
+	newPreviewSuffix = func() (string, error) {
+		if len(suffixes) == 0 {
+			t.Fatal("suffix generator called too many times")
+		}
+		next := suffixes[0]
+		suffixes = suffixes[1:]
+		return next, nil
+	}
+	t.Cleanup(func() { newPreviewSuffix = previous })
+
+	env, err := resolveOrCreatePreview(app, "abcdefghijklmnop/bar", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env != "abcdefghijklmnop-bar-cd34" {
+		t.Fatalf("truncated host-label collision should retry, got %s", env)
 	}
 }
 

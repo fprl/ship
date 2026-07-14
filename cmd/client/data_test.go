@@ -50,16 +50,16 @@ func TestRunDataSaveDefaultNameUsesArchiveMetadata(t *testing.T) {
 	}
 }
 
-func TestDefaultDataSnapshotPathBuildsUnsuffixedName(t *testing.T) {
+func TestDefaultDataSnapshotPathUsesProductionEnvName(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	now := time.Date(2026, time.July, 14, 12, 30, 45, 0, time.UTC)
-	path, err := defaultDataSnapshotPath("api", "preview", "abc1234", now)
+	path, err := defaultDataSnapshotPath("api", productionEnvName, "abc1234", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Collision suffixes are allocated only by claimDataSnapshotPath at
 	// link time; the default name is always the plain stamp.
-	if got := filepath.Base(path); got != "preview-abc1234-20260714T123045Z.data.tar.gz" {
+	if got := filepath.Base(path); got != "production-abc1234-20260714T123045Z.data.tar.gz" {
 		t.Fatalf("snapshot name = %q", got)
 	}
 }
@@ -222,7 +222,7 @@ func TestDataPreviewURLFallsBackWhenLiveURLIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if url != "https://preview.203-0-113-7.sslip.io" {
+	if url != "https://api-preview.203-0-113-7.sslip.io" {
 		t.Fatalf("preview URL = %q", url)
 	}
 }
@@ -255,12 +255,12 @@ func TestRunDataForkPreservesSuccessfulMutationWhenURLLookupFails(t *testing.T) 
 	}
 }
 
-func TestRunDataRmPreservesSuccessfulMutationWhenURLLookupFails(t *testing.T) {
+func TestRunDataResetPreservesSuccessfulMutationWhenURLLookupFails(t *testing.T) {
 	runner := &fakeDataRunner{fakeSSHRunner: &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
-		serverAppDataRmCommand("api", "preview"): {{stdout: "removed"}},
-		serverAppListCommand(true):               {{stderr: "status lookup failed", code: 1}},
+		serverAppDataResetCommand("api", "preview"): {{stdout: "removed"}},
+		serverAppListCommand(true):                  {{stderr: "status lookup failed", code: 1}},
 	}}}
-	result, err := runDataRm(dataContext{
+	result, err := runDataReset(dataContext{
 		AppContext:    &config.AppContext{AppName: "api", Server: "example.com"},
 		PreviewBranch: "feature/data",
 		EnvName:       "preview",
@@ -272,7 +272,7 @@ func TestRunDataRmPreservesSuccessfulMutationWhenURLLookupFails(t *testing.T) {
 	if result.URLLookupErr == nil {
 		t.Fatalf("result = %+v, want URL lookup error", result)
 	}
-	stdout, stderr := renderDataRmOutput("feature/data", result)
+	stdout, stderr := renderDataResetOutput("feature/data", result)
 	if stdout != "" {
 		t.Fatalf("stdout = %q, want no URL when lookup failed", stdout)
 	}
@@ -281,7 +281,7 @@ func TestRunDataRmPreservesSuccessfulMutationWhenURLLookupFails(t *testing.T) {
 	}
 }
 
-func TestDataForkAndRmOutputKeepStdoutToPreviewURL(t *testing.T) {
+func TestDataForkAndResetOutputKeepStdoutToPreviewURL(t *testing.T) {
 	forkStdout, forkStderr := renderDataForkOutput("feature/data", dataForkResult{
 		Summary: dataForkSummary{Files: []dataForkFile{{Path: "app.db", Size: 4, SQLite: true}}, SQLiteFiles: 1},
 		URL:     "https://preview.example.com",
@@ -289,9 +289,9 @@ func TestDataForkAndRmOutputKeepStdoutToPreviewURL(t *testing.T) {
 	if forkStdout != "https://preview.example.com\n" || strings.Contains(forkStderr, "preview:") {
 		t.Fatalf("fork streams:\nstdout=%q\nstderr=%q", forkStdout, forkStderr)
 	}
-	rmStdout, rmStderr := renderDataRmOutput("feature/data", dataRmResult{URL: "https://preview.example.com"})
-	if rmStdout != "https://preview.example.com\n" || rmStderr != "Reset data for Preview feature/data\n" {
-		t.Fatalf("rm streams:\nstdout=%q\nstderr=%q", rmStdout, rmStderr)
+	resetStdout, resetStderr := renderDataResetOutput("feature/data", dataResetResult{URL: "https://preview.example.com"})
+	if resetStdout != "https://preview.example.com\n" || resetStderr != "Reset data for Preview feature/data\n" {
+		t.Fatalf("reset streams:\nstdout=%q\nstderr=%q", resetStdout, resetStderr)
 	}
 }
 

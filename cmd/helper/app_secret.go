@@ -36,7 +36,7 @@ func (c appSecretSetCmd) Run() error {
 	if err := secrets.ValidateKey(c.Key); err != nil {
 		return errcat.New(errcat.CodeInvalidSecretKey, errcat.Fields{"key": fmt.Sprintf("%q", c.Key)})
 	}
-	authorizeOrDie(helperVerbSecretSet, authTargetForAppEnv(c.App, c.Env, "key="+c.Key))
+	authorizeOrDie(helperVerbSecretSet, authTargetForAppEnv(c.App, c.Env, "set", "key="+c.Key))
 	// stdin only — never argv. The client owns the single trailing
 	// TTY-newline trim before SSHing the value here; the helper stores
 	// these bytes verbatim so the value never lands in the host's
@@ -72,7 +72,7 @@ func (c appSecretListCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
-	authorizeOrDie(helperVerbSecretRead, authTargetForAppEnv(c.App, c.Env, "secret-list"))
+	authorizeOrDie(helperVerbSecretRead, authTargetForAppEnv(c.App, c.Env, "list", "secret-list"))
 	keys, err := secrets.List(c.App, c.Env)
 	if err != nil {
 		utils.DieError(err, 1)
@@ -119,7 +119,7 @@ func (c appSecretRmCmd) Run() error {
 	if err := secrets.ValidateKey(c.Key); err != nil {
 		utils.DieError(err, 1)
 	}
-	authorizeOrDie(helperVerbSecretRemove, authTargetForAppEnv(c.App, c.Env, "key="+c.Key))
+	authorizeOrDie(helperVerbSecretRemove, authTargetForAppEnv(c.App, c.Env, "rm", "key="+c.Key))
 	withAppEnvLock(c.App, c.Env, func() {
 		err := secrets.Rm(c.App, c.Env, c.Key)
 		switch {

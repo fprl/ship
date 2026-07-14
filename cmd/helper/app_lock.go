@@ -40,12 +40,20 @@ func boxConfigLockPath() string {
 	return filepath.Join(appEnvLockDir(), "box-config.lock")
 }
 
+func previewHostLabelLockPath() string {
+	return filepath.Join(appEnvLockDir(), "preview-host-label.lock")
+}
+
 func acquireBoxUpdateLock() (*appEnvLock, error) {
 	return acquireLockFile(boxUpdateLockPath())
 }
 
 func acquireBoxConfigLock() (*appEnvLock, error) {
 	return acquireLockFile(boxConfigLockPath())
+}
+
+func acquirePreviewHostLabelLock() (*appEnvLock, error) {
+	return acquireLockFile(previewHostLabelLockPath())
 }
 
 func acquireAppEnvLock(app, env string) (*appEnvLock, error) {

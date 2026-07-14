@@ -34,8 +34,6 @@ type cli struct {
 	SSH        sshCmd           `cmd:"ssh" group:"project" help:"Open an SSH session to the box."`
 	Secret     secretCmd        `cmd:"" group:"project" help:"Manage secrets for the current branch environment."`
 	Box        boxCmd           `cmd:"" group:"host" help:"Install or inspect a ship box."`
-	Member     memberCmd        `cmd:"" group:"host" help:"Manage deploy SSH members."`
-	Approve    approveCmd       `cmd:"" group:"host" help:"List or approve one-shot role approvals."`
 	Docs       docsCmd          `cmd:"" group:"global" help:"Print the agent contract."`
 	Help       helpCmd          `cmd:"" group:"global" help:"Show usage for one verb."`
 	Completion completionCmd    `cmd:"" hidden:"" group:"global" help:"Emit shell completions. Install: bash: ship completion bash > /etc/bash_completion.d/ship; zsh: ship completion zsh > ~/.zsh/completions/_ship; fish: ship completion fish > ~/.config/fish/completions/ship.fish."`
@@ -302,7 +300,7 @@ func (c rmCmd) Run() error {
 
 type dataCmd struct {
 	Fork    dataForkCmd    `cmd:"" help:"Fork Production /data into this branch's Preview."`
-	Rm      dataRmCmd      `cmd:"rm" help:"Reset this branch's Preview /data to empty."`
+	Reset   dataResetCmd   `cmd:"reset" help:"Reset this branch's Preview /data to empty."`
 	Save    dataSaveCmd    `cmd:"" help:"Save this environment's /data to a local snapshot."`
 	Restore dataRestoreCmd `cmd:"" help:"Restore this environment's /data from a local snapshot."`
 	Ls      dataLsCmd      `cmd:"" help:"List local data snapshots for this app."`
@@ -321,16 +319,16 @@ func (c dataForkCmd) Run() error {
 	return nil
 }
 
-type dataRmCmd struct {
+type dataResetCmd struct {
 	projectArgs
 }
 
-func (c dataRmCmd) Run() error {
+func (c dataResetCmd) Run() error {
 	root, err := c.projectRoot()
 	if err != nil {
 		return err
 	}
-	client.CmdDataRm(root)
+	client.CmdDataReset(root)
 	return nil
 }
 
@@ -440,16 +438,20 @@ func (c secretRmCmd) Run() error {
 }
 
 type boxCmd struct {
-	Setup  boxSetupCmd        `cmd:"" help:"Install or converge a box."`
-	Doctor boxDoctorCmd       `cmd:"" help:"Run box diagnostics."`
-	Notify boxNotifyCmd       `cmd:"" help:"Read or set the box notification webhook."`
-	Apps   boxAppsCmd         `cmd:"" help:"Show the box's app table."`
-	Ls     boxLsCmd           `cmd:"" hidden:""`
-	Rm     boxRmCmd           `cmd:"rm" help:"Destroy an app and all its environments on a box."`
-	Status boxStatusCmd       `cmd:"" help:"Show helper version, disk, apps, and approvals for one box."`
-	Update boxUpdateCmd       `cmd:"" help:"Update a box helper and version-owned artifacts."`
-	Forget boxForgetCmd       `cmd:"" hidden:"" help:"Drop a box host-key pin."`
-	Config boxConfigClientCmd `cmd:"" help:"Read or change box configuration."`
+	Setup     boxSetupCmd        `cmd:"" help:"Install or converge a box."`
+	Doctor    boxDoctorCmd       `cmd:"" help:"Run box diagnostics."`
+	Notify    boxNotifyCmd       `cmd:"" help:"Read or set the box notification webhook."`
+	Apps      boxAppsCmd         `cmd:"" help:"Show the box's app table."`
+	Ls        boxLsCmd           `cmd:"" hidden:""`
+	Rm        boxRmCmd           `cmd:"rm" help:"Destroy an app and all its environments on a box."`
+	Status    boxStatusCmd       `cmd:"" help:"Show helper version, disk, apps, and approvals for one box."`
+	Update    boxUpdateCmd       `cmd:"" help:"Update a box helper and version-owned artifacts."`
+	Forget    boxForgetCmd       `cmd:"" hidden:"" help:"Drop a box host-key pin."`
+	Config    boxConfigClientCmd `cmd:"" help:"Read or change box configuration."`
+	Member    boxMemberCmd       `cmd:"" help:"Manage deploy SSH members."`
+	Members   boxMembersCmd      `cmd:"" help:"List deploy SSH members."`
+	Approve   boxApproveCmd      `cmd:"" help:"Grant one pending role approval."`
+	Approvals boxApprovalsCmd    `cmd:"" help:"List pending role approvals."`
 }
 
 type boxStatusCmd struct {
@@ -580,76 +582,85 @@ func (c boxNotifyCmd) Run() error {
 	return nil
 }
 
-type memberCmd struct {
-	Add memberAddCmd `cmd:"" help:"Authorize a member's SSH public key for deploy access."`
-	Ls  memberLsCmd  `cmd:"ls" help:"List authorized deploy members."`
-	Rm  memberRmCmd  `cmd:"rm" help:"Revoke a deploy member's SSH keys."`
+type boxMemberCmd struct {
+	Add boxMemberAddCmd `cmd:"" help:"Authorize a member's SSH public key for deploy access."`
+	Rm  boxMemberRmCmd  `cmd:"rm" help:"Revoke a deploy member's SSH keys."`
 }
 
-type memberAddCmd struct {
+type boxMemberAddCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
 	Source string `arg:"" help:"GitHub username, SSH public key string, or path to a .pub/.pem file."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	Role   string `name:"role" enum:"owner,shipper,agent" default:"shipper" help:"Role recorded for newly added keys."`
 }
 
-func (c memberAddCmd) Run() error {
-	target, err := memberTarget(c.Config)
+func (c boxMemberAddCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box member add <src> <box>")
 	if err != nil {
 		return err
 	}
-	client.CmdMemberAdd(target, c.Source, c.Role)
+	client.CmdBoxMemberAdd(target, c.Source, c.Role)
 	return nil
 }
 
-type memberLsCmd struct {
+type boxMembersCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	JSON   bool   `name:"json" help:"Emit structured JSON instead of plain text."`
 }
 
-func (c memberLsCmd) Run() error {
-	target, err := memberTarget(c.Config)
+func (c boxMembersCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box members <box>")
 	if err != nil {
 		return err
 	}
-	client.CmdMemberLs(target, c.JSON)
+	client.CmdBoxMembers(target, c.JSON)
 	return nil
 }
 
-type memberRmCmd struct {
+type boxMemberRmCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
 	Name   string `arg:"" help:"Member name to revoke."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 }
 
-func (c memberRmCmd) Run() error {
-	target, err := memberTarget(c.Config)
+func (c boxMemberRmCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box member rm <name> <box>")
 	if err != nil {
 		return err
 	}
-	client.CmdMemberRm(target, c.Name)
+	client.CmdBoxMemberRm(target, c.Name)
 	return nil
 }
 
-type approveCmd struct {
+type boxApprovalsCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
 	JSON   bool   `name:"json" help:"Emit structured JSON for the pending approval list."`
-	ID     string `arg:"" optional:"" help:"Approval id to grant. Omit to list pending requests."`
 }
 
-func (c approveCmd) Run() error {
-	target, err := memberTarget(c.Config)
+func (c boxApprovalsCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box approvals <box>")
 	if err != nil {
 		return err
 	}
-	client.CmdApprove(target, c.ID, c.JSON)
+	client.CmdBoxApprovals(target, c.JSON)
 	return nil
 }
 
-func memberTarget(configPath string) (string, error) {
-	root, err := projectAppRoot(configPath)
+type boxApproveCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	ID     string `arg:"" help:"Approval id to grant."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
+}
+
+func (c boxApproveCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box approve <id> <box>")
 	if err != nil {
-		return "", err
+		return err
 	}
-	return client.BoxTarget(root)
+	client.CmdBoxApprove(target, c.ID)
+	return nil
 }
 
 type boxAppsCmd struct {
@@ -719,6 +730,7 @@ func (c boxForgetCmd) Run() error {
 
 type boxSetupCmd struct {
 	Target                   string `arg:"" name:"ssh-target" help:"Bootstrap SSH target like root@example.com or example.com."`
+	ClientAddress            string `name:"client-address" hidden:""`
 	Mode                     string `enum:"auto,local,remote" default:"auto" help:"Execution mode."`
 	BootstrapUser            string `help:"SSH user for remote bootstrap."`
 	SSHKey                   string `name:"ssh-key" help:"SSH private key for remote mode."`
@@ -731,6 +743,7 @@ type boxSetupCmd struct {
 func (c boxSetupCmd) Run() error {
 	opts := hostinstall.DefaultOptions(nil)
 	opts.TargetHost = c.Target
+	opts.ClientAddress = c.ClientAddress
 	if c.Mode != "" {
 		opts.Mode = c.Mode
 	}

@@ -201,7 +201,7 @@ func RenderAuthorizedKeyLine(key AuthorizedKey, record store.MemberRecord) strin
 
 func RowsWithMembers(keys []AuthorizedKey, members store.MembersFile) []Row {
 	records := EffectiveMemberRecords(keys, members, nil)
-	var rows []Row
+	rows := make([]Row, 0, len(keys))
 	for _, key := range keys {
 		if key.Material == "" {
 			continue

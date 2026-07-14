@@ -14,6 +14,7 @@ const (
 	ProcessPattern    = `^[a-z][a-z0-9-]{0,30}$`
 	SystemUserPattern = `^[a-z_][a-z0-9_-]{0,31}\$?$`
 	EnvKeyPattern     = `^[A-Za-z_][A-Za-z0-9_]*$`
+	ProductionEnvName = "production"
 )
 
 var (
@@ -52,6 +53,55 @@ func SanitizeBranchEnvName(branch string) string {
 		out = out[:28]
 	}
 	return strings.Trim(out, "-")
+}
+
+// SynthesizedHostLabel returns the one-label, app-first hostname prefix for
+// an environment. Production uses the app name alone; previews carry the
+// persisted suffix from their environment name.
+func SynthesizedHostLabel(app, env string) string {
+	app = strings.Trim(app, "-")
+	if env == ProductionEnvName {
+		return app
+	}
+
+	slug, suffix, ok := strings.Cut(env, "-")
+	if ok {
+		if index := strings.LastIndex(env, "-"); index > 0 {
+			slug, suffix = env[:index], env[index+1:]
+		}
+	}
+	if !ok || slug == "" || suffix == "" {
+		return synthesizedHostLabelWithSlug(app, env, "")
+	}
+
+	return synthesizedHostLabelWithSlug(app, slug, suffix)
+}
+
+func synthesizedHostLabelWithSlug(app, slug, suffix string) string {
+	slug = strings.Trim(slug, "-")
+	suffix = strings.Trim(suffix, "-")
+	if slug != "" {
+		fixedLength := len(app) + 1
+		if suffix != "" {
+			fixedLength += len(suffix) + 1
+		}
+		slugBudget := min(28, 63-fixedLength)
+		if slugBudget < 0 {
+			slugBudget = 0
+		}
+		if len(slug) > slugBudget {
+			slug = slug[:slugBudget]
+		}
+		slug = strings.Trim(slug, "-")
+	}
+
+	parts := make([]string, 0, 3)
+	for _, part := range []string{app, slug, suffix} {
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return strings.Join(parts, "-")
 }
 
 func ValidGitBranch(branch string) bool {

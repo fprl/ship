@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	productionEnvName = "prod"
+	productionEnvName = names.ProductionEnvName
 	previewTTL        = 72 * time.Hour
 	previewMapLock    = "preview-map"
 	previewSuffixLen  = 4
@@ -69,7 +69,7 @@ func (c appPreviewResolveCmd) Run() error {
 	if err := validatePreviewAppBranch(c.App, c.Branch); err != nil {
 		utils.DieError(err, 1)
 	}
-	authorizeOrDie(helperVerbRead, authTargetForPreviewBranch(c.App, c.Branch, "preview-resolve"))
+	authorizeOrDie(helperVerbRead, authTargetForPreviewBranch(c.App, c.Branch, "resolve"))
 	file, ok, err := findPreviewByBranch(c.App, c.Branch)
 	if err != nil {
 		utils.DieError(err, 1)
@@ -157,6 +157,11 @@ func resolveOrCreatePreview(app, branch string, now time.Time) (string, error) {
 	}
 
 	base := names.SanitizeBranchEnvName(branch)
+	hostLock, err := acquirePreviewHostLabelLock()
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = hostLock.Release() }()
 	for attempt := 0; attempt < 20; attempt++ {
 		suffix, err := newPreviewSuffix()
 		if err != nil {
@@ -167,6 +172,13 @@ func resolveOrCreatePreview(app, branch string, now time.Time) (string, error) {
 			return "", err
 		}
 		if previewEnvExists(app, env) {
+			continue
+		}
+		inUse, err := synthesizedHostLabelExists(names.SynthesizedHostLabel(app, env))
+		if err != nil {
+			return "", err
+		}
+		if inUse {
 			continue
 		}
 		expires := now.Add(previewTTL)
@@ -201,6 +213,24 @@ func resolveOrCreatePreview(app, branch string, now time.Time) (string, error) {
 		return env, nil
 	}
 	return "", fmt.Errorf("could not allocate a unique preview suffix for branch %s", branch)
+}
+
+func synthesizedHostLabelExists(label string) (bool, error) {
+	_, found, err := synthesizedHostLabelOwner(label)
+	return found, err
+}
+
+func synthesizedHostLabelOwner(label string) (appEnvStatus, bool, error) {
+	envs, err := identityAppEnvs()
+	if err != nil {
+		return appEnvStatus{}, false, err
+	}
+	for _, env := range envs {
+		if names.SynthesizedHostLabel(env.App, env.Env) == label {
+			return env, true, nil
+		}
+	}
+	return appEnvStatus{}, false, nil
 }
 
 func ensurePreviewCapability(app, env string) (string, error) {
@@ -288,7 +318,7 @@ func validatePreviewIdentity(file identity.EnvIdentity) error {
 		return nil
 	}
 	if file.Env == productionEnvName {
-		return fmt.Errorf("prod cannot carry preview metadata")
+		return fmt.Errorf("production cannot carry preview metadata")
 	}
 	if file.Preview.Env != file.Env {
 		return fmt.Errorf("preview env %q does not match top-level env %q", file.Preview.Env, file.Env)

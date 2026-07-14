@@ -137,6 +137,10 @@ func TestNotifyDoctorDegradedPayloadCarriesEvidenceAndRunnableRemediation(t *tes
 func TestNotifyApprovalRequestedPayloadCarriesLiteralApproveCommand(t *testing.T) {
 	setupPreviewHostTest(t)
 	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	writeValidHost(t, store.Default().HostPath())
+	if err := store.Default().WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{ClientAddress: "203.0.113.7"}); err != nil {
+		t.Fatal(err)
+	}
 	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName, InfraID: identity.InfraID("api", productionEnvName)})
 	sink := newNotifyTestSink(t)
 	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"notify.url": sink.URL}}); err != nil {
@@ -163,7 +167,7 @@ func TestNotifyApprovalRequestedPayloadCarriesLiteralApproveCommand(t *testing.T
 			App:     "api",
 			Env:     productionEnvName,
 			Class:   "production",
-			Summary: "app=api env=prod class=production release=aaa111",
+			Summary: "ship app=api env=production class=production release=aaa111",
 		},
 		CreatedAt: "2026-07-08T10:00:00Z",
 		ExpiresAt: "2026-07-08T10:15:00Z",
@@ -173,18 +177,20 @@ func TestNotifyApprovalRequestedPayloadCarriesLiteralApproveCommand(t *testing.T
 
 	payload := sink.singlePayload(t)
 	assertNotifyField(t, payload, "event", notifyEventApprovalRequested)
-	if box, _ := payload["box"].(string); box == "" {
-		t.Fatalf("approval_requested missing box host: %s", prettyNotifyJSON(t, payload))
-	}
+	assertNotifyField(t, payload, "box", "203.0.113.7")
 	assertNotifyField(t, payload, "release", "aaa111bbb222")
 	assertNotifyNestedField(t, payload, "why", "id", "abc123xy")
-	assertNotifyNestedField(t, payload, "remediation", "command", "ship approve abc123xy")
+	assertNotifyNestedField(t, payload, "remediation", "command", "ship box approve abc123xy 203.0.113.7")
 	t.Logf("approval_requested payload:\n%s", prettyNotifyJSON(t, payload))
 }
 
 func TestNotifyApprovalRequestedForBoxTargetUsesBoxWebhook(t *testing.T) {
 	setupPreviewHostTest(t)
 	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	writeValidHost(t, store.Default().HostPath())
+	if err := store.Default().WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{ClientAddress: "203.0.113.7"}); err != nil {
+		t.Fatal(err)
+	}
 	sink := newNotifyTestSink(t)
 	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"notify.url": sink.URL}}); err != nil {
 		t.Fatal(err)
@@ -194,7 +200,7 @@ func TestNotifyApprovalRequestedForBoxTargetUsesBoxWebhook(t *testing.T) {
 		ID:        "abc123xy",
 		Member:    store.ApprovalMember{Name: "alice", Role: store.MemberRoleShipper},
 		Verb:      "box_mutation",
-		Target:    store.ApprovalTarget{Summary: "box notify set"},
+		Target:    store.ApprovalTarget{Summary: "set box notify"},
 		ExpiresAt: "2026-07-08T10:15:00Z",
 	}, time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC))
 
@@ -203,7 +209,9 @@ func TestNotifyApprovalRequestedForBoxTargetUsesBoxWebhook(t *testing.T) {
 	if app, _ := payload["app"].(string); app != "" {
 		t.Fatalf("box approval app = %q, want empty: %s", app, prettyNotifyJSON(t, payload))
 	}
-	assertNotifyNestedField(t, payload, "why", "target.summary", "box notify set")
+	assertNotifyNestedField(t, payload, "why", "target.summary", "set box notify")
+	assertNotifyField(t, payload, "box", "203.0.113.7")
+	assertNotifyNestedField(t, payload, "remediation", "command", "ship box approve abc123xy 203.0.113.7")
 }
 
 func TestNotifyFailureIsBoundedAndDoesNotLeakURL(t *testing.T) {

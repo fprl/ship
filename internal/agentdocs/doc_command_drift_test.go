@@ -131,6 +131,13 @@ func invocationVerb(rest string, verbs map[string]bool) string {
 	if strings.HasPrefix(first, "-") {
 		return "ship"
 	}
+	if len(fields) > 2 {
+		second := cleanShellToken(fields[1])
+		third := cleanShellToken(fields[2])
+		if verbs[first+" "+second+" "+third] {
+			return first + " " + second + " " + third
+		}
+	}
 	if len(fields) > 1 {
 		second := cleanShellToken(fields[1])
 		if verbs[first+" "+second] {

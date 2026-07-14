@@ -25,7 +25,7 @@ func (c appPreviewShareCmd) Run() error {
 	if c.Rotate {
 		verb = helperVerbShare
 	}
-	authorizeOrDie(verb, authTargetForAppEnv(c.App, c.Env, "preview-share"))
+	authorizeOrDie(verb, authTargetForAppEnv(c.App, c.Env, "share", "preview-share"))
 
 	lock, err := acquireAppEnvLock(c.App, c.Env)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/fprl/ship/internal/names"
 )
@@ -137,45 +138,76 @@ func validateApprovalsFile(file ApprovalsFile) error {
 			return fmt.Errorf("approvals.requests contains duplicate id %s", request.ID)
 		}
 		seen[request.ID] = true
-		if strings.TrimSpace(request.Member.Fingerprint) == "" {
-			return fmt.Errorf("approvals.requests.%s.member.fingerprint is required", request.ID)
+		if err := validateApprovalRequest(request); err != nil {
+			return err
 		}
-		if strings.TrimSpace(request.Member.Name) == "" {
-			return fmt.Errorf("approvals.requests.%s.member.name is required", request.ID)
-		}
-		if !ValidMemberRole(request.Member.Role) {
-			return fmt.Errorf("approvals.requests.%s.member.role must be owner, shipper, or agent", request.ID)
-		}
-		if strings.TrimSpace(request.Verb) == "" {
-			return fmt.Errorf("approvals.requests.%s.verb is required", request.ID)
-		}
-		if strings.TrimSpace(request.Target.Summary) == "" {
-			return fmt.Errorf("approvals.requests.%s.target.summary is required", request.ID)
-		}
-		if strings.TrimSpace(request.MatchKey) == "" {
-			return fmt.Errorf("approvals.requests.%s.match_key is required", request.ID)
-		}
-		switch request.Status {
-		case ApprovalStatusPending, ApprovalStatusApproved:
-		default:
-			return fmt.Errorf("approvals.requests.%s.status must be pending or approved", request.ID)
-		}
-		if strings.TrimSpace(request.CreatedAt) == "" {
-			return fmt.Errorf("approvals.requests.%s.created is required", request.ID)
-		}
-		if strings.TrimSpace(request.ExpiresAt) == "" {
-			return fmt.Errorf("approvals.requests.%s.expires is required", request.ID)
-		}
-		if request.Status == ApprovalStatusApproved {
-			if strings.TrimSpace(request.ApprovedAt) == "" {
-				return fmt.Errorf("approvals.requests.%s.approved_at is required", request.ID)
+	}
+	return nil
+}
+
+// dropInvalidExpiredApprovals removes requests that fail validation AND are
+// already past their expiry (or carry an unparseable expiry). Approvals are
+// 15-minute objects: an expired entry is prunable garbage whatever its
+// shape, and it must never brick reads of the live entries. Invalid entries
+// that are still live keep failing validation loudly.
+func dropInvalidExpiredApprovals(file *ApprovalsFile, now time.Time) {
+	kept := file.Requests[:0]
+	for _, request := range file.Requests {
+		if validateApprovalRequest(request) != nil {
+			expires, err := time.Parse(time.RFC3339Nano, request.ExpiresAt)
+			if err != nil || !expires.After(now) {
+				continue
 			}
-			if request.ApprovedBy == nil {
-				return fmt.Errorf("approvals.requests.%s.approved_by is required", request.ID)
-			}
-			if !ValidMemberRole(request.ApprovedBy.Role) {
-				return fmt.Errorf("approvals.requests.%s.approved_by.role must be owner, shipper, or agent", request.ID)
-			}
+		}
+		kept = append(kept, request)
+	}
+	file.Requests = kept
+}
+
+func validateApprovalRequest(request ApprovalRequest) error {
+	if strings.TrimSpace(request.Member.Fingerprint) == "" {
+		return fmt.Errorf("approvals.requests.%s.member.fingerprint is required", request.ID)
+	}
+	if strings.TrimSpace(request.Member.Name) == "" {
+		return fmt.Errorf("approvals.requests.%s.member.name is required", request.ID)
+	}
+	if !ValidMemberRole(request.Member.Role) {
+		return fmt.Errorf("approvals.requests.%s.member.role must be owner, shipper, or agent", request.ID)
+	}
+	switch request.RequiredRole {
+	case MemberRoleOwner, MemberRoleShipper:
+	default:
+		return fmt.Errorf("approvals.requests.%s.required_role must be owner or shipper", request.ID)
+	}
+	if strings.TrimSpace(request.Verb) == "" {
+		return fmt.Errorf("approvals.requests.%s.verb is required", request.ID)
+	}
+	if strings.TrimSpace(request.Target.Summary) == "" {
+		return fmt.Errorf("approvals.requests.%s.target.summary is required", request.ID)
+	}
+	if strings.TrimSpace(request.MatchKey) == "" {
+		return fmt.Errorf("approvals.requests.%s.match_key is required", request.ID)
+	}
+	switch request.Status {
+	case ApprovalStatusPending, ApprovalStatusApproved:
+	default:
+		return fmt.Errorf("approvals.requests.%s.status must be pending or approved", request.ID)
+	}
+	if strings.TrimSpace(request.CreatedAt) == "" {
+		return fmt.Errorf("approvals.requests.%s.created is required", request.ID)
+	}
+	if strings.TrimSpace(request.ExpiresAt) == "" {
+		return fmt.Errorf("approvals.requests.%s.expires is required", request.ID)
+	}
+	if request.Status == ApprovalStatusApproved {
+		if strings.TrimSpace(request.ApprovedAt) == "" {
+			return fmt.Errorf("approvals.requests.%s.approved_at is required", request.ID)
+		}
+		if request.ApprovedBy == nil {
+			return fmt.Errorf("approvals.requests.%s.approved_by is required", request.ID)
+		}
+		if !ValidMemberRole(request.ApprovedBy.Role) {
+			return fmt.Errorf("approvals.requests.%s.approved_by.role must be owner, shipper, or agent", request.ID)
 		}
 	}
 	return nil

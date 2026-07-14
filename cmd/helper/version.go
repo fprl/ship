@@ -46,7 +46,7 @@ func (c versionHelperCmd) BeforeApply() error { return requireRoot() }
 
 func (c versionHelperCmd) Run() error {
 	setServerMemberFingerprint(c.MemberFingerprint)
-	if _, err := authorizeHelper(helperVerbRead, authTargetForBox("box version")); err != nil {
+	if _, err := authorizeHelper(helperVerbRead, authTargetForBox("version box")); err != nil {
 		utils.DieError(err, 1)
 	}
 	if !c.JSON {

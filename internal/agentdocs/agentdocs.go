@@ -545,7 +545,7 @@ var verbs = []Verb{
 			{Name: "--rebuild", Purpose: "Refresh base images and bypass the container build cache."},
 		},
 		JSONSchema: schema(
-			`{"url":"https://...","env":"prod","release":"abc123","processes":["web"],"durationMs":1234}`,
+			`{"url":"https://...","env":"production","release":"abc123","processes":["web"],"durationMs":1234}`,
 		),
 		ExitCodes: normalExit,
 		Errors: []string{
@@ -598,7 +598,7 @@ var verbs = []Verb{
 			{Name: "--json", Purpose: "Emit captured log lines as JSON. Cannot be combined with --follow."},
 		},
 		JSONSchema: schema(
-			`{"app":"api","env":"prod","process":"web","lines":["line 1","line 2"]}`,
+			`{"app":"api","env":"production","process":"web","lines":["line 1","line 2"]}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"logs_follow_json_conflict", "unknown_preview_branch", "host_key_changed", "operation_failed"},
@@ -629,7 +629,7 @@ var verbs = []Verb{
 			{Name: "--json", Purpose: "Emit the raw deploy journal entry."},
 		},
 		JSONSchema: schema(
-			`{"schema_version":1,"app":"api","env":"prod","outcome":"aborted_probe","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","failing_step":"probe","stderr_tail":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"probe":{"status":502,"body_snippet":"..."}}`,
+			`{"schema_version":1,"app":"api","env":"production","outcome":"aborted_probe","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","failing_step":"probe","stderr_tail":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"probe":{"status":502,"body_snippet":"..."}}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"unknown_preview_branch", "no_deploys", "host_key_changed", "operation_failed"},
@@ -659,21 +659,21 @@ var verbs = []Verb{
 		Errors:    []string{"data_fork_on_production", "no_preview_env", "approval_required", "host_key_changed", "missing_tool", "operation_failed"},
 		Notes: []string{
 			"Run from a Preview branch whose environment already exists. Production branches are refused.",
-			"Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command.",
+			"Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship box approve <id> <box>`, retry the same command.",
 			"SQLite files are copied on the box with `VACUUM INTO`; other files copy with `cp -a` using reflink when supported. The client never receives data contents.",
 			"stdout is exactly the Preview URL; the fork report and PII note are stderr. If the fork landed but the URL lookup fails, exit stays 0 with a stderr warning and `next: ship status`.",
 		},
 	},
 	{
-		Verb:      "data rm",
+		Verb:      "data reset",
 		Purpose:   "Reset the current branch Preview /data to empty.",
-		Usage:     "ship data rm [--config <path>]",
+		Usage:     "ship data reset [--config <path>]",
 		Flags:     []Flag{configFlag},
 		ExitCodes: normalExit,
 		Errors:    []string{"data_fork_on_production", "no_preview_env", "approval_required", "host_key_changed", "operation_failed"},
 		Notes: []string{
 			"Run from a Preview branch whose environment already exists. Production branches are refused.",
-			"Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command.",
+			"Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship box approve <id> <box>`, retry the same command.",
 			"stdout is exactly the Preview URL; the reset confirmation is stderr. If the reset landed but the URL lookup fails, exit stays 0 with a stderr warning and `next: ship status`.",
 		},
 	},
@@ -708,7 +708,7 @@ var verbs = []Verb{
 		Usage:   "ship data ls [--json] [--config <path>]",
 		Flags:   []Flag{configFlag, {Name: "--json", Purpose: "Emit stable snapshot JSON."}},
 		JSONSchema: schema(
-			`{"snapshots":[{"id":"...","name":"...","size":123,"created":"2026-07-07T10:00:00Z","env":"prod","release":"abc123"}]}`,
+			`{"snapshots":[{"id":"...","name":"...","size":123,"created":"2026-07-07T10:00:00Z","env":"production","release":"abc123"}]}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"operation_failed"},
@@ -785,7 +785,7 @@ var verbs = []Verb{
 			{Name: "--json", Purpose: "Emit structured JSON."},
 		},
 		JSONSchema: schema(
-			`{"app":"api","env":"prod","keys":["DATABASE_URL"]}`,
+			`{"app":"api","env":"production","keys":["DATABASE_URL"]}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"secret_scope_conflict", "unknown_preview_branch", "host_key_changed", "operation_failed"},
@@ -829,59 +829,70 @@ var verbs = []Verb{
 		},
 	},
 	{
-		Verb:    "member add",
+		Verb:    "box member add",
 		Purpose: "Authorize SSH public key access for a deploy member.",
-		Usage:   "ship member add <github-user|key|path> [--role owner|shipper|agent] [--config <path>]",
+		Usage:   "ship box member add <github-user|key|path> [<box>] [--role owner|shipper|agent]",
 		Flags: []Flag{
 			{Name: "github-user|key|path", Purpose: "A GitHub username, literal SSH public key, or path to a .pub/.pem file."},
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 			{Name: "--role", Value: "owner|shipper|agent", Default: "shipper", Purpose: "Role recorded for newly added keys."},
-			{Name: "--config", Value: "<path>", Default: "ship.toml", Purpose: "Path to the app manifest containing box."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"manifest_invalid", "invalid_box_target", "github_keys_unavailable", "ssh_public_key_invalid", "host_key_changed", "operation_failed"},
+		Errors:    []string{"box_target_required", "invalid_box_target", "github_keys_unavailable", "ssh_public_key_invalid", "approval_required", "member_unknown", "host_key_changed", "operation_failed"},
 		Notes:     []string{"Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or already authorized, with role and SHA256 fingerprint. Existing keys are deduplicated by key material. Agent-role keys are installed with a forced `agent-shell` command; owner and shipper keys remain plain authorized_keys entries."},
 	},
 	{
-		Verb:    "member ls",
+		Verb:    "box members",
 		Purpose: "List deploy members from authorized_keys.",
-		Usage:   "ship member ls [--json] [--config <path>]",
+		Usage:   "ship box members [<box>] [--json]",
 		Flags: []Flag{
-			{Name: "--config", Value: "<path>", Default: "ship.toml", Purpose: "Path to the app manifest containing box."},
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 			{Name: "--json", Purpose: "Emit structured JSON."},
 		},
 		JSONSchema: schema(
 			`{"members":[{"name":"alice","role":"shipper","key_type":"ssh-ed25519","fingerprint":"SHA256:..."}]}`,
 		),
 		ExitCodes: normalExit,
-		Errors:    []string{"manifest_invalid", "invalid_box_target", "host_key_changed", "operation_failed"},
+		Errors:    []string{"box_target_required", "invalid_box_target", "member_unknown", "host_key_changed", "operation_failed"},
 	},
 	{
-		Verb:    "member rm",
+		Verb:    "box member rm",
 		Purpose: "Remove all SSH keys for a deploy member.",
-		Usage:   "ship member rm <name> [--config <path>]",
+		Usage:   "ship box member rm <name> [<box>]",
 		Flags: []Flag{
 			{Name: "name", Purpose: "Member name, matching the authorized key comment."},
-			{Name: "--config", Value: "<path>", Default: "ship.toml", Purpose: "Path to the app manifest containing box."},
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"manifest_invalid", "invalid_box_target", "member_not_found", "member_last_key", "host_key_changed", "operation_failed"},
+		Errors:    []string{"box_target_required", "invalid_box_target", "member_not_found", "member_last_key", "approval_required", "member_unknown", "host_key_changed", "operation_failed"},
 		Notes:     []string{"Removes every key whose comment equals the member name. Refuses to remove the last remaining authorized key."},
 	},
 	{
-		Verb:    "approve",
-		Purpose: "List or grant one-shot approvals for out-of-role requests.",
-		Usage:   "ship approve [id] [--json] [--config <path>]",
+		Verb:    "box approvals",
+		Purpose: "List pending one-shot approvals for out-of-role requests.",
+		Usage:   "ship box approvals [<box>] [--json]",
 		Flags: []Flag{
-			{Name: "id", Purpose: "Approval id to grant. Omit to list pending approvals."},
-			{Name: "--json", Purpose: "Emit structured pending approvals. Only valid for the list form."},
-			{Name: "--config", Value: "<path>", Default: "ship.toml", Purpose: "Path to the app manifest containing box."},
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
+			{Name: "--json", Purpose: "Emit structured pending approvals."},
 		},
 		JSONSchema: schema(
-			`{"approvals":[{"id":"abc123xy","member":"alice","role":"agent","request":"app=api env=prod class=production release=abc123","expires":"2026-07-08T10:15:00Z"}]}`,
+			`{"approvals":[{"id":"abc123xy","member":"alice","role":"agent","request":"ship app=api env=production class=production release=abc123","expires":"2026-07-08T10:15:00Z"}]}`,
 		),
 		ExitCodes: normalExit,
-		Errors:    []string{"approval_expired", "member_unknown", "role_denied", "host_key_changed", "operation_failed"},
-		Notes:     []string{"Bare `ship approve` lists pending requests and prunes expired entries. `ship approve <id>` can be run only by owner or shipper and grants one retry by the original member."},
+		Errors:    []string{"box_target_required", "invalid_box_target", "member_unknown", "host_key_changed", "operation_failed"},
+		Notes:     []string{"Listing prunes expired entries. Approvals are box-scoped: run from anywhere by naming the box."},
+	},
+	{
+		Verb:    "box approve",
+		Purpose: "Grant one pending out-of-role approval.",
+		Usage:   "ship box approve <id> [<box>]",
+		Flags: []Flag{
+			{Name: "id", Purpose: "Approval id to grant."},
+			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
+		},
+		ExitCodes: normalExit,
+		Errors:    []string{"box_target_required", "invalid_box_target", "approval_expired", "member_unknown", "role_denied", "host_key_changed", "operation_failed"},
+		Notes:     []string{"Each request records the role the denied action requires; the approver's role must cover it (owner covers everything, shipper covers shipper-gated requests only) and nobody can grant their own request. Granting refreshes the 15-minute expiry window and gives one retry by the original member. Remediations always print the fully resolved command (`ship box approve <id> <box>`) so it can be pasted from anywhere."},
 	},
 	{
 		Verb:    "box status",
@@ -949,7 +960,7 @@ var verbs = []Verb{
 		},
 		ExitCodes: normalExit,
 		Errors:    []string{"approval_required", "box_config_key_unknown", "box_config_value_invalid", "box_target_required", "invalid_box_target", "host_key_changed", "operation_failed"},
-		Notes:     []string{"Authorization is declared by the key schema. notify.url is owner-set; an out-of-role request mints one approval and succeeds once after ship approve <id>."},
+		Notes:     []string{"Authorization is declared by the key schema. notify.url is owner-set; an out-of-role request mints one approval and succeeds once after ship box approve <id> <box>."},
 	},
 	{
 		Verb:    "box config unset",
@@ -976,7 +987,7 @@ var verbs = []Verb{
 		ExitCodes: normalExit,
 		Errors:    []string{"usage_error", "box_config_value_invalid", "box_target_required", "invalid_box_target", "approval_required", "host_key_changed", "operation_failed"},
 		Notes: []string{
-			"Any member may read. Only owners may set or clear; other roles receive approval_required and retry after ship approve <id>.",
+			"Any member may read. Only owners may set or clear; other roles receive approval_required and retry after ship box approve <id> <box>.",
 			"This is sugar over box config key notify.url; both paths share one value and journal shape.",
 			"When unset, the command prints an unset notice and next: ship box notify <box> <url>.",
 		},
@@ -990,7 +1001,7 @@ var verbs = []Verb{
 			{Name: "--json", Purpose: "Emit the box app/environment list as JSON."},
 		},
 		JSONSchema: schema(
-			`{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"prod","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`,
+			`{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"production","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
@@ -1154,12 +1165,12 @@ const outputAndDataContracts = `
 ## Data forks
 
 - ` + "`ship data fork`" + ` copies Production ` + "`/data`" + ` into the current branch Preview and bounces the existing Preview containers.
-- ` + "`ship data rm`" + ` empties the current branch Preview ` + "`/data`" + ` and bounces the existing Preview containers.
+- ` + "`ship data reset`" + ` empties the current branch Preview ` + "`/data`" + ` and bounces the existing Preview containers.
 - ` + "`ship data save`" + ` streams a data-only gzip tar to the laptop; its default destination is ` + "`~/.ship/backups/<app>/<env>-<release>-<utc>.data.tar.gz`" + `. Its stdout is exactly the local path.
 - ` + "`ship data restore <id|path>`" + ` uploads through ` + "`/tmp/ship-deploy`" + `, validates the archive before touching ` + "`/data`" + `, then stops containers, swaps data, and starts them. Snapshot envs may be restored into another env.
 - ` + "`ship data ls [--json]`" + ` lists local snapshots only; it never calls the helper.
-- ` + "`data fork`" + ` and ` + "`data rm`" + ` require an existing Preview environment. If none exists, the error code is ` + "`no_preview_env`" + ` with remediation ` + "`ship`" + `.
-- ` + "`data fork`" + ` and ` + "`data rm`" + ` refuse Production branches with ` + "`data_fork_on_production`" + `.
+- ` + "`data fork`" + ` and ` + "`data reset`" + ` require an existing Preview environment. If none exists, the error code is ` + "`no_preview_env`" + ` with remediation ` + "`ship`" + `.
+- ` + "`data fork`" + ` and ` + "`data reset`" + ` refuse Production branches with ` + "`data_fork_on_production`" + `.
 - Owner and shipper roles may run data commands. Agents get ` + "`approval_required`" + ` because Production data is above the agent default role.
 - ` + "`ship data fork`" + ` prints forked relative file names and byte sizes, the Preview URL, and this exact PII line: ` + "`note: Production data, including any PII, now exists in this less-guarded Preview.`" + `.
 - If no SQLite files are found, ` + "`ship data fork`" + ` still copies non-database files and prints: ` + "`note: No SQLite files found; copied non-database files from /data only.`" + `.
@@ -1171,7 +1182,7 @@ const outputAndDataContracts = `
 Each env has an append-only ` + "`journal.jsonl`" + `. Each line is:
 
 ` + "```json" + `
-{"schema_version":1,"app":"api","env":"prod","outcome":"deployed | aborted_build | aborted_release | aborted_probe | rolled_back","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","failing_step":"build | release | probe","stderr_tail":"last scrubbed stderr lines","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
+{"schema_version":1,"app":"api","env":"production","outcome":"deployed | aborted_build | aborted_release | aborted_probe | rolled_back","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","failing_step":"build | release | probe","stderr_tail":"last scrubbed stderr lines","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
 ` + "```" + `
 
 ## Notify payload schemas
@@ -1184,5 +1195,5 @@ App events go only to the affected app manifest ` + "`notify`" + ` URL: ` + "`de
 - ` + "`deploy_recovered`" + `: ` + "`why`" + ` is ` + "`{\"previous_failure\":\"<entry>\",\"current\":\"<entry>\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship status\",\"journal\":\"<current>\",\"previous_failure\":\"<previous>\"}`" + `.
 - ` + "`preview_reaped`" + `: ` + "`why`" + ` is ` + "`{\"branch\":\"feature/x\",\"env\":\"Preview feature/x\",\"expired_at\":\"...\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"git checkout feature/x && ship\",\"branch\":\"feature/x\",\"env\":\"Preview feature/x\"}`" + `.
 - ` + "`doctor_degraded`" + `: box event; ` + "`why`" + ` is a doctor check ` + "`{\"id\",\"status\",\"evidence\",\"remediation\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"<check.remediation>\",\"check\":\"<doctor check>\"}`" + `.
-- ` + "`approval_requested`" + `: box event; ` + "`why`" + ` is ` + "`{\"id\",\"member\",\"verb\",\"target\",\"expires\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship approve <id>\",\"request\":\"<approval request>\"}`" + `. The request target retains the affected app and env when present; box-target approvals have empty app/env.
+- ` + "`approval_requested`" + `: box event; ` + "`why`" + ` is ` + "`{\"id\",\"member\",\"verb\",\"target\",\"expires\"}`" + `; ` + "`remediation`" + ` is ` + "`{\"command\":\"ship box approve <id> <box>\",\"request\":\"<approval request>\"}`" + `. The request target retains the affected app and env when present; box-target approvals have empty app/env.
 `

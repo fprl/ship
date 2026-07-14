@@ -81,10 +81,11 @@ git commit -m "initial ship app"
 ship
 ```
 
-Progress goes to stderr. Stdout is exactly one HTTPS URL.
+Progress goes to stderr. Stdout is exactly one HTTPS URL, named after
+your app:
 
 ```text
-https://prod.203-0-113-7.sslip.io
+https://taskflow.203-0-113-7.sslip.io
 ```
 
 ## 5. Add a domain later
@@ -115,13 +116,14 @@ ship
 Authorize a GitHub user's public SSH keys:
 
 ```bash
-ship member add alice
+ship box member add alice 203.0.113.7
 ```
 
-You can also pass a literal public key or a path to a `.pub` file:
+You can also pass a literal public key or a path to a `.pub` file (inside an
+app directory the box argument can be omitted — it falls back to `ship.toml`):
 
 ```bash
-ship member add ~/.ssh/alice.pub
+ship box member add ~/.ssh/alice.pub
 ```
 
 The default role is `shipper`, which covers deploys, logs, exec, rollback,
@@ -130,12 +132,12 @@ manage members and destructive box/app operations, or `--role agent` for a key
 limited to Preview deploys and reads:
 
 ```bash
-ship member add alice --role owner
-ship member add ~/.ssh/agent.pub --role agent
-ship member ls
+ship box member add alice --role owner
+ship box member add ~/.ssh/agent.pub --role agent
+ship box members
 ```
 
-`member add` prints each key's SHA256 fingerprint. After this, invite the
+`box member add` prints each key's SHA256 fingerprint. After this, invite the
 teammate to the repo; their first `ship` will use their key and the box member
 record.
 
@@ -188,18 +190,18 @@ Production stays read-only. Data commands only run from Preview branches.
 Empty the Preview data when you are done:
 
 ```bash
-ship data rm
+ship data reset
 ```
 
 If an out-of-role action asks for approval, an owner or shipper can list and
-grant one retry:
+grant one retry from anywhere — the error names the exact command:
 
 ```bash
-ship approve
-ship approve abc123xy
+ship box approvals 203.0.113.7
+ship box approve abc123xy 203.0.113.7
 ```
 
-Approvals expire after 15 minutes.
+Approvals expire after 15 minutes; granting one refreshes the window.
 
 ## 9. Save and restore data
 
@@ -213,7 +215,7 @@ List local snapshots, then restore one by ID or path:
 
 ```bash
 ship data ls
-ship data restore prod-abc123-20260707T100000Z --confirm api
+ship data restore production-abc123-20260707T100000Z --confirm api
 ```
 
 Snapshots contain `/data` and metadata only; they never include secrets. After

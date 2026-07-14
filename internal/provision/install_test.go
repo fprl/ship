@@ -31,6 +31,7 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	summary, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
 		DeploySSHPublicKeys:   []string{deployTestPublicKey},
+		ClientAddress:         "203.0.113.7",
 		StateRoot:             root,
 		HelperBinaryPath:      helper,
 		ApplyID:               "apply-test",
@@ -61,6 +62,9 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	}
 	if loaded.Meta.LastApply.Status != "ok" {
 		t.Fatalf("unexpected apply status: %s", loaded.Meta.LastApply.Status)
+	}
+	if loaded.Meta.ClientAddress != "203.0.113.7" {
+		t.Fatalf("client address = %q, want 203.0.113.7", loaded.Meta.ClientAddress)
 	}
 	if _, ok := runner.files["/etc/systemd/system/ssh.service"]; ok {
 		t.Fatal("install must not overwrite the packaged ssh.service unit")

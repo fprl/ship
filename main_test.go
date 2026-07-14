@@ -59,6 +59,8 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"preview", "unpin", "feat/x"},
 		{"preview", "share"},
 		{"preview", "share", "--rotate"},
+		{"data", "fork"},
+		{"data", "reset"},
 		{"data", "save"},
 		{"data", "save", "--out", "/tmp/api.data.tar.gz"},
 		{"data", "restore", "backup-id"},
@@ -88,17 +90,19 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"box", "notify", "example.com", "--rm"},
 		{"box", "apps", "example.com"},
 		{"box", "apps", "example.com", "--json"},
+		{"box", "member", "add", "alice"},
+		{"box", "member", "add", "alice", "example.com", "--role", "owner"},
+		{"box", "members"},
+		{"box", "members", "example.com", "--json"},
+		{"box", "member", "rm", "alice"},
+		{"box", "member", "rm", "alice", "example.com"},
+		{"box", "approvals"},
+		{"box", "approvals", "example.com", "--json"},
+		{"box", "approve", "abc123xy"},
+		{"box", "approve", "abc123xy", "example.com"},
 		{"box", "rm", "api", "--confirm", "api"},
 		{"box", "rm", "api", "example.com", "--confirm", "api"},
 		{"box", "forget", "example.com"},
-		{"member", "add", "alice"},
-		{"member", "add", "alice", "--role", "owner"},
-		{"member", "ls"},
-		{"member", "ls", "--json"},
-		{"member", "rm", "alice"},
-		{"approve"},
-		{"approve", "--json"},
-		{"approve", "abc123xy"},
 		{"docs"},
 		{"help"},
 		{"help", "status"},
@@ -116,6 +120,12 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 				t.Fatalf("parse %v failed: %v", tt, err)
 			}
 		})
+	}
+}
+
+func TestPublicCLIRejectsRemovedDataRmVerb(t *testing.T) {
+	if _, err := newTestParser(t).Parse([]string{"data", "rm"}); err == nil {
+		t.Fatal("data rm should be rejected after the reset rename")
 	}
 }
 
@@ -234,6 +244,11 @@ func TestPublicCLIRejectsRemovedCompatibilityForms(t *testing.T) {
 		{"host", "status"},
 		{"box", "add-key", "alice"},
 		{"box", "init", "deploy@example.com"},
+		{"member", "add", "alice"},
+		{"member", "ls"},
+		{"member", "rm", "alice"},
+		{"approve"},
+		{"approve", "abc123xy"},
 		{"box", "doctor", "--server", "deploy@example.com"},
 		{"box", "setup", "example.com", "--ingress", "cloudflare"},
 		{"box", "setup", "example.com", "--admin", "tailscale"},
@@ -353,6 +368,10 @@ func TestBoxVerbHelpUsesBoxPlaceholder(t *testing.T) {
 		{"box", "doctor", "--help"},
 		{"box", "notify", "--help"},
 		{"box", "apps", "--help"},
+		{"box", "member", "add", "--help"},
+		{"box", "members", "--help"},
+		{"box", "approve", "--help"},
+		{"box", "approvals", "--help"},
 		{"box", "rm", "--help"},
 	} {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
@@ -420,7 +439,7 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	}
 	_, _ = parser.Parse([]string{"--help"})
 	text := stdout.String() + stderr.String()
-	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "data <command>", "preview <command>", "ssh", "secret <command>", "box <command>", "member <command>", "approve", "docs", "help", "version"} {
+	for _, want := range []string{"Project commands:", "Host commands:", "Global commands:", "init", "status", "logs", "exec", "why", "rollback", "rm <branch>", "data <command>", "preview <command>", "ssh", "secret <command>", "box <command>", "docs", "help", "version"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("top-level help should mention %q, got:\n%s", want, text)
 		}
@@ -428,6 +447,11 @@ func TestTopLevelHelpShowsParentCommands(t *testing.T) {
 	for _, legacy := range []string{"deploy <command>", "check", "restart", "backup <command>", "destroy", "app <command>", "host <command>", "--env", "--server", "--dirty"} {
 		if strings.Contains(text, legacy) {
 			t.Fatalf("top-level help should not expand %q, got:\n%s", legacy, text)
+		}
+	}
+	for _, removed := range []string{"member <command>", "approve <"} {
+		if strings.Contains(text, removed) {
+			t.Fatalf("top-level help exposed removed %q, got:\n%s", removed, text)
 		}
 	}
 }

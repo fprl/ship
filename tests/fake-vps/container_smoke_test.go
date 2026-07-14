@@ -22,7 +22,7 @@ import (
 	h "github.com/fprl/ship/tests/harness"
 )
 
-const productionEnv = "prod"
+const productionEnv = "production"
 
 func TestFakeCaddyRejectsUnsupportedCommand(t *testing.T) {
 	cmd := exec.Command(filepath.Join(h.RepoRootForTest(t), "tests", "fake-vps", "fake-caddy"), "reload")
@@ -78,8 +78,8 @@ func TestContainerSmoke(t *testing.T) {
 	t.Run("daily verbs pin unknown host and refuse changed host", env.testDailyVerbHostKeyTOFU)
 	t.Run("phase 1 acceptance init ship branch and sslip", env.testPhase1AcceptanceAndZeroDNS)
 	t.Run("member add ls rm manages deploy access", env.testMemberAccess)
-	t.Run("agent role prod ship approval flow", env.testAgentRoleApprovalFlow)
-	t.Run("data fork and rm", env.testDataForks)
+	t.Run("agent role production ship approval flow", env.testAgentRoleApprovalFlow)
+	t.Run("data fork and reset", env.testDataForks)
 	t.Run("release command failure leaves old traffic unchanged", env.testReleaseCommandFailure)
 	t.Run("probe failure explains old traffic kept serving", env.testProbeFailureWhy)
 	t.Run("caddy switch failure restores runtime state", env.testCaddySwitchFailureRollback)
@@ -321,7 +321,7 @@ func (e *smokeEnv) testNotifyWebhooks(t *testing.T) {
 
 	unset := e.ship(t, app, nil, "box", "notify", "fake-vps")
 	assertContains(t, unset, "box notify is unset")
-	assertContains(t, unset, "next: ship box notify <box> <url>")
+	assertContains(t, unset, "next: ship box notify fake-vps <url>")
 	freshConfig := e.ship(t, app, nil, "box", "config", "fake-vps", "--json")
 	assertContains(t, freshConfig, `"notify.url"`)
 	assertContains(t, freshConfig, `"source": "default"`)
@@ -639,6 +639,10 @@ CMD ["/bin/sh", "-c", "sleep 3600"]
 		t.Fatalf("ship from main failed: %v\nstdout:\n%s\nstderr:\n%s", prod.err, prod.stdout, prod.stderr)
 	}
 	prodURL := assertOnlyURL(t, prod.stdout)
+	prodParsed, err := url.Parse(prodURL)
+	if err != nil || !strings.HasPrefix(prodParsed.Hostname(), "phaseone.") {
+		t.Fatalf("production URL should use the app label, got %q (parse err %v)", prodURL, err)
+	}
 	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, prodURL)
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/phase1")
@@ -654,6 +658,10 @@ CMD ["/bin/sh", "-c", "sleep 3600"]
 		t.Fatalf("feature branch URL should be distinct from Production URL: %s", previewURL)
 	}
 	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, previewURL)
+	previewParsed, err := url.Parse(previewURL)
+	if err != nil || !strings.HasPrefix(previewParsed.Hostname(), "phaseone-feature-phase1-") {
+		t.Fatalf("preview URL should use an app-first label, got %q (parse err %v)", previewURL, err)
+	}
 	previewRelease := gitRelease(t, e, app)
 	previewEnv := e.urlBody(t, previewURL, "/ship-env")
 	// SHIP_URL is the env's own clean https URL; the capability token rides
@@ -690,6 +698,9 @@ CMD ["/bin/sh", "-c", "sleep 3600"]
 	}
 	if !strings.HasSuffix(parsed.Hostname(), ".sslip.io") {
 		t.Fatalf("zero-DNS URL should use sslip.io, got %s", zeroURL)
+	}
+	if !strings.HasPrefix(parsed.Hostname(), "zerodns.") {
+		t.Fatalf("zero-DNS production URL should use the app label, got %s", zeroURL)
 	}
 	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, zeroURL)
 	ip := sslipIPFromHost(parsed.Hostname())
@@ -913,7 +924,7 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	baseShort := gitRelease(t, e, app)
 
 	e.ship(t, app, nil)
-	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", "prod"))
+	e.ssh(t, "test -f "+identity.IdentityFile("branchapi", "production"))
 
 	mustWrite(t, filepath.Join(app, "dirty.txt"), "dirty deploy payload")
 	rejected := e.runShip(t, app, nil)
@@ -1021,7 +1032,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 
 	e.ship(t, app, nil)
-	e.ssh(t, "test -f "+identity.IdentityFile("previewapi", "prod"))
+	e.ssh(t, "test -f "+identity.IdentityFile("previewapi", "production"))
 
 	unknown := e.runShip(t, app, nil, "preview", "pin", "ghost/branch")
 	if unknown.err == nil {
@@ -1078,7 +1089,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 		t.Fatalf("production app list summary missing fields: %+v", prodAppListEnv)
 	}
 	previewAppListEnv := appListEnvByAppClassBranch(t, appList, "previewapi", "preview", "feature/lifecycle")
-	if previewAppListEnv.Env != previewEnv || !strings.Contains(previewAppListEnv.URL, previewEnv+".") || previewAppListEnv.CurrentRelease == "" || previewAppListEnv.Health != "healthy" || previewAppListEnv.ExpiresAt == "" || previewAppListEnv.Pinned || previewAppListEnv.ShippedBy == nil {
+	if previewAppListEnv.Env != previewEnv || !strings.Contains(previewAppListEnv.URL, "previewapi-"+previewEnv+".") || previewAppListEnv.CurrentRelease == "" || previewAppListEnv.Health != "healthy" || previewAppListEnv.ExpiresAt == "" || previewAppListEnv.Pinned || previewAppListEnv.ShippedBy == nil {
 		t.Fatalf("preview app list summary missing fields: %+v", previewAppListEnv)
 	}
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "previewapi", previewEnv)
@@ -1086,7 +1097,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	assertContains(t, reapOutput, "Reaped preview previewapi ("+previewEnv+") branch=feature/lifecycle")
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("previewapi", previewEnv))
 	e.dockerExec(t, "test ! -e /etc/ship/secrets/previewapi/"+previewEnv)
-	e.dockerExec(t, "test -e "+identity.EnvRoot("previewapi", "prod"))
+	e.dockerExec(t, "test -e "+identity.EnvRoot("previewapi", "production"))
 }
 
 func (e *smokeEnv) testPreviewProtection(t *testing.T) {
@@ -1191,7 +1202,7 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 
 	agentKeyPath := filepath.Join(e.tmp, "preview-protection-agent")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "preview-protection-agent", "-f", agentKeyPath)
-	e.ship(t, app, nil, "member", "add", agentKeyPath+".pub", "--role", "agent")
+	e.ship(t, app, nil, "box", "member", "add", agentKeyPath+".pub", "--role", "agent")
 	agentKey, err := os.ReadFile(agentKeyPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1208,7 +1219,7 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 	assertContains(t, agentRotateText, "approval_required")
 	approvalID := approvalIDFromOutput(t, agentRotateText)
 	e.pathPrefix = ownerPrefix
-	e.ship(t, app, nil, "approve", approvalID)
+	e.ship(t, app, nil, "box", "approve", approvalID)
 	e.pathPrefix = agentPrefix
 	agentRetry := e.runCommand(t, app, []string{"SHIP_SSH_KEY=" + string(agentKey)}, nil, e.goBin, "preview", "share", "--rotate")
 	if agentRetry.err != nil {
@@ -1268,17 +1279,17 @@ web = { port = 3000 }
 	keyComment := filepath.Base(keyPath)
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", keyComment, "-f", keyPath)
 
-	out := e.ship(t, app, nil, "member", "add", keyPath+".pub")
+	out := e.ship(t, app, nil, "box", "member", "add", keyPath+".pub")
 	if !strings.HasPrefix(strings.TrimSpace(out), "member added: "+keyComment+" (shipper, SHA256:") {
 		t.Fatalf("unexpected member add output: %q", out)
 	}
 	fingerprint := fingerprintFromMemberMutation(t, out)
-	again := e.ship(t, app, nil, "member", "add", keyPath+".pub")
+	again := e.ship(t, app, nil, "box", "member", "add", keyPath+".pub")
 	assertContains(t, again, "member "+keyComment+" already authorized (shipper, "+fingerprint+")")
 	authorized := e.dockerExec(t, "cat /home/deploy/.ssh/authorized_keys")
 	assertContains(t, authorized, keyComment)
 
-	list := e.ship(t, app, nil, "member", "ls")
+	list := e.ship(t, app, nil, "box", "members")
 	assertContains(t, list, keyComment+" shipper ssh-ed25519 "+fingerprint)
 	assertContains(t, list, "fake-vps-smoke owner ssh-ed25519 SHA256:")
 
@@ -1290,7 +1301,7 @@ web = { port = 3000 }
 			Fingerprint string `json:"fingerprint"`
 		} `json:"members"`
 	}
-	if err := json.Unmarshal([]byte(e.ship(t, app, nil, "member", "ls", "--json")), &members); err != nil {
+	if err := json.Unmarshal([]byte(e.ship(t, app, nil, "box", "members", "--json")), &members); err != nil {
 		t.Fatal(err)
 	}
 	foundMember := false
@@ -1303,7 +1314,7 @@ web = { port = 3000 }
 		t.Fatalf("member ls --json missing added member: %+v", members.Members)
 	}
 
-	unknown := e.runShip(t, app, nil, "member", "rm", "ghost")
+	unknown := e.runShip(t, app, nil, "box", "member", "rm", "ghost")
 	if unknown.err == nil {
 		t.Fatal("member rm unknown should fail")
 	}
@@ -1332,7 +1343,7 @@ web = { port = 3000 }
 		t.Fatalf("ship with added key should attribute the teammate key, got %+v", status.ShippedBy)
 	}
 
-	rmOut := e.ship(t, app, nil, "member", "rm", keyComment)
+	rmOut := e.ship(t, app, nil, "box", "member", "rm", keyComment)
 	assertContains(t, rmOut, "removed 1 SSH key for "+keyComment)
 	e.pathPrefix = teammatePrefix
 	revoked := e.runCommand(t, app, teammateEnv, nil, e.goBin)
@@ -1341,7 +1352,7 @@ web = { port = 3000 }
 	}
 	e.pathPrefix = oldPrefix
 
-	guard := e.runShip(t, app, nil, "member", "rm", "fake-vps-smoke")
+	guard := e.runShip(t, app, nil, "box", "member", "rm", "fake-vps-smoke")
 	if guard.err == nil {
 		t.Fatal("member rm should refuse to remove the last key")
 	}
@@ -1363,7 +1374,7 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 
 	agentKeyPath := filepath.Join(e.tmp, "agent-role")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "agent-role", "-f", agentKeyPath)
-	added := e.ship(t, app, nil, "member", "add", agentKeyPath+".pub", "--role", "agent")
+	added := e.ship(t, app, nil, "box", "member", "add", agentKeyPath+".pub", "--role", "agent")
 	agentFingerprint := fingerprintFromMemberMutation(t, added)
 	assertContains(t, added, "member added: agent-role (agent, "+agentFingerprint+")")
 	authorized := e.dockerExec(t, "cat /home/deploy/.ssh/authorized_keys")
@@ -1385,7 +1396,7 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 
 	shipperKeyPath := filepath.Join(e.tmp, "shipper-role")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "shipper-role", "-f", shipperKeyPath)
-	e.ship(t, app, nil, "member", "add", shipperKeyPath+".pub", "--role", "shipper")
+	e.ship(t, app, nil, "box", "member", "add", shipperKeyPath+".pub", "--role", "shipper")
 	shipperKey, err := os.ReadFile(shipperKeyPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1401,9 +1412,15 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	configID := approvalIDFromOutput(t, configDenied.stdout+configDenied.stderr)
 	configRequested := sink.waitForEvent(t, notifyEventApprovalRequested)
 	assertNotifySmokeField(t, configRequested, "_sink_path", "/box")
-	assertNotifySmokeNested(t, configRequested, "why.target.summary", "box config set notify.url")
+	assertNotifySmokeNested(t, configRequested, "why.target.summary", "set box config notify.url")
+	selfApprove := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "approve", configID)
+	if selfApprove.err == nil {
+		t.Fatal("shipper must not self-approve an owner-gated request")
+	}
+	assertContains(t, selfApprove.stdout+selfApprove.stderr, "requests cannot be self-approved")
+	assertContains(t, selfApprove.stdout+selfApprove.stderr, "another owner")
 	setOwner()
-	e.ship(t, app, nil, "approve", configID)
+	e.ship(t, app, nil, "box", "approve", configID)
 	setShipper()
 	if retry := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "config", "fake-vps", "set", "notify.url", sink.URL("/shipper")); retry.err != nil {
 		t.Fatalf("approved shipper box config retry should succeed: %v\nstdout:\n%s\nstderr:\n%s", retry.err, retry.stdout, retry.stderr)
@@ -1422,9 +1439,16 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	notifyID := approvalIDFromOutput(t, notifyDenied.stdout+notifyDenied.stderr)
 	notifyRequested := sink.waitForEvent(t, notifyEventApprovalRequested)
 	assertNotifySmokeField(t, notifyRequested, "_sink_path", "/box")
-	assertNotifySmokeNested(t, notifyRequested, "why.target.summary", "box notify set")
+	assertNotifySmokeNested(t, notifyRequested, "why.target.summary", "set box notify")
+	setShipper()
+	shipperApprove := e.runCommand(t, app, shipperEnv, nil, e.goBin, "box", "approve", notifyID)
+	if shipperApprove.err == nil {
+		t.Fatal("shipper must not grant an owner-gated request")
+	}
+	assertContains(t, shipperApprove.stdout+shipperApprove.stderr, "request requires owner")
+	assertContains(t, shipperApprove.stdout+shipperApprove.stderr, "ask an owner")
 	setOwner()
-	e.ship(t, app, nil, "approve", notifyID)
+	e.ship(t, app, nil, "box", "approve", notifyID)
 	setAgent()
 	if retry := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "notify", "fake-vps", sink.URL("/moved")); retry.err != nil {
 		t.Fatalf("approved agent box notify retry should succeed: %v\nstdout:\n%s\nstderr:\n%s", retry.err, retry.stdout, retry.stderr)
@@ -1475,9 +1499,9 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	assertJournalLineContains(t, previewJournal, `"outcome":"rolled_back"`, `"name":"agent-role"`, `"role":"agent"`)
 
 	e.mustRun(t, app, nil, "git", "checkout", "main")
-	mustWrite(t, filepath.Join(app, "README.md"), "agent prod ship needs approval\n")
+	mustWrite(t, filepath.Join(app, "README.md"), "agent production ship needs approval\n")
 	e.mustRun(t, app, nil, "git", "add", ".")
-	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "agent prod approval")
+	e.mustRun(t, app, nil, "git", "commit", "-q", "-m", "agent production approval")
 	prodRelease := gitRelease(t, e, app)
 	setAgent()
 	denied := e.runCommand(t, app, agentEnv, nil, e.goBin)
@@ -1485,17 +1509,17 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 		t.Fatal("agent production ship should require approval")
 	}
 	deniedText := denied.stdout + denied.stderr
-	assertContains(t, deniedText, "approval required for app=roleapi env=prod class=production release="+prodRelease)
-	assertContains(t, deniedText, "agent-role (agent) requested app=roleapi env=prod class=production release="+prodRelease)
+	assertContains(t, deniedText, "approval required for ship app=roleapi env=production class=production release="+prodRelease)
+	assertContains(t, deniedText, "agent-role (agent) requested ship app=roleapi env=production class=production release="+prodRelease)
 	id := approvalIDFromOutput(t, deniedText)
 
 	requested := sink.waitForEvent(t, notifyEventApprovalRequested)
 	assertNotifySmokeField(t, requested, "_sink_path", "/box")
-	assertNotifySmokeNested(t, requested, "remediation.command", "ship approve "+id)
+	assertNotifySmokeNested(t, requested, "remediation.command", "ship box approve "+id+" fake-vps")
 
 	setOwner()
-	approved := e.ship(t, app, nil, "approve", id)
-	assertContains(t, approved, "approved "+id+" for agent-role (app=roleapi env=prod class=production release="+prodRelease+")")
+	approved := e.ship(t, app, nil, "box", "approve", id)
+	assertContains(t, approved, "approved "+id+" for agent-role (ship app=roleapi env=production class=production release="+prodRelease+")")
 
 	setAgent()
 	retry := e.runCommand(t, app, agentEnv, nil, e.goBin)
@@ -1513,20 +1537,21 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 		t.Fatalf("second approval reused consumed id %s\noutput:\n%s", id, secondText)
 	}
 
-	agentApprove := e.runCommand(t, app, agentEnv, nil, e.goBin, "approve", secondID)
+	agentApprove := e.runCommand(t, app, agentEnv, nil, e.goBin, "box", "approve", secondID)
 	if agentApprove.err == nil {
 		t.Fatal("agent approving should be hard-denied")
 	}
 	assertContains(t, agentApprove.stdout+agentApprove.stderr, "operation denied")
+	assertContains(t, agentApprove.stdout+agentApprove.stderr, "requests cannot be self-approved")
 	assertNotContains(t, agentApprove.stdout+agentApprove.stderr, "approval required")
 
 	setOwner()
 	status := e.ship(t, app, nil, "status")
-	assertContains(t, status, "1 approvals pending — ship approve")
+	assertContains(t, status, "1 approvals pending — ship box approvals fake-vps")
 
-	listing := e.ship(t, app, nil, "approve")
+	listing := e.ship(t, app, nil, "box", "approvals")
 	assertContains(t, listing, "ID MEMBER REQUEST EXPIRES")
-	assertContains(t, listing, secondID+" agent-role app=roleapi env=prod class=production release="+prodRelease+" ")
+	assertContains(t, listing, secondID+" agent-role ship app=roleapi env=production class=production release="+prodRelease+" ")
 
 	setAgent()
 	const updateHelperVersion = "v0.4.0"
@@ -1538,7 +1563,7 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 	if updateDenied.err == nil {
 		t.Fatal("agent box update should require approval")
 	}
-	assertContains(t, updateDenied.stdout+updateDenied.stderr, "approval required for box update")
+	assertContains(t, updateDenied.stdout+updateDenied.stderr, "approval required for update box")
 	e.mustRun(t, e.repoRoot, nil, "docker", "cp", e.linuxBin, e.container+":/usr/local/bin/ship")
 
 	setOwner()
@@ -1632,16 +1657,16 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 		t.Fatalf("prod data changed after refresh:\nbefore:\n%s\nafter:\n%s", prodHash, got)
 	}
 
-	rmOut := e.runShip(t, app, nil, "data", "rm")
-	if rmOut.err != nil {
-		t.Fatalf("data rm failed: %v\nstdout:\n%s\nstderr:\n%s", rmOut.err, rmOut.stdout, rmOut.stderr)
+	resetOut := e.runShip(t, app, nil, "data", "reset")
+	if resetOut.err != nil {
+		t.Fatalf("data reset failed: %v\nstdout:\n%s\nstderr:\n%s", resetOut.err, resetOut.stdout, resetOut.stderr)
 	}
-	if rmOut.stdout != previewURL+"\n" {
-		t.Fatalf("data rm stdout = %q, want only preview URL", rmOut.stdout)
+	if resetOut.stdout != previewURL+"\n" {
+		t.Fatalf("data reset stdout = %q, want only preview URL", resetOut.stdout)
 	}
-	assertContains(t, rmOut.stderr, "Reset data for Preview feature/data\n")
+	assertContains(t, resetOut.stderr, "Reset data for Preview feature/data\n")
 	if got := strings.TrimSpace(e.urlBody(t, previewURL, "/data-count")); got != "missing" {
-		t.Fatalf("preview row count after data rm = %q, want missing", got)
+		t.Fatalf("preview row count after data reset = %q, want missing", got)
 	}
 	e.dockerExec(t, "test ! -e "+identity.DataDir("dataapi", previewEnv)+"/app.db")
 	h.AssertURLServes200(t, func(command string) string { return e.ssh(t, command) }, previewURL)
@@ -1672,7 +1697,7 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 	e.mustRun(t, app, nil, "git", "checkout", "feature/data")
 	agentKeyPath := filepath.Join(e.tmp, "data-agent")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "data-agent", "-f", agentKeyPath)
-	added := e.ship(t, app, nil, "member", "add", agentKeyPath+".pub", "--role", "agent")
+	added := e.ship(t, app, nil, "box", "member", "add", agentKeyPath+".pub", "--role", "agent")
 	assertContains(t, added, "member added: data-agent (agent, ")
 	agentKey, err := os.ReadFile(agentKeyPath)
 	if err != nil {
@@ -1688,20 +1713,20 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 		t.Fatal("agent data fork should require approval")
 	}
 	deniedText := denied.stdout + denied.stderr
-	assertContains(t, deniedText, "approval required for app=dataapi env="+previewEnv+" class=preview data=fork from=prod")
+	assertContains(t, deniedText, "approval required for fork app=dataapi env="+previewEnv+" class=preview data=fork from=production")
 	deniedSave := e.runCommand(t, app, agentEnv, nil, e.goBin, "data", "save")
 	if deniedSave.err == nil {
 		t.Fatal("agent data save should require approval")
 	}
-	assertContains(t, deniedSave.stdout+deniedSave.stderr, "approval required for app=dataapi env="+previewEnv+" class=preview data=save")
+	assertContains(t, deniedSave.stdout+deniedSave.stderr, "approval required for save app=dataapi env="+previewEnv+" class=preview data=save")
 	deniedRestore := e.runCommand(t, app, agentEnv, nil, e.goBin, "data", "restore", snapshot)
 	if deniedRestore.err == nil {
 		t.Fatal("agent data restore should require approval")
 	}
-	assertContains(t, deniedRestore.stdout+deniedRestore.stderr, "approval required for app=dataapi env="+previewEnv+" class=preview data=restore")
+	assertContains(t, deniedRestore.stdout+deniedRestore.stderr, "approval required for restore app=dataapi env="+previewEnv+" class=preview data=restore")
 	approvalID := approvalIDFromOutput(t, deniedText)
 	e.pathPrefix = ownerPrefix
-	approved := e.ship(t, app, nil, "approve", approvalID)
+	approved := e.ship(t, app, nil, "box", "approve", approvalID)
 	assertContains(t, approved, "approved "+approvalID+" for data-agent")
 	e.pathPrefix = agentPrefix
 	retry := e.runCommand(t, app, agentEnv, nil, e.goBin, "data", "fork")
@@ -2952,7 +2977,7 @@ web = { port = 3000 }
 
 // writeNotifySecondFixture is the notify test's own second app: it exists
 // only to prove box events fire once across two apps on one box. It must
-// NOT reuse another subtest's app name (e.g. roleapi) — a leftover prod
+// NOT reuse another subtest's app name (e.g. roleapi) — a leftover production
 // deploy would poison that subtest's own first ship.
 func writeNotifySecondFixture(t *testing.T, app string, notifyURL string) {
 	t.Helper()
@@ -3210,15 +3235,15 @@ func approvalIDFromOutput(t *testing.T, output string) string {
 	t.Helper()
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		id, ok := strings.CutPrefix(line, "next: ship approve ")
+		command, ok := strings.CutPrefix(line, "next: ship box approve ")
 		if !ok {
 			continue
 		}
-		id = strings.TrimSpace(id)
-		if id == "" {
-			t.Fatalf("approval line missing id:\n%s", output)
+		fields := strings.Fields(command)
+		if len(fields) != 2 || fields[0] == "" || fields[1] != "fake-vps" {
+			t.Fatalf("approval line must carry id and resolved box:\n%s", output)
 		}
-		return id
+		return fields[0]
 	}
 	for _, line := range strings.Split(output, "\n") {
 		var payload struct {
@@ -3229,8 +3254,11 @@ func approvalIDFromOutput(t *testing.T, output string) string {
 		if json.Unmarshal([]byte(line), &payload) != nil {
 			continue
 		}
-		if id, ok := strings.CutPrefix(payload.Error.Remediation, "ship approve "); ok && strings.TrimSpace(id) != "" {
-			return strings.TrimSpace(id)
+		if command, ok := strings.CutPrefix(payload.Error.Remediation, "ship box approve "); ok {
+			fields := strings.Fields(command)
+			if len(fields) == 2 && fields[0] != "" && fields[1] == "fake-vps" {
+				return fields[0]
+			}
 		}
 	}
 	t.Fatalf("approval output missing remediation:\n%s", output)

@@ -70,7 +70,7 @@ func (c keyAddCmd) run() error {
 	if !store.ValidMemberRole(role) {
 		return errcat.New(errcat.CodeUsageError, errcat.Fields{
 			"detail":  "role must be owner, shipper, or agent",
-			"command": "ship member add <src> --role owner|shipper|agent",
+			"command": "ship box member add <src> " + boxClientAddress() + " --role owner|shipper|agent",
 		})
 	}
 	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
@@ -81,7 +81,7 @@ func (c keyAddCmd) run() error {
 	if err != nil {
 		return err
 	}
-	authorizeOrDie(helperVerbMember, authTargetForBox("member add comment="+comment+" role="+string(role), memberAddTargetArgs(comment, role, keys)...))
+	authorizeOrDie(helperVerbMember, authTargetForBox("add member comment="+comment+" role="+string(role), memberAddTargetArgs(comment, role, keys)...))
 	user, err := deployAuthorizedKeysUser()
 	if err != nil {
 		return err
@@ -104,7 +104,7 @@ func (c keyListCmd) Run() error {
 }
 
 func (c keyListCmd) run() error {
-	authorizeOrDie(helperVerbMember, authTargetForBox("member ls"))
+	authorizeOrDie(helperVerbMember, authTargetForBox("list members"))
 	user, err := deployAuthorizedKeysUser()
 	if err != nil {
 		return err
@@ -141,10 +141,10 @@ func (c keyRmCmd) run() error {
 	if name == "" {
 		return errcat.New(errcat.CodeUsageError, errcat.Fields{
 			"detail":  "member name is required",
-			"command": "ship member rm <name>",
+			"command": "ship box member rm <name> " + boxClientAddress(),
 		})
 	}
-	authorizeOrDie(helperVerbMember, authTargetForBox("member rm name="+name, "name="+name))
+	authorizeOrDie(helperVerbMember, authTargetForBox("rm member name="+name, "name="+name))
 	user, err := deployAuthorizedKeysUser()
 	if err != nil {
 		return err
@@ -207,7 +207,7 @@ func appendDeployAuthorizedKeys(user string, keys []authorizedKey, role store.Me
 			}
 			return nil, errcat.New(errcat.CodeUsageError, errcat.Fields{
 				"detail":  fmt.Sprintf("member %q already has role %q; additional keys must use that role", key.Comment, record.Role),
-				"command": "ship member add <src> --role " + string(record.Role),
+				"command": "ship box member add <src> " + boxClientAddress() + " --role " + string(record.Role),
 			})
 		}
 	}
@@ -275,10 +275,11 @@ func removeDeployAuthorizedKeys(user, name string) (int, error) {
 		return 0, errcat.New(errcat.CodeMemberNotFound, errcat.Fields{
 			"name":    name,
 			"members": memberNamesList(memberNames),
+			"box":     boxClientAddress(),
 		})
 	}
 	if parseable-removed == 0 {
-		return 0, errcat.New(errcat.CodeMemberLastKey, errcat.Fields{"name": name})
+		return 0, errcat.New(errcat.CodeMemberLastKey, errcat.Fields{"name": name, "box": boxClientAddress()})
 	}
 	remaining := memberkeys.Parse(memberkeys.Content(lines))
 	rendered := memberkeys.RenderAuthorizedKeyLines(remaining, memberkeys.EffectiveMemberRecords(remaining, *members, nil))
@@ -350,7 +351,15 @@ func readAuthorizedKeys(path string) ([]authorizedKey, error) {
 }
 
 func normalizeAuthorizedKeys(raw, comment string) ([]authorizedKey, error) {
-	return memberkeys.Normalize(raw, comment)
+	keys, err := memberkeys.Normalize(raw, comment)
+	if !errcat.Is(err, errcat.CodeSSHPublicKeyInvalid) {
+		return keys, err
+	}
+	coded, _ := errcat.As(err)
+	return nil, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{
+		"detail": coded.Cause(),
+		"box":    boxClientAddress(),
+	})
 }
 
 func memberRows(keys []authorizedKey, members store.MembersFile) []memberKeyRow {

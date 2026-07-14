@@ -10,7 +10,7 @@ import (
 	"github.com/fprl/ship/internal/names"
 )
 
-const productionEnvName = "prod"
+const productionEnvName = names.ProductionEnvName
 
 type gitState struct {
 	Branch   string
@@ -91,6 +91,9 @@ func envNameForBranch(branch, productionBranch string) (string, error) {
 	}
 	envName := names.SanitizeBranchEnvName(branch)
 	if envName == "" {
+		return "", errcat.New(errcat.CodeUnmappableBranchName, errcat.Fields{"branch": fmt.Sprintf("%q", branch)})
+	}
+	if envName == productionEnvName {
 		return "", errcat.New(errcat.CodeUnmappableBranchName, errcat.Fields{"branch": fmt.Sprintf("%q", branch)})
 	}
 	return envName, nil

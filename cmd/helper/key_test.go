@@ -1,10 +1,12 @@
 package helper
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/store"
 )
@@ -103,6 +105,7 @@ func TestAppendDeployAuthorizedKeysRejectsConflictingRoleForExistingMember(t *te
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
 	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
 	t.Setenv("SHIP_STATE_DIR", root)
+	setHelperBoxClientAddress(t, "203.0.113.7")
 	if err := os.WriteFile(authorizedKeysPath, []byte(alicePublicKey+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -119,8 +122,89 @@ func TestAppendDeployAuthorizedKeysRejectsConflictingRoleForExistingMember(t *te
 		t.Fatal(err)
 	}
 	_, err = appendDeployAuthorizedKeys("deploy", keys, store.MemberRoleOwner)
-	if err == nil || err.Error() != "command usage failed\nmember \"shared\" already has role \"agent\"; additional keys must use that role\nnext: ship member add <src> --role agent" {
+	if err == nil || err.Error() != "command usage failed\nmember \"shared\" already has role \"agent\"; additional keys must use that role\nnext: ship box member add <src> 203.0.113.7 --role agent" {
 		t.Fatalf("conflicting member role err = %v", err)
+	}
+}
+
+func TestMemberRemediationsUseRecordedBoxAddress(t *testing.T) {
+	root := t.TempDir()
+	authorizedKeysPath := filepath.Join(root, "authorized_keys")
+	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
+	t.Setenv("SHIP_STATE_DIR", root)
+	setHelperBoxClientAddress(t, "203.0.113.7")
+	if err := os.WriteFile(authorizedKeysPath, []byte(alicePublicKey+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Default().WriteMembers(store.MembersFile{
+		Version: store.CurrentVersion,
+		Members: map[string]store.MemberRecord{
+			aliceFingerprint: {Name: "alice", Role: store.MemberRoleOwner},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name            string
+		member          string
+		code            errcat.Code
+		wantRemediation string
+	}{
+		{name: "missing member", member: "nobody", code: errcat.CodeMemberNotFound, wantRemediation: "ship box members 203.0.113.7"},
+		{name: "last member key", member: "alice", code: errcat.CodeMemberLastKey, wantRemediation: "ship box member add <github-user|key|path> 203.0.113.7"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := removeDeployAuthorizedKeys("deploy", tt.member)
+			if !errcat.Is(err, tt.code) {
+				t.Fatalf("remove member error = %v, want %s", err, tt.code)
+			}
+			coded, _ := errcat.As(err)
+			if got := coded.Remediation(); got != tt.wantRemediation {
+				t.Fatalf("remediation = %q, want %q", got, tt.wantRemediation)
+			}
+		})
+	}
+}
+
+func TestNormalizeAuthorizedKeysUsesRecordedBoxAddress(t *testing.T) {
+	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	setHelperBoxClientAddress(t, "203.0.113.7")
+	_, err := normalizeAuthorizedKeys("not an SSH key", "alice")
+	if !errcat.Is(err, errcat.CodeSSHPublicKeyInvalid) {
+		t.Fatalf("normalize error = %v, want ssh_public_key_invalid", err)
+	}
+	coded, _ := errcat.As(err)
+	if got, want := coded.Remediation(), "ship box member add <github-user|key|path> 203.0.113.7"; got != want {
+		t.Fatalf("remediation = %q, want %q", got, want)
+	}
+}
+
+func TestEmptyHelperListPayloadsEncodeArrays(t *testing.T) {
+	members, err := json.Marshal(memberKeyListPayload{Members: memberRows(nil, store.MembersFile{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(members), `{"members":[]}`; got != want {
+		t.Fatalf("empty member payload = %s, want %s", got, want)
+	}
+
+	approvals, err := json.Marshal(approvalListPayload{Approvals: approvalRows(nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(approvals), `{"approvals":[]}`; got != want {
+		t.Fatalf("empty approval payload = %s, want %s", got, want)
+	}
+}
+
+func setHelperBoxClientAddress(t *testing.T, address string) {
+	t.Helper()
+	stateStore := store.Default()
+	writeValidHost(t, stateStore.HostPath())
+	if err := stateStore.WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{ClientAddress: address}); err != nil {
+		t.Fatal(err)
 	}
 }
 

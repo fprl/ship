@@ -100,7 +100,7 @@ func TestApplySecretImportReplaceRemovesOmittedKeys(t *testing.T) {
 	}}
 	secret := secretContext{
 		AppContext: &config.AppContext{AppName: "api", Server: "example.com"},
-		EnvName:    "prod",
+		EnvName:    "production",
 		Runner:     runner,
 	}
 	imported := dotenvSecretImport{
@@ -151,7 +151,7 @@ func (f *fakeSecretRunner) Close() {}
 func (f *fakeSecretRunner) RunSSH(_ string, command string) (string, string, int, error) {
 	f.commands = append(f.commands, command)
 	switch {
-	case command == serverAppSecretListCommand("api", "prod", true):
+	case command == serverAppSecretListCommand("api", "production", true):
 		var keys []string
 		for key := range f.secrets {
 			keys = append(keys, key)
@@ -160,12 +160,12 @@ func (f *fakeSecretRunner) RunSSH(_ string, command string) (string, string, int
 			App  string   `json:"app"`
 			Env  string   `json:"env"`
 			Keys []string `json:"keys"`
-		}{App: "api", Env: "prod", Keys: keys})
+		}{App: "api", Env: "production", Keys: keys})
 		if err != nil {
 			return "", "", 1, err
 		}
 		return string(data), "", 0, nil
-	case strings.HasPrefix(command, serverCommand("app", "secret", "rm", "api", "prod")):
+	case strings.HasPrefix(command, serverCommand("app", "secret", "rm", "api", "production")):
 		key := lastCommandWord(command)
 		delete(f.secrets, key)
 		return fmt.Sprintf("Removed secret %s\n", key), "", 0, nil
@@ -176,7 +176,7 @@ func (f *fakeSecretRunner) RunSSH(_ string, command string) (string, string, int
 
 func (f *fakeSecretRunner) RunSSHWithStdin(_ string, command string, stdin []byte) (string, string, int, error) {
 	f.commands = append(f.commands, command)
-	if !strings.HasPrefix(command, serverCommand("app", "secret", "set", "api", "prod")) {
+	if !strings.HasPrefix(command, serverCommand("app", "secret", "set", "api", "production")) {
 		return "", "unexpected command: " + command, 1, nil
 	}
 	key := lastCommandWord(command)

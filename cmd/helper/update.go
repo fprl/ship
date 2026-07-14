@@ -36,7 +36,7 @@ func (c updateHelperCmd) BeforeApply() error { return requireRoot() }
 
 func (c updateHelperCmd) Run() error {
 	setServerMemberFingerprint(c.MemberFingerprint)
-	if _, err := authorizeHelper(helperVerbBoxMutation, authTargetForBox("box update")); err != nil {
+	if _, err := authorizeHelper(helperVerbBoxMutation, authTargetForBox("update box")); err != nil {
 		utils.DieError(err, 1)
 	}
 	if err := validateUpdateTarget(version.Version, c.Version); err != nil {

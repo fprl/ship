@@ -28,6 +28,7 @@ const (
 type InstallOptions struct {
 	OperatorSSHPublicKeys []string
 	DeploySSHPublicKeys   []string
+	ClientAddress         string
 	CheckMode             bool
 	StateRoot             string
 	HelperBinaryPath      string
@@ -916,20 +917,26 @@ func hostDesiredChanged(stateStore store.Store, desired store.HostDesired) (bool
 	return string(currentData) != string(nextData), nil
 }
 
-func writeApplyState(stateStore store.Store, _ InstallOptions, applyID string, startedAt time.Time, finishedAt time.Time, status string, changed int) error {
+func writeApplyState(stateStore store.Store, opts InstallOptions, applyID string, startedAt time.Time, finishedAt time.Time, status string, changed int) error {
+	meta := store.HostMeta{}
+	if hostFile, err := stateStore.ReadHost(); err == nil {
+		meta = hostFile.Meta
+	}
+	meta.ShipVersion = version.Version
+	if address := strings.TrimSpace(opts.ClientAddress); address != "" {
+		meta.ClientAddress = address
+	}
+	meta.LastApply = &store.ApplyMeta{
+		ID:                applyID,
+		StartedAt:         startedAt.Format(time.RFC3339),
+		FinishedAt:        finishedAt.Format(time.RFC3339),
+		Status:            status,
+		OperationsChanged: changed,
+	}
 	return stateStore.WriteHostState(store.HostObserved{
 		Packages: map[string]store.ObservedPackage{},
 		Ingress:  store.HostIngressObserved{},
-	}, store.HostMeta{
-		ShipVersion: version.Version,
-		LastApply: &store.ApplyMeta{
-			ID:                applyID,
-			StartedAt:         startedAt.Format(time.RFC3339),
-			FinishedAt:        finishedAt.Format(time.RFC3339),
-			Status:            status,
-			OperationsChanged: changed,
-		},
-	})
+	}, meta)
 }
 
 func normalizeOptions(opts InstallOptions) InstallOptions {

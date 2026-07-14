@@ -2,15 +2,14 @@ package client
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/utils"
 )
 
-func CmdApprove(server, id string, jsonFlag bool) {
+func CmdBoxApprovals(server string, jsonFlag bool) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(invalidBoxTargetError(server, invalidBoxTargetManifestRemediation), 2)
+		utils.DieError(invalidBoxTargetError(server, "ship box approvals"), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -18,13 +17,7 @@ func CmdApprove(server, id string, jsonFlag bool) {
 	}
 	defer runner.Close()
 
-	command := serverApprovalListCommand(jsonFlag)
-	remediation := "ship approve"
-	if strings.TrimSpace(id) != "" {
-		command = serverApprovalApproveCommand(id)
-		remediation = "ship approve " + id
-	}
-	stdout, stderr, code, err := runner.RunSSH(server, command)
+	stdout, stderr, code, err := runner.RunSSH(server, serverApprovalListCommand(jsonFlag))
 	if err != nil || code != 0 {
 		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
 		if outcome.TransportCoded != nil {
@@ -36,9 +29,38 @@ func CmdApprove(server, id string, jsonFlag bool) {
 		}
 		detail := outcome.Detail
 		if detail == "" {
-			detail = "approval command failed"
+			detail = "approvals failed"
 		}
-		utils.DieError(operationError(detail, remediation), 1)
+		utils.DieError(operationError(detail, "ship box approvals "+server), 1)
+	}
+	fmt.Print(stdout)
+}
+
+func CmdBoxApprove(server, id string) {
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box approve "+id), 2)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer runner.Close()
+
+	stdout, stderr, code, err := runner.RunSSH(server, serverApprovalApproveCommand(id))
+	if err != nil || code != 0 {
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+		if outcome.TransportCoded != nil {
+			utils.DieError(outcome.TransportCoded, 1)
+		}
+		if outcome.RemoteCoded != nil {
+			writeRemoteStderr(outcome)
+			utils.DieError(outcome.RemoteCoded, 1)
+		}
+		detail := outcome.Detail
+		if detail == "" {
+			detail = "approve failed"
+		}
+		utils.DieError(operationError(detail, "ship box approve "+id+" "+server), 1)
 	}
 	fmt.Print(stdout)
 }

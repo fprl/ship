@@ -52,7 +52,7 @@ func TestResolveEnvPreviewUsesSharedPreviewNotProductionSecret(t *testing.T) {
 	t.Setenv("SHIP_APPS_DIR", t.TempDir())
 	preview := &identity.PreviewIdentity{Branch: "feat/x", SanitizedBranch: "feat-x", Env: "feat-x-ab12", Suffix: "ab12", LastShipAt: time.Now(), ExpiresAt: ptrTime(time.Now().Add(time.Hour))}
 	writePreviewIdentityForResolveTest(t, "api", "feat-x-ab12", preview)
-	if err := secrets.Put("api", "prod", "db_url", []byte("postgres://prod")); err != nil {
+	if err := secrets.Put("api", "production", "db_url", []byte("postgres://prod")); err != nil {
 		t.Fatal(err)
 	}
 	if err := secrets.Put("api", sharedPreviewSecretsEnvName, "db_url", []byte("postgres://preview")); err != nil {
@@ -170,13 +170,13 @@ func TestCaddyStageActionErrorPassesThroughOtherErrors(t *testing.T) {
 
 func TestRecordDeployFailureKeepsProbeErrorWhenJournalAppendFails(t *testing.T) {
 	t.Setenv("SHIP_APPS_DIR", t.TempDir())
-	journalPath := identity.DeployJournalFile("api", "prod")
+	journalPath := identity.DeployJournalFile("api", "production")
 	if err := os.MkdirAll(journalPath, 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	probeErr := newJournalStepError("probe", errors.New("health check failed"), nil, nil)
-	cmd := appApplyCmd{App: "api", Env: "prod", SHA: "abc1234"}
+	cmd := appApplyCmd{App: "api", Env: "production", SHA: "abc1234"}
 	var got error
 	stderr := captureStderr(t, func() {
 		got = cmd.recordDeployFailure(nil, "", time.Now().UTC(), probeErr)
@@ -201,7 +201,7 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 		AttemptedRelease: "old111",
 		FailingStep:      "probe",
 	}
-	if err := appendDeployJournalEntry("api", "prod", previous, nil); err != nil {
+	if err := appendDeployJournalEntry("api", "production", previous, nil); err != nil {
 		t.Fatal(err)
 	}
 	sink := newNotifyTestSink(t)
@@ -218,7 +218,7 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 		bestEffortPruneAfterDeploy = oldPrune
 	})
 
-	cmd := appApplyCmd{App: "api", Env: "prod", SHA: "new222"}
+	cmd := appApplyCmd{App: "api", Env: "production", SHA: "new222"}
 	app := &config.AppContext{Notify: sink.URL, ProductionBranch: "main"}
 	var stdout string
 	stderr := captureStderr(t, func() {
@@ -228,13 +228,13 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 			}
 		})
 	})
-	if !strings.Contains(stdout, "Deployed api (prod) at new222\n") {
+	if !strings.Contains(stdout, "Deployed api (production) at new222\n") {
 		t.Fatalf("stdout = %q", stdout)
 	}
 	if !strings.Contains(stderr, "warning: deployed but failed to write deploy journal: journal disk is read-only; run ship box doctor\n") {
 		t.Fatalf("stderr = %q", stderr)
 	}
-	entries, err := readDeployJournalEntries("api", "prod")
+	entries, err := readDeployJournalEntries("api", "production")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ exit 0
 `)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	cmd := appApplyCmd{App: "api", Env: "prod", SHA: "abc1234"}
+	cmd := appApplyCmd{App: "api", Env: "production", SHA: "abc1234"}
 	_, err := cmd.applyContainer(t.TempDir(), &config.AppContext{
 		Processes: map[string]config.Process{"worker": {Command: "run worker"}},
 	}, []containerEntry{
@@ -537,10 +537,10 @@ func TestBuildPodmanRunArgsAppliesDefaultPreviewResourceCaps(t *testing.T) {
 }
 
 func TestBuildPodmanRunArgsLeavesProdUncappedByDefault(t *testing.T) {
-	args := buildPodmanRunArgs("api", "prod", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "prod", "web", "abc123"), false, false)
+	args := buildPodmanRunArgs("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "production", "web", "abc123"), false, false)
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "--memory") || strings.Contains(joined, "--cpus") {
-		t.Fatalf("prod args should not get default resource caps:\n%s", joined)
+		t.Fatalf("production args should not get default resource caps:\n%s", joined)
 	}
 }
 
@@ -691,7 +691,7 @@ func TestRenderAppCaddyfileStaticPathUsesHandlePath(t *testing.T) {
 	if !strings.Contains(got, "handle_path /docs/*") {
 		t.Fatalf("expected handle_path for static prefix, got:\n%s", got)
 	}
-	if !strings.Contains(got, `root * "/var/apps/site.prod/static/releases/abc123/docs"`) {
+	if !strings.Contains(got, `root * "/var/apps/site.production/static/releases/abc123/docs"`) {
 		t.Fatalf("expected static route root, got:\n%s", got)
 	}
 	if !strings.Contains(got, "file_server") {
@@ -740,7 +740,7 @@ func TestRenderAppCaddyfileMixedRoutesUseOneRelease(t *testing.T) {
 	if !strings.Contains(got, "reverse_proxy http://"+identity.ContainerName("api", productionEnvName, "web", "abc123")+":3000") {
 		t.Fatalf("expected process route to use release container:\n%s", got)
 	}
-	if !strings.Contains(got, `root * "/var/apps/api.prod/static/releases/abc123/docs"`) {
+	if !strings.Contains(got, `root * "/var/apps/api.production/static/releases/abc123/docs"`) {
 		t.Fatalf("expected static route to use release-pinned root:\n%s", got)
 	}
 }

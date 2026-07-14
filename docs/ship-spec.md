@@ -153,7 +153,10 @@ Rules:
 The new surface has no `--env`. Resolution rule, implemented client-side:
 
 - Current git branch equal to `production_branch` (default `main`, else
-  `master`) → env name `prod`.
+  `master`) → env name `production` (ADR-0018: one word for the one
+  concept — the env NAME and the authorization CLASS no longer differ;
+  the name is internal only, since URLs are app-first per §8 and users
+  never type env names).
 - Any other branch → a **preview env** named from the sanitized branch name
   (`lowercase; [^a-z0-9-] → -; collapse dashes; max 28 chars`), plus a
   random 4-char suffix generated once at env creation and persisted on the
@@ -188,12 +191,13 @@ the env identity file (extend the existing identity storage).
 - A reaper runs on the box (systemd timer installed by `box setup`,
   invoking a new helper verb `server env reap`) and destroys expired
   preview envs — equivalent to the existing destroy path, secrets purged.
-  Reap events fire `notify`. `prod` is never reaped and `ship rm` on prod
+  Reap events fire `notify`. Production is never reaped and `ship rm` on Production
   requires `--confirm <name>` (existing destroy guard).
-- Preview URL: `<envname>.<base-domain>`. Base domain: the project's
-  wildcard domain if configured; otherwise sslip.io (§8). Previews
-  collapse to this single URL, serving the default host's routes (paths
-  included); extra hosts and redirects are production-only.
+- Preview URL: `<app>-<branch-slug>-<id>.<base-domain>` (app-first,
+  one flat label — §8/ADR-0018). Base domain: the project's wildcard
+  domain if configured; otherwise sslip.io (§8). Previews collapse to
+  this single URL, serving the default host's routes (paths included);
+  extra hosts and redirects are production-only.
 - Preview processes run under default CPU/memory caps unless the process
   declares its own `resources` — a runaway preview must not starve prod.
 
@@ -285,17 +289,20 @@ ship box setup <ssh-target>   host install — ONE shape, no topology
                           error).
                           One sentence: ship knows who you are; setup
                           introduces you to the box; everyone else is
-                          ship member add. Members and approvals are
+                          ship box member add. Members and approvals are
                           BOX-scoped (the trust boundary); secrets,
                           envs, and journals are app-scoped.
-ship member add <github-user|key|path>   authorize a teammate's SSH key
+ship box member add <github-user|key|path> [<box>]
+                          authorize a teammate's SSH key
                           (bare word → fetches github.com/<user>.keys;
                           prints type + SHA256 fingerprint per key
                           added; dedupes; comment = member name, which
                           feeds §7 attribution)
-ship member ls [--json]   authorized members: name, key type, SHA256
+ship box members [<box>] [--json]
+                          authorized members: name, key type, SHA256
                           fingerprint
-ship member rm <name>     revoke all of a member's keys; refuses to
+ship box member rm <name> [<box>]
+                          revoke all of a member's keys; refuses to
                           remove the last remaining key (lockout
                           guard). Roles arrive post-v1 (RFD-0003);
                           until then every member has full deploy
@@ -316,12 +323,19 @@ ship box doctor [--json]  existing doctor, output upgraded per §9
                           ~/.config/ship/boxes (written on successful
                           setup, plain text, hand-editable, reminder
                           not resolver; deleting it costs nothing but
-                          the list). The next: line always uses the
-                          placeholder form — next: ship box <verb>
-                          <box> — never a filled-in host (Franco: the
-                          placeholder teaches the shape, the list
-                          above supplies the value, and no
-                          count-dependent special case exists). <box>
+                          the list). In THAT refusal — where no target
+                          could be resolved — the next: line uses the
+                          placeholder form, next: ship box <verb>
+                          <box>, never a host picked from the list
+                          (Franco: the placeholder teaches the shape,
+                          the list above supplies the value, and no
+                          count-dependent special case exists). When
+                          the box IS known — box-side remediations,
+                          approval flows, any message minted with the
+                          target in hand — the next: line prints the
+                          fully resolved command (ADR-0018): a
+                          remediation an approver pastes from chat
+                          must run verbatim. <box>
                           is the placeholder everywhere a box verb
                           takes its host; box setup alone keeps
                           <ssh-target> (bootstrap may be user@host).
@@ -482,11 +496,30 @@ URL), `SHIP_BRANCH`, `SHIP_ENV` (`production` | `preview`),
 ## 8. Zero-DNS URLs
 
 When no route host is configured for the target env (typical for previews,
-and for prod before a domain exists), synthesize
-`<envname>.<box-ip-with-dashes>.sslip.io` and route it via Caddy with a
-public certificate. The synthesized route targets the process named
-`web`, else the sole declared process; several processes with no `web`
-and no `[routes]` is a manifest error. Document (in `ship docs` and README) that sslip.io
+and for production before a domain exists), synthesize an APP-FIRST
+host (ADR-0018) and route it via Caddy with a public certificate:
+
+```
+production:  <app>.<box-ip-with-dashes>.sslip.io
+preview:     <app>-<branch-slug>-<id>.<box-ip-with-dashes>.sslip.io
+```
+
+Environment names never appear in URLs. The app name is the box-global
+identity, which is what makes the host collision-free: two routeless
+production apps on one box synthesize different hosts (the old
+`<envname>.` scheme made them identical). Preview label budget: the
+app name is never truncated; `slug_budget = min(28, 57 - len(app))`
+(app max 41 → the slug always keeps ≥ 16 chars); the persisted 4-char
+id disambiguates, and its collision retry keys on the FINAL host
+label, not the env name (two long slugs can truncate to one prefix).
+One flat label so the identical shape rides sslip today and the
+wildcard-base future (`*.preview.example.com`) tomorrow — a standard
+wildcard covers exactly one label, which is why the nested
+`<app>.<slug>-<id>.<base>` shape was rejected.
+
+The synthesized route targets the process named `web`, else the sole
+declared process; several processes with no `web` and no `[routes]` is
+a manifest error. Document (in `ship docs` and README) that sslip.io
 shares CA rate quotas and an owned wildcard domain is the steady state.
 `--tls internal` remains available (existing flag) for disposable boxes.
 
@@ -531,7 +564,7 @@ not fail, since DNS may still be propagating.
   (prod value must not leak) and branch-value-over-shared-preview
   precedence; stdout-is-URL contract; `why` after induced release/probe
   failures; notify webhook fired (assert against a local HTTP sink);
-  sslip route synthesis; `member add` end-to-end (newly added key can
+  sslip route synthesis; `box member add` end-to-end (newly added key can
   ship); `behind_production` stale-checkout guard; notify payload carries
   `why` + `remediation`; doctor timer fires notify on an induced degraded
   check; attribution (who shipped) present in status and journal.
@@ -561,7 +594,7 @@ bypasses the catalogue; `ship docs | wc -l` > 0 and drift test green.
 bulk import: `ship secret set --from .env [--preview|--branch <name>]`
 (merge by default; `--replace` makes the file authoritative for the
 scope and lists removed key names on stderr — never values);
-`member add|ls|rm`, `box rm <app>` + the `box apps --json` app list,
+`box member add`/`box members`/`box member rm`, `box rm <app>` + the `box apps --json` app list,
 install one-liner (curl script — the only install story; a Homebrew
 tap is deliberately cut, deferred until users ask) + shell
 completions, README rewritten around the four moments (§0),
@@ -603,12 +636,23 @@ DSL, ever.**
 Surface:
 
 ```
-ship member add <src> [--role owner|shipper|agent]   default: shipper
-ship member ls [--json]     now shows the role per member
-ship approve                bare form: list pending approvals (box-wide)
-ship approve <id>           grant one-shot; requests expire in 15 min
-                            (expiry is the only "deny"; no deny verb)
+ship box member add <src> [<box>] [--role owner|shipper|agent]
+                                        default role: shipper
+ship box members [<box>] [--json]       members: name, role, key SHA256
+ship box member rm <name> [<box>]       revoke all of a member's keys
+ship box approvals [<box>] [--json]     list pending approvals (box-wide)
+ship box approve <id> [<box>]           grant one-shot; requests expire
+                                        in 15 min (expiry is the only
+                                        "deny"; no deny verb); granting
+                                        refreshes the window
 ```
+
+Members and approvals are box-scoped objects, so their verbs live
+under `box` with the object-first `[<box>]` fallback every box verb
+uses (explicit target anywhere, ship.toml inside an app dir) — the
+approver is usually NOT in the requester's checkout (ADR-0018). List
+verbs are plural (`members`, `approvals`, like `apps`); mutations are
+singular.
 
 - `box setup` enrolls the first member as **owner**.
 - Role bundles (verb × scope, enforced helper-side):
@@ -622,10 +666,21 @@ ship approve <id>           grant one-shot; requests expire in 15 min
     status/logs/why/docs everywhere. Not: prod mutations, secret read
     or set, rm, data save/restore, shell.
 - Out-of-role → errcat `approval_required` carrying the request id and
-  the literal `ship approve <id>`; the helper mints the request into a
-  box-global queue; a `notify` event `approval_requested` fires with
-  the same payload (to the box webhook once v0.4.0 lands, §17).
-  Approvals are one-shot and journaled.
+  the FULLY RESOLVED `ship box approve <id> <box>` (approvers paste
+  from chat; a command that depends on cwd or a placeholder is not a
+  remediation). The helper mints the request into a box-global queue;
+  a `notify` event `approval_requested` fires with the same payload
+  (to the box webhook once v0.4.0 lands, §17). Approvals are one-shot
+  and journaled. The box learns its client-routable address at
+  `box setup` (recorded box-side next to members state) — remediations
+  and notifications must never derive the box name from the machine
+  hostname.
+- Grant integrity (ADR-0018): the request records the ROLE the denied
+  action requires; granting needs approver role ≥ that role AND a
+  different member than the requester (no self-approval); a grant
+  refreshes the expiry window. Approval summaries are verb-first human
+  sentences. The agent flow (agent mints, human grants) is the
+  feature and stays.
 - Scope rule (AGENT.md verbatim): members and approvals belong to the
   box; secrets, envs, and journals belong to the app. Per-app
   membership is explicitly parked (a future role-scope extension, not
@@ -643,11 +698,14 @@ ship approve <id>           grant one-shot; requests expire in 15 min
   member-name nit from v0.1.1 is fixed in this arc.
 
 Acceptance (fake-vps unless noted): role matrix — agent ship to prod →
-`approval_required` with id; `ship approve <id>` → the same command
-succeeds exactly once; a second attempt re-requests; expired request
-refuses with a fresh-request remediation; bare `ship approve` lists
-pending with ids; shipper denied member add; owner unrestricted;
-`member add` default role is shipper; box setup first member is owner;
+`approval_required` with a fully resolved `ship box approve <id> <box>`
+→ the same command succeeds exactly once; a second attempt
+re-requests; expired request refuses with a fresh-request remediation;
+`ship box approvals` lists pending with ids; a shipper cannot grant an
+owner-gated request and NOBODY can grant their own (ADR-0018); a grant
+refreshes the expiry window; shipper denied member add; owner
+unrestricted; `box member add` default role is shipper; box setup
+first member is owner;
 agent-role key cannot open a shell (ssh attempt refused by
 forced-command); member ls shows roles; one new agent-eval scenario:
 recover from `approval_required` via the oracle approving. Tag v0.2.0
@@ -664,7 +722,7 @@ Surface:
 
 ```
 ship data fork        fork prod's current /data into this branch's preview
-ship data rm          reset this preview's /data to empty
+ship data reset       reset this preview's /data to empty
 ```
 
 - **`ship data fork`** — run from a **preview** branch: copies prod's
@@ -675,7 +733,7 @@ ship data rm          reset this preview's /data to empty
   `/data` files with `cp -a` (reflink when the filesystem supports it).
   **Prod is READ-ONLY throughout — never modified.** Re-running
   refreshes the fork.
-- **`ship data rm`** — resets this preview's `/data` to empty and
+- **`ship data reset`** (ADR-0018; was `data rm` — every other rm destroys an addressed object, this empties a directory) — resets this preview's `/data` to empty and
   bounces it (clean-slate previews).
 - **Guards:** preview branch only — the production branch errors
   `data_fork_on_production` (you cannot fork into prod, and you cannot
@@ -702,7 +760,7 @@ hook run against the fork before first use; `ship data rewind`;
 provider branch-API integration for managed DBs.
 
 Acceptance (fake-vps): fork prod SQLite into a preview → the preview
-serves prod's rows while prod is byte-for-byte unchanged; `data rm`
+serves prod's rows while prod is byte-for-byte unchanged; `data reset`
 empties the preview; `data fork` on the production branch is refused;
 an agent-role key → `approval_required`; a `/data` with only uploads
 (no SQLite) copies the files; a second `data fork` refreshes. Tag

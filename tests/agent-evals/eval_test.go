@@ -23,7 +23,7 @@ import (
 const (
 	evalImage         = "ship-agent-evals:local"
 	evalToolCallLimit = 6
-	productionEnv     = "prod"
+	productionEnv     = "production"
 )
 
 type commandResult struct {
@@ -559,7 +559,7 @@ func setupApprovalRecovery(t *testing.T, e *evalCase) *evalProject {
 
 	agentKeyPath := filepath.Join(e.tmp, "approval-agent")
 	e.mustRun(t, e.suite.repoRoot, nil, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "approval-agent", "-f", agentKeyPath)
-	e.mustRun(t, app, nil, nil, e.suite.shipBin, "member", "add", agentKeyPath+".pub", "--role", "agent")
+	e.mustRun(t, app, nil, nil, e.suite.shipBin, "box", "member", "add", agentKeyPath+".pub", "--role", "agent")
 	agentKeyCopy := filepath.Join(app, ".agent_ssh_key")
 	keyData, err := os.ReadFile(agentKeyPath)
 	if err != nil {
@@ -1186,6 +1186,13 @@ func checkApprovalRecovery(e *evalCase, p *evalProject) error {
 	if !strings.Contains(second.stdout+second.stderr, "approval_required") &&
 		!strings.Contains(second.stdout+second.stderr, "approval required") {
 		return fmt.Errorf("second agent Production ship failed without approval_required:\nstdout:%s\nstderr:%s", second.stdout, second.stderr)
+	}
+	pending := e.runShell(p.Dir, nil, nil, "ship box approvals fake-vps")
+	if pending.err != nil {
+		return fmt.Errorf("list pending agent approval failed: %v\nstdout:%s\nstderr:%s", pending.err, pending.stdout, pending.stderr)
+	}
+	if !strings.Contains(pending.combined(), "approval-agent ship app=evalapproval env=production class=production") {
+		return fmt.Errorf("pending agent approval is missing its verb-first summary:\n%s", pending.combined())
 	}
 	p.ApprovalOneShotChecked = true
 	return nil

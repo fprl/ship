@@ -82,13 +82,14 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if plan.Mode != "remote" || plan.TargetHost != "203.0.113.10" {
+	if plan.Mode != "remote" || plan.TargetHost != "203.0.113.10" || plan.ClientAddress != "203.0.113.10" {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
 	command := remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/operator.pub", "/tmp/deploy.pub")
 	for _, want := range []string{
 		`/tmp/ship-host-install.example box setup localhost --mode local`,
 		`--suppress-setup-narration`,
+		`--client-address 203.0.113.10`,
 		`--operator-ssh-public-key-file /tmp/operator.pub`,
 		`--deploy-ssh-public-key-file /tmp/deploy.pub`,
 		`--check`,

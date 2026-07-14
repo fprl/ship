@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/names"
@@ -164,7 +165,7 @@ func (c appDestroyCmd) Run() error {
 	if !names.AppRe.MatchString(c.App) {
 		utils.DieError(fmt.Errorf("invalid app name: %q", c.App), 1)
 	}
-	authorizeOrDie(helperVerbBoxMutation, authTargetForBox("box rm app="+c.App, "app="+c.App))
+	authorizeOrDie(helperVerbBoxMutation, authTargetForBox("rm box app="+c.App, "app="+c.App))
 	envs, err := appEnvsForDestroy(c.App)
 	if err != nil {
 		utils.DieError(err, 1)
@@ -210,7 +211,7 @@ func (c appDestroyEnvCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
-	authorizeOrDie(helperVerbRemoveEnv, authTargetForAppEnv(c.App, c.Env, fmt.Sprintf("purge=%t", c.Purge)))
+	authorizeOrDie(helperVerbRemoveEnv, authTargetForAppEnv(c.App, c.Env, "rm", fmt.Sprintf("purge=%t", c.Purge)))
 	withAppEnvLock(c.App, c.Env, func() {
 		c.runLocked(true)
 	})
@@ -379,8 +380,38 @@ func dirEmpty(path string) bool {
 	return err == nil && len(entries) == 0
 }
 
-func writeEnvIdentity(app, env string) error {
+func writeEnvIdentity(app, env string) (err error) {
 	existing, _ := readEnvIdentity(app, env)
+	if env != productionEnvName || envIdentityExists(app, env) {
+		return writeEnvIdentityWithPreview(app, env, existing.Preview)
+	}
+
+	hostLock, err := acquirePreviewHostLabelLock()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if releaseErr := hostLock.Release(); err == nil && releaseErr != nil {
+			err = fmt.Errorf("release host-label lock: %v", releaseErr)
+		}
+	}()
+
+	// Recheck while holding the same box-global lock used by preview allocation.
+	// setup-env and apply both arrive here when they create a production identity.
+	if envIdentityExists(app, env) {
+		return writeEnvIdentityWithPreview(app, env, existing.Preview)
+	}
+	label := names.SynthesizedHostLabel(app, env)
+	if owner, found, err := synthesizedHostLabelOwner(label); err != nil {
+		return err
+	} else if found {
+		return errcat.New(errcat.CodeHostLabelConflict, errcat.Fields{
+			"app":          app,
+			"label":        label,
+			"existing_app": owner.App,
+			"existing_env": owner.Env,
+		})
+	}
 	return writeEnvIdentityWithPreview(app, env, existing.Preview)
 }
 

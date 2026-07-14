@@ -27,7 +27,7 @@ func (c notifyCmd) AfterApply() error {
 type notifyGetCmd struct{}
 
 func (notifyGetCmd) Run() error {
-	if _, err := authorizeHelper(helperVerbRead, authTargetForBox("box notify")); err != nil {
+	if _, err := authorizeHelper(helperVerbRead, authTargetForBox("get box notify")); err != nil {
 		utils.DieError(err, 1)
 	}
 	url, err := boxConfigValueFor("notify.url")
@@ -36,7 +36,7 @@ func (notifyGetCmd) Run() error {
 	}
 	if url == "" {
 		fmt.Println("box notify is unset")
-		fmt.Println("next: ship box notify <box> <url>")
+		fmt.Println("next: ship box notify " + boxClientAddress() + " <url>")
 		return nil
 	}
 	fmt.Println(url)
@@ -48,7 +48,7 @@ type notifySetCmd struct {
 }
 
 func (c notifySetCmd) Run() error {
-	if err := setBoxConfig("notify.url", c.URL, "box notify set"); err != nil {
+	if err := setBoxConfig("notify.url", c.URL, "set box notify"); err != nil {
 		utils.DieError(err, 1)
 	}
 	fmt.Println("box notify set")
@@ -58,7 +58,8 @@ func (c notifySetCmd) Run() error {
 func validateBoxNotifyURL(raw string) (string, error) {
 	url := strings.TrimSpace(raw)
 	if url == "" {
-		return "", fmt.Errorf("notify.url cannot be empty; use ship box config <box> unset notify.url or ship box notify <box> --rm")
+		box := boxClientAddress()
+		return "", fmt.Errorf("notify.url cannot be empty; use ship box config %s unset notify.url or ship box notify %s --rm", box, box)
 	}
 	if err := config.ValidateNotifyURL(url); err != nil {
 		return "", err
@@ -74,7 +75,7 @@ func boxNotifyTargetArg(url string) string {
 type notifyClearCmd struct{}
 
 func (notifyClearCmd) Run() error {
-	if err := unsetBoxConfig("notify.url", "box notify clear"); err != nil {
+	if err := unsetBoxConfig("notify.url", "clear box notify"); err != nil {
 		utils.DieError(err, 1)
 	}
 	fmt.Println("box notify cleared")

@@ -229,8 +229,8 @@ func serverAppDataForkCommand(appName, prodEnv, previewEnv string) string {
 	return serverCommand("app", "data", "fork", appName, prodEnv, previewEnv)
 }
 
-func serverAppDataRmCommand(appName, previewEnv string) string {
-	return serverCommand("app", "data", "rm", appName, previewEnv)
+func serverAppDataResetCommand(appName, previewEnv string) string {
+	return serverCommand("app", "data", "reset", appName, previewEnv)
 }
 
 func serverAppDataSaveCommand(appName, envName string) string {

@@ -82,10 +82,10 @@ live
 next: add DNS A <your-domain> → 203.0.113.7 and add it under [routes]
 ```
 
-Stdout is only the URL:
+Stdout is only the URL — app-first, no env words:
 
 ```text
-https://prod.203-0-113-7.sslip.io
+https://taskflow.203-0-113-7.sslip.io
 ```
 
 That stdout contract is deliberate. Pipe it, paste it, or hand it to an agent.
@@ -103,7 +103,7 @@ The stdout URL is the Preview for that branch — a capability URL that
 works as printed:
 
 ```text
-https://feature-billing-x7q2.203-0-113-7.sslip.io/?ship=<token>
+https://taskflow-feature-billing-x7q2.203-0-113-7.sslip.io/?ship=<token>
 ```
 
 Every Preview is protected by a capability URL printed by `ship`. CI and
@@ -130,12 +130,12 @@ Preview:
 ```bash
 ship data fork
 ship exec -- npx drizzle-kit migrate
-ship data rm
+ship data reset
 ```
 
 Run `ship data fork` from a Preview branch after that Preview exists. It copies
 Production `/data` on the box, bounces the Preview, and never sends data to the
-client. Production stays read-only. `ship data rm` empties that Preview's
+client. Production stays read-only. `ship data reset` empties that Preview's
 `/data` when you are done.
 
 Scary migration loop:
@@ -191,20 +191,20 @@ next: ship secret set api_token [--preview|--branch <name>]
 Authorize a teammate by GitHub username:
 
 ```bash
-ship member add alice
+ship box member add alice <box>
 ```
 
 You can also pass a literal public key or a `.pub` file:
 
 ```bash
-ship member add ~/.ssh/alice.pub
-ship member ls
+ship box member add ~/.ssh/alice.pub <box>
+ship box members <box>
 ```
 
-`member add` defaults to the `shipper` role. Bare GitHub usernames fetch
+`box member add` defaults to the `shipper` role. Bare GitHub usernames fetch
 `https://github.com/<user>.keys` and print SHA256 fingerprints for every key
 added or already authorized. Onboarding is intentionally small: run
-`ship member add <user>`, invite them to the repo, and their first `ship` works.
+`ship box member add <user> <box>`, invite them to the repo, and their first `ship` works.
 
 | Role | What it can do |
 | --- | --- |
@@ -215,7 +215,7 @@ added or already authorized. Onboarding is intentionally small: run
 Remove all keys for a member by name:
 
 ```bash
-ship member rm alice
+ship box member rm alice <box>
 ```
 
 ## Failure
@@ -254,7 +254,7 @@ If `notify` is set in `ship.toml`, ship posts failure and recovery events:
   "why": {
     "schema_version": 1,
     "app": "taskflow",
-    "env": "prod",
+    "env": "production",
     "outcome": "aborted_probe",
     "started_at": "2026-07-07T10:00:00Z",
     "ended_at": "2026-07-07T10:00:10Z",
@@ -337,18 +337,20 @@ the output contract, deploy journals, notify payloads, and the error catalogue.
 Operational reads expose `--json`, and `ship --json` gives agents a structured
 deploy result.
 
-Out-of-role actions do not silently run. They return `approval_required` with an
-approval id:
+Out-of-role actions do not silently run. They return `approval_required` with
+the exact command an approver should paste — from any machine, no checkout
+needed:
 
 ```bash
-ship approve
-ship approve abc123xy
+ship box approvals 203.0.113.7
+ship box approve abc123xy 203.0.113.7
 ```
 
-Bare `ship approve` lists pending requests. `ship approve <id>` grants one retry
-by the original member, expires after 15 minutes, and can be run by an `owner` or
-`shipper`. This is the safety valve for agent-role keys: agents can ask for a
-specific risky action without receiving broader credentials.
+`ship box approvals` lists pending requests. `ship box approve <id> <box>`
+grants one retry by the original member, expires after 15 minutes, and can be
+run by an `owner` or `shipper`. This is the safety valve for agent-role keys:
+agents can ask for a specific risky action without receiving broader
+credentials.
 
 The eval suite in `tests/agent-evals/` proves the contract. Seven recovery
 scenarios pass with a real agent given only the binary and `ship docs`: missing

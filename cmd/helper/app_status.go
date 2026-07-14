@@ -121,7 +121,7 @@ func (c appLogsCmd) Run() error {
 	if c.Process != "" {
 		args = append(args, "process="+c.Process)
 	}
-	authorizeOrDie(helperVerbRead, authTargetForAppEnv(c.App, c.Env, args...))
+	authorizeOrDie(helperVerbRead, authTargetForAppEnv(c.App, c.Env, "logs", args...))
 	containerName, err := resolveLogContainer(c.App, c.Env, c.Process)
 	if err != nil {
 		utils.DieError(err, 1)

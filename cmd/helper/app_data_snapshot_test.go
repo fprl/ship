@@ -47,7 +47,7 @@ func TestRestoreDataSnapshotRejectsMissingDataBeforeLiveDataMutation(t *testing.
 	if err := os.WriteFile(filepath.Join(dataDir, "keep.txt"), []byte("live"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	archive := writeDataSnapshotForTest(t, root, false, dataSnapshotMetadata{SchemaVersion: 1, App: "api", Env: "prod", Release: "abc1234", CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+	archive := writeDataSnapshotForTest(t, root, false, dataSnapshotMetadata{SchemaVersion: 1, App: "api", Env: "production", Release: "abc1234", CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 
 	_, err := restoreAppData("api", "production", archive)
 	if !errcat.Is(err, errcat.CodeDataSnapshotInvalid) {
@@ -108,7 +108,7 @@ func TestRestoreDataSnapshotRejectsAppMismatchBeforeLiveDataMutation(t *testing.
 	if err := os.WriteFile(filepath.Join(dataDir, "keep.txt"), []byte("live"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	archive := writeDataSnapshotForTest(t, root, true, dataSnapshotMetadata{SchemaVersion: 1, App: "other", Env: "prod", Release: "abc1234", CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+	archive := writeDataSnapshotForTest(t, root, true, dataSnapshotMetadata{SchemaVersion: 1, App: "other", Env: "production", Release: "abc1234", CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 
 	_, err := restoreAppData("api", "production", archive)
 	if !errcat.Is(err, errcat.CodeDataSnapshotInvalid) {
@@ -134,7 +134,7 @@ func TestRestoreDataSnapshotStagingFailureLeavesLiveDataUntouched(t *testing.T) 
 	}
 	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 1\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	archive := writeDataSnapshotForTest(t, root, true, dataSnapshotMetadata{SchemaVersion: 1, App: "api", Env: "prod", Release: "abc1234", CreatedAt: time.Now().UTC().Format(time.RFC3339)})
+	archive := writeDataSnapshotForTest(t, root, true, dataSnapshotMetadata{SchemaVersion: 1, App: "api", Env: "production", Release: "abc1234", CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 
 	if _, err := restoreAppData("api", "production", archive); err == nil {
 		t.Fatal("expected staging failure")

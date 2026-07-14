@@ -61,6 +61,7 @@ type HostMeta struct {
 	InstalledAt       string     `json:"installed_at,omitempty"`
 	ShipVersion       string     `json:"ship_version,omitempty"`
 	LastClientVersion string     `json:"last_client_version,omitempty"`
+	ClientAddress     string     `json:"client_address,omitempty"`
 	LastApply         *ApplyMeta `json:"last_apply,omitempty"`
 }
 
@@ -219,16 +220,17 @@ const (
 )
 
 type ApprovalRequest struct {
-	ID         string          `json:"id"`
-	Member     ApprovalMember  `json:"member"`
-	Verb       string          `json:"verb"`
-	Target     ApprovalTarget  `json:"target"`
-	MatchKey   string          `json:"match_key"`
-	Status     ApprovalStatus  `json:"status"`
-	CreatedAt  string          `json:"created"`
-	ExpiresAt  string          `json:"expires"`
-	ApprovedAt string          `json:"approved_at,omitempty"`
-	ApprovedBy *ApprovalMember `json:"approved_by,omitempty"`
+	ID           string          `json:"id"`
+	Member       ApprovalMember  `json:"member"`
+	RequiredRole MemberRole      `json:"required_role"`
+	Verb         string          `json:"verb"`
+	Target       ApprovalTarget  `json:"target"`
+	MatchKey     string          `json:"match_key"`
+	Status       ApprovalStatus  `json:"status"`
+	CreatedAt    string          `json:"created"`
+	ExpiresAt    string          `json:"expires"`
+	ApprovedAt   string          `json:"approved_at,omitempty"`
+	ApprovedBy   *ApprovalMember `json:"approved_by,omitempty"`
 }
 
 type ApprovalsFile struct {

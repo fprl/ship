@@ -26,6 +26,7 @@ import (
 type Options struct {
 	Mode                     string
 	TargetHost               string
+	ClientAddress            string
 	BootstrapUser            string
 	BootstrapUserExplicit    bool
 	SSHKey                   string
@@ -40,6 +41,7 @@ type Options struct {
 type Plan struct {
 	Mode                     string
 	TargetHost               string
+	ClientAddress            string
 	BootstrapUser            string
 	KnownHostsFile           string
 	SSHKey                   string
@@ -180,6 +182,7 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 			return Plan{}, err
 		}
 		opts.TargetHost = targetHost
+		opts.ClientAddress = targetHost
 		opts.BootstrapUser = bootstrapUser
 		if opts.BootstrapUser == "" {
 			return Plan{}, installUsageError("BOOTSTRAP_USER is required in remote mode", boxSetupCommand(opts.TargetHost, "--bootstrap-user", "root"))
@@ -191,6 +194,9 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 			})
 		}
 	}
+	if opts.ClientAddress == "" {
+		opts.ClientAddress = opts.TargetHost
+	}
 
 	operatorKeyFile := opts.OperatorSSHPublicKeyFile
 	deployKeyFile := opts.DeploySSHPublicKeyFile
@@ -201,6 +207,7 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 	return Plan{
 		Mode:                     mode,
 		TargetHost:               opts.TargetHost,
+		ClientAddress:            opts.ClientAddress,
 		BootstrapUser:            opts.BootstrapUser,
 		SSHKey:                   opts.SSHKey,
 		BootstrapIdentityKey:     opts.BootstrapIdentityKey,
@@ -341,6 +348,7 @@ func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) (provision.InstallSumma
 	summary, err := provision.RunInstall(context.Background(), local.Runner{}, provision.InstallOptions{
 		OperatorSSHPublicKeys: keyLines(keyPlan.Operator),
 		DeploySSHPublicKeys:   keyLines(keyPlan.Deploy),
+		ClientAddress:         plan.ClientAddress,
 		CheckMode:             plan.CheckMode,
 		HelperBinaryPath:      helperPath,
 	})
@@ -676,6 +684,9 @@ func remoteLocalInstallCommand(binary string, plan Plan, operatorKeyFile string,
 		"localhost",
 		"--mode", "local",
 		"--suppress-setup-narration",
+	}
+	if plan.ClientAddress != "" {
+		args = append(args, "--client-address", plan.ClientAddress)
 	}
 	if operatorKeyFile != "" {
 		args = append(args, "--operator-ssh-public-key-file", operatorKeyFile)

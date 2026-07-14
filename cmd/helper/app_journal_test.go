@@ -13,7 +13,7 @@ import (
 
 func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
 	startedAt := time.Date(2026, time.July, 14, 10, 0, 0, 0, time.UTC)
-	entry, _ := deployJournalFailureEntry("api", "prod", "old111", "new222", deployIdentity{}, startedAt, errors.New("corrupt upload tar"))
+	entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", deployIdentity{}, startedAt, errors.New("corrupt upload tar"))
 	if entry.FailingStep != "apply" || entry.Outcome != "aborted_release" || entry.StderrTail != "corrupt upload tar" {
 		t.Fatalf("unwrapped journal entry = %+v", entry)
 	}
@@ -27,7 +27,7 @@ func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
 		{step: "release", outcome: "aborted_release"},
 	} {
 		t.Run(tt.step, func(t *testing.T) {
-			entry, _ := deployJournalFailureEntry("api", "prod", "old111", "new222", deployIdentity{}, startedAt, newJournalStepError(tt.step, errors.New(tt.step+" failed"), nil, nil))
+			entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", deployIdentity{}, startedAt, newJournalStepError(tt.step, errors.New(tt.step+" failed"), nil, nil))
 			if entry.FailingStep != tt.step || entry.Outcome != tt.outcome {
 				t.Fatalf("wrapped journal entry = %+v", entry)
 			}
@@ -49,22 +49,22 @@ func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {
 		Identity:         deployIdentity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
 		Probe:            &journalProbe{BodySnippet: "body " + secretValue},
 	}
-	if err := appendDeployJournalEntry("api", "prod", entry, []string{secretValue}); err != nil {
+	if err := appendDeployJournalEntry("api", "production", entry, []string{secretValue}); err != nil {
 		t.Fatal(err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(os.Getenv("SHIP_APPS_DIR"), "api.prod", "releases", "journal.jsonl"))
+	raw, err := os.ReadFile(filepath.Join(os.Getenv("SHIP_APPS_DIR"), "api.production", "releases", "journal.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(raw), secretValue) {
 		t.Fatalf("journal file leaked secret value:\n%s", raw)
 	}
-	latest, err := readLatestDeployJournalEntry("api", "prod")
+	latest, err := readLatestDeployJournalEntry("api", "production")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest.SchemaVersion != deployJournalSchemaVersion || latest.App != "api" || latest.Env != "prod" {
+	if latest.SchemaVersion != deployJournalSchemaVersion || latest.App != "api" || latest.Env != "production" {
 		t.Fatalf("unexpected journal identity: %+v", latest)
 	}
 	if !strings.Contains(latest.StderrTail, "[redacted]") || strings.Contains(latest.StderrTail, secretValue) {
@@ -85,7 +85,7 @@ func TestLatestSuccessfulDeployJournalEntrySkipsFailures(t *testing.T) {
 		FailingStep:      "probe",
 		Identity:         deployIdentity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
 	}
-	if err := appendDeployJournalEntry("api", "prod", failed, nil); err != nil {
+	if err := appendDeployJournalEntry("api", "production", failed, nil); err != nil {
 		t.Fatal(err)
 	}
 	deployed := deployJournalEntry{
@@ -95,11 +95,11 @@ func TestLatestSuccessfulDeployJournalEntrySkipsFailures(t *testing.T) {
 		AttemptedRelease: "good333",
 		Identity:         deployIdentity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
 	}
-	if err := appendDeployJournalEntry("api", "prod", deployed, nil); err != nil {
+	if err := appendDeployJournalEntry("api", "production", deployed, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := readLatestSuccessfulDeployJournalEntry("api", "prod")
+	got, err := readLatestSuccessfulDeployJournalEntry("api", "production")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,11 +110,11 @@ func TestLatestSuccessfulDeployJournalEntrySkipsFailures(t *testing.T) {
 
 func TestLatestDeployJournalEntryNoDeploysError(t *testing.T) {
 	setupJournalHostTest(t)
-	_, err := readLatestDeployJournalEntry("api", "prod")
+	_, err := readLatestDeployJournalEntry("api", "production")
 	if err == nil {
 		t.Fatal("expected no_deploys error")
 	}
-	want := "deploy journal lookup failed\nno deploys recorded for api (prod)\nnext: ship"
+	want := "deploy journal lookup failed\nno deploys recorded for api (production)\nnext: ship"
 	if !errcat.Is(err, errcat.CodeNoDeploys) || err.Error() != want {
 		t.Fatalf("unexpected no_deploys error:\n%s", err.Error())
 	}

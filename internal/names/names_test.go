@@ -1,6 +1,9 @@
 package names
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidGitBranch(t *testing.T) {
 	tests := []struct {
@@ -24,6 +27,63 @@ func TestValidGitBranch(t *testing.T) {
 		t.Run(tt.branch, func(t *testing.T) {
 			if got := ValidGitBranch(tt.branch); got != tt.want {
 				t.Fatalf("ValidGitBranch(%q) = %v, want %v", tt.branch, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSynthesizedHostLabelUsesAppFirstProductionAndBudgetedPreviewShape(t *testing.T) {
+	longApp := strings.Repeat("a", 41)
+	longSlug := strings.Repeat("b", 28)
+	trailingDashApp := strings.Repeat("c", 30)
+	trailingDashSlug := strings.Repeat("d", 26) + "-more"
+
+	tests := []struct {
+		app  string
+		env  string
+		want string
+	}{
+		{app: "api", env: ProductionEnvName, want: "api"},
+		{app: "api", env: "feat-x-ab12", want: "api-feat-x-ab12"},
+		{app: longApp, env: longSlug + "-ab12", want: longApp + "-" + strings.Repeat("b", 16) + "-ab12"},
+		{app: trailingDashApp, env: trailingDashSlug + "-ab12", want: trailingDashApp + "-" + strings.Repeat("d", 26) + "-ab12"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.app+"/"+tt.env, func(t *testing.T) {
+			if got := SynthesizedHostLabel(tt.app, tt.env); got != tt.want {
+				t.Fatalf("SynthesizedHostLabel(%q, %q) = %q, want %q", tt.app, tt.env, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSynthesizedHostLabelFallbacksAreValidDNSLabels(t *testing.T) {
+	longApp := strings.Repeat("a", 41)
+	tests := []struct {
+		name string
+		app  string
+		env  string
+		want string
+	}{
+		{
+			name: "long app and env",
+			app:  longApp,
+			env:  strings.Repeat("b", 33),
+			want: longApp + "-" + strings.Repeat("b", 21),
+		},
+		{name: "trailing env dash", app: "api", env: "a-", want: "api-a"},
+		{name: "env without dash", app: "api", env: "plain", want: "api-plain"},
+		{name: "empty slug after trim", app: "api", env: "---", want: "api"},
+		{name: "production trailing app dash", app: "api-", env: ProductionEnvName, want: "api"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SynthesizedHostLabel(tt.app, tt.env)
+			if got != tt.want {
+				t.Fatalf("SynthesizedHostLabel(%q, %q) = %q, want %q", tt.app, tt.env, got, tt.want)
+			}
+			if len(got) > 63 || strings.HasPrefix(got, "-") || strings.HasSuffix(got, "-") {
+				t.Fatalf("SynthesizedHostLabel(%q, %q) = %q, want valid DNS label", tt.app, tt.env, got)
 			}
 		})
 	}

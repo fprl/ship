@@ -9,6 +9,7 @@ import (
 
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/names"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -37,7 +38,7 @@ func prepareDeployRoutes(ctx *config.AppContext, envName string, opts deployRout
 
 	if opts.Preview {
 		if hadConfiguredRoutes {
-			collapsed, err := previewCollapsedRoutes(ctx.Routes, envName, opts.BoxIP)
+			collapsed, err := previewCollapsedRoutes(ctx, envName, opts.BoxIP)
 			if err != nil {
 				return deployRoutePlan{}, err
 			}
@@ -88,7 +89,7 @@ func synthesizedRoutes(ctx *config.AppContext, envName, boxIP string) (map[strin
 	if err != nil {
 		return nil, err
 	}
-	host := sslipHost(envName, boxIP)
+	host := synthesizedSSLIPHost(ctx.AppName, envName, boxIP)
 	return map[string]config.Route{
 		host: {Host: host, Process: process},
 	}, nil
@@ -112,15 +113,16 @@ func synthesizedRouteProcess(processes map[string]config.Process) (string, error
 	})
 }
 
-func previewCollapsedRoutes(routes map[string]config.Route, envName, boxIP string) (map[string]config.Route, error) {
+func previewCollapsedRoutes(ctx *config.AppContext, envName, boxIP string) (map[string]config.Route, error) {
+	routes := ctx.Routes
 	defaultHost := defaultRouteHost(routes)
 	if defaultHost == "" {
-		synthHost := sslipHost(envName, boxIP)
+		synthHost := synthesizedSSLIPHost(ctx.AppName, envName, boxIP)
 		return nil, manifestInvalidError(fmt.Sprintf("preview routes cannot be collapsed because [routes] has no non-redirect default host; add a process or static route for %s", synthHost), "fix ship.toml")
 	}
 	// v1 previews always use sslip because the manifest has no wildcard-base knob.
 	// TODO(§3): add an explicit wildcard-base config field and use it here.
-	previewHost := sslipHost(envName, boxIP)
+	previewHost := synthesizedSSLIPHost(ctx.AppName, envName, boxIP)
 	out := map[string]config.Route{}
 	for _, name := range sortedRouteNames(routes) {
 		route := routes[name]
@@ -259,11 +261,11 @@ func sortedRouteNames(routes map[string]config.Route) []string {
 	return names
 }
 
-func sslipHost(envName, boxIP string) string {
+func synthesizedSSLIPHost(app, envName, boxIP string) string {
 	if boxIP == "" {
 		boxIP = "127.0.0.1"
 	}
-	return envName + "." + strings.ReplaceAll(boxIP, ".", "-") + ".sslip.io"
+	return names.SynthesizedHostLabel(app, envName) + "." + strings.ReplaceAll(boxIP, ".", "-") + ".sslip.io"
 }
 
 func resolveBoxIPv4(runner sshRunner, server string) string {

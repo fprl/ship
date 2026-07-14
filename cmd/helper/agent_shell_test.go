@@ -43,8 +43,8 @@ func TestAgentShellAllowsHelperProtocolAndForcesPinnedFingerprint(t *testing.T) 
 		},
 		{
 			name:     "quoted helper arg",
-			original: "sudo -n /usr/local/bin/ship server app apply --git-author 'Smoke <smoke@example.com>' api prod",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "apply", "--git-author", "Smoke <smoke@example.com>", "api", "prod"},
+			original: "sudo -n /usr/local/bin/ship server app apply --git-author 'Smoke <smoke@example.com>' api production",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "apply", "--git-author", "Smoke <smoke@example.com>", "api", "production"},
 		},
 		{
 			// Kong applies last-value-wins, so an inline `=value` form left
@@ -90,19 +90,19 @@ func TestAgentShellAllowsDeployUploadShapes(t *testing.T) {
 	}{
 		{
 			name:     "prepare remote dir",
-			original: "mkdir -p /tmp/ship-deploy/api-prod-abc123 && chmod 0700 /tmp/ship-deploy/api-prod-abc123",
+			original: "mkdir -p /tmp/ship-deploy/api-production-abc123 && chmod 0700 /tmp/ship-deploy/api-production-abc123",
 			kind:     agentShellActionPrepareUpload,
-			path:     "/tmp/ship-deploy/api-prod-abc123",
+			path:     "/tmp/ship-deploy/api-production-abc123",
 		},
 		{
 			name:     "cleanup remote dir",
-			original: "rm -rf /tmp/ship-deploy/api-prod-abc123",
+			original: "rm -rf /tmp/ship-deploy/api-production-abc123",
 			kind:     agentShellActionCleanupUpload,
-			path:     "/tmp/ship-deploy/api-prod-abc123",
+			path:     "/tmp/ship-deploy/api-production-abc123",
 		},
 		{
 			name:     "rsync receiver",
-			original: "rsync --server -vlogDtprze.iLsfxCIvu . /tmp/ship-deploy/api-prod-abc123/source.tar",
+			original: "rsync --server -vlogDtprze.iLsfxCIvu . /tmp/ship-deploy/api-production-abc123/source.tar",
 			kind:     agentShellActionExec,
 		},
 	}

@@ -181,8 +181,8 @@ func notifyDoctorDegraded(box string, checks []store.DoctorCheck, now time.Time)
 }
 
 func notifyApprovalRequested(request store.ApprovalRequest, now time.Time) {
-	command := "ship approve " + request.ID
-	box := notifyBoxHost()
+	command := approvalCommand(request.ID)
+	box := boxClientAddress()
 	app := strings.TrimSpace(request.Target.App)
 	env := strings.TrimSpace(request.Target.Env)
 	var ctx *config.AppContext
@@ -225,12 +225,12 @@ func boxNotifyURL() string {
 	return url
 }
 
-func notifyBoxHost() string {
-	host, err := os.Hostname()
-	if err != nil || strings.TrimSpace(host) == "" {
-		return "box"
+func boxClientAddress() string {
+	hostFile, err := store.Default().ReadHost()
+	if err != nil || strings.TrimSpace(hostFile.Meta.ClientAddress) == "" {
+		return "<box>"
 	}
-	return host
+	return strings.TrimSpace(hostFile.Meta.ClientAddress)
 }
 
 func notifyEnvLabel(app, env string, ctx *config.AppContext) string {

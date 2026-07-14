@@ -284,9 +284,9 @@ func isGitDescribeVersion(value string) bool {
 	return err == nil
 }
 
-func CmdMemberAdd(server, source string, role string) {
+func CmdBoxMemberAdd(server, source string, role string) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(invalidBoxTargetError(server, invalidBoxTargetManifestRemediation), 2)
+		utils.DieError(invalidBoxTargetError(server, "ship box member add "+source), 2)
 	}
 	input, err := resolveMemberAddSource(source)
 	if err != nil {
@@ -313,14 +313,14 @@ func CmdMemberAdd(server, source string, role string) {
 		if detail == "" {
 			detail = "member add failed"
 		}
-		utils.DieError(operationError(detail, "ship member add "+source), 1)
+		utils.DieError(operationError(detail, "ship box member add "+source+" "+server), 1)
 	}
 	fmt.Print(stdout)
 }
 
-func CmdMemberLs(server string, jsonFlag bool) {
+func CmdBoxMembers(server string, jsonFlag bool) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(invalidBoxTargetError(server, invalidBoxTargetManifestRemediation), 2)
+		utils.DieError(invalidBoxTargetError(server, "ship box members"), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -338,18 +338,22 @@ func CmdMemberLs(server string, jsonFlag bool) {
 			writeRemoteStderr(outcome)
 			utils.DieError(outcome.RemoteCoded, 1)
 		}
-		detail := outcome.Detail
-		if detail == "" {
-			detail = "member ls failed"
-		}
-		utils.DieError(operationError(detail, "ship member ls"), 1)
+		detail := boxMembersFailureDetail(outcome.Detail)
+		utils.DieError(operationError(detail, "ship box members "+server), 1)
 	}
 	fmt.Print(stdout)
 }
 
-func CmdMemberRm(server, name string) {
+func boxMembersFailureDetail(detail string) string {
+	if detail == "" {
+		return "box members failed"
+	}
+	return detail
+}
+
+func CmdBoxMemberRm(server, name string) {
 	if !config.ValidateBoxHost(server) {
-		utils.DieError(invalidBoxTargetError(server, invalidBoxTargetManifestRemediation), 2)
+		utils.DieError(invalidBoxTargetError(server, "ship box member rm "+name), 2)
 	}
 	runner, err := NewCommandRunner()
 	if err != nil {
@@ -371,7 +375,7 @@ func CmdMemberRm(server, name string) {
 		if detail == "" {
 			detail = "member rm failed"
 		}
-		utils.DieError(operationError(detail, "ship member rm "+name), 1)
+		utils.DieError(operationError(detail, "ship box member rm "+name+" "+server), 1)
 	}
 	fmt.Print(stdout)
 }
@@ -673,7 +677,7 @@ func resolveMemberAddSource(source string) (memberAddInput, error) {
 	if path, isPath := resolvePublicKeyPath(source); isPath {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return memberAddInput{}, operationError(fmt.Sprintf("read public key file %s: %v", source, err), "ship member add "+source)
+			return memberAddInput{}, operationError(fmt.Sprintf("read public key file %s: %v", source, err), "ship box member add "+source+" <box>")
 		}
 		comment := memberNameFromPath(path)
 		keys, err := normalizeSSHPublicKeys(string(data), comment)
@@ -723,18 +727,18 @@ func fetchGitHubPublicKeys(user string) (string, error) {
 	client := http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		return "", operationError(fmt.Sprintf("fetch %s: %v", url, err), "ship member add "+user)
+		return "", operationError(fmt.Sprintf("fetch %s: %v", url, err), "ship box member add "+user+" <box>")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return "", errcat.New(errcat.CodeGitHubKeysUnavailable, errcat.Fields{"user": user})
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return "", operationError(fmt.Sprintf("fetch %s: HTTP %d", url, resp.StatusCode), "ship member add "+user)
+		return "", operationError(fmt.Sprintf("fetch %s: HTTP %d", url, resp.StatusCode), "ship box member add "+user+" <box>")
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", operationError(fmt.Sprintf("read %s: %v", url, err), "ship member add "+user)
+		return "", operationError(fmt.Sprintf("read %s: %v", url, err), "ship box member add "+user+" <box>")
 	}
 	if strings.TrimSpace(string(data)) == "" {
 		return "", errcat.New(errcat.CodeGitHubKeysUnavailable, errcat.Fields{"user": user})

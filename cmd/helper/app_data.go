@@ -26,8 +26,8 @@ const (
 )
 
 type appDataCmd struct {
-	Fork    appDataForkCmd    `cmd:"fork" help:"Fork prod /data into a preview env."`
-	Rm      appDataRmCmd      `cmd:"rm" help:"Empty a preview env /data dir."`
+	Fork    appDataForkCmd    `cmd:"fork" help:"Fork Production /data into a preview env."`
+	Reset   appDataResetCmd   `cmd:"reset" help:"Empty a preview env /data dir."`
 	Save    appDataSaveCmd    `cmd:"save" help:"Stream a data snapshot to stdout."`
 	Restore appDataRestoreCmd `cmd:"restore" help:"Restore a staged data snapshot."`
 }
@@ -38,7 +38,7 @@ type appDataForkCmd struct {
 	PreviewEnv string `arg:"" help:"Preview env name."`
 }
 
-type appDataRmCmd struct {
+type appDataResetCmd struct {
 	App        string `arg:"" help:"App name."`
 	PreviewEnv string `arg:"" help:"Preview env name."`
 }
@@ -66,7 +66,7 @@ func (c appDataSaveCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
-	authorizeOrDie(helperVerbData, authTargetForAppEnv(c.App, c.Env, "data=save"))
+	authorizeOrDie(helperVerbData, authTargetForAppEnv(c.App, c.Env, "save", "data=save"))
 	withAppEnvLock(c.App, c.Env, func() {
 		if err := saveAppData(c.App, c.Env, os.Stdout, time.Now().UTC()); err != nil {
 			utils.DieError(err, 1)
@@ -79,11 +79,11 @@ func (c appDataRestoreCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
-	authorizeOrDie(helperVerbData, authTargetForAppEnv(c.App, c.Env, "data=restore"))
+	authorizeOrDie(helperVerbData, authTargetForAppEnv(c.App, c.Env, "restore", "data=restore"))
 	if c.Env == productionEnvName {
 		// Production data replacement is an owner act even though preview restores
 		// are available to shippers through the data role.
-		authorizeOrDie(helperVerbBoxMutation, authTargetForAppEnv(c.App, c.Env, "data=restore"))
+		authorizeOrDie(helperVerbBoxMutation, authTargetForAppEnv(c.App, c.Env, "restore", "data=restore"))
 	}
 	withAppEnvLock(c.App, c.Env, func() {
 		meta, err := restoreAppData(c.App, c.Env, c.Archive)
@@ -127,7 +127,7 @@ func (c appDataForkCmd) Run() error {
 	if err := ensureDataPreviewTarget(c.App, c.PreviewEnv); err != nil {
 		utils.DieError(err, 1)
 	}
-	authorizeOrDie(helperVerbData, authTargetForAppEnv(c.App, c.PreviewEnv, "data=fork", "from="+c.ProdEnv))
+	authorizeOrDie(helperVerbData, authTargetForAppEnv(c.App, c.PreviewEnv, "fork", "data=fork", "from="+c.ProdEnv))
 	withAppEnvLock(c.App, c.PreviewEnv, func() {
 		summary, err := forkAppData(c.App, c.ProdEnv, c.PreviewEnv, dataForkOptions{})
 		if err != nil {
@@ -142,7 +142,7 @@ func (c appDataForkCmd) Run() error {
 	return nil
 }
 
-func (c appDataRmCmd) Run() error {
+func (c appDataResetCmd) Run() error {
 	if err := validateAppEnv(c.App, c.PreviewEnv); err != nil {
 		utils.DieError(err, 1)
 	}
@@ -152,7 +152,7 @@ func (c appDataRmCmd) Run() error {
 	if err := ensureDataPreviewTarget(c.App, c.PreviewEnv); err != nil {
 		utils.DieError(err, 1)
 	}
-	authorizeOrDie(helperVerbData, authTargetForAppEnv(c.App, c.PreviewEnv, "data=rm"))
+	authorizeOrDie(helperVerbData, authTargetForAppEnv(c.App, c.PreviewEnv, "reset", "data=reset"))
 	withAppEnvLock(c.App, c.PreviewEnv, func() {
 		if err := resetAppData(c.App, c.PreviewEnv); err != nil {
 			utils.DieError(err, 1)

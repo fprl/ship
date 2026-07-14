@@ -86,6 +86,7 @@ const (
 	CodeBoxSetupRequired                  Code = "box_setup_required"
 	CodeBoxConfigKeyUnknown               Code = "box_config_key_unknown"
 	CodeBoxConfigValueInvalid             Code = "box_config_value_invalid"
+	CodeHostLabelConflict                 Code = "host_label_conflict"
 )
 
 type Fields map[string]string
@@ -316,31 +317,36 @@ var catalogue = map[Code]Entry{
 		Code:                CodeGitHubKeysUnavailable,
 		MessageTemplate:     "GitHub SSH key lookup failed",
 		CauseTemplate:       "no public SSH keys found for GitHub user {user}",
-		RemediationTemplate: "ship member add <path-to-public-key>",
+		RemediationTemplate: "ship box member add <path-to-public-key> {box}",
+		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeSSHPublicKeyInvalid: {
 		Code:                CodeSSHPublicKeyInvalid,
 		MessageTemplate:     "SSH public key is invalid",
 		CauseTemplate:       "{detail}",
-		RemediationTemplate: "ship member add <github-user|key|path>",
+		RemediationTemplate: "ship box member add <github-user|key|path> {box}",
+		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeMemberNotFound: {
 		Code:                CodeMemberNotFound,
 		MessageTemplate:     "member rm failed",
 		CauseTemplate:       "no authorized keys found for member {name}; current members: {members}",
-		RemediationTemplate: "ship member ls",
+		RemediationTemplate: "ship box members {box}",
+		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeMemberLastKey: {
 		Code:                CodeMemberLastKey,
 		MessageTemplate:     "member rm refused",
 		CauseTemplate:       "removing {name} would remove the last remaining authorized key",
-		RemediationTemplate: "ship member add <github-user|key|path>",
+		RemediationTemplate: "ship box member add <github-user|key|path> {box}",
+		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeMemberUnknown: {
 		Code:                CodeMemberUnknown,
 		MessageTemplate:     "member identity is not authorized",
 		CauseTemplate:       "fingerprint {fingerprint} is not in authorized_keys",
-		RemediationTemplate: "ship member add",
+		RemediationTemplate: "ship box member add <src> {box}",
+		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeRoleDenied: {
 		Code:                CodeRoleDenied,
@@ -353,7 +359,8 @@ var catalogue = map[Code]Entry{
 		Code:                CodeApprovalRequired,
 		MessageTemplate:     "approval required for {summary}",
 		CauseTemplate:       "{member} ({role}) requested {summary}; approval id {id}",
-		RemediationTemplate: "ship approve {id}",
+		RemediationTemplate: "ship box approve {id} {box}",
+		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeApprovalExpired: {
 		Code:                CodeApprovalExpired,
@@ -560,6 +567,12 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "box config value is invalid",
 		CauseTemplate:       "{key}: {detail}",
 		RemediationTemplate: "{command}",
+	},
+	CodeHostLabelConflict: {
+		Code:                CodeHostLabelConflict,
+		MessageTemplate:     "production hostname collision",
+		CauseTemplate:       "app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env})",
+		RemediationTemplate: "rename app {app} and deploy again",
 	},
 }
 

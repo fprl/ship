@@ -104,18 +104,18 @@ func setServerMemberFingerprint(fingerprint string) {
 }
 
 func authorizeHelper(verb helperVerb, target authTarget) (serverMember, error) {
-	return authorizeHelperWithPolicy(verb, target, func(member serverMember) bool {
+	return authorizeHelperWithPolicy(verb, helperRequiredRole(verb, target.Class), target, func(member serverMember) bool {
 		return helperAllows(member.Role, verb, target.Class)
 	}, true)
 }
 
 func authorizeBoxConfigMutation(key store.BoxConfigKey, target authTarget) (serverMember, error) {
-	return authorizeHelperWithPolicy(helperVerbBoxMutation, target, func(member serverMember) bool {
+	return authorizeHelperWithPolicy(helperVerbBoxMutation, key.WriteRole, target, func(member serverMember) bool {
 		return member.Role == store.MemberRoleOwner || member.Role == key.WriteRole
 	}, key.OutOfRoleNeedsApproval)
 }
 
-func authorizeHelperWithPolicy(verb helperVerb, target authTarget, allowed func(serverMember) bool, mintApproval bool) (serverMember, error) {
+func authorizeHelperWithPolicy(verb helperVerb, requiredRole store.MemberRole, target authTarget, allowed func(serverMember) bool, mintApproval bool) (serverMember, error) {
 	member, err := resolveServerMember()
 	if err != nil {
 		return serverMember{}, err
@@ -137,7 +137,7 @@ func authorizeHelperWithPolicy(verb helperVerb, target authTarget, allowed func(
 	} else if consumed {
 		return member, nil
 	}
-	request, minted, err := requestApproval(member, verb, target)
+	request, minted, err := requestApproval(member, requiredRole, verb, target)
 	if err != nil {
 		return serverMember{}, err
 	}
@@ -163,17 +163,27 @@ func authorizeApprovalGrant(id string) (serverMember, error) {
 		return serverMember{}, err
 	}
 	serverAuthorizedMember = &member
-	switch member.Role {
-	case store.MemberRoleOwner, store.MemberRoleShipper:
-		return member, nil
-	default:
+	file, err := store.Default().ReadApprovals()
+	if err != nil {
+		return serverMember{}, err
+	}
+	for _, request := range file.Requests {
+		if request.ID == id {
+			if err := authorizeApprovalGrantForRequest(member, request); err != nil {
+				return serverMember{}, err
+			}
+			return member, nil
+		}
+	}
+	if member.Role == store.MemberRoleAgent {
 		return serverMember{}, errcat.New(errcat.CodeRoleDenied, errcat.Fields{
 			"member":  member.Name,
 			"role":    string(member.Role),
 			"summary": "approve " + id,
-			"command": "ask an owner or shipper to run ship approve " + id,
+			"command": "ask an owner or shipper to run " + approvalCommand(id),
 		})
 	}
+	return member, nil
 }
 
 func authorizeOrDie(verb helperVerb, target authTarget) serverMember {
@@ -206,13 +216,20 @@ func helperAllows(role store.MemberRole, verb helperVerb, class string) bool {
 	}
 }
 
+func helperRequiredRole(verb helperVerb, class string) store.MemberRole {
+	if helperAllows(store.MemberRoleShipper, verb, class) {
+		return store.MemberRoleShipper
+	}
+	return store.MemberRoleOwner
+}
+
 func resolveServerMember() (serverMember, error) {
 	fingerprint := strings.TrimSpace(serverMemberFingerprint)
 	if fingerprint == "" && os.Getenv("SUDO_USER") == "" {
 		return serverMember{Name: "root", Role: store.MemberRoleOwner}, nil
 	}
 	if fingerprint == "" {
-		return serverMember{}, errcat.New(errcat.CodeMemberUnknown, errcat.Fields{"fingerprint": "(missing)"})
+		return serverMember{}, errcat.New(errcat.CodeMemberUnknown, errcat.Fields{"fingerprint": "(missing)", "box": boxClientAddress()})
 	}
 	user, err := deployAuthorizedKeysUser()
 	if err != nil {
@@ -230,7 +247,7 @@ func resolveServerMember() (serverMember, error) {
 		}
 	}
 	if !authorized {
-		return serverMember{}, errcat.New(errcat.CodeMemberUnknown, errcat.Fields{"fingerprint": fingerprint})
+		return serverMember{}, errcat.New(errcat.CodeMemberUnknown, errcat.Fields{"fingerprint": fingerprint, "box": boxClientAddress()})
 	}
 	members, err := store.Default().ReadMembers()
 	if err != nil {
@@ -239,7 +256,7 @@ func resolveServerMember() (serverMember, error) {
 	records := memberkeys.EffectiveMemberRecords(keys, *members, nil)
 	record, ok := records[fingerprint]
 	if !ok {
-		return serverMember{}, errcat.New(errcat.CodeMemberUnknown, errcat.Fields{"fingerprint": fingerprint})
+		return serverMember{}, errcat.New(errcat.CodeMemberUnknown, errcat.Fields{"fingerprint": fingerprint, "box": boxClientAddress()})
 	}
 	return serverMember{
 		Fingerprint: fingerprint,
@@ -258,24 +275,24 @@ func envClassForAuth(app, env string) string {
 	return "unknown"
 }
 
-func authTargetForAppEnv(app, env string, args ...string) authTarget {
+func authTargetForAppEnv(app, env, summaryVerb string, args ...string) authTarget {
 	class := envClassForAuth(app, env)
 	return authTarget{
 		App:     app,
 		Env:     env,
 		Class:   class,
 		Args:    append([]string(nil), args...),
-		Summary: summarizeTarget(app, env, class, args...),
+		Summary: summarizeTarget(summaryVerb, app, env, class, args...),
 	}
 }
 
-func authTargetForPreviewBranch(app, branch string, args ...string) authTarget {
+func authTargetForPreviewBranch(app, branch, summaryVerb string, args ...string) authTarget {
 	summaryArgs := append([]string{"branch=" + branch}, args...)
 	return authTarget{
 		App:     app,
 		Class:   "preview",
 		Args:    summaryArgs,
-		Summary: summarizeTarget(app, "", "preview", summaryArgs...),
+		Summary: summarizeTarget(summaryVerb, app, "", "preview", summaryArgs...),
 	}
 }
 
@@ -286,8 +303,11 @@ func authTargetForBox(summary string, args ...string) authTarget {
 	}
 }
 
-func summarizeTarget(app, env, class string, args ...string) string {
+func summarizeTarget(summaryVerb, app, env, class string, args ...string) string {
 	parts := []string{}
+	if summaryVerb = strings.TrimSpace(summaryVerb); summaryVerb != "" {
+		parts = append(parts, summaryVerb)
+	}
 	if app != "" {
 		parts = append(parts, "app="+app)
 	}
@@ -327,7 +347,7 @@ func approvalMatchKey(member serverMember, verb helperVerb, target authTarget) s
 	return string(data)
 }
 
-func requestApproval(member serverMember, verb helperVerb, target authTarget) (store.ApprovalRequest, bool, error) {
+func requestApproval(member serverMember, requiredRole store.MemberRole, verb helperVerb, target authTarget) (store.ApprovalRequest, bool, error) {
 	lock, err := acquireApprovalLock()
 	if err != nil {
 		return store.ApprovalRequest{}, false, err
@@ -358,7 +378,8 @@ func requestApproval(member serverMember, verb helperVerb, target authTarget) (s
 			Name:        member.Name,
 			Role:        member.Role,
 		},
-		Verb: string(verb),
+		RequiredRole: requiredRole,
+		Verb:         string(verb),
 		Target: store.ApprovalTarget{
 			App:     target.App,
 			Env:     target.Env,
@@ -448,11 +469,15 @@ func approveRequest(id string, approver serverMember) (store.ApprovalRequest, er
 		if request.Status == store.ApprovalStatusApproved {
 			return store.ApprovalRequest{}, errcat.New(errcat.CodeOperationFailed, errcat.Fields{
 				"detail":  "approval " + id + " is already approved",
-				"command": "ship approve",
+				"command": "ship box approvals " + boxClientAddress(),
 			})
+		}
+		if err := authorizeApprovalGrantForRequest(approver, request); err != nil {
+			return store.ApprovalRequest{}, err
 		}
 		request.Status = store.ApprovalStatusApproved
 		request.ApprovedAt = now.Format(time.RFC3339Nano)
+		request.ExpiresAt = now.Add(approvalTTL).Format(time.RFC3339Nano)
 		request.ApprovedBy = &store.ApprovalMember{
 			Fingerprint: approver.Fingerprint,
 			Name:        approver.Name,
@@ -471,8 +496,39 @@ func approveRequest(id string, approver serverMember) (store.ApprovalRequest, er
 	}
 	return store.ApprovalRequest{}, errcat.New(errcat.CodeOperationFailed, errcat.Fields{
 		"detail":  "approval " + id + " was not found",
-		"command": "ship approve",
+		"command": "ship box approvals " + boxClientAddress(),
 	})
+}
+
+func authorizeApprovalGrantForRequest(approver serverMember, request store.ApprovalRequest) error {
+	if approver.Fingerprint == request.Member.Fingerprint {
+		eligibleRole := "owner or shipper"
+		if request.RequiredRole == store.MemberRoleOwner {
+			eligibleRole = "owner"
+		}
+		return errcat.New(errcat.CodeRoleDenied, errcat.Fields{
+			"member":  approver.Name,
+			"role":    string(approver.Role),
+			"summary": "self-approve request " + request.ID + "; requests cannot be self-approved; ask another " + eligibleRole,
+			"command": "ask another " + eligibleRole + " to run " + approvalCommand(request.ID),
+		})
+	}
+	if approvalRoleCovers(approver.Role, request.RequiredRole) {
+		return nil
+	}
+	return errcat.New(errcat.CodeRoleDenied, errcat.Fields{
+		"member":  approver.Name,
+		"role":    string(approver.Role),
+		"summary": "approve request " + request.ID + "; request requires " + string(request.RequiredRole),
+		"command": "ask an owner to run " + approvalCommand(request.ID),
+	})
+}
+
+func approvalRoleCovers(approverRole, requiredRole store.MemberRole) bool {
+	if approverRole == store.MemberRoleOwner {
+		return requiredRole == store.MemberRoleOwner || requiredRole == store.MemberRoleShipper
+	}
+	return approverRole == store.MemberRoleShipper && requiredRole == store.MemberRoleShipper
 }
 
 func pendingApprovals() ([]store.ApprovalRequest, error) {
@@ -533,7 +589,12 @@ func approvalRequiredError(request store.ApprovalRequest) error {
 		"role":    string(request.Member.Role),
 		"summary": request.Target.Summary,
 		"id":      request.ID,
+		"box":     boxClientAddress(),
 	})
+}
+
+func approvalCommand(id string) string {
+	return "ship box approve " + id + " " + boxClientAddress()
 }
 
 func newApprovalID(existing []store.ApprovalRequest) string {

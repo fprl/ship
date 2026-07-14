@@ -284,7 +284,7 @@ func SeedHostJSON() string {
 			Packages: map[string]store.ObservedPackage{},
 			Ingress:  store.HostIngressObserved{},
 		},
-		Meta: store.HostMeta{},
+		Meta: store.HostMeta{ClientAddress: "fake-vps"},
 	})
 	if err != nil {
 		panic(err)

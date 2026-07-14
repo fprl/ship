@@ -68,7 +68,7 @@ func (c appApplyCmd) Run() error {
 	if _, err := c.releaseMetadata(); err != nil {
 		utils.DieError(err, 1)
 	}
-	authorizeOrDie(helperVerbShip, authTargetForAppEnv(c.App, c.Env, "release="+c.SHA))
+	authorizeOrDie(helperVerbShip, authTargetForAppEnv(c.App, c.Env, "ship", "release="+c.SHA))
 	if err := c.recordClientVersion(); err != nil {
 		utils.DieError(err, 1)
 	}

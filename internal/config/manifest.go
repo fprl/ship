@@ -38,7 +38,7 @@ const (
 	secretBare = "@secret"
 )
 
-const ProductionEnvName = "prod"
+const ProductionEnvName = names.ProductionEnvName
 
 type Resources struct {
 	Memory *string  `toml:"memory"`

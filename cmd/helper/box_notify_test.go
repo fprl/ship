@@ -23,11 +23,13 @@ func TestValidateBoxNotifyURL(t *testing.T) {
 }
 
 func TestValidateBoxNotifyURLEmptyRefusesSet(t *testing.T) {
+	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	setHelperBoxClientAddress(t, "203.0.113.7")
 	_, err := validateBoxNotifyURL("")
 	if err == nil {
 		t.Fatal("validateBoxNotifyURL(\"\") succeeded, want error")
 	}
-	if !strings.Contains(err.Error(), "unset notify.url") || !strings.Contains(err.Error(), "--rm") {
+	if !strings.Contains(err.Error(), "ship box config 203.0.113.7 unset notify.url") || !strings.Contains(err.Error(), "ship box notify 203.0.113.7 --rm") {
 		t.Fatalf("empty URL error = %q, want unset guidance", err)
 	}
 }

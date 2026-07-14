@@ -253,6 +253,13 @@ func TestEnvNameForBranchRejectsUnmappableBranchName(t *testing.T) {
 	}
 }
 
+func TestEnvNameForBranchRejectsProductionPreviewCollision(t *testing.T) {
+	_, err := envNameForBranch("production", "main")
+	if !errcat.Is(err, errcat.CodeUnmappableBranchName) {
+		t.Fatalf("expected production preview collision rejection, got %v", err)
+	}
+}
+
 func TestResolveDeployAddressMapsBranchesToEnvs(t *testing.T) {
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
@@ -264,8 +271,8 @@ func TestResolveDeployAddressMapsBranchesToEnvs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if addr.EnvName != "prod" || !addr.ProductionBranch || addr.Branch != "main" {
-		t.Fatalf("main should resolve to prod production branch, got %+v", addr)
+	if addr.EnvName != "production" || !addr.ProductionBranch || addr.Branch != "main" {
+		t.Fatalf("main should resolve to production branch, got %+v", addr)
 	}
 
 	runGit(t, root, "checkout", "-B", "feat/x")
@@ -308,8 +315,8 @@ web = { port = 3000 }
 	if err != nil {
 		t.Fatal(err)
 	}
-	if addr.EnvName != "prod" || !addr.ProductionBranch {
-		t.Fatalf("stable should resolve to prod, got %+v", addr)
+	if addr.EnvName != "production" || !addr.ProductionBranch {
+		t.Fatalf("stable should resolve to production, got %+v", addr)
 	}
 }
 
@@ -353,7 +360,7 @@ func TestResolveDeployAddressReportsNotGitRepo(t *testing.T) {
 func TestWriteShipResultOutputContracts(t *testing.T) {
 	result := ShipResult{
 		URL:        "https://api.example.com",
-		Env:        "prod",
+		Env:        "production",
 		Release:    "abc1234",
 		Processes:  []string{"web"},
 		DurationMs: 1234,
@@ -380,11 +387,11 @@ func TestWriteShipResultOutputContracts(t *testing.T) {
 
 func TestRewriteRollbackSummaryUsesSurfaceEnvironmentName(t *testing.T) {
 	read := readContext{
-		AppContext: &config.AppContext{AppName: "api", EnvName: "prod", ProductionBranch: "main"},
-		Address:    readAddress{EnvName: "prod", ProductionBranch: true},
-		EnvName:    "prod",
+		AppContext: &config.AppContext{AppName: "api", EnvName: "production", ProductionBranch: "main"},
+		Address:    readAddress{EnvName: "production", ProductionBranch: true},
+		EnvName:    "production",
 	}
-	out := rewriteRollbackSummary("Rolled back api (prod) from def456 to abc123\n  web          running\n", read)
+	out := rewriteRollbackSummary("Rolled back api (production) from def456 to abc123\n  web          running\n", read)
 	if !strings.Contains(out, "Rolled back Production main from def456 to abc123") {
 		t.Fatalf("rollback summary leaked internal env:\n%s", out)
 	}
@@ -394,9 +401,9 @@ func TestRewriteRollbackSummaryUsesSurfaceEnvironmentName(t *testing.T) {
 }
 
 func TestDeploymentURLSynthesizesSSLIPWithoutRoutes(t *testing.T) {
-	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "203.0.113.7"}
-	got := deploymentURL(ctx, "prod")
-	want := "https://prod.203-0-113-7.sslip.io"
+	ctx := &config.AppContext{AppName: "api", EnvName: "production", Server: "203.0.113.7"}
+	got := deploymentURL(ctx, "production")
+	want := "https://api.203-0-113-7.sslip.io"
 	if got != want {
 		t.Fatalf("fallback URL = %q, want %q", got, want)
 	}
@@ -405,14 +412,14 @@ func TestDeploymentURLSynthesizesSSLIPWithoutRoutes(t *testing.T) {
 func TestDeploymentURLPrefersRootWebRoute(t *testing.T) {
 	ctx := &config.AppContext{
 		AppName: "api",
-		EnvName: "prod",
+		EnvName: "production",
 		Server:  "example.com",
 		Routes: map[string]config.Route{
 			"api.example.com/docs": {Host: "api.example.com", Path: "/docs", Process: "web"},
 			"api.example.com":      {Host: "api.example.com", Process: "web"},
 		},
 	}
-	got := deploymentURL(ctx, "prod")
+	got := deploymentURL(ctx, "production")
 	want := "https://api.example.com"
 	if got != want {
 		t.Fatalf("routed URL = %q, want %q", got, want)
@@ -423,21 +430,21 @@ func TestPrepareDeployRoutesSynthesizesSSLIPRouteForRoutelessApp(t *testing.T) {
 	port := 3000
 	ctx := &config.AppContext{
 		AppName: "api",
-		EnvName: "prod",
+		EnvName: "production",
 		Server:  "example.com",
 		Processes: map[string]config.Process{
 			"web": {Port: &port},
 		},
 	}
-	plan, err := prepareDeployRoutes(ctx, "prod", deployRouteOptions{BoxIP: "203.0.113.7"})
+	plan, err := prepareDeployRoutes(ctx, "production", deployRouteOptions{BoxIP: "203.0.113.7"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !plan.RewritesManifest || !plan.NoConfiguredDomain {
 		t.Fatalf("expected rewritten no-domain plan: %+v", plan)
 	}
-	route := plan.Context.Routes["prod.203-0-113-7.sslip.io"]
-	if route.Host != "prod.203-0-113-7.sslip.io" || route.Process != "web" {
+	route := plan.Context.Routes["api.203-0-113-7.sslip.io"]
+	if route.Host != "api.203-0-113-7.sslip.io" || route.Process != "web" {
 		t.Fatalf("unexpected synthesized route: %+v", route)
 	}
 }
@@ -445,13 +452,13 @@ func TestPrepareDeployRoutesSynthesizesSSLIPRouteForRoutelessApp(t *testing.T) {
 func TestPrepareDeployRoutesRejectsMultipleProcessesWithoutWeb(t *testing.T) {
 	ctx := &config.AppContext{
 		AppName: "api",
-		EnvName: "prod",
+		EnvName: "production",
 		Processes: map[string]config.Process{
 			"api":    {},
 			"worker": {},
 		},
 	}
-	_, err := prepareDeployRoutes(ctx, "prod", deployRouteOptions{BoxIP: "203.0.113.7"})
+	_, err := prepareDeployRoutes(ctx, "production", deployRouteOptions{BoxIP: "203.0.113.7"})
 	if !errcat.Is(err, errcat.CodeMultiProcessNoWebRoute) {
 		t.Fatalf("expected multi-process/no-web error, got %v", err)
 	}
@@ -482,12 +489,12 @@ func TestPrepareDeployRoutesCollapsesPreviewToSSLIPHost(t *testing.T) {
 	if _, ok := plan.Context.Routes["old.example.com"]; ok {
 		t.Fatalf("preview routes should drop redirects and extra hosts: %+v", plan.Context.Routes)
 	}
-	root := plan.Context.Routes["feat-x-ab12.203-0-113-7.sslip.io"]
-	docs := plan.Context.Routes["feat-x-ab12.203-0-113-7.sslip.io/docs"]
-	if root.Host != "feat-x-ab12.203-0-113-7.sslip.io" || root.Process != "web" || root.TLS != "internal" {
+	root := plan.Context.Routes["api-feat-x-ab12.203-0-113-7.sslip.io"]
+	docs := plan.Context.Routes["api-feat-x-ab12.203-0-113-7.sslip.io/docs"]
+	if root.Host != "api-feat-x-ab12.203-0-113-7.sslip.io" || root.Process != "web" || root.TLS != "internal" {
 		t.Fatalf("unexpected preview root route: %+v", root)
 	}
-	if docs.Host != "feat-x-ab12.203-0-113-7.sslip.io" || docs.Path != "/docs" || docs.Serve != "dist" || docs.TLS != "internal" {
+	if docs.Host != "api-feat-x-ab12.203-0-113-7.sslip.io" || docs.Path != "/docs" || docs.Serve != "dist" || docs.TLS != "internal" {
 		t.Fatalf("unexpected preview docs route: %+v", docs)
 	}
 }
@@ -498,7 +505,7 @@ func TestWriteDeployManifestOverlaysRoutesAsParseableTOML(t *testing.T) {
 	writeClientManifest(t, root, clientContainerManifest())
 	dst := filepath.Join(root, "upload.toml")
 	routes := map[string]config.Route{
-		"prod.203-0-113-7.sslip.io": {Host: "prod.203-0-113-7.sslip.io", Process: "web", TLS: "internal"},
+		"api.203-0-113-7.sslip.io": {Host: "api.203-0-113-7.sslip.io", Process: "web", TLS: "internal"},
 	}
 	if err := writeDeployManifest(filepath.Join(root, ManifestFile), dst, routes); err != nil {
 		t.Fatal(err)
@@ -510,11 +517,11 @@ func TestWriteDeployManifestOverlaysRoutesAsParseableTOML(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ManifestFile), data, 0644); err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := config.LoadAppContext(root, "prod")
+	ctx, err := config.LoadAppContext(root, "production")
 	if err != nil {
 		t.Fatal(err)
 	}
-	route := ctx.Routes["prod.203-0-113-7.sslip.io"]
+	route := ctx.Routes["api.203-0-113-7.sslip.io"]
 	if route.Process != "web" || route.TLS != "" {
 		t.Fatalf("overlay route did not round-trip: %+v\n%s", route, string(data))
 	}
@@ -537,9 +544,9 @@ func TestEnforceProductionAncestryRejectsBehindProduction(t *testing.T) {
 	deployed := gitHead(t, root)
 	runGit(t, root, "reset", "--hard", first)
 
-	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "example.com"}
+	ctx := &config.AppContext{AppName: "api", EnvName: "production", Server: "example.com"}
 	runner := &fakeSSHRunner{responses: map[string]string{
-		serverAppStatusCommand("api", "prod"): `{"app":"api","env":"prod","release":{"release":"` + deployed[:12] + `","base_commit":"` + deployed + `","source":"process"},"processes":[]}`,
+		serverAppStatusCommand("api", "production"): `{"app":"api","env":"production","release":{"release":"` + deployed[:12] + `","base_commit":"` + deployed + `","source":"process"},"processes":[]}`,
 	}}
 
 	err := enforceProductionAncestry(root, runner, ctx, first)
@@ -561,16 +568,16 @@ func TestEnforceProductionAncestryAllowsFirstDeployAndAncestor(t *testing.T) {
 	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "new production")
 	head := gitHead(t, root)
 
-	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "example.com"}
+	ctx := &config.AppContext{AppName: "api", EnvName: "production", Server: "example.com"}
 	firstDeploy := &fakeSSHRunner{responses: map[string]string{
-		serverAppStatusCommand("api", "prod"): `{"app":"api","env":"prod","processes":[]}`,
+		serverAppStatusCommand("api", "production"): `{"app":"api","env":"production","processes":[]}`,
 	}}
 	if err := enforceProductionAncestry(root, firstDeploy, ctx, head); err != nil {
 		t.Fatalf("first deploy should skip ancestry check: %v", err)
 	}
 
 	ancestor := &fakeSSHRunner{responses: map[string]string{
-		serverAppStatusCommand("api", "prod"): `{"app":"api","env":"prod","release":{"release":"` + first[:12] + `","base_commit":"` + first + `","source":"process"},"processes":[]}`,
+		serverAppStatusCommand("api", "production"): `{"app":"api","env":"production","release":{"release":"` + first[:12] + `","base_commit":"` + first + `","source":"process"},"processes":[]}`,
 	}}
 	if err := enforceProductionAncestry(root, ancestor, ctx, head); err != nil {
 		t.Fatalf("ancestor deployed commit should pass: %v", err)
@@ -578,7 +585,7 @@ func TestEnforceProductionAncestryAllowsFirstDeployAndAncestor(t *testing.T) {
 }
 
 func TestResolveReadPreviewEnvPropagatesUnknownBranchError(t *testing.T) {
-	ctx := &config.AppContext{AppName: "api", EnvName: "prod", Server: "example.com"}
+	ctx := &config.AppContext{AppName: "api", EnvName: "production", Server: "example.com"}
 	command := serverAppPreviewResolveCommand("api", "feat/x")
 	runner := &fakeSSHRunner{failures: map[string]string{
 		command: errcat.New(errcat.CodeUnknownPreviewBranch, errcat.Fields{
@@ -735,8 +742,8 @@ func TestCommandRunnerInjectsMemberFingerprintAfterServerNamespace(t *testing.T)
 	}{
 		{
 			name: "app",
-			in:   "sudo -n /usr/local/bin/ship server app apply api prod",
-			want: "sudo -n /usr/local/bin/ship server app --member-fingerprint SHA256:abc+/123 apply api prod",
+			in:   "sudo -n /usr/local/bin/ship server app apply api production",
+			want: "sudo -n /usr/local/bin/ship server app --member-fingerprint SHA256:abc+/123 apply api production",
 		},
 		{
 			name: "doctor",
@@ -750,8 +757,8 @@ func TestCommandRunnerInjectsMemberFingerprintAfterServerNamespace(t *testing.T)
 		},
 		{
 			name: "env prefix",
-			in:   "SHIP_ERROR_JSON=1 sudo -n /usr/local/bin/ship server app secret set api prod KEY",
-			want: "SHIP_ERROR_JSON=1 sudo -n /usr/local/bin/ship server app --member-fingerprint SHA256:abc+/123 secret set api prod KEY",
+			in:   "SHIP_ERROR_JSON=1 sudo -n /usr/local/bin/ship server app secret set api production KEY",
+			want: "SHIP_ERROR_JSON=1 sudo -n /usr/local/bin/ship server app --member-fingerprint SHA256:abc+/123 secret set api production KEY",
 		},
 		{
 			name: "non server",
@@ -1178,8 +1185,8 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "preview unpin", command: serverAppPreviewUnpinCommand("api", "feat/x")},
 		{name: "preview share", command: serverAppPreviewShareCommand("api", "feat-x-abcd", false)},
 		{name: "preview share rotate", command: serverAppPreviewShareCommand("api", "feat-x-abcd", true)},
-		{name: "data fork", command: serverAppDataForkCommand("api", "prod", "feat-x-abcd")},
-		{name: "data rm", command: serverAppDataRmCommand("api", "feat-x-abcd")},
+		{name: "data fork", command: serverAppDataForkCommand("api", "production", "feat-x-abcd")},
+		{name: "data reset", command: serverAppDataResetCommand("api", "feat-x-abcd")},
 		{name: "secret set", command: serverAppSecretSetCommand("api", "production", "DATABASE_URL")},
 		{name: "secret list", command: serverAppSecretListCommand("api", "production", false)},
 		{name: "secret list json", command: serverAppSecretListCommand("api", "production", true)},
@@ -1329,22 +1336,22 @@ func TestServerBoxStatusCommandUsesCompactVersionSummary(t *testing.T) {
 
 func TestServerAppWhyCommand(t *testing.T) {
 	// The helper always emits journal JSON; the command carries no flag.
-	got := serverAppWhyCommand("api", "prod")
-	want := "sudo -n /usr/local/bin/ship server app why api prod"
+	got := serverAppWhyCommand("api", "production")
+	want := "sudo -n /usr/local/bin/ship server app why api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 }
 
 func TestServerAppExecCommand(t *testing.T) {
-	got := serverAppExecCommand("api", "prod", false, []string{"sh", "-c", "exit 7"})
-	want := "sudo -n /usr/local/bin/ship server app exec api prod -- sh -c 'exit 7'"
+	got := serverAppExecCommand("api", "production", false, []string{"sh", "-c", "exit 7"})
+	want := "sudo -n /usr/local/bin/ship server app exec api production -- sh -c 'exit 7'"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
-	got = serverAppExecCommand("api", "prod", true, []string{"env"})
-	want = "sudo -n /usr/local/bin/ship server app exec --tty api prod -- env"
+	got = serverAppExecCommand("api", "production", true, []string{"env"})
+	want = "sudo -n /usr/local/bin/ship server app exec --tty api production -- env"
 	if got != want {
 		t.Fatalf("unexpected tty command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1479,7 +1486,7 @@ func TestStatusFromAppListIncludesShippedBy(t *testing.T) {
 			"api.example.com": {Host: "api.example.com", Process: "web"},
 		},
 	}
-	raw := `{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"prod","current_release":"abc1234","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"fake-vps-smoke","git_author":"Smoke <smoke@example.com>"},"processes":[{"process":"web","container":"api-web","state":"running","release":"abc1234","created_at":"2026-07-07T10:00:00Z"}]}]}]}`
+	raw := `{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"production","current_release":"abc1234","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"fake-vps-smoke","git_author":"Smoke <smoke@example.com>"},"processes":[{"process":"web","container":"api-web","state":"running","release":"abc1234","created_at":"2026-07-07T10:00:00Z"}]}]}]}`
 	payload, err := statusFromAppList(ctx, raw)
 	if err != nil {
 		t.Fatal(err)
@@ -1604,13 +1611,13 @@ func TestServerAppDataCommands(t *testing.T) {
 	}{
 		{
 			name: "fork",
-			got:  serverAppDataForkCommand("api", "prod", "feat-x-abcd"),
-			want: "sudo -n /usr/local/bin/ship server app data fork api prod feat-x-abcd",
+			got:  serverAppDataForkCommand("api", "production", "feat-x-abcd"),
+			want: "sudo -n /usr/local/bin/ship server app data fork api production feat-x-abcd",
 		},
 		{
-			name: "rm",
-			got:  serverAppDataRmCommand("api", "feat-x-abcd"),
-			want: "sudo -n /usr/local/bin/ship server app data rm api feat-x-abcd",
+			name: "reset",
+			got:  serverAppDataResetCommand("api", "feat-x-abcd"),
+			want: "sudo -n /usr/local/bin/ship server app data reset api feat-x-abcd",
 		},
 	}
 	for _, tt := range tests {

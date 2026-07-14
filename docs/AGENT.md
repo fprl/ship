@@ -92,7 +92,7 @@ Secret scoping:
 - Purpose: Deploy the current branch and print the deployment URL.
 - Usage: `ship [--json] [--branch <name>] [--tls auto|internal] [--rebuild] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--json`: Emit the mutation object instead of stdout-is-URL; `--branch <name>`: Detached HEAD only; supplies the branch used for branch=env resolution; `--tls auto|internal` default `auto`: Select automatic public TLS or internal TLS for synthesized routes; `--rebuild`: Refresh base images and bypass the container build cache.
-- `--json` stdout schema: `{"url":"https://...","env":"prod","release":"abc123","processes":["web"],"durationMs":1234}`
+- `--json` stdout schema: `{"url":"https://...","env":"production","release":"abc123","processes":["web"],"durationMs":1234}`
 - Notes: Successful non-JSON stdout is exactly one URL plus a trailing newline; all phase lines go to stderr. Production refuses dirty worktrees and stale checkouts; Preview accepts dirty worktrees and creates the preview mapping if needed.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `not_a_git_repo`, `detached_head_requires_branch`, `branch_flag_requires_detached_head`, `unmappable_branch_name`, `dirty_worktree`, `behind_production`, `manifest_invalid`, `dockerfile_missing`, `multi_process_no_web_route`, `secret_missing`, `remote_preflight_failed`, `remote_preflight_after_prepare_failed`, `deploy_blocked_local_checks`, `release_command_failed`, `probe_failed`, `dotenv_rejected`, `host_key_changed`
@@ -118,7 +118,7 @@ Secret scoping:
 - Purpose: Print logs for the current branch environment.
 - Usage: `ship logs [process] [--follow] [--tail N] [--json] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `process`: Process name. Optional only when one process exists; `--follow`: Stream new log lines; `--tail <N>` default `100`: Number of trailing lines. With --follow, use 0 to stream new lines only; `--json`: Emit captured log lines as JSON. Cannot be combined with --follow.
-- `--json` stdout schema: `{"app":"api","env":"prod","process":"web","lines":["line 1","line 2"]}`
+- `--json` stdout schema: `{"app":"api","env":"production","process":"web","lines":["line 1","line 2"]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `logs_follow_json_conflict`, `unknown_preview_branch`, `host_key_changed`, `operation_failed`
 
@@ -134,7 +134,7 @@ Secret scoping:
 - Purpose: Explain the latest deploy journal entry for the current branch environment.
 - Usage: `ship why [--branch <name>] [--json] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--branch <name>`: Inspect another branch environment; `--json`: Emit the raw deploy journal entry.
-- `--json` stdout schema: `{"schema_version":1,"app":"api","env":"prod","outcome":"aborted_probe","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","failing_step":"probe","stderr_tail":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"probe":{"status":502,"body_snippet":"..."}}`
+- `--json` stdout schema: `{"schema_version":1,"app":"api","env":"production","outcome":"aborted_probe","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","failing_step":"probe","stderr_tail":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"probe":{"status":502,"body_snippet":"..."}}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `unknown_preview_branch`, `no_deploys`, `host_key_changed`, `operation_failed`
 
@@ -156,15 +156,15 @@ Secret scoping:
 - Purpose: Fork Production /data into the current branch Preview.
 - Usage: `ship data fork [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest.
-- Notes: Run from a Preview branch whose environment already exists. Production branches are refused. Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command. SQLite files are copied on the box with `VACUUM INTO`; other files copy with `cp -a` using reflink when supported. The client never receives data contents. stdout is exactly the Preview URL; the fork report and PII note are stderr. If the fork landed but the URL lookup fails, exit stays 0 with a stderr warning and `next: ship status`.
+- Notes: Run from a Preview branch whose environment already exists. Production branches are refused. Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship box approve <id> <box>`, retry the same command. SQLite files are copied on the box with `VACUUM INTO`; other files copy with `cp -a` using reflink when supported. The client never receives data contents. stdout is exactly the Preview URL; the fork report and PII note are stderr. If the fork landed but the URL lookup fails, exit stays 0 with a stderr warning and `next: ship status`.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `data_fork_on_production`, `no_preview_env`, `approval_required`, `host_key_changed`, `missing_tool`, `operation_failed`
 
-### `data rm`
+### `data reset`
 - Purpose: Reset the current branch Preview /data to empty.
-- Usage: `ship data rm [--config <path>]`
+- Usage: `ship data reset [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest.
-- Notes: Run from a Preview branch whose environment already exists. Production branches are refused. Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship approve <id>`, retry the same command. stdout is exactly the Preview URL; the reset confirmation is stderr. If the reset landed but the URL lookup fails, exit stays 0 with a stderr warning and `next: ship status`.
+- Notes: Run from a Preview branch whose environment already exists. Production branches are refused. Requires owner or shipper. Agent-role keys mint `approval_required`; after `ship box approve <id> <box>`, retry the same command. stdout is exactly the Preview URL; the reset confirmation is stderr. If the reset landed but the URL lookup fails, exit stays 0 with a stderr warning and `next: ship status`.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `data_fork_on_production`, `no_preview_env`, `approval_required`, `host_key_changed`, `operation_failed`
 
@@ -188,7 +188,7 @@ Secret scoping:
 - Purpose: List local data snapshots for this app.
 - Usage: `ship data ls [--json] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--json`: Emit stable snapshot JSON.
-- `--json` stdout schema: `{"snapshots":[{"id":"...","name":"...","size":123,"created":"2026-07-07T10:00:00Z","env":"prod","release":"abc123"}]}`
+- `--json` stdout schema: `{"snapshots":[{"id":"...","name":"...","size":123,"created":"2026-07-07T10:00:00Z","env":"production","release":"abc123"}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `operation_failed`
 
@@ -233,7 +233,7 @@ Secret scoping:
 - Purpose: List secret keys for a scope. Values are never printed.
 - Usage: `ship secret ls [--preview|--branch <name>] [--json] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--preview`: List the shared Preview scope; `--branch <name>`: List one branch Preview scope; `--json`: Emit structured JSON.
-- `--json` stdout schema: `{"app":"api","env":"prod","keys":["DATABASE_URL"]}`
+- `--json` stdout schema: `{"app":"api","env":"production","keys":["DATABASE_URL"]}`
 - Notes: Without --preview or --branch, lists the current branch's scope: Production on the production branch, otherwise that branch's Preview.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `secret_scope_conflict`, `unknown_preview_branch`, `host_key_changed`, `operation_failed`
@@ -253,38 +253,46 @@ Secret scoping:
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `usage_error`, `invalid_box_target`, `deploy_key_missing`, `operator_key_missing`, `ssh_private_key_missing`, `ssh_public_key_file_missing`, `ssh_public_key_file_empty`, `host_install_requires_root`, `host_install_ssh_failed`, `unsupported_target_architecture`, `host_helper_unavailable`, `host_helper_download_failed`, `host_install_unsupported_os`, `host_install_missing_tool`, `host_install_permission_denied`, `host_install_apply_failed`, `operation_failed`
 
-### `member add`
+### `box member add`
 - Purpose: Authorize SSH public key access for a deploy member.
-- Usage: `ship member add <github-user|key|path> [--role owner|shipper|agent] [--config <path>]`
-- Arguments and flags: `github-user|key|path`: A GitHub username, literal SSH public key, or path to a .pub/.pem file; `--role owner|shipper|agent` default `shipper`: Role recorded for newly added keys; `--config <path>` default `ship.toml`: Path to the app manifest containing box.
+- Usage: `ship box member add <github-user|key|path> [<box>] [--role owner|shipper|agent]`
+- Arguments and flags: `github-user|key|path`: A GitHub username, literal SSH public key, or path to a .pub/.pem file; `box`: Box host. Defaults to ship.toml box when run in an app directory; `--role owner|shipper|agent` default `shipper`: Role recorded for newly added keys.
 - Notes: Bare GitHub usernames fetch https://github.com/<user>.keys. The command prints every fetched key as added or already authorized, with role and SHA256 fingerprint. Existing keys are deduplicated by key material. Agent-role keys are installed with a forced `agent-shell` command; owner and shipper keys remain plain authorized_keys entries.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `manifest_invalid`, `invalid_box_target`, `github_keys_unavailable`, `ssh_public_key_invalid`, `host_key_changed`, `operation_failed`
+- Common error codes: `box_target_required`, `invalid_box_target`, `github_keys_unavailable`, `ssh_public_key_invalid`, `approval_required`, `member_unknown`, `host_key_changed`, `operation_failed`
 
-### `member ls`
+### `box members`
 - Purpose: List deploy members from authorized_keys.
-- Usage: `ship member ls [--json] [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest containing box; `--json`: Emit structured JSON.
+- Usage: `ship box members [<box>] [--json]`
+- Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit structured JSON.
 - `--json` stdout schema: `{"members":[{"name":"alice","role":"shipper","key_type":"ssh-ed25519","fingerprint":"SHA256:..."}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `manifest_invalid`, `invalid_box_target`, `host_key_changed`, `operation_failed`
+- Common error codes: `box_target_required`, `invalid_box_target`, `member_unknown`, `host_key_changed`, `operation_failed`
 
-### `member rm`
+### `box member rm`
 - Purpose: Remove all SSH keys for a deploy member.
-- Usage: `ship member rm <name> [--config <path>]`
-- Arguments and flags: `name`: Member name, matching the authorized key comment; `--config <path>` default `ship.toml`: Path to the app manifest containing box.
+- Usage: `ship box member rm <name> [<box>]`
+- Arguments and flags: `name`: Member name, matching the authorized key comment; `box`: Box host. Defaults to ship.toml box when run in an app directory.
 - Notes: Removes every key whose comment equals the member name. Refuses to remove the last remaining authorized key.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `manifest_invalid`, `invalid_box_target`, `member_not_found`, `member_last_key`, `host_key_changed`, `operation_failed`
+- Common error codes: `box_target_required`, `invalid_box_target`, `member_not_found`, `member_last_key`, `approval_required`, `member_unknown`, `host_key_changed`, `operation_failed`
 
-### `approve`
-- Purpose: List or grant one-shot approvals for out-of-role requests.
-- Usage: `ship approve [id] [--json] [--config <path>]`
-- Arguments and flags: `id`: Approval id to grant. Omit to list pending approvals; `--json`: Emit structured pending approvals. Only valid for the list form; `--config <path>` default `ship.toml`: Path to the app manifest containing box.
-- `--json` stdout schema: `{"approvals":[{"id":"abc123xy","member":"alice","role":"agent","request":"app=api env=prod class=production release=abc123","expires":"2026-07-08T10:15:00Z"}]}`
-- Notes: Bare `ship approve` lists pending requests and prunes expired entries. `ship approve <id>` can be run only by owner or shipper and grants one retry by the original member.
+### `box approvals`
+- Purpose: List pending one-shot approvals for out-of-role requests.
+- Usage: `ship box approvals [<box>] [--json]`
+- Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit structured pending approvals.
+- `--json` stdout schema: `{"approvals":[{"id":"abc123xy","member":"alice","role":"agent","request":"ship app=api env=production class=production release=abc123","expires":"2026-07-08T10:15:00Z"}]}`
+- Notes: Listing prunes expired entries. Approvals are box-scoped: run from anywhere by naming the box.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `approval_expired`, `member_unknown`, `role_denied`, `host_key_changed`, `operation_failed`
+- Common error codes: `box_target_required`, `invalid_box_target`, `member_unknown`, `host_key_changed`, `operation_failed`
+
+### `box approve`
+- Purpose: Grant one pending out-of-role approval.
+- Usage: `ship box approve <id> [<box>]`
+- Arguments and flags: `id`: Approval id to grant; `box`: Box host. Defaults to ship.toml box when run in an app directory.
+- Notes: Each request records the role the denied action requires; the approver's role must cover it (owner covers everything, shipper covers shipper-gated requests only) and nobody can grant their own request. Granting refreshes the 15-minute expiry window and gives one retry by the original member. Remediations always print the fully resolved command (`ship box approve <id> <box>`) so it can be pasted from anywhere.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `box_target_required`, `invalid_box_target`, `approval_expired`, `member_unknown`, `role_denied`, `host_key_changed`, `operation_failed`
 
 ### `box status`
 - Purpose: Show helper version, disk use, apps, pending approvals, and the last doctor result for one box.
@@ -324,7 +332,7 @@ Secret scoping:
 - Purpose: Set one schema-authorized box configuration value.
 - Usage: `ship box config [<box>] set <key> <value>`
 - Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `key`: Configuration key. Current key: notify.url; `value`: Value validated by the key schema.
-- Notes: Authorization is declared by the key schema. notify.url is owner-set; an out-of-role request mints one approval and succeeds once after ship approve <id>.
+- Notes: Authorization is declared by the key schema. notify.url is owner-set; an out-of-role request mints one approval and succeeds once after ship box approve <id> <box>.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `approval_required`, `box_config_key_unknown`, `box_config_value_invalid`, `box_target_required`, `invalid_box_target`, `host_key_changed`, `operation_failed`
 
@@ -340,7 +348,7 @@ Secret scoping:
 - Purpose: Read, set, or clear the box notification webhook.
 - Usage: `ship box notify <box> [url] [--rm] [--json]`
 - Arguments and flags: `box`: Box host. Omit only for a read in an app directory, which uses ship.toml box; `url`: Webhook URL to set. Omit to print the current URL; `--rm`: Clear the box webhook; `--json`: Read only: emit {"url":"..."} with an empty string when unset. Rejected on set and --rm.
-- Notes: Any member may read. Only owners may set or clear; other roles receive approval_required and retry after ship approve <id>. This is sugar over box config key notify.url; both paths share one value and journal shape. When unset, the command prints an unset notice and next: ship box notify <box> <url>.
+- Notes: Any member may read. Only owners may set or clear; other roles receive approval_required and retry after ship box approve <id> <box>. This is sugar over box config key notify.url; both paths share one value and journal shape. When unset, the command prints an unset notice and next: ship box notify <box> <url>.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `usage_error`, `box_config_value_invalid`, `box_target_required`, `invalid_box_target`, `approval_required`, `host_key_changed`, `operation_failed`
 
@@ -348,7 +356,7 @@ Secret scoping:
 - Purpose: Show the box's app table.
 - Usage: `ship box apps [<box>] [--json]`
 - Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit the box app/environment list as JSON.
-- `--json` stdout schema: `{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"prod","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`
+- `--json` stdout schema: `{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"production","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_target_required`, `invalid_box_target`, `ssh_unreachable`, `box_not_initialized`, `host_key_changed`, `operation_failed`
 
@@ -403,12 +411,12 @@ Secret scoping:
 ## Data forks
 
 - `ship data fork` copies Production `/data` into the current branch Preview and bounces the existing Preview containers.
-- `ship data rm` empties the current branch Preview `/data` and bounces the existing Preview containers.
+- `ship data reset` empties the current branch Preview `/data` and bounces the existing Preview containers.
 - `ship data save` streams a data-only gzip tar to the laptop; its default destination is `~/.ship/backups/<app>/<env>-<release>-<utc>.data.tar.gz`. Its stdout is exactly the local path.
 - `ship data restore <id|path>` uploads through `/tmp/ship-deploy`, validates the archive before touching `/data`, then stops containers, swaps data, and starts them. Snapshot envs may be restored into another env.
 - `ship data ls [--json]` lists local snapshots only; it never calls the helper.
-- `data fork` and `data rm` require an existing Preview environment. If none exists, the error code is `no_preview_env` with remediation `ship`.
-- `data fork` and `data rm` refuse Production branches with `data_fork_on_production`.
+- `data fork` and `data reset` require an existing Preview environment. If none exists, the error code is `no_preview_env` with remediation `ship`.
+- `data fork` and `data reset` refuse Production branches with `data_fork_on_production`.
 - Owner and shipper roles may run data commands. Agents get `approval_required` because Production data is above the agent default role.
 - `ship data fork` prints forked relative file names and byte sizes, the Preview URL, and this exact PII line: `note: Production data, including any PII, now exists in this less-guarded Preview.`.
 - If no SQLite files are found, `ship data fork` still copies non-database files and prints: `note: No SQLite files found; copied non-database files from /data only.`.
@@ -420,7 +428,7 @@ Secret scoping:
 Each env has an append-only `journal.jsonl`. Each line is:
 
 ```json
-{"schema_version":1,"app":"api","env":"prod","outcome":"deployed | aborted_build | aborted_release | aborted_probe | rolled_back","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","failing_step":"build | release | probe","stderr_tail":"last scrubbed stderr lines","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
+{"schema_version":1,"app":"api","env":"production","outcome":"deployed | aborted_build | aborted_release | aborted_probe | rolled_back","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","failing_step":"build | release | probe","stderr_tail":"last scrubbed stderr lines","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
 ```
 
 ## Notify payload schemas
@@ -433,13 +441,13 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 - `deploy_recovered`: `why` is `{"previous_failure":"<entry>","current":"<entry>"}`; `remediation` is `{"command":"ship status","journal":"<current>","previous_failure":"<previous>"}`.
 - `preview_reaped`: `why` is `{"branch":"feature/x","env":"Preview feature/x","expired_at":"..."}`; `remediation` is `{"command":"git checkout feature/x && ship","branch":"feature/x","env":"Preview feature/x"}`.
 - `doctor_degraded`: box event; `why` is a doctor check `{"id","status","evidence","remediation"}`; `remediation` is `{"command":"<check.remediation>","check":"<doctor check>"}`.
-- `approval_requested`: box event; `why` is `{"id","member","verb","target","expires"}`; `remediation` is `{"command":"ship approve <id>","request":"<approval request>"}`. The request target retains the affected app and env when present; box-target approvals have empty app/env.
+- `approval_requested`: box event; `why` is `{"id","member","verb","target","expires"}`; `remediation` is `{"command":"ship box approve <id> <box>","request":"<approval request>"}`. The request target retains the affected app and env when present; box-target approvals have empty app/env.
 
 ## Error-code catalogue
 
 <!-- BEGIN GENERATED ERRCAT -->
 - `approval_expired`: approval expired; cause: approval {id} expired for {summary}; remediation: `retry the command to mint a fresh request`.
-- `approval_required`: approval required for {summary}; cause: {member} ({role}) requested {summary}; approval id {id}; remediation: `ship approve {id}`.
+- `approval_required`: approval required for {summary}; cause: {member} ({role}) requested {summary}; approval id {id}; remediation: `ship box approve {id} {box}`; defaults: `box="<box>"`.
 - `behind_production`: Production ship failed; cause: deployed commit {deployed} {detail}; remediation: `git pull`.
 - `box_config_key_unknown`: box config key is unknown; cause: {key} is not a valid box config key; valid keys: {valid}; remediation: `{command}`.
 - `box_config_value_invalid`: box config value is invalid; cause: {key}: {detail}; remediation: `{command}`.
@@ -464,7 +472,7 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 - `dotenv_rejected`: deploy artifact contains dotenv files; cause: refusing to deploy dotenv file: {files}; remediation: `run ship secret set --from .env, then remove the file (allowed names: .env.example, .env.sample, .env.defaults)`.
 - `env_invalid`: app environment preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `env_missing`: app environment preflight failed; cause: {detail}; remediation: `ship`.
-- `github_keys_unavailable`: GitHub SSH key lookup failed; cause: no public SSH keys found for GitHub user {user}; remediation: `ship member add <path-to-public-key>`.
+- `github_keys_unavailable`: GitHub SSH key lookup failed; cause: no public SSH keys found for GitHub user {user}; remediation: `ship box member add <path-to-public-key> {box}`; defaults: `box="<box>"`.
 - `host_helper_download_failed`: host install helper download failed; cause: {detail}; remediation: `{command}`; defaults: `command="SHIP_REPO_ROOT=<path-to-ship-checkout> ship box setup <ssh-target>"`.
 - `host_helper_unavailable`: host install helper is unavailable; cause: {detail}; remediation: `{command}`; defaults: `command="SHIP_REPO_ROOT=<path-to-ship-checkout> ship box setup <ssh-target>"`.
 - `host_install_apply_failed`: host provisioning failed; cause: {detail}; remediation: `{command}`.
@@ -475,15 +483,16 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 - `host_install_unsupported_os`: host OS is unsupported; cause: host install requires Ubuntu/Debian apt tooling; missing {tool}; remediation: `ship box setup <ubuntu-24.04-ssh-target>`.
 - `host_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `host_key_changed`: box host key changed; cause: SSH host key for {box} is unknown or changed; if the box was rebuilt, re-establish the pin (ship box forget {box} clears it); if not, investigate before trusting this host; remediation: `ship box setup <ssh-target>`.
+- `host_label_conflict`: production hostname collision; cause: app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env}); remediation: `rename app {app} and deploy again`.
 - `host_not_installed`: host preflight failed; cause: host is not installed; remediation: `ship box setup <ssh-target>`.
 - `ingress_invalid`: ingress preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `invalid_box_target`: box target is invalid; cause: box target must be a host like 203.0.113.7; remove any user@ prefix; remediation: `{command}`; defaults: `command="ship box apps 203.0.113.7"`.
 - `invalid_secret_key`: secret key is invalid; cause: secret key {key} must match ^[A-Za-z_][A-Za-z0-9_]*$; remediation: `ship secret set KEY`.
 - `logs_follow_json_conflict`: logs command is invalid; cause: logs --json cannot be combined with --follow; remediation: `ship logs`.
 - `manifest_invalid`: ship.toml validation failed; cause: {details}; remediation: `{command}`; defaults: `command="fix ship.toml"`.
-- `member_last_key`: member rm refused; cause: removing {name} would remove the last remaining authorized key; remediation: `ship member add <github-user|key|path>`.
-- `member_not_found`: member rm failed; cause: no authorized keys found for member {name}; current members: {members}; remediation: `ship member ls`.
-- `member_unknown`: member identity is not authorized; cause: fingerprint {fingerprint} is not in authorized_keys; remediation: `ship member add`.
+- `member_last_key`: member rm refused; cause: removing {name} would remove the last remaining authorized key; remediation: `ship box member add <github-user|key|path> {box}`; defaults: `box="<box>"`.
+- `member_not_found`: member rm failed; cause: no authorized keys found for member {name}; current members: {members}; remediation: `ship box members {box}`; defaults: `box="<box>"`.
+- `member_unknown`: member identity is not authorized; cause: fingerprint {fingerprint} is not in authorized_keys; remediation: `ship box member add <src> {box}`; defaults: `box="<box>"`.
 - `missing_tool`: host preflight failed; cause: missing host tool: {tool}; remediation: `ship box setup <ssh-target>`.
 - `multi_process_no_web_route`: route synthesis failed; cause: manifest declares multiple processes but no [routes] host and no process named "web"; remediation: `fix ship.toml`.
 - `no_deploys`: deploy journal lookup failed; cause: no deploys recorded for {app} ({env}); remediation: `ship`.
@@ -506,7 +515,7 @@ App events go only to the affected app manifest `notify` URL: `deploy_aborted`, 
 - `ssh_private_key_missing`: SSH private key is missing; cause: SSH private key file not found: {path}; remediation: `{command}`.
 - `ssh_public_key_file_empty`: SSH public key file is empty; cause: SSH public key file is empty: {path}; remediation: `{command}`.
 - `ssh_public_key_file_missing`: SSH public key file is missing; cause: SSH public key file not found: {path}; remediation: `{command}`.
-- `ssh_public_key_invalid`: SSH public key is invalid; cause: {detail}; remediation: `ship member add <github-user|key|path>`.
+- `ssh_public_key_invalid`: SSH public key is invalid; cause: {detail}; remediation: `ship box member add <github-user|key|path> {box}`; defaults: `box="<box>"`.
 - `ssh_unreachable`: box preflight failed; cause: SSH failed for {target}: {detail}; remediation: `ssh {target}`.
 - `unknown_preview_branch`: preview environment lookup failed; cause: no preview environment is mapped for branch {branch}; remediation: `{command}`; defaults: `command="git checkout <branch> && ship"`.
 - `unmappable_branch_name`: branch resolution failed; cause: branch {branch} does not produce a valid environment name; remediation: `git branch -m <new-name>`.

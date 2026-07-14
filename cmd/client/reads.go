@@ -107,7 +107,7 @@ func CmdStatus(root string, jsonFlag bool) {
 	if err != nil {
 		utils.DieError(err, 1)
 	}
-	fmt.Print(renderStatusSummaryWithApprovals(payload, pending))
+	fmt.Print(renderStatusSummaryWithApprovals(payload, pending, ctx.Server))
 }
 
 type whyJournalEntry struct {
@@ -336,10 +336,10 @@ func renderStatusSummary(payload statusPayload) string {
 	return b.String()
 }
 
-func renderStatusSummaryWithApprovals(payload statusPayload, pendingApprovals int) string {
+func renderStatusSummaryWithApprovals(payload statusPayload, pendingApprovals int, server string) string {
 	out := renderStatusSummary(payload)
 	if pendingApprovals > 0 {
-		out += fmt.Sprintf("%d approvals pending — ship approve\n", pendingApprovals)
+		out += fmt.Sprintf("%d approvals pending — ship box approvals %s\n", pendingApprovals, server)
 	}
 	return out
 }
@@ -361,7 +361,7 @@ func fetchPendingApprovalCount(runner sshRunner, server string) (int, error) {
 	}
 	var payload remoteApprovalListPayload
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &payload); err != nil {
-		return 0, operationError(fmt.Sprintf("status failed: invalid approval list JSON: %v", err), "ship approve")
+		return 0, operationError(fmt.Sprintf("status failed: invalid approval list JSON: %v", err), "ship box approvals "+server)
 	}
 	return len(payload.Approvals), nil
 }

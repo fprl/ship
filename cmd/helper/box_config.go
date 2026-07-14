@@ -40,7 +40,7 @@ type boxConfigGetResponse struct {
 type boxConfigGetCmd struct{}
 
 func (boxConfigGetCmd) Run() error {
-	if _, err := authorizeHelper(helperVerbRead, authTargetForBox("box config")); err != nil {
+	if _, err := authorizeHelper(helperVerbRead, authTargetForBox("get box config")); err != nil {
 		utils.DieError(err, 1)
 	}
 	response, err := readBoxConfig()
@@ -61,7 +61,7 @@ type boxConfigSetCmd struct {
 }
 
 func (c boxConfigSetCmd) Run() error {
-	if err := setBoxConfig(c.Key, c.Value, "box config set "+c.Key); err != nil {
+	if err := setBoxConfig(c.Key, c.Value, "set box config "+c.Key); err != nil {
 		utils.DieError(err, 1)
 	}
 	fmt.Println("box config set " + c.Key)
@@ -73,7 +73,7 @@ type boxConfigUnsetCmd struct {
 }
 
 func (c boxConfigUnsetCmd) Run() error {
-	if err := unsetBoxConfig(c.Key, "box config unset "+c.Key); err != nil {
+	if err := unsetBoxConfig(c.Key, "unset box config "+c.Key); err != nil {
 		utils.DieError(err, 1)
 	}
 	fmt.Println("box config unset " + c.Key)
@@ -213,7 +213,7 @@ func boxConfigError(err error) error {
 		return errcat.New(errcat.CodeBoxConfigKeyUnknown, errcat.Fields{
 			"key":     unknown.Key,
 			"valid":   strings.Join(keys, ", "),
-			"command": "ship box config <box>",
+			"command": "ship box config " + boxClientAddress(),
 		})
 	}
 	var invalid *store.BoxConfigValueError
@@ -221,7 +221,7 @@ func boxConfigError(err error) error {
 		return errcat.New(errcat.CodeBoxConfigValueInvalid, errcat.Fields{
 			"key":     invalid.Key,
 			"detail":  invalid.Detail,
-			"command": "ship box config <box> set " + invalid.Key + " <value>",
+			"command": "ship box config " + boxClientAddress() + " set " + invalid.Key + " <value>",
 		})
 	}
 	return err

@@ -82,13 +82,13 @@ func TestReleaseImageKeepSetKeepsRollbackTargetInsideWindow(t *testing.T) {
 
 func TestImageReleasesFromEntriesFiltersOtherAppsAndEnvs(t *testing.T) {
 	entries := []imageEntry{
-		imageEntryFor("api", "prod", "000000000001"),
+		imageEntryFor("api", "production", "000000000001"),
 		imageEntryFor("api", "feat-x-ab12", "000000000002"),
-		imageEntryFor("worker", "prod", "000000000003"),
+		imageEntryFor("worker", "production", "000000000003"),
 	}
 
-	got := imageReleasesFromEntries("api", "prod", entries)
-	if len(got) != 1 || got[0].Release != "000000000001" || got[0].Image != identity.ImageTag("api", "prod", "000000000001") {
+	got := imageReleasesFromEntries("api", "production", entries)
+	if len(got) != 1 || got[0].Release != "000000000001" || got[0].Image != identity.ImageTag("api", "production", "000000000001") {
 		t.Fatalf("unexpected filtered images: %+v", got)
 	}
 }
@@ -117,7 +117,7 @@ exit 0
 
 	entry := deployEntries("2026-07-09T10:00:00Z", "000000000001")[0]
 	stderr := captureStderr(t, func() {
-		summary := bestEffortPruneReleaseImagesAfterDeploy("api", "prod", "000000000001", entry)
+		summary := bestEffortPruneReleaseImagesAfterDeploy("api", "production", "000000000001", entry)
 		if summary != "pruned 0 old images" {
 			t.Fatalf("unexpected prune summary: %q", summary)
 		}
@@ -125,7 +125,7 @@ exit 0
 	if strings.Count(strings.TrimSpace(stderr), "\n") != 0 {
 		t.Fatalf("prune failure should log one line, got:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "image prune failed for api (prod): podman image prune -f: forced image prune failure") {
+	if !strings.Contains(stderr, "image prune failed for api (production): podman image prune -f: forced image prune failure") {
 		t.Fatalf("unexpected prune failure log:\n%s", stderr)
 	}
 }

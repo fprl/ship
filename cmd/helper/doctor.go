@@ -80,7 +80,7 @@ func (c doctorCmd) Run() error {
 	if c.Action != "" {
 		return fmt.Errorf("unsupported doctor action: %s", c.Action)
 	}
-	if _, err := authorizeHelper(helperVerbRead, authTargetForBox("box doctor")); err != nil {
+	if _, err := authorizeHelper(helperVerbRead, authTargetForBox("doctor box")); err != nil {
 		utils.DieError(err, 1)
 	}
 	CmdDoctor(c.JSON, c.BoxTarget)
@@ -299,7 +299,7 @@ func recordDoctorRun(opts doctorOptions) (store.DoctorFile, error) {
 	if err := opts.StateStore.WriteDoctor(file); err != nil {
 		return store.DoctorFile{}, err
 	}
-	notifyDoctorDegraded(notifyBoxHost(), delta, now)
+	notifyDoctorDegraded(boxClientAddress(), delta, now)
 	return file, nil
 }
 
@@ -849,7 +849,7 @@ func doctorBoxSetupCommand(target string) string {
 
 func doctorBoxUpdateCommand(target string) string {
 	if target == "" {
-		return "ship box update <box>"
+		return "ship box update " + utils.ShellEscape(boxClientAddress())
 	}
 	return "ship box update " + utils.ShellEscape(target)
 }
