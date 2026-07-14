@@ -1,5 +1,74 @@
 # Changelog
 
+## v0.5.0
+
+The simplification arc lands: data-only backups, one box config file, one
+preview capability, branch-scoped secrets — and a CLI surface rebuilt around
+where things actually live. Verbs moved, the production env got its real
+name, and generated URLs now lead with your app instead of an env word.
+Breaking on most user-visible surfaces; there is nothing to migrate.
+
+### Added
+
+- `ship data save | restore | ls` — stream an environment's `/data` to your
+  laptop as a snapshot and put it back later. Snapshots carry metadata and
+  data only; secrets are never included. Default names come from the
+  archive's own metadata and a save never overwrites an existing snapshot.
+- `ship box config <box> [set|unset]` — one schema-validated box config
+  file (unknown keys refuse, atomic writes, per-key roles and approvals).
+  `ship box notify` is sugar over its `notify.url` key.
+- One preview capability: every Preview is protected by a single token that
+  works as a URL parameter, a cookie, or an `x-ship-capability` header;
+  `ship preview share --rotate` kills the old link. The `[previews]` knob,
+  team password, and bypass token are gone.
+- `ship box status` — cheap one-screen summary: version skew with the exact
+  update command, disk, app count, pending approvals, and the last
+  doctor-timer result with its age. `ship box apps` is the table;
+  `ship box doctor` is the probe.
+- Approval grant integrity: every request records the role the denied action
+  requires, the approver's role must cover it, nobody can approve their own
+  request, and granting refreshes the 15-minute window.
+- The box records its client-routable address at `box setup`, so every
+  approval remediation and webhook prints a command you can paste from any
+  machine: `ship box approve <id> <box>`.
+
+### Changed
+
+- Approvals and members live on the box, so their verbs do too:
+  `ship box approvals`, `ship box approve <id> [<box>]`,
+  `ship box member add|rm`, `ship box members`. Top-level `approve` and
+  `member` verbs are gone. Run them from anywhere by naming the box.
+- Generated URLs are app-first and env words never appear: production is
+  `<app>.<ip>.sslip.io`, previews are `<app>-<branch>-<id>.<ip>.sslip.io`.
+  Two routeless production apps on one box can no longer synthesize the
+  same host; the app name is never truncated.
+- The production environment is named `production` (was `prod`) in
+  directories, snapshot names, JSON, and approval rows.
+- `ship data rm` is now `ship data reset` — it empties a Preview's `/data`;
+  it never destroyed an environment.
+- Bare `ship secret set KEY` follows branch=env: it targets the branch you
+  are on instead of silently writing production from a feature branch.
+- `ship init` writes a manifest with no `[routes]` unless you pass
+  `--host`; the first deploy prints the automatic URL and the output tells
+  you how to add a real domain later.
+- Secrets keep exactly one trailing newline and refuse embedded newlines
+  (the container env-file format cannot carry them; encode multi-line
+  material instead).
+- Deploys, data commands, and rotation report honestly at every point of no
+  return: a live deploy is never journaled as aborted, partial container
+  stops are always restarted, and post-success URL-lookup failures warn
+  instead of reporting a failed mutation.
+- `data fork`/`data reset` print exactly the Preview URL on stdout;
+  narration, the PII note, and warnings go to stderr. Helper warnings on
+  successful commands now reach your terminal.
+
+### Removed
+
+- Whole-app save/restore and its backup format, `@secret:NAME` aliasing,
+  `--include-dotenv`, `ship init` starter templates, multi-provider setup
+  paths and topology flags, `box ls` (now `box apps`), and the unused
+  box-config apply-mode scaffolding.
+
 ## v0.4.2
 
 Deploys start faster and failures explain themselves. No command changes:
