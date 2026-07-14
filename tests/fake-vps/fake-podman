@@ -137,20 +137,6 @@ PY
     exit 0
     ;;
 
-  inspect)
-    # `podman inspect --format '...' <name>` — best-effort; returns
-    # empty string when the container is unknown so the helper's
-    # label-discovery path falls through gracefully.
-    name="${!#}"
-    labels_file="$state_dir/containers/$name.labels"
-    if [[ ! -f "$labels_file" ]]; then
-      echo "no such container: $name" >&2
-      exit 1
-    fi
-    echo ""
-    exit 0
-    ;;
-
   build)
     tag=""
     declare -a labels=()
@@ -261,10 +247,6 @@ PY
     shift || true
     case "$sub" in
       prune)
-        if [[ -f "$state_dir/fail-image-prune" ]]; then
-          echo "fake podman: forced image prune failure" >&2
-          exit 42
-        fi
         # The real `podman image prune` without `-a` removes dangling
         # untagged images. In fake state, those are image records with
         # no ship.release label.
@@ -322,10 +304,6 @@ PY
     if [[ ! -f "$state_dir/containers/$container.labels" ]]; then
       echo "fake podman: no such container: $container" >&2
       exit 1
-    fi
-    if [[ "$container" == "caddy" && "${1:-}" == "caddy" && "${2:-}" == "validate" && -f "$state_dir/fail-caddy-validate" ]]; then
-      echo "fake caddy validate failed" >&2
-      exit 42
     fi
     if [[ "$container" == "caddy" && "${1:-}" == "caddy" && "${2:-}" == "validate" ]]; then
       exec /usr/local/bin/caddy-real "${@:2}"

@@ -10,9 +10,7 @@ SHELL_SCRIPTS := \
 FAKE_VPS_SHELL_SCRIPTS := \
 	tests/fake-vps/fake-caddy \
 	tests/fake-vps/fake-install-apt-get \
-	tests/fake-vps/fake-install-curl \
 	tests/fake-vps/fake-install-dpkg-query \
-	tests/fake-vps/fake-install-gpg \
 	tests/fake-vps/fake-install-localectl \
 	tests/fake-vps/fake-install-systemctl \
 	tests/fake-vps/fake-install-timedatectl \
