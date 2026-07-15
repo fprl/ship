@@ -323,7 +323,11 @@ func (e *smokeEnv) assertSetupMemberVisible(t *testing.T) {
 	t.Helper()
 	app := e.memberListApp(t, "member-list")
 	list := e.ship(t, app, nil, "box", "member", "ls")
-	assertContains(t, list, "fake-vps-smoke owner SHA256:")
+	// The member table pads its columns; assert fields, not spacing.
+	assertContains(t, list, "fake-vps-smoke")
+	assertContains(t, list, "owner")
+	assertContains(t, list, "SHA256:")
+	assertContains(t, list, "CURRENT")
 }
 
 func (e *smokeEnv) memberListApp(t *testing.T, name string) string {
