@@ -308,15 +308,37 @@ ship box member add <key|path|https-url> [<box>] --name <n>
                           usernames are gone — the URL is the
                           provenance.
 ship box member ls [<box>] [--json]
-                          authorized members: name, key type, SHA256
-                          fingerprint
-ship box member rm <name> [<box>]
-                          revoke all of a member's keys; refuses to
-                          remove the last recorded member (lockout
-                          guard — stray unrecorded lines don't count,
-                          ADR-0020). Roles shipped in v0.4 (owner /
-                          shipper / agent, §17); RFD-0003 records the
-                          original post-v1 plan.
+                          members grouped with their keys: name, role,
+                          copy-pasteable short key id (12-char floor),
+                          type, CURRENT marker on the connecting key.
+                          Readable by every enrolled member. --json is
+                          nested: members[] → keys[] (ADR-0021).
+ship box member rename <old> <new> [<box>]
+                          identity-only mutation: every key keeps its
+                          material and role. Refuses unknown <old> or
+                          a <new> that names any existing member
+                          (never merges principals). Idempotent on
+                          <old> == <new>. (ADR-0021)
+ship box member role <name> <owner|shipper|agent> [<box>]
+                          change a member's role across all their keys
+                          and re-render role-dependent access lines
+                          (agent keys get the forced agent-shell line).
+                          Idempotent on the current role. (ADR-0021)
+ship box member rm <name> [--key <id>] [<box>]
+                          revoke all of a member's keys, or exactly one
+                          with --key (full SHA256 fingerprint or unique
+                          prefix, 12-char floor; the key must belong to
+                          <name>). Key rotation is add → verify the new
+                          connection → rm --key the old (no atomic
+                          rotate verb: atomicity can't prove possession
+                          of the new private key, ADR-0021).
+                          One invariant guards every member mutation:
+                          it must leave at least one effective owner
+                          key (record in members.json AND line in
+                          authorized_keys; stray unrecorded lines don't
+                          count, ADR-0020). Roles shipped in v0.4
+                          (owner / shipper / agent, §17); RFD-0003
+                          records the original post-v1 plan.
 ship box doctor [--json]  existing doctor, output upgraded per §9
                           BOX ADDRESSING (v0.2 polish, Franco July 8):
                           boxes are addressed by HOST only — the deploy

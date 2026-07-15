@@ -1,7 +1,8 @@
 # ADR-0020: The Member Store Is the Identity Truth
 
-- **Status**: Proposed (compat/quality sweep, July 14–15, 2026;
-  pending Franco's review)
+- **Status**: Accepted (Franco, July 15, 2026; implemented in the
+  compat/quality sweep, amended same day by ADR-0021's
+  setup-name-preservation rule)
 - **Date**: 2026-07-15
 - **Related**: ADR-0019 §member onboarding ("identity never derives
   from comments/filenames/git config except the blessed `box setup`
