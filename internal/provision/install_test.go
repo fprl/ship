@@ -94,6 +94,71 @@ func TestSetupMemberRoleOverridesUsesExplicitGitDerivedMemberName(t *testing.T) 
 	}
 }
 
+func TestRunVersionConvergeRendersAuthorizedKeysFromMembersStore(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "ship")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	deployKeys, err := memberkeys.Normalize(deployTestPublicKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployFingerprint := deployKeys[0].Fingerprint
+	stateStore := store.Store{Root: root}
+	if err := stateStore.WriteHostDesired(store.HostDesired{
+		Users:    store.HostUsers{Operator: "operator", Deploy: "deploy"},
+		Ingress:  store.HostIngressDesired{Expose: store.ExposePublic},
+		Packages: map[string]store.DesiredPackage{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.WriteMembers(store.MembersFile{
+		Version: store.CurrentVersion,
+		Members: map[string]store.MemberRecord{
+			deployFingerprint: {Name: "Franco Pablo", Role: store.MemberRoleAgent},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runner := &installFakeRunner{files: map[string]host.FileState{
+		"/home/deploy/.ssh/authorized_keys": {
+			Content: []byte(deployTestPublicKey + "\n" + operatorTestPublicKey + "\n"),
+			Owner:   "deploy",
+			Group:   "deploy",
+			Mode:    0600,
+		},
+	}}
+
+	_, err = RunVersionConverge(context.Background(), runner, VersionConvergeOptions{
+		StateRoot:        root,
+		HelperBinaryPath: helper,
+		Now:              func() time.Time { return time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantKey, err := memberkeys.Normalize(deployTestPublicKey, "Franco Pablo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := memberkeys.RenderAuthorizedKeyLine(wantKey[0], store.MemberRecord{Name: "Franco Pablo", Role: store.MemberRoleAgent}) + "\n"
+	got := string(runner.files["/home/deploy/.ssh/authorized_keys"].Content)
+	if got != want {
+		t.Fatalf("converged authorized_keys = %q, want %q", got, want)
+	}
+	members, err := stateStore.ReadMembers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(members.Members) != 1 || members.Members[deployFingerprint].Name != "Franco Pablo" {
+		t.Fatalf("converged members = %+v, want only recorded member", members.Members)
+	}
+}
+
 func TestRunInstallDoesNotRestartSSHWhenConfigAlreadyConverged(t *testing.T) {
 	root := t.TempDir()
 	helper := filepath.Join(root, "ship")

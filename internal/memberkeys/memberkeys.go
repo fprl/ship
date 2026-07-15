@@ -14,7 +14,6 @@ import (
 
 type AuthorizedKey struct {
 	Line        string
-	Options     string
 	Material    string
 	Type        string
 	Body        string
@@ -89,7 +88,7 @@ func NormalizeLine(line, comment string) (AuthorizedKey, error) {
 }
 
 func ParseLine(line string) (AuthorizedKey, error) {
-	options, rest, err := splitAuthorizedKeyLine(line)
+	_, rest, err := splitAuthorizedKeyLine(line)
 	if err != nil {
 		return AuthorizedKey{}, err
 	}
@@ -110,7 +109,6 @@ func ParseLine(line string) (AuthorizedKey, error) {
 	}
 	return AuthorizedKey{
 		Line:        line,
-		Options:     options,
 		Material:    KeyMaterial(fields[0], fields[1]),
 		Type:        fields[0],
 		Body:        fields[1],
@@ -173,7 +171,7 @@ func RenderAuthorizedKeyLines(keys []AuthorizedKey, records map[string]store.Mem
 		}
 		record, ok := records[key.Fingerprint]
 		if !ok {
-			record = store.MemberRecord{Name: key.Comment, Role: store.MemberRoleShipper}
+			continue
 		}
 		lines = append(lines, RenderAuthorizedKeyLine(key, record))
 	}
@@ -206,7 +204,10 @@ func RowsWithMembers(keys []AuthorizedKey, members store.MembersFile) []Row {
 		if key.Material == "" {
 			continue
 		}
-		record := records[key.Fingerprint]
+		record, ok := records[key.Fingerprint]
+		if !ok {
+			continue
+		}
 		rows = append(rows, Row{
 			Name:        record.Name,
 			Role:        string(record.Role),
@@ -237,35 +238,18 @@ func ReconciledMembersFile(keys []AuthorizedKey, current store.MembersFile, over
 }
 
 func EffectiveMemberRecords(keys []AuthorizedKey, members store.MembersFile, overrides map[string]store.MemberRecord) map[string]store.MemberRecord {
-	parseableCount := 0
-	for _, key := range keys {
-		if key.Material != "" {
-			parseableCount++
-		}
-	}
-	fallbackRole := store.MemberRoleShipper
-	if parseableCount == 1 {
-		fallbackRole = store.MemberRoleOwner
-	}
-
 	records := map[string]store.MemberRecord{}
 	for _, key := range keys {
 		if key.Material == "" {
 			continue
 		}
 		record, ok := members.Members[key.Fingerprint]
-		if !ok {
-			record = store.MemberRecord{Name: key.Comment, Role: fallbackRole}
-		}
-		if override, ok := overrides[key.Fingerprint]; ok {
+		if override, found := overrides[key.Fingerprint]; found {
 			record = override
+			ok = true
 		}
-		record.Name = strings.Join(strings.Fields(record.Name), " ")
-		if record.Name == "" {
-			record.Name = key.Comment
-		}
-		if !store.ValidMemberRole(record.Role) {
-			record.Role = fallbackRole
+		if !ok {
+			continue
 		}
 		records[key.Fingerprint] = record
 	}

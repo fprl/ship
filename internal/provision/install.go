@@ -70,7 +70,7 @@ func RunVersionConverge(ctx context.Context, runner host.Runner, opts VersionCon
 	var ops []operation
 	installOpts := InstallOptions{HelperBinaryPath: opts.HelperBinaryPath}
 	addHelper(&ops, installOpts)
-	addDeployMembersStore(&ops, stateStore, defaultDeployUser, &summary, "")
+	addDeployMembersStore(&ops, stateStore, defaultDeployUser, &summary, "", true)
 	addPreviewReaper(&ops)
 	addDoctorTimer(&ops)
 
@@ -198,7 +198,7 @@ func installOperations(opts InstallOptions, stateStore store.Store, summary *Ins
 	addAuthorizedKeys(&ops, defaultDeployUser, opts.DeploySSHPublicKeys, func(results []memberkeys.AddResult) {
 		summary.DeployKeyResults = results
 	})
-	addDeployMembersStore(&ops, stateStore, defaultDeployUser, summary, opts.MemberName)
+	addDeployMembersStore(&ops, stateStore, defaultDeployUser, summary, opts.MemberName, false)
 
 	add("timezone", func(apply host.Apply) (bool, error) {
 		return host.EnsureTimezone(apply, defaultTimezone)
@@ -251,7 +251,7 @@ func addAuthorizedKeys(ops *[]operation, user string, keyLines []string, capture
 	}})
 }
 
-func addDeployMembersStore(ops *[]operation, stateStore store.Store, deployUser string, summary *InstallSummary, memberName string) {
+func addDeployMembersStore(ops *[]operation, stateStore store.Store, deployUser string, summary *InstallSummary, memberName string, renderAuthorizedKeys bool) {
 	path := filepath.Join("/home", deployUser, ".ssh", "authorized_keys")
 	*ops = append(*ops, operation{name: "members store", run: func(apply host.Apply) (bool, error) {
 		current, err := apply.Runner.ReadFile(apply.ContextOrBackground(), path)
@@ -272,13 +272,27 @@ func addDeployMembersStore(ops *[]operation, stateStore store.Store, deployUser 
 				summary.DeployKeyResults[i].Role = string(record.Role)
 			}
 		}
-		if reflect.DeepEqual(*members, next) {
-			return false, nil
+		membersChanged := !reflect.DeepEqual(*members, next)
+		if membersChanged && !apply.CheckMode {
+			if err := stateStore.WriteMembers(next); err != nil {
+				return false, err
+			}
 		}
-		if apply.CheckMode {
-			return true, nil
+		if !renderAuthorizedKeys {
+			return membersChanged, nil
 		}
-		return true, stateStore.WriteMembers(next)
+		rendered := memberkeys.RenderAuthorizedKeyLines(keys, memberkeys.EffectiveMemberRecords(keys, next, nil))
+		keysChanged, err := host.EnsureFile(apply, host.File{
+			Path:    path,
+			Content: memberkeys.Content(rendered),
+			Owner:   deployUser,
+			Group:   deployUser,
+			Mode:    0600,
+		})
+		if err != nil {
+			return false, err
+		}
+		return membersChanged || keysChanged, nil
 	}})
 }
 

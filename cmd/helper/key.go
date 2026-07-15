@@ -218,8 +218,11 @@ func validateMemberEnrollment(existing []authorizedKey, existingRecords map[stri
 			if existingKey.Material == "" {
 				continue
 			}
-			record := existingRecords[existingKey.Fingerprint]
+			record, recorded := existingRecords[existingKey.Fingerprint]
 			if existingKey.Material == key.Material {
+				if !recorded {
+					continue
+				}
 				if record.Name != key.Comment {
 					return errcat.New(errcat.CodeUsageError, errcat.Fields{
 						"detail":  fmt.Sprintf("key %s already belongs to member %q", key.Fingerprint, record.Name),
@@ -232,6 +235,9 @@ func validateMemberEnrollment(existing []authorizedKey, existingRecords map[stri
 						"command": "ship box member add <https-url|key|path> " + boxClientAddress() + " --name " + key.Comment + " --role " + string(record.Role),
 					})
 				}
+				continue
+			}
+			if !recorded {
 				continue
 			}
 			if record.Name == key.Comment && record.Role != role {
@@ -262,8 +268,8 @@ func removeDeployAuthorizedKeys(user, name string) (int, error) {
 		return 0, err
 	}
 	records := memberkeys.EffectiveMemberRecords(existing, *members, nil)
-	parseable := 0
 	removed := 0
+	removedRecorded := 0
 	memberNames := map[string]bool{}
 	var lines []string
 	for _, key := range existing {
@@ -271,14 +277,16 @@ func removeDeployAuthorizedKeys(user, name string) (int, error) {
 			lines = append(lines, key.Line)
 			continue
 		}
-		parseable++
 		memberName := key.Comment
 		if record, ok := records[key.Fingerprint]; ok {
 			memberName = record.Name
+			memberNames[memberName] = true
 		}
-		memberNames[memberName] = true
 		if memberName == name {
 			removed++
+			if _, ok := records[key.Fingerprint]; ok {
+				removedRecorded++
+			}
 			continue
 		}
 		lines = append(lines, key.Line)
@@ -290,11 +298,12 @@ func removeDeployAuthorizedKeys(user, name string) (int, error) {
 			"box":     boxClientAddress(),
 		})
 	}
-	if parseable-removed == 0 {
+	remaining := memberkeys.Parse(memberkeys.Content(lines))
+	remainingRecords := memberkeys.EffectiveMemberRecords(remaining, *members, nil)
+	if removedRecorded > 0 && len(remainingRecords) == 0 {
 		return 0, errcat.New(errcat.CodeMemberLastKey, errcat.Fields{"name": name, "box": boxClientAddress()})
 	}
-	remaining := memberkeys.Parse(memberkeys.Content(lines))
-	rendered := memberkeys.RenderAuthorizedKeyLines(remaining, memberkeys.EffectiveMemberRecords(remaining, *members, nil))
+	rendered := memberkeys.RenderAuthorizedKeyLines(remaining, remainingRecords)
 	if err := writeDeployAuthorizedKeys(user, sshDir, path, rendered); err != nil {
 		return 0, err
 	}

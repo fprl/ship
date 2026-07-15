@@ -128,7 +128,7 @@ func TestAppendDeployAuthorizedKeysRejectsConflictingRoleForExistingMember(t *te
 	}
 }
 
-func TestAppendDeployAuthorizedKeysRepairsMissingMembersStore(t *testing.T) {
+func TestAppendDeployAuthorizedKeysHealsHalfEnrollment(t *testing.T) {
 	root := t.TempDir()
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
 	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
@@ -157,12 +157,106 @@ func TestAppendDeployAuthorizedKeysRepairsMissingMembersStore(t *testing.T) {
 	if len(results) != 1 || results[0].Added {
 		t.Fatalf("re-add results = %+v, want one already-authorized key", results)
 	}
+	content, err := os.ReadFile(authorizedKeysPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(content), alicePublicKey+"\n"; got != want {
+		t.Fatalf("healed authorized_keys = %q, want %q", got, want)
+	}
 	members, err := store.Default().ReadMembers()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := members.Members[aliceFingerprint]; got.Name != "alice" || got.Role != store.MemberRoleOwner {
 		t.Fatalf("reconciled member = %+v, want alice owner", got)
+	}
+}
+
+func TestAppendDeployAuthorizedKeysDropsStrayButKeepsRecordedOwner(t *testing.T) {
+	root := t.TempDir()
+	authorizedKeysPath := filepath.Join(root, "authorized_keys")
+	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
+	t.Setenv("SHIP_STATE_DIR", root)
+	setHelperBoxClientAddress(t, "203.0.113.7")
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	stray := strings.Replace(bobPublicKey, " bob", " stray", 1)
+	if err := os.WriteFile(authorizedKeysPath, []byte(alicePublicKey+"\n"+stray+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Default().WriteMembers(store.MembersFile{
+		Version: store.CurrentVersion,
+		Members: map[string]store.MemberRecord{
+			aliceFingerprint: {Name: "alice", Role: store.MemberRoleOwner},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := normalizeAuthorizedKeys(bobPublicKey, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := appendDeployAuthorizedKeys("deploy", keys, store.MemberRoleShipper); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(authorizedKeysPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(content), alicePublicKey+"\n"+bobPublicKey+"\n"; got != want {
+		t.Fatalf("authorized_keys = %q, want %q", got, want)
+	}
+	members, err := store.Default().ReadMembers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := members.Members[aliceFingerprint]; got.Name != "alice" || got.Role != store.MemberRoleOwner {
+		t.Fatalf("recorded owner = %+v, want alice owner", got)
+	}
+}
+
+func TestRemoveDeployAuthorizedKeysRemovesUnrecordedStray(t *testing.T) {
+	root := t.TempDir()
+	authorizedKeysPath := filepath.Join(root, "authorized_keys")
+	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
+	t.Setenv("SHIP_STATE_DIR", root)
+	setHelperBoxClientAddress(t, "203.0.113.7")
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	stray := strings.Replace(bobPublicKey, " bob", " stray", 1)
+	if err := os.WriteFile(authorizedKeysPath, []byte(alicePublicKey+"\n"+stray+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Default().WriteMembers(store.MembersFile{
+		Version: store.CurrentVersion,
+		Members: map[string]store.MemberRecord{
+			aliceFingerprint: {Name: "alice", Role: store.MemberRoleOwner},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := removeDeployAuthorizedKeys("deploy", "stray")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed = %d, want 1", removed)
+	}
+	content, err := os.ReadFile(authorizedKeysPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(content), alicePublicKey+"\n"; got != want {
+		t.Fatalf("authorized_keys = %q, want recorded owner %q", got, want)
 	}
 }
 
@@ -318,8 +412,7 @@ func TestAuthorizedKeyLineRenderingUsesAgentForcedCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Options != `command="/usr/local/bin/ship server agent-shell --member-fingerprint `+aliceFingerprint+`",restrict` ||
-		parsed.Fingerprint != aliceFingerprint ||
+	if parsed.Fingerprint != aliceFingerprint ||
 		parsed.Comment != "alice" {
 		t.Fatalf("parsed forced entry = %+v", parsed)
 	}
@@ -352,7 +445,7 @@ func TestReconciledMembersRecordsExplicitRoles(t *testing.T) {
 	}
 }
 
-func TestReconciledMembersDefaultsMissingStoreByAuthorizedKeyCount(t *testing.T) {
+func TestReconciledMembersRefusesMissingStoreRecords(t *testing.T) {
 	alice, err := normalizeAuthorizedKeys(alicePublicKey, "alice")
 	if err != nil {
 		t.Fatal(err)
@@ -363,13 +456,13 @@ func TestReconciledMembersDefaultsMissingStoreByAuthorizedKeyCount(t *testing.T)
 	}
 
 	one := memberRows(alice, store.MembersFile{Version: store.CurrentVersion})
-	if one[0].Role != "owner" {
-		t.Fatalf("single missing store role = %q, want owner", one[0].Role)
+	if len(one) != 0 {
+		t.Fatalf("single missing store rows = %+v, want none", one)
 	}
 
 	two := memberRows([]authorizedKey{alice[0], bob[0]}, store.MembersFile{Version: store.CurrentVersion})
-	if two[0].Role != "shipper" || two[1].Role != "shipper" {
-		t.Fatalf("multi-key missing store roles = %+v, want all shipper", two)
+	if len(two) != 0 {
+		t.Fatalf("multi-key missing store rows = %+v, want none", two)
 	}
 }
 

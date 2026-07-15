@@ -305,17 +305,14 @@ func TestFingerprintResolutionRejectsSameNameRoleCollision(t *testing.T) {
 	}
 }
 
-func TestAuthorizedKeyMissingFromMembersUsesEffectiveShipperRole(t *testing.T) {
+func TestAuthorizedKeyMissingFromMembersIsUnknown(t *testing.T) {
 	setupAuthTest(t, map[string]store.MemberRecord{
 		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
 	})
 	setServerMemberFingerprint(bobFingerprint)
-	member, err := authorizeHelper(helperVerbShip, authTargetForAppEnv("api", productionEnvName, "ship", "release=abc123"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if member.Name != "bob" || member.Role != store.MemberRoleShipper {
-		t.Fatalf("effective member = %+v, want bob shipper", member)
+	_, err := authorizeHelper(helperVerbShip, authTargetForAppEnv("api", productionEnvName, "ship", "release=abc123"))
+	if !errcat.Is(err, errcat.CodeMemberUnknown) {
+		t.Fatalf("unrecorded fingerprint err = %v, want member_unknown", err)
 	}
 }
 
