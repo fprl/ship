@@ -174,9 +174,13 @@ func RenderMarkdown() string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(agentIntro))
 	b.WriteString("\n\n")
-	b.WriteString(renderVerbSection())
-	b.WriteString("\n\n")
 	b.WriteString(strings.TrimSpace(outputAndDataContracts))
+	b.WriteString("\n\n")
+	b.WriteString(strings.TrimSpace(roleMatrix))
+	b.WriteString("\n\n")
+	b.WriteString(strings.TrimSpace(shipTOMLReference))
+	b.WriteString("\n\n")
+	b.WriteString(renderVerbSection())
 	b.WriteString("\n\n")
 	b.WriteString(RenderErrorCatalogue())
 	b.WriteString("\n")
@@ -568,7 +572,7 @@ var verbs = []Verb{
 			configFlag,
 		},
 		ExitCodes: normalExit,
-		Errors:    []string{"usage_error", "manifest_invalid"},
+		Errors:    []string{"usage_error", "operation_failed"},
 		Notes: []string{
 			"Never overwrites existing files; kept files are reported on stdout.",
 			"Writes a skeleton only: name (package.json name or directory name), a placeholder box, and [processes] web = {}. Edit ship.toml to set the real box, ports, [routes], and [preview]; without [routes] the first deploy prints the automatic sslip.io URL.",
@@ -845,7 +849,7 @@ var verbs = []Verb{
 	},
 	{
 		Verb:    "box member ls",
-		Purpose: "List enrolled deploy members and their keys.",
+		Purpose: "List members from members.json, grouped with their authorized keys.",
 		Usage:   "ship box member ls [<box>] [--json]",
 		Flags: []Flag{
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
@@ -862,7 +866,7 @@ var verbs = []Verb{
 		Purpose: "Remove all or one SSH key for a deploy member.",
 		Usage:   "ship box member rm <name> [--key <id>] [<box>]",
 		Flags: []Flag{
-			{Name: "name", Purpose: "Member name, matching the authorized key comment."},
+			{Name: "name", Purpose: "Stored box-global member name."},
 			{Name: "--key", Value: "<id>", Purpose: "Remove exactly one key by full fingerprint or unique fingerprint-payload prefix (minimum 12 characters)."},
 			{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."},
 		},
@@ -1160,6 +1164,10 @@ Member identity and approvals:
   the fingerprint bound to the authenticated key before the privileged helper runs.
 - Members and approvals are box-scoped, not app-scoped.
 
+A member is one box-global name, one role, and one or more keys. All keys of
+the member share the role. Names are normalized by collapsing whitespace;
+` + "`member rename`" + ` and ` + "`member role`" + ` affect every key belonging to that member.
+
 Manifest env:
 
 - ` + "`[env]`" + ` defines committed container environment variables for every deploy.
@@ -1180,6 +1188,79 @@ Secret scoping:
 - Preview resolves branch value first, then shared Preview value.
 - Preview never falls back to Production.
 - Values are stdin-only. Keys can be listed; values are never printed.
+`
+
+const roleMatrix = `
+## Role matrix
+
+This is the helper's direct authorization table; ` + "`approval_required`" + ` means a one-shot approval flow is available.
+
+| Role | Read | Ship Preview | Ship Production | Member/box mutations | Grant approval |
+|---|---|---|---|---|---|
+| owner | direct | direct | direct | direct | any request, except own |
+| shipper | direct | direct | direct | approval where required | shipper-gated requests |
+| agent | direct | direct | approval | approval | never |
+
+Member mutations and owner-only box mutations therefore do not become direct
+shipper or agent access merely because an approval can be requested.
+`
+
+const shipTOMLReference = `
+## ` + "`ship.toml`" + `
+
+The manifest is strict: unknown top-level keys, process fields, route target
+fields, or preview fields fail parsing. The accepted schema is:
+
+- ` + "`name`" + ` (string, required): app name.
+- ` + "`box`" + ` (string, required): box hostname; ` + "`user@host`" + ` is not accepted.
+- ` + "`production_branch`" + ` (string, optional): branch treated as Production. Default is ` + "`main`" + ` when it exists, otherwise ` + "`master`" + `, otherwise ` + "`main`" + `.
+- ` + "`release`" + ` (string, optional, default empty): container release command.
+- ` + "`probe`" + ` (string, optional, default empty): container probe path; when set it must start with ` + "`/`" + `.
+- ` + "`webhook`" + ` (URL string, optional, default empty): app webhook; only ` + "`http`" + ` and ` + "`https`" + ` URLs are accepted.
+- ` + "`[processes]`" + ` maps process names to a command string shorthand or a ` + "`[processes.<name>]`" + ` table. Its ` + "`cmd`" + ` is a string (default empty), ` + "`port`" + ` is an optional integer 1..65535, ` + "`preview`" + ` defaults to ` + "`true`" + `, and nested ` + "`[processes.<name>.resources]`" + ` accepts ` + "`memory`" + ` (a byte string such as ` + "`512m`" + `) or ` + "`cpus`" + ` (a positive number). A port-holding process has ` + "`port`" + ` and may receive HTTP routes; a portless process is a worker and cannot be a process route. A routed process with no explicit port inherits the sole Dockerfile ` + "`EXPOSE`" + ` port, or ` + "`3000`" + ` when there is no sole exposed port.
+- ` + "`[routes]`" + ` maps ` + "`host`" + ` or ` + "`host/path`" + ` keys to a process-name string, or to exactly one target table: ` + "`{ static = \"relative-dir\" }`" + ` or ` + "`{ redirect = \"host\" }`" + `. Process targets must name a process with a port; static directories are relative to the repo and redirects target a hostname.
+- ` + "`[preview]`" + ` accepts ` + "`base`" + ` (bare DNS suffix, default empty, which keeps synthesized sslip.io addressing) and ` + "`aliases`" + ` (boolean, default ` + "`false`" + `).
+- ` + "`[env]`" + ` accepts dynamic environment-name keys whose values are strings; ` + "`\"@secret\"`" + ` refers to the secret with the same key. ` + "`[env.preview]`" + ` is the only supported env subtable and overlays ` + "`[env]`" + ` for Preview. There are no other ` + "`[env.<name>]`" + ` tables.
+
+<!-- BEGIN SHIP.TOML EXAMPLE -->
+` + "```toml" + `
+` + shipTOMLExample + `
+` + "```" + `
+<!-- END SHIP.TOML EXAMPLE -->
+`
+
+const shipTOMLExample = `name = "api"
+box = "203.0.113.7"
+production_branch = "main"
+release = "bun run migrate"
+probe = "/health"
+webhook = "https://ntfy.example/ship"
+
+[env]
+LOG_LEVEL = "info"
+DATABASE_URL = "@secret"
+
+[env.preview]
+LOG_LEVEL = "debug"
+
+[processes.web]
+cmd = "bun run server"
+port = 8080
+
+[processes.web.resources]
+memory = "512m"
+cpus = 0.5
+
+[processes.worker]
+cmd = "bun run worker"
+preview = false
+
+[routes]
+"api.example.com" = "web"
+
+[preview]
+base = "preview.example.com"
+aliases = true
 `
 
 const outputAndDataContracts = `

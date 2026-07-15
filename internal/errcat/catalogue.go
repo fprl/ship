@@ -348,7 +348,7 @@ var catalogue = map[Code]Entry{
 	CodeMemberLastOwner: {
 		Code:                CodeMemberLastOwner,
 		MessageTemplate:     "member mutation refused",
-		CauseTemplate:       "the mutation would leave no effective owner key (an owner record with a matching authorized_keys line)",
+		CauseTemplate:       "the mutation would leave no effective owner key; at least one effective owner key (an owner record with a matching authorized_keys line) must remain",
 		RemediationTemplate: "ship box member add <https-url|key|path> {box} --name <new-owner> --role owner",
 		Defaults:            Fields{"box": "<box>"},
 	},

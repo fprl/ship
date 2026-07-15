@@ -69,6 +69,10 @@ Member identity and approvals:
   the fingerprint bound to the authenticated key before the privileged helper runs.
 - Members and approvals are box-scoped, not app-scoped.
 
+A member is one box-global name, one role, and one or more keys. All keys of
+the member share the role. Names are normalized by collapsing whitespace;
+`member rename` and `member role` affect every key belonging to that member.
+
 Manifest env:
 
 - `[env]` defines committed container environment variables for every deploy.
@@ -90,6 +94,121 @@ Secret scoping:
 - Preview never falls back to Production.
 - Values are stdin-only. Keys can be listed; values are never printed.
 
+## Output contract
+
+- Successful `ship` without `--json` writes exactly the deployment URL to stdout.
+- All progress, warnings, timings, and next steps go to stderr.
+- `ship --json` writes the mutation object to stdout instead of the URL.
+- During deploy, stderr has phase lines such as `preflight 0.4s`, `build 6.2s`, `release 1.1s`, `probe ok`, and `live`.
+- Human errors are exactly: what failed, cause, then `next: <command>`.
+- JSON errors are `{"error":{"code":"...","message":"...","cause":"...","remediation":"..."}}`.
+- Exit codes are `0` success, `1` operation failed, `2` usage or manifest error, except `ship exec` passes through the remote command exit status after setup.
+- User-facing language is `Production <branch>` or `Preview <branch>`. Internal env slugs appear only in URLs and JSON fields.
+
+## Data forks
+
+- `ship data fork` copies Production `/data` into the current branch Preview and bounces the existing Preview containers.
+- `ship data reset` empties the current branch Preview `/data` and bounces the existing Preview containers.
+- `ship data save` streams a data-only gzip tar to the laptop; its default destination is `~/.ship/backups/<app>/<env>-<release>-<utc>.data.tar.gz`. Its stdout is exactly the local path.
+- `ship data restore <id|path>` uploads through `/tmp/ship-deploy`, validates the archive before touching `/data`, then stops containers, swaps data, and starts them. Snapshot envs may be restored into another env.
+- `ship data ls [--json]` lists local snapshots only; it never calls the helper.
+- `data fork` and `data reset` require an existing Preview environment. If none exists, the error code is `no_preview_env` with remediation `ship`.
+- `data fork` and `data reset` refuse Production branches with `data_fork_on_production`.
+- Owner and shipper roles may run data commands. Agents get `approval_required` because Production data is above the agent default role.
+- `ship data fork` prints forked relative file names and byte sizes, the Preview URL, and this exact PII line: `note: Production data, including any PII, now exists in this less-guarded Preview.`.
+- If no SQLite files are found, `ship data fork` still copies non-database files and prints: `note: No SQLite files found; copied non-database files from /data only.`.
+- Data snapshots use SQLite `VACUUM INTO` and `cp -a` for other files. Their consistency guarantee is per-file, not cross-file.
+- Snapshots never contain secrets. After a box loss: `ship box setup`, `ship`, `ship secret set --from .env`, then `ship data restore`.
+
+## Deploy journal schema
+
+Each env has an append-only `journal.jsonl`. Each line is:
+
+```json
+{"schema_version":1,"app":"api","env":"production","outcome":"deployed | aborted_build | aborted_release | aborted_probe | rolled_back","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","failing_step":"apply | build | release | probe","stderr_tail":"last scrubbed stderr lines","image_prune":"post-deploy prune summary","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"member":{"fingerprint":"fingerprint","name":"alice","role":"owner"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
+```
+
+`image_prune` and `member` are optional (`omitempty`); `member.fingerprint` is also optional.
+
+## Webhook payload schemas
+
+All events POST `{"app","env","event","release","summary","why","remediation","ts"}` and never fail the operation. Box events also include `box` (the box hostname).
+
+App events go only to the affected app manifest `webhook` URL: `deploy_aborted`, `deploy_recovered`, and `preview_reaped`. Box events go once to the box URL configured by `ship box webhook`, never to app URLs: `doctor_degraded` and `approval_requested`. With no configured box URL, box events are dropped without failing anything; journals and doctor state are still recorded.
+
+- `deploy_aborted`: `why` is a deploy journal entry; `remediation` is `{"command":"ship","journal":"<entry>"}`.
+- `deploy_recovered`: `why` is `{"previous_failure":"<entry>","current":"<entry>"}`; `remediation` is `{"command":"ship status","journal":"<current>","previous_failure":"<previous>"}`.
+- `preview_reaped`: `why` is `{"branch":"feature/x","env":"Preview feature/x","expired_at":"..."}`; `remediation` is `{"command":"git checkout feature/x && ship","branch":"feature/x","env":"Preview feature/x"}`.
+- `doctor_degraded`: box event; `why` is a doctor check `{"id","status","evidence","remediation"}`; `remediation` is `{"command":"<check.remediation>","check":"<doctor check>"}`.
+- `approval_requested`: box event; `why` is `{"id","member","verb","target","expires"}`; `remediation` is `{"command":"ship box approval grant <id> <box>","request":"<approval request>"}`. The request target retains the affected app and env when present; box-target approvals have empty app/env.
+
+## Role matrix
+
+This is the helper's direct authorization table; `approval_required` means a one-shot approval flow is available.
+
+| Role | Read | Ship Preview | Ship Production | Member/box mutations | Grant approval |
+|---|---|---|---|---|---|
+| owner | direct | direct | direct | direct | any request, except own |
+| shipper | direct | direct | direct | approval where required | shipper-gated requests |
+| agent | direct | direct | approval | approval | never |
+
+Member mutations and owner-only box mutations therefore do not become direct
+shipper or agent access merely because an approval can be requested.
+
+## `ship.toml`
+
+The manifest is strict: unknown top-level keys, process fields, route target
+fields, or preview fields fail parsing. The accepted schema is:
+
+- `name` (string, required): app name.
+- `box` (string, required): box hostname; `user@host` is not accepted.
+- `production_branch` (string, optional): branch treated as Production. Default is `main` when it exists, otherwise `master`, otherwise `main`.
+- `release` (string, optional, default empty): container release command.
+- `probe` (string, optional, default empty): container probe path; when set it must start with `/`.
+- `webhook` (URL string, optional, default empty): app webhook; only `http` and `https` URLs are accepted.
+- `[processes]` maps process names to a command string shorthand or a `[processes.<name>]` table. Its `cmd` is a string (default empty), `port` is an optional integer 1..65535, `preview` defaults to `true`, and nested `[processes.<name>.resources]` accepts `memory` (a byte string such as `512m`) or `cpus` (a positive number). A port-holding process has `port` and may receive HTTP routes; a portless process is a worker and cannot be a process route. A routed process with no explicit port inherits the sole Dockerfile `EXPOSE` port, or `3000` when there is no sole exposed port.
+- `[routes]` maps `host` or `host/path` keys to a process-name string, or to exactly one target table: `{ static = "relative-dir" }` or `{ redirect = "host" }`. Process targets must name a process with a port; static directories are relative to the repo and redirects target a hostname.
+- `[preview]` accepts `base` (bare DNS suffix, default empty, which keeps synthesized sslip.io addressing) and `aliases` (boolean, default `false`).
+- `[env]` accepts dynamic environment-name keys whose values are strings; `"@secret"` refers to the secret with the same key. `[env.preview]` is the only supported env subtable and overlays `[env]` for Preview. There are no other `[env.<name>]` tables.
+
+<!-- BEGIN SHIP.TOML EXAMPLE -->
+```toml
+name = "api"
+box = "203.0.113.7"
+production_branch = "main"
+release = "bun run migrate"
+probe = "/health"
+webhook = "https://ntfy.example/ship"
+
+[env]
+LOG_LEVEL = "info"
+DATABASE_URL = "@secret"
+
+[env.preview]
+LOG_LEVEL = "debug"
+
+[processes.web]
+cmd = "bun run server"
+port = 8080
+
+[processes.web.resources]
+memory = "512m"
+cpus = 0.5
+
+[processes.worker]
+cmd = "bun run worker"
+preview = false
+
+[routes]
+"api.example.com" = "web"
+
+[preview]
+base = "preview.example.com"
+aliases = true
+
+```
+<!-- END SHIP.TOML EXAMPLE -->
+
 ## Public verbs
 
 <!-- BEGIN VERBS -->
@@ -108,7 +227,7 @@ Secret scoping:
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest.
 - Notes: Never overwrites existing files; kept files are reported on stdout. Writes a skeleton only: name (package.json name or directory name), a placeholder box, and [processes] web = {}. Edit ship.toml to set the real box, ports, [routes], and [preview]; without [routes] the first deploy prints the automatic sslip.io URL.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `usage_error`, `manifest_invalid`
+- Common error codes: `usage_error`, `operation_failed`
 
 ### `status`
 - Purpose: Show all live environments for this app.
@@ -267,7 +386,7 @@ Secret scoping:
 - Common error codes: `box_target_required`, `invalid_box_target`, `keys_url_unavailable`, `ssh_public_key_invalid`, `approval_required`, `member_unknown`, `host_key_changed`, `operation_failed`
 
 ### `box member ls`
-- Purpose: List enrolled deploy members and their keys.
+- Purpose: List members from members.json, grouped with their authorized keys.
 - Usage: `ship box member ls [<box>] [--json]`
 - Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit structured JSON.
 - `--json` stdout schema: `{"members":[{"name":"alice","role":"shipper","keys":[{"id":"SHA256:DUvOnIMvzMmJ","fingerprint":"SHA256:...","type":"ssh-ed25519","current":true}]}]}`
@@ -277,7 +396,7 @@ Secret scoping:
 ### `box member rm`
 - Purpose: Remove all or one SSH key for a deploy member.
 - Usage: `ship box member rm <name> [--key <id>] [<box>]`
-- Arguments and flags: `name`: Member name, matching the authorized key comment; `--key <id>`: Remove exactly one key by full fingerprint or unique fingerprint-payload prefix (minimum 12 characters); `box`: Box host. Defaults to ship.toml box when run in an app directory.
+- Arguments and flags: `name`: Stored box-global member name; `--key <id>`: Remove exactly one key by full fingerprint or unique fingerprint-payload prefix (minimum 12 characters); `box`: Box host. Defaults to ship.toml box when run in an app directory.
 - Notes: Without --key, removes every key for the member. With --key, the selector must identify exactly one key belonging to that member. Every mutation must leave an effective owner key.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_target_required`, `invalid_box_target`, `member_not_found`, `member_key_not_found`, `member_key_ambiguous`, `member_last_owner`, `approval_required`, `member_unknown`, `host_key_changed`, `operation_failed`
@@ -416,54 +535,6 @@ Secret scoping:
 
 <!-- END VERBS -->
 
-## Output contract
-
-- Successful `ship` without `--json` writes exactly the deployment URL to stdout.
-- All progress, warnings, timings, and next steps go to stderr.
-- `ship --json` writes the mutation object to stdout instead of the URL.
-- During deploy, stderr has phase lines such as `preflight 0.4s`, `build 6.2s`, `release 1.1s`, `probe ok`, and `live`.
-- Human errors are exactly: what failed, cause, then `next: <command>`.
-- JSON errors are `{"error":{"code":"...","message":"...","cause":"...","remediation":"..."}}`.
-- Exit codes are `0` success, `1` operation failed, `2` usage or manifest error, except `ship exec` passes through the remote command exit status after setup.
-- User-facing language is `Production <branch>` or `Preview <branch>`. Internal env slugs appear only in URLs and JSON fields.
-
-## Data forks
-
-- `ship data fork` copies Production `/data` into the current branch Preview and bounces the existing Preview containers.
-- `ship data reset` empties the current branch Preview `/data` and bounces the existing Preview containers.
-- `ship data save` streams a data-only gzip tar to the laptop; its default destination is `~/.ship/backups/<app>/<env>-<release>-<utc>.data.tar.gz`. Its stdout is exactly the local path.
-- `ship data restore <id|path>` uploads through `/tmp/ship-deploy`, validates the archive before touching `/data`, then stops containers, swaps data, and starts them. Snapshot envs may be restored into another env.
-- `ship data ls [--json]` lists local snapshots only; it never calls the helper.
-- `data fork` and `data reset` require an existing Preview environment. If none exists, the error code is `no_preview_env` with remediation `ship`.
-- `data fork` and `data reset` refuse Production branches with `data_fork_on_production`.
-- Owner and shipper roles may run data commands. Agents get `approval_required` because Production data is above the agent default role.
-- `ship data fork` prints forked relative file names and byte sizes, the Preview URL, and this exact PII line: `note: Production data, including any PII, now exists in this less-guarded Preview.`.
-- If no SQLite files are found, `ship data fork` still copies non-database files and prints: `note: No SQLite files found; copied non-database files from /data only.`.
-- Data snapshots use SQLite `VACUUM INTO` and `cp -a` for other files. Their consistency guarantee is per-file, not cross-file.
-- Snapshots never contain secrets. After a box loss: `ship box setup`, `ship`, `ship secret set --from .env`, then `ship data restore`.
-
-## Deploy journal schema
-
-Each env has an append-only `journal.jsonl`. Each line is:
-
-```json
-{"schema_version":1,"app":"api","env":"production","outcome":"deployed | aborted_build | aborted_release | aborted_probe | rolled_back","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","failing_step":"apply | build | release | probe","stderr_tail":"last scrubbed stderr lines","image_prune":"post-deploy prune summary","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"member":{"fingerprint":"fingerprint","name":"alice","role":"owner"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
-```
-
-`image_prune` and `member` are optional (`omitempty`); `member.fingerprint` is also optional.
-
-## Webhook payload schemas
-
-All events POST `{"app","env","event","release","summary","why","remediation","ts"}` and never fail the operation. Box events also include `box` (the box hostname).
-
-App events go only to the affected app manifest `webhook` URL: `deploy_aborted`, `deploy_recovered`, and `preview_reaped`. Box events go once to the box URL configured by `ship box webhook`, never to app URLs: `doctor_degraded` and `approval_requested`. With no configured box URL, box events are dropped without failing anything; journals and doctor state are still recorded.
-
-- `deploy_aborted`: `why` is a deploy journal entry; `remediation` is `{"command":"ship","journal":"<entry>"}`.
-- `deploy_recovered`: `why` is `{"previous_failure":"<entry>","current":"<entry>"}`; `remediation` is `{"command":"ship status","journal":"<current>","previous_failure":"<previous>"}`.
-- `preview_reaped`: `why` is `{"branch":"feature/x","env":"Preview feature/x","expired_at":"..."}`; `remediation` is `{"command":"git checkout feature/x && ship","branch":"feature/x","env":"Preview feature/x"}`.
-- `doctor_degraded`: box event; `why` is a doctor check `{"id","status","evidence","remediation"}`; `remediation` is `{"command":"<check.remediation>","check":"<doctor check>"}`.
-- `approval_requested`: box event; `why` is `{"id","member","verb","target","expires"}`; `remediation` is `{"command":"ship box approval grant <id> <box>","request":"<approval request>"}`. The request target retains the affected app and env when present; box-target approvals have empty app/env.
-
 ## Error-code catalogue
 
 <!-- BEGIN GENERATED ERRCAT -->
@@ -514,7 +585,7 @@ App events go only to the affected app manifest `webhook` URL: `deploy_aborted`,
 - `manifest_invalid`: ship.toml validation failed; cause: {details}; remediation: `{command}`; defaults: `command="fix ship.toml"`.
 - `member_key_ambiguous`: member key selector is ambiguous; cause: key selector {selector} matches multiple keys: {matches}; remediation: `ship box member rm {name} --key <full-fingerprint> {box}`; defaults: `box="<box>", name="<name>"`.
 - `member_key_not_found`: member key selector failed; cause: no such key for member {name}; remediation: `ship box member ls {box}`; defaults: `box="<box>", name="<name>"`.
-- `member_last_owner`: member mutation refused; cause: the mutation would leave no effective owner key (an owner record with a matching authorized_keys line); remediation: `ship box member add <https-url|key|path> {box} --name <new-owner> --role owner`; defaults: `box="<box>"`.
+- `member_last_owner`: member mutation refused; cause: the mutation would leave no effective owner key; at least one effective owner key (an owner record with a matching authorized_keys line) must remain; remediation: `ship box member add <https-url|key|path> {box} --name <new-owner> --role owner`; defaults: `box="<box>"`.
 - `member_name_taken`: member rename refused; cause: member name {name} already exists; remediation: `ship box member ls {box}`; defaults: `box="<box>"`.
 - `member_not_found`: member rm failed; cause: no authorized keys found for member {name}; current members: {members}; remediation: `ship box member ls {box}`; defaults: `box="<box>"`.
 - `member_unknown`: member identity is not authorized; cause: fingerprint {fingerprint} is not in authorized_keys; remediation: `ship box member add <https-url|key|path> {box} --name <name>`; defaults: `box="<box>"`.

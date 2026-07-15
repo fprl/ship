@@ -665,6 +665,55 @@ func TestAgentDocsVerbDrift(t *testing.T) {
 	assertSameStrings(t, agentdocs.VerbNames(), want)
 }
 
+func TestAgentDocsFlagDrift(t *testing.T) {
+	leafNodes := parserLeafNodes(t)
+	for _, verb := range documentedParserVerbs(t) {
+		t.Run(strings.ReplaceAll(verb, " ", "_"), func(t *testing.T) {
+			// These are documentation projections onto boxConfigClientCmd.Args;
+			// they do not have distinct Kong nodes of their own.
+			if verb == "box config set" || verb == "box config unset" {
+				return
+			}
+			node, ok := leafNodes[verb]
+			if !ok {
+				t.Fatalf("documented verb %q has no Kong leaf", verb)
+			}
+			documented := map[string]bool{}
+			item, ok := agentdocs.Lookup(verb)
+			if !ok {
+				t.Fatalf("documented verb %q missing from agentdocs", verb)
+			}
+			for _, flag := range item.Flags {
+				if strings.HasPrefix(flag.Name, "--") {
+					documented[flag.Name] = true
+				}
+			}
+
+			kongFlags := map[string]bool{}
+			for _, group := range node.AllFlags(false) {
+				for _, flag := range group {
+					// Kong's synthesized help flag is not a field on the
+					// corresponding command struct or part of the agent contract.
+					if flag.Name == "help" {
+						continue
+					}
+					kongFlags["--"+flag.Name] = flag.Hidden
+				}
+			}
+			for name := range documented {
+				if _, ok := kongFlags[name]; !ok {
+					t.Errorf("documented long flag %s is absent from Kong metadata for %s", name, verb)
+				}
+			}
+			for name, hidden := range kongFlags {
+				if !hidden && !documented[name] {
+					t.Errorf("visible Kong long flag %s is undocumented for %s", name, verb)
+				}
+			}
+		})
+	}
+}
+
 func TestShipDocsSmoke(t *testing.T) {
 	var out bytes.Buffer
 	if err := writeShipDocs(&out); err != nil {
@@ -829,6 +878,28 @@ func collectPublicCommandLeaves(node *kong.Node, path []string, out map[string]b
 			continue
 		}
 		collectPublicCommandLeaves(child, next, out)
+	}
+}
+
+func parserLeafNodes(t *testing.T) map[string]*kong.Node {
+	t.Helper()
+	parser := newTestParser(t)
+	out := map[string]*kong.Node{}
+	if parser.Model.Node.DefaultCmd != nil {
+		out["ship"] = parser.Model.Node.DefaultCmd
+	}
+	collectCommandLeafNodes(parser.Model.Node, nil, out)
+	return out
+}
+
+func collectCommandLeafNodes(node *kong.Node, path []string, out map[string]*kong.Node) {
+	for _, child := range node.Children {
+		next := append(append([]string(nil), path...), child.Name)
+		if child.Leaf() {
+			out[strings.Join(next, " ")] = child
+			continue
+		}
+		collectCommandLeafNodes(child, next, out)
 	}
 }
 
