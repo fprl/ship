@@ -2,6 +2,7 @@ package helper
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,6 +26,8 @@ type appRollbackCmd struct {
 	SSHKeyComment string `name:"ssh-key-comment" help:"SSH public key comment for the deploying key."`
 	GitAuthor     string `name:"git-author" help:"Git author configured by the deploying client."`
 }
+
+var rollbackCaddyPath = caddyfilePath
 
 func (c appRollbackCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
@@ -119,7 +122,7 @@ func activeRelease(app, env string, ctx *config.AppContext) (string, error) {
 	return "", fmt.Errorf("no active release found")
 }
 
-func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *config.AppContext) (rollbackPayload, error) {
+func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *config.AppContext) (payload rollbackPayload, err error) {
 	containers, err := podmanPSContainers(c.App, c.Env)
 	if err != nil {
 		return rollbackPayload{}, err
@@ -132,10 +135,50 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 	if err != nil {
 		return rollbackPayload{}, err
 	}
+	manifestSnapshot, err := snapshotCurrentManifest(c.App, c.Env)
+	if err != nil {
+		return rollbackPayload{}, err
+	}
 	var started []string
+	var stoppedOld []string
+	var caddyPath string
+	var prevFragment []byte
+	var prevExisted bool
+	var caddySnapshotReady bool
+	var trafficSwitched bool
 	cleanupStarted := func() {
 		removeContainers(started)
+		warnOnRestartFailure(uniqueContainerNames(stoppedOld))
 	}
+	defer func() {
+		if err == nil {
+			return
+		}
+
+		var restoreErrs []error
+		if caddySnapshotReady {
+			if restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted); restoreErr != nil {
+				restoreErrs = append(restoreErrs, restoreErr)
+			} else if trafficSwitched {
+				if reloadErr := reloadCaddyOrRestore(caddyPath, prevFragment, prevExisted); reloadErr != nil {
+					restoreErrs = append(restoreErrs, caddyStageActionError(reloadErr, "after rollback", caddyPath))
+				}
+			}
+		}
+		cleanupStarted()
+		for _, restore := range []func() error{
+			func() error { return restoreEnvFile(c.App, c.Env, envSnapshot) },
+			func() error { return restoreStaticCurrent(c.App, c.Env, staticSnapshot) },
+			func() error { return restoreCurrentManifest(c.App, c.Env, manifestSnapshot) },
+		} {
+			if restoreErr := restore(); restoreErr != nil {
+				restoreErrs = append(restoreErrs, restoreErr)
+			}
+		}
+		if len(restoreErrs) > 0 {
+			err = fmt.Errorf("%w; rollback restore failed: %v", err, errors.Join(restoreErrs...))
+		}
+	}()
 
 	if app.HasStaticRoutes {
 		if err := activateStaticRelease(c.App, c.Env, targetRelease); err != nil {
@@ -158,46 +201,36 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 					return nil
 				}
 				for _, old := range processContainers(containers, procName, targetRelease) {
-					_, _ = utils.RunChecked("podman", []string{"rm", "-f", old}, "")
+					stopped, stopErr := stopContainers([]string{old})
+					stoppedOld = append(stoppedOld, stopped...)
+					if stopErr != nil {
+						return stopErr
+					}
 				}
 				return nil
 			},
 		})
 		started = append(started, startedResult.Started...)
 		if err != nil {
-			cleanupStarted()
-			_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-			_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
 			return rollbackPayload{}, err
 		}
 	}
-	caddyPath := caddyfilePath(c.App, c.Env)
+	caddyPath = rollbackCaddyPath(c.App, c.Env)
 	if err := addConfiguredPreviewAlias(c.App, c.Env, app); err != nil {
-		cleanupStarted()
-		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-		_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
 		return rollbackPayload{}, err
 	}
-	prevFragment, prevExisted, err := snapshotCaddyFragment(caddyPath)
+	prevFragment, prevExisted, err = snapshotCaddyFragment(caddyPath)
 	if err != nil {
-		cleanupStarted()
-		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-		_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
 		return rollbackPayload{}, fmt.Errorf("snapshot existing fragment: %v", err)
 	}
-	if err := writeAppCaddyfile(c.App, c.Env, app, targetRelease); err != nil {
-		cleanupStarted()
-		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-		_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
-		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
+	caddySnapshotReady = true
+	if err := writeRollbackCaddyfile(caddyPath, c.App, c.Env, app, targetRelease); err != nil {
 		return rollbackPayload{}, err
 	}
 	if err := reloadCaddyOrRestore(caddyPath, prevFragment, prevExisted); err != nil {
-		cleanupStarted()
-		_ = restoreEnvFile(c.App, c.Env, envSnapshot)
-		_ = restoreStaticCurrent(c.App, c.Env, staticSnapshot)
 		return rollbackPayload{}, caddyStageActionError(err, "after rollback", caddyPath)
 	}
+	trafficSwitched = true
 	if err := persistCurrentManifestFromRelease(c.App, c.Env, targetRelease); err != nil {
 		return rollbackPayload{}, err
 	}
@@ -214,6 +247,17 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 		Release:   targetRelease,
 		Processes: processNames(app.Processes),
 	}, nil
+}
+
+func writeRollbackCaddyfile(path, app, env string, ctx *config.AppContext, release string) error {
+	content, err := renderAppCaddyfileWithProcessNames(app, env, ctx, release, nil)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return store.AtomicWrite(path, []byte(content), caddyFragmentMode([]byte(content)))
 }
 
 type rollbackPayload struct {

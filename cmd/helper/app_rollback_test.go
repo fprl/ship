@@ -1,8 +1,14 @@
 package helper
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/identity"
 )
 
 func TestCurrentReleaseRejectsEmptyOrMixedProcesses(t *testing.T) {
@@ -116,4 +122,162 @@ func TestRenderRollbackText(t *testing.T) {
 	if !strings.Contains(out, "web") || !strings.Contains(out, "running") {
 		t.Fatalf("missing process row:\n%s", out)
 	}
+}
+
+func TestRollbackTargetStartupFailureRestartsStoppedOldWorkers(t *testing.T) {
+	app, oldWorker, targetWorker, logPath, oldEnv, oldManifest := setupRollbackFailureTest(t, true, false)
+
+	_, err := (appRollbackCmd{App: "api", Env: "production"}).rollbackToTarget("3333333", "2222222", app)
+	if err == nil {
+		t.Fatal("expected target startup failure")
+	}
+
+	assertRollbackFile(t, identity.EnvFile("api", "production"), oldEnv)
+	assertRollbackFile(t, identity.ManifestFile("api", "production"), oldManifest)
+	log := readRollbackLog(t, logPath)
+	for _, want := range []string{"stop " + oldWorker, "rm -f " + targetWorker, "start " + oldWorker} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("podman calls missing %q:\n%s", want, log)
+		}
+	}
+	if strings.Contains(log, "rm -f "+oldWorker) {
+		t.Fatalf("old worker was removed instead of stopped:\n%s", log)
+	}
+}
+
+func TestRollbackPersistFailureRestoresLiveState(t *testing.T) {
+	app, oldWorker, targetWorker, logPath, oldEnv, oldManifest := setupRollbackFailureTest(t, false, true)
+	oldCaddy := []byte("old caddy fragment\n")
+	caddyPath := filepath.Join(t.TempDir(), "api.production.caddy")
+	previousCaddyPath := rollbackCaddyPath
+	rollbackCaddyPath = func(string, string) string { return caddyPath }
+	t.Cleanup(func() { rollbackCaddyPath = previousCaddyPath })
+	if err := os.WriteFile(caddyPath, oldCaddy, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := (appRollbackCmd{App: "api", Env: "production"}).rollbackToTarget("3333333", "2222222", app)
+	if err == nil {
+		t.Fatal("expected manifest persist failure")
+	}
+
+	assertRollbackFile(t, identity.EnvFile("api", "production"), oldEnv)
+	assertRollbackFile(t, identity.ManifestFile("api", "production"), oldManifest)
+	assertRollbackFile(t, caddyPath, oldCaddy)
+	log := readRollbackLog(t, logPath)
+	if strings.Count(log, "rm -f "+targetWorker) < 2 {
+		t.Fatalf("target worker was not removed after it started:\n%s", log)
+	}
+	if !strings.Contains(log, "start "+oldWorker) {
+		t.Fatalf("old worker was not restarted:\n%s", log)
+	}
+	if strings.Count(log, "exec caddy caddy reload") < 2 {
+		t.Fatalf("Caddy was not reloaded for both the switch and restore:\n%s", log)
+	}
+}
+
+func setupRollbackFailureTest(t *testing.T, failTargetStart, failPersist bool) (*config.AppContext, string, string, string, []byte, []byte) {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	t.Setenv("SHIP_LOCK_DIR", filepath.Join(root, "locks"))
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := filepath.Join(root, "podman.log")
+	psPath := filepath.Join(root, "podman-ps.json")
+	t.Setenv("PODMAN_LOG", logPath)
+	t.Setenv("PODMAN_PS_FILE", psPath)
+	if failTargetStart {
+		t.Setenv("PODMAN_FAIL_RUN", "1")
+	}
+	if failPersist {
+		t.Setenv("ROLLBACK_FAIL_PERSIST", "1")
+	}
+
+	oldRelease := "3333333"
+	targetRelease := "2222222"
+	oldWorker := identity.ContainerName("api", "production", "worker", oldRelease)
+	targetWorker := identity.ContainerName("api", "production", "worker", targetRelease)
+	ps := fmt.Sprintf(`[{"Names":["%s"],"State":"running","Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"%s","ship.process":"worker","ship.release":"%s"}}]`, oldWorker, identity.InfraID("api", "production"), oldRelease)
+	if err := os.WriteFile(psPath, []byte(ps), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFakeCommand(t, bin, "id", `#!/usr/bin/env sh
+if [ "$1" = "-u" ] || [ "$1" = "-g" ]; then
+  printf '1000\n'
+  exit 0
+fi
+exit 1
+`)
+	writeFakeCommand(t, bin, "podman", `#!/usr/bin/env sh
+if [ "$1" = "ps" ]; then
+  cat "$PODMAN_PS_FILE"
+  exit 0
+fi
+printf '%s\n' "$*" >> "$PODMAN_LOG"
+if [ "$1" = "run" ] && [ "${PODMAN_FAIL_RUN:-0}" = "1" ]; then
+  echo "forced target startup failure" >&2
+  exit 1
+fi
+exit 0
+`)
+	markerPath := filepath.Join(root, "manifest-chown.failed")
+	t.Setenv("ROLLBACK_MANIFEST", identity.ManifestFile("api", "production"))
+	t.Setenv("ROLLBACK_CHOWN_MARKER", markerPath)
+	writeFakeCommand(t, bin, "chown", `#!/usr/bin/env sh
+if [ "${ROLLBACK_FAIL_PERSIST:-0}" = "1" ] && [ "$1" = "root:root" ] && [ "$2" = "$ROLLBACK_MANIFEST" ] && [ ! -e "$ROLLBACK_CHOWN_MARKER" ]; then
+  : > "$ROLLBACK_CHOWN_MARKER"
+  echo "forced manifest persist failure" >&2
+  exit 1
+fi
+exit 0
+`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	oldEnv := []byte("VERSION=old\n")
+	oldManifest := []byte("name = \"api\"\n# old release\n")
+	for path, data := range map[string][]byte{
+		identity.EnvFile("api", "production"):                            oldEnv,
+		identity.ManifestFile("api", "production"):                       oldManifest,
+		identity.ReleaseManifestFile("api", "production", targetRelease): []byte("name = \"api\"\n# target release\n"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	return &config.AppContext{
+		AppName:    "api",
+		EnvName:    "production",
+		NeedsImage: true,
+		Processes:  map[string]config.Process{"worker": {Command: "run worker"}},
+		Vars:       map[string]string{"VERSION": "new"},
+	}, oldWorker, targetWorker, logPath, oldEnv, oldManifest
+}
+
+func assertRollbackFile(t *testing.T, path string, want []byte) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if string(got) != string(want) {
+		t.Fatalf("%s = %q, want %q", path, got, want)
+	}
+}
+
+func readRollbackLog(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

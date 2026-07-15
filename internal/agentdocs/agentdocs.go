@@ -629,7 +629,7 @@ var verbs = []Verb{
 			{Name: "--json", Purpose: "Emit the raw deploy journal entry."},
 		},
 		JSONSchema: schema(
-			`{"schema_version":1,"app":"api","env":"production","outcome":"aborted_probe","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","failing_step":"probe","stderr_tail":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"probe":{"status":502,"body_snippet":"..."}}`,
+			`{"schema_version":1,"app":"api","env":"production","outcome":"aborted_probe","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","failing_step":"probe","stderr_tail":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"member":{"name":"alice","role":"owner"},"probe":{"status":502,"body_snippet":"..."}}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"unknown_preview_branch", "no_deploys", "host_key_changed", "operation_failed"},
@@ -1189,8 +1189,10 @@ const outputAndDataContracts = `
 Each env has an append-only ` + "`journal.jsonl`" + `. Each line is:
 
 ` + "```json" + `
-{"schema_version":1,"app":"api","env":"production","outcome":"deployed | aborted_build | aborted_release | aborted_probe | rolled_back","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","failing_step":"build | release | probe","stderr_tail":"last scrubbed stderr lines","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
+{"schema_version":1,"app":"api","env":"production","outcome":"deployed | aborted_build | aborted_release | aborted_probe | rolled_back","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","failing_step":"apply | build | release | probe","stderr_tail":"last scrubbed stderr lines","image_prune":"post-deploy prune summary","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"member":{"fingerprint":"fingerprint","name":"alice","role":"owner"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
 ` + "```" + `
+
+` + "`image_prune` and `member` are optional (" + "`omitempty`" + `); ` + "`member.fingerprint`" + ` is also optional.
 
 ## Webhook payload schemas
 
