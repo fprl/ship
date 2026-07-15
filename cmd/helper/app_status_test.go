@@ -148,7 +148,7 @@ func TestRenderStatusTextWithProcesses(t *testing.T) {
 		{Process: "web", Container: "ship-a8f9b2-web-abc1234", State: "running", Status: "Up 4 minutes", Release: "abc1234"},
 		{Process: "worker", Container: "ship-a8f9b2-worker-abc1234", State: "exited", Status: "Exited (1) 2 minutes ago", Release: "abc1234"},
 	}
-	out := renderStatusText("api", "production", processes, true, &statusRelease{Release: "abc1234", Source: "process"}, nil)
+	out := renderStatusText("api", "production", processes, true, &statusRelease{Release: "abc1234"}, nil)
 	if !strings.Contains(out, "api (production)") {
 		t.Fatalf("missing header:\n%s", out)
 	}
@@ -163,7 +163,7 @@ func TestRenderStatusTextWithProcesses(t *testing.T) {
 func TestRenderAppListTextEmpty(t *testing.T) {
 	out := renderAppListText(appListPayload{})
 	if strings.TrimSpace(out) != "no apps found" {
-		t.Fatalf("unexpected empty app list text:\n%s", out)
+		t.Fatalf("unexpected empty app ls text:\n%s", out)
 	}
 }
 
@@ -186,7 +186,7 @@ func TestRenderAppListTextWithApps(t *testing.T) {
 	out := renderAppListText(payload)
 	for _, want := range []string{"APP", "api", "Production", "main", "https://api.example.com", "abc1234", "healthy"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("app list table missing %q:\n%s", want, out)
+			t.Fatalf("app ls table missing %q:\n%s", want, out)
 		}
 	}
 }
@@ -224,7 +224,7 @@ func TestAppListFromStatusesSummarizesProductionAndPreview(t *testing.T) {
 		},
 	}, now)
 	if len(payload.Apps) != 1 || len(payload.Apps[0].Envs) != 2 {
-		t.Fatalf("unexpected app list payload: %+v", payload)
+		t.Fatalf("unexpected app ls payload: %+v", payload)
 	}
 	prod := payload.Apps[0].Envs[0]
 	if prod.Class != "production" || prod.Branch != "main" || prod.Env != productionEnvName || prod.CurrentRelease != "abc1234" || prod.Health != "healthy" || prod.AgeSeconds != 60 || prod.ShippedBy == nil {
@@ -239,7 +239,6 @@ func TestAppListFromStatusesSummarizesProductionAndPreview(t *testing.T) {
 func TestRenderStatusTextMarksDirtyReleaseAndStatic(t *testing.T) {
 	release := &statusRelease{
 		Release:    "abc1234-dirty-20260530t143012000000000z",
-		Source:     "mixed",
 		Dirty:      true,
 		BaseCommit: "abc1234abc1234abc1234abc1234abc1234abc1234",
 	}

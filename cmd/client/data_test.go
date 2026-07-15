@@ -189,7 +189,7 @@ func TestRunDataRestoreCleansRemoteStagingOnFailure(t *testing.T) {
 
 func TestDataPreviewURLReturnsLiveLookupError(t *testing.T) {
 	runner := &fakeDataRunner{fakeSSHRunner: &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
-		serverAppListCommand(true): {{stderr: "lookup failed", code: 1}},
+		serverAppLsCommand(true): {{stderr: "lookup failed", code: 1}},
 	}}}
 	_, err := dataPreviewURL(dataContext{
 		AppContext: &config.AppContext{AppName: "api", Server: "203.0.113.7"},
@@ -199,14 +199,14 @@ func TestDataPreviewURLReturnsLiveLookupError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "lookup failed") {
 		t.Fatalf("preview URL error = %v, want live lookup failure", err)
 	}
-	if len(runner.commands) != 1 || runner.commands[0] != serverAppListCommand(true) {
+	if len(runner.commands) != 1 || runner.commands[0] != serverAppLsCommand(true) {
 		t.Fatalf("commands = %#v, want only live URL lookup", runner.commands)
 	}
 }
 
 func TestDataPreviewURLFallsBackWhenLiveURLIsEmpty(t *testing.T) {
 	runner := &fakeDataRunner{fakeSSHRunner: &fakeSSHRunner{responses: map[string]string{
-		serverAppListCommand(true): `{"apps":[{"app":"api","envs":[{"env":"preview"}]}]}`,
+		serverAppLsCommand(true): `{"apps":[{"app":"api","envs":[{"env":"preview"}]}]}`,
 	}}}
 	url, err := dataPreviewURL(dataContext{
 		AppContext: &config.AppContext{
@@ -229,8 +229,8 @@ func TestDataPreviewURLFallsBackWhenLiveURLIsEmpty(t *testing.T) {
 
 func TestRunDataForkPreservesSuccessfulMutationWhenURLLookupFails(t *testing.T) {
 	runner := &fakeDataRunner{fakeSSHRunner: &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
-		serverAppDataForkCommand("api", productionEnvName, "preview"): {{stdout: `{"files":[{"path":"app.db","size":4,"sqlite":true}],"sqliteFiles":1}`}},
-		serverAppListCommand(true):                                    {{stderr: "status lookup failed", code: 1}},
+		serverAppDataForkCommand("api", "preview"): {{stdout: `{"files":[{"path":"app.db","size":4,"sqlite":true}],"sqliteFiles":1}`}},
+		serverAppLsCommand(true):                   {{stderr: "status lookup failed", code: 1}},
 	}}}
 	result, err := runDataFork(dataContext{
 		AppContext:    &config.AppContext{AppName: "api", Server: "example.com"},
@@ -258,7 +258,7 @@ func TestRunDataForkPreservesSuccessfulMutationWhenURLLookupFails(t *testing.T) 
 func TestRunDataResetPreservesSuccessfulMutationWhenURLLookupFails(t *testing.T) {
 	runner := &fakeDataRunner{fakeSSHRunner: &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
 		serverAppDataResetCommand("api", "preview"): {{stdout: "removed"}},
-		serverAppListCommand(true):                  {{stderr: "status lookup failed", code: 1}},
+		serverAppLsCommand(true):                    {{stderr: "status lookup failed", code: 1}},
 	}}}
 	result, err := runDataReset(dataContext{
 		AppContext:    &config.AppContext{AppName: "api", Server: "example.com"},

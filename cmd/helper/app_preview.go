@@ -52,6 +52,7 @@ func (c appPreviewResolveOrCreateCmd) Run() error {
 	if err := validatePreviewAppBranch(c.App, c.Branch); err != nil {
 		utils.DieError(err, 1)
 	}
+	authorizeOrDie(helperVerbShip, authTargetForPreviewBranch(c.App, c.Branch, "resolve-or-create"))
 	var env string
 	withAppNamedLock(c.App, previewMapLock, func() {
 		resolved, err := resolveOrCreatePreview(c.App, c.Branch, time.Now().UTC())

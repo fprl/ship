@@ -137,9 +137,9 @@ func forceAgentMemberFingerprint(argv []string, fingerprint string) []string {
 
 func isForcedMemberClaim(token string) (isFlag bool, hasInlineValue bool) {
 	switch {
-	case token == "--member-fingerprint", token == "--member":
+	case token == "--member-fingerprint":
 		return true, false
-	case strings.HasPrefix(token, "--member-fingerprint="), strings.HasPrefix(token, "--member="):
+	case strings.HasPrefix(token, "--member-fingerprint="):
 		return true, true
 	}
 	return false, false

@@ -12,7 +12,6 @@ func isEphemeralProcess(process string) bool {
 }
 
 type processStartRuntime struct {
-	Resolved    map[string]string
 	ScrubValues []string
 	UserID      string
 	GroupID     string
@@ -75,7 +74,6 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 		return result, err
 	}
 	runtime := processStartRuntime{
-		Resolved:    resolved,
 		ScrubValues: scrubValues,
 		UserID:      userID,
 		GroupID:     groupID,

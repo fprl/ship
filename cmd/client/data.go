@@ -471,7 +471,7 @@ func dataPreviewURL(data dataContext) (string, error) {
 }
 
 func runDataFork(data dataContext) (dataForkResult, error) {
-	out, err := runSSHDetail(data.Runner, data.AppContext.Server, serverAppDataForkCommand(data.AppContext.AppName, productionEnvName, data.EnvName))
+	out, err := runSSHDetail(data.Runner, data.AppContext.Server, serverAppDataForkCommand(data.AppContext.AppName, data.EnvName))
 	if err != nil {
 		return dataForkResult{}, err
 	}
@@ -492,13 +492,13 @@ func runDataReset(data dataContext) (dataResetResult, error) {
 }
 
 func liveEnvURL(runner sshRunner, server, app, env string) (string, error) {
-	out, err := runSSHDetail(runner, server, serverAppListCommand(true))
+	out, err := runSSHDetail(runner, server, serverAppLsCommand(true))
 	if err != nil {
 		return "", err
 	}
 	var payload appListJSON
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &payload); err != nil {
-		return "", operationError(fmt.Sprintf("data command failed: invalid app list JSON: %v", err), "ship status")
+		return "", operationError(fmt.Sprintf("data command failed: invalid app ls JSON: %v", err), "ship status")
 	}
 	for _, item := range payload.Apps {
 		if item.App != app {

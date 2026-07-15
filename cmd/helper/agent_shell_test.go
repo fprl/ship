@@ -15,18 +15,13 @@ func TestAgentShellAllowsHelperProtocolAndForcesPinnedFingerprint(t *testing.T) 
 	}{
 		{
 			name:     "plain helper",
-			original: "sudo -n /usr/local/bin/ship server app list --json",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "list", "--json"},
+			original: "sudo -n /usr/local/bin/ship server app ls --json",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "ls", "--json"},
 		},
 		{
 			name:     "lying fingerprint",
-			original: "sudo -n /usr/local/bin/ship server app --member-fingerprint SHA256:owner list --json",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "list", "--json"},
-		},
-		{
-			name:     "lying member claim",
-			original: "sudo -n /usr/local/bin/ship server approval --member owner list --json",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "approval", "--member-fingerprint", "SHA256:agent", "list", "--json"},
+			original: "sudo -n /usr/local/bin/ship server app --member-fingerprint SHA256:owner ls --json",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "ls", "--json"},
 		},
 		{
 			// box webhook must reach the helper so its role check can
@@ -52,11 +47,6 @@ func TestAgentShellAllowsHelperProtocolAndForcesPinnedFingerprint(t *testing.T) 
 			// agent key authorize as an arbitrary owner. It must be stripped.
 			name:     "lying fingerprint inline equals form",
 			original: "sudo -n /usr/local/bin/ship server app destroy api --member-fingerprint=SHA256:owner",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "destroy", "api"},
-		},
-		{
-			name:     "lying member inline equals form",
-			original: "sudo -n /usr/local/bin/ship server app --member=SHA256:owner destroy api",
 			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "destroy", "api"},
 		},
 		{
@@ -124,9 +114,9 @@ func TestAgentShellRefusesInteractiveArbitraryAndInjectionCommands(t *testing.T)
 		"interactive":       "",
 		"arbitrary command": "ls",
 		"unallowed helper":  "sudo -n /usr/local/bin/ship server env reap",
-		"semicolon":         "sudo -n /usr/local/bin/ship server app list ; rm -rf /",
-		"subshell":          "sudo -n /usr/local/bin/ship server app list $(rm -rf /)",
-		"newline":           "sudo -n /usr/local/bin/ship server app list\nrm -rf /",
+		"semicolon":         "sudo -n /usr/local/bin/ship server app ls ; rm -rf /",
+		"subshell":          "sudo -n /usr/local/bin/ship server app ls $(rm -rf /)",
+		"newline":           "sudo -n /usr/local/bin/ship server app ls\nrm -rf /",
 		"bad prepare path":  "mkdir -p /tmp/not-ship && chmod 0700 /tmp/not-ship",
 		"bad cleanup path":  "rm -rf /tmp/ship-deploy/../../etc",
 		"bad rsync path":    "rsync --server -vlogDtprze.iLsfxCIvu . /etc/passwd",

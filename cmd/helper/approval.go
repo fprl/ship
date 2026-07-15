@@ -10,20 +10,20 @@ import (
 )
 
 type approvalCmd struct {
-	MemberFingerprint string             `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
-	List              approvalListCmd    `cmd:"list" help:"List pending approval requests."`
-	Approve           approvalApproveCmd `cmd:"approve" help:"Approve one pending request."`
+	MemberFingerprint string           `name:"member-fingerprint" hidden:"" help:"Caller SSH public key fingerprint."`
+	Ls                approvalLsCmd    `cmd:"ls" help:"List pending approval requests."`
+	Grant             approvalGrantCmd `cmd:"grant" help:"Grant one pending request."`
 }
 
 func (c approvalCmd) BeforeApply() error {
 	return requireRoot()
 }
 
-type approvalListCmd struct {
+type approvalLsCmd struct {
 	JSON bool `name:"json" help:"Emit structured JSON instead of plain text."`
 }
 
-type approvalApproveCmd struct {
+type approvalGrantCmd struct {
 	ID string `arg:"" help:"Approval request id."`
 }
 
@@ -44,7 +44,7 @@ func (c approvalCmd) AfterApply() error {
 	return nil
 }
 
-func (c approvalListCmd) Run() error {
+func (c approvalLsCmd) Run() error {
 	if _, err := authorizeApprovalList(); err != nil {
 		utils.DieError(err, 1)
 	}
@@ -67,7 +67,7 @@ func (c approvalListCmd) Run() error {
 	return nil
 }
 
-func (c approvalApproveCmd) Run() error {
+func (c approvalGrantCmd) Run() error {
 	approver, err := authorizeApprovalGrant(c.ID)
 	if err != nil {
 		utils.DieError(err, 1)

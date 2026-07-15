@@ -34,7 +34,6 @@ type appDataCmd struct {
 
 type appDataForkCmd struct {
 	App        string `arg:"" help:"App name."`
-	ProdEnv    string `arg:"" help:"Production env name."`
 	PreviewEnv string `arg:"" help:"Preview env name."`
 }
 
@@ -115,21 +114,18 @@ type dataForkOptions struct {
 }
 
 func (c appDataForkCmd) Run() error {
-	if err := validateAppEnv(c.App, c.ProdEnv); err != nil {
-		utils.DieError(err, 1)
-	}
 	if err := validateAppEnv(c.App, c.PreviewEnv); err != nil {
 		utils.DieError(err, 1)
 	}
-	if c.PreviewEnv == productionEnvName || c.ProdEnv != productionEnvName {
+	if c.PreviewEnv == productionEnvName {
 		utils.DieError(dataForkOnProductionError("helper"), 1)
 	}
 	if err := ensureDataPreviewTarget(c.App, c.PreviewEnv); err != nil {
 		utils.DieError(err, 1)
 	}
-	authorizeOrDie(helperVerbData, authTargetForAppEnv(c.App, c.PreviewEnv, "fork", "data=fork", "from="+c.ProdEnv))
+	authorizeOrDie(helperVerbData, authTargetForAppEnv(c.App, c.PreviewEnv, "fork", "data=fork", "from="+productionEnvName))
 	withAppEnvLock(c.App, c.PreviewEnv, func() {
-		summary, err := forkAppData(c.App, c.ProdEnv, c.PreviewEnv, dataForkOptions{})
+		summary, err := forkAppData(c.App, c.PreviewEnv, dataForkOptions{})
 		if err != nil {
 			utils.DieError(err, 1)
 		}
@@ -162,8 +158,8 @@ func (c appDataResetCmd) Run() error {
 	return nil
 }
 
-func forkAppData(app, prodEnv, previewEnv string, opts dataForkOptions) (summary dataForkSummary, err error) {
-	if prodEnv != productionEnvName || previewEnv == productionEnvName {
+func forkAppData(app, previewEnv string, opts dataForkOptions) (summary dataForkSummary, err error) {
+	if previewEnv == productionEnvName {
 		return dataForkSummary{}, dataForkOnProductionError("helper")
 	}
 	if err := ensureDataPreviewTarget(app, previewEnv); err != nil {
@@ -172,7 +168,7 @@ func forkAppData(app, prodEnv, previewEnv string, opts dataForkOptions) (summary
 	if err := applyEnvLayoutPerms(app, previewEnv); err != nil {
 		return dataForkSummary{}, err
 	}
-	prodData := identity.DataDir(app, prodEnv)
+	prodData := identity.DataDir(app, productionEnvName)
 	if info, err := os.Stat(prodData); err != nil {
 		return dataForkSummary{}, fmt.Errorf("read production data dir: %v", err)
 	} else if !info.IsDir() {

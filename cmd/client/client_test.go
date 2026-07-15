@@ -955,8 +955,8 @@ func TestCommandRunnerInjectsMemberFingerprintAfterServerNamespace(t *testing.T)
 		},
 		{
 			name: "approval",
-			in:   "sudo -n /usr/local/bin/ship server approval list --json",
-			want: "sudo -n /usr/local/bin/ship server approval --member-fingerprint SHA256:abc+/123 list --json",
+			in:   "sudo -n /usr/local/bin/ship server approval ls --json",
+			want: "sudo -n /usr/local/bin/ship server approval --member-fingerprint SHA256:abc+/123 ls --json",
 		},
 		{
 			name: "env prefix",
@@ -1378,8 +1378,8 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "preflight json", command: serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})},
 		{name: "apply", command: serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, "auto", "")},
 		{name: "status json", command: serverAppStatusCommand("api", "production")},
-		{name: "list text", command: serverAppListCommand(false)},
-		{name: "list json", command: serverAppListCommand(true)},
+		{name: "ls text", command: serverAppLsCommand(false)},
+		{name: "ls json", command: serverAppLsCommand(true)},
 		{name: "logs", command: serverAppLogsCommand("api", "production", "web", false, intPtr(50))},
 		{name: "logs follow", command: serverAppLogsCommand("api", "production", "", true, intPtr(0))},
 		{name: "exec pipes", command: serverAppExecCommand("api", "production", false, []string{"sh", "-c", "exit 7"})},
@@ -1396,7 +1396,7 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "preview unpin", command: serverAppPreviewUnpinCommand("api", "feat/x")},
 		{name: "preview share", command: serverAppPreviewShareCommand("api", "feat-x-abcd", false)},
 		{name: "preview share rotate", command: serverAppPreviewShareCommand("api", "feat-x-abcd", true)},
-		{name: "data fork", command: serverAppDataForkCommand("api", "production", "feat-x-abcd")},
+		{name: "data fork", command: serverAppDataForkCommand("api", "feat-x-abcd")},
 		{name: "data reset", command: serverAppDataResetCommand("api", "feat-x-abcd")},
 		{name: "secret set", command: serverAppSecretSetCommand("api", "production", "DATABASE_URL")},
 		{name: "secret list", command: serverAppSecretListCommand("api", "production", false)},
@@ -1407,9 +1407,9 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "key list text", command: serverKeyListCommand(false)},
 		{name: "key list json", command: serverKeyListCommand(true)},
 		{name: "key rm", command: serverKeyRmCommand("alice")},
-		{name: "approval list text", command: serverApprovalListCommand(false)},
-		{name: "approval list json", command: serverApprovalListCommand(true)},
-		{name: "approval approve", command: serverApprovalApproveCommand("abc123xy")},
+		{name: "approval ls text", command: serverApprovalLsCommand(false)},
+		{name: "approval ls json", command: serverApprovalLsCommand(true)},
+		{name: "approval grant", command: serverApprovalGrantCommand("abc123xy")},
 		{name: "box webhook get", command: serverBoxWebhookGetCommand()},
 		{name: "box webhook set", command: serverBoxWebhookSetCommand("https://ntfy.example/ship")},
 		{name: "box webhook clear", command: serverBoxWebhookClearCommand()},
@@ -1523,15 +1523,15 @@ func TestServerAppPreflightJSONCommandIncludesRequiredSecrets(t *testing.T) {
 	}
 }
 
-func TestServerAppListCommandSupportsJSON(t *testing.T) {
-	got := serverAppListCommand(false)
-	want := "sudo -n /usr/local/bin/ship server app list"
+func TestServerAppLsCommandSupportsJSON(t *testing.T) {
+	got := serverAppLsCommand(false)
+	want := "sudo -n /usr/local/bin/ship server app ls"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
-	got = serverAppListCommand(true)
-	want = "sudo -n /usr/local/bin/ship server app list --json"
+	got = serverAppLsCommand(true)
+	want = "sudo -n /usr/local/bin/ship server app ls --json"
 	if got != want {
 		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1839,8 +1839,8 @@ func TestServerAppDataCommands(t *testing.T) {
 	}{
 		{
 			name: "fork",
-			got:  serverAppDataForkCommand("api", "production", "feat-x-abcd"),
-			want: "sudo -n /usr/local/bin/ship server app data fork api production feat-x-abcd",
+			got:  serverAppDataForkCommand("api", "feat-x-abcd"),
+			want: "sudo -n /usr/local/bin/ship server app data fork api feat-x-abcd",
 		},
 		{
 			name: "reset",
@@ -1890,7 +1890,7 @@ func TestRenderDataForkSummaryIncludesStableNotes(t *testing.T) {
 func TestPreviewShareRotateKeepsCapabilityWhenURLLookupFails(t *testing.T) {
 	runner := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
 		serverAppPreviewShareCommand("api", "preview", true): {{stdout: "new-capability\n"}},
-		serverAppListCommand(true):                           {{stderr: "status lookup failed", code: 1}},
+		serverAppLsCommand(true):                             {{stderr: "status lookup failed", code: 1}},
 	}}
 	result, err := runPreviewShare(previewShareContext{
 		AppContext: &config.AppContext{AppName: "api", Server: "example.com"},
@@ -1950,18 +1950,18 @@ func TestServerApprovalCommands(t *testing.T) {
 	}{
 		{
 			name: "list text",
-			got:  serverApprovalListCommand(false),
-			want: "sudo -n /usr/local/bin/ship server approval list",
+			got:  serverApprovalLsCommand(false),
+			want: "sudo -n /usr/local/bin/ship server approval ls",
 		},
 		{
 			name: "list json",
-			got:  serverApprovalListCommand(true),
-			want: "sudo -n /usr/local/bin/ship server approval list --json",
+			got:  serverApprovalLsCommand(true),
+			want: "sudo -n /usr/local/bin/ship server approval ls --json",
 		},
 		{
-			name: "approve",
-			got:  serverApprovalApproveCommand("abc123xy"),
-			want: "sudo -n /usr/local/bin/ship server approval approve abc123xy",
+			name: "grant",
+			got:  serverApprovalGrantCommand("abc123xy"),
+			want: "sudo -n /usr/local/bin/ship server approval grant abc123xy",
 		},
 	}
 	for _, tt := range tests {

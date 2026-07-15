@@ -290,6 +290,34 @@ func TestPreviewResolveAuthorizationSummaryDoesNotRepeatResolve(t *testing.T) {
 	}
 }
 
+func TestDeployPreparationUsesShipAuthorization(t *testing.T) {
+	setupAuthTest(t, map[string]store.MemberRecord{
+		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
+		bobFingerprint:   {Name: "bob", Role: store.MemberRoleShipper},
+	})
+
+	setupTarget := authTargetForAppEnv("api", productionEnvName, "setup-env")
+	setServerMemberFingerprint(aliceFingerprint)
+	if _, err := authorizeHelper(helperVerbShip, setupTarget); !errcat.Is(err, errcat.CodeApprovalRequired) {
+		t.Fatalf("agent setup-env authorization = %v, want approval_required", err)
+	}
+
+	for _, fingerprint := range []string{bobFingerprint, ""} {
+		setServerMemberFingerprint(fingerprint)
+		if _, err := authorizeHelper(helperVerbShip, setupTarget); err != nil {
+			t.Fatalf("%s setup-env authorization = %v", fingerprint, err)
+		}
+	}
+
+	previewTarget := authTargetForPreviewBranch("api", "feat/x", "resolve-or-create")
+	for _, fingerprint := range []string{aliceFingerprint, bobFingerprint, ""} {
+		setServerMemberFingerprint(fingerprint)
+		if _, err := authorizeHelper(helperVerbShip, previewTarget); err != nil {
+			t.Fatalf("%s preview resolve-or-create authorization = %v", fingerprint, err)
+		}
+	}
+}
+
 func TestFingerprintResolutionRejectsSameNameRoleCollision(t *testing.T) {
 	setupAuthTest(t, map[string]store.MemberRecord{
 		aliceFingerprint: {Name: "shared", Role: store.MemberRoleAgent},
@@ -398,7 +426,7 @@ func TestApprovalListHumanTable(t *testing.T) {
 	got := "ID MEMBER REQUEST EXPIRES\n" + formatApprovalRow(rows[0]) + "\n"
 	want := "ID MEMBER REQUEST EXPIRES\nabc123xy alice ship app=api env=production class=production release=abc123 2026-07-08T10:15:00Z\n"
 	if got != want {
-		t.Fatalf("approval listing:\nwant: %s\n got: %s", want, got)
+		t.Fatalf("approval ls output:\nwant: %s\n got: %s", want, got)
 	}
 }
 

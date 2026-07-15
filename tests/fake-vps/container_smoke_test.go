@@ -284,14 +284,14 @@ func (e *smokeEnv) buildStampedShip(t *testing.T, name, goos, stampedVersion str
 
 func (e *smokeEnv) assertShipSudoersMatchesRealHelperShape(t *testing.T) {
 	t.Helper()
-	e.ssh(t, "sudo -n /usr/local/bin/ship server app list --json >/dev/null")
+	e.ssh(t, "sudo -n /usr/local/bin/ship server app ls --json >/dev/null")
 
-	result := e.run(t, e.repoRoot, nil, e.sshBin(), "fake-vps", "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app list --json")
+	result := e.run(t, e.repoRoot, nil, e.sshBin(), "fake-vps", "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app ls --json")
 	if result.err == nil {
 		t.Fatalf("sudo accepted env-prefixed helper command; stdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
 	if strings.Contains(result.stdout, `"apps"`) {
-		t.Fatalf("env-prefixed helper command reached ship server app list; stdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
+		t.Fatalf("env-prefixed helper command reached ship server app ls; stdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
 }
 
@@ -1097,11 +1097,11 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	appList := appListPayloadForBox(t, e, app)
 	prodAppListEnv := appListEnvByAppClassBranch(t, appList, "previewapi", "production", "main")
 	if prodAppListEnv.Env != productionEnv || prodAppListEnv.URL != "https://preview.example.com" || prodAppListEnv.CurrentRelease == "" || prodAppListEnv.Health != "healthy" || prodAppListEnv.ExpiresAt != "" || prodAppListEnv.Pinned || prodAppListEnv.ShippedBy == nil {
-		t.Fatalf("production app list summary missing fields: %+v", prodAppListEnv)
+		t.Fatalf("production app ls summary missing fields: %+v", prodAppListEnv)
 	}
 	previewAppListEnv := appListEnvByAppClassBranch(t, appList, "previewapi", "preview", "feature/lifecycle")
 	if previewAppListEnv.Env != previewEnv || !strings.Contains(previewAppListEnv.URL, "previewapi-"+previewEnv+".") || previewAppListEnv.CurrentRelease == "" || previewAppListEnv.Health != "healthy" || previewAppListEnv.ExpiresAt == "" || previewAppListEnv.Pinned || previewAppListEnv.ShippedBy == nil {
-		t.Fatalf("preview app list summary missing fields: %+v", previewAppListEnv)
+		t.Fatalf("preview app ls summary missing fields: %+v", previewAppListEnv)
 	}
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "previewapi", previewEnv)
 	reapOutput := e.dockerExec(t, "/usr/local/bin/ship server env reap")
@@ -2096,7 +2096,7 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 		} `json:"apps"`
 	}
 	if err := json.Unmarshal([]byte(rawListJSON), &listPayload); err != nil {
-		t.Fatalf("app list --json output not parseable as JSON: %v\nraw:\n%s", err, rawListJSON)
+		t.Fatalf("app ls --json output not parseable as JSON: %v\nraw:\n%s", err, rawListJSON)
 	}
 	foundStatic := false
 	for _, listed := range listPayload.Apps {
@@ -2110,7 +2110,7 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 		}
 	}
 	if !foundStatic {
-		t.Fatalf("app list --json missing static-only site env:\n%+v", listPayload.Apps)
+		t.Fatalf("app ls --json missing static-only site env:\n%+v", listPayload.Apps)
 	}
 
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: static.example.com' http://127.0.0.1/", "static-ok")
@@ -2716,10 +2716,10 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 		} `json:"apps"`
 	}
 	if err := json.Unmarshal([]byte(rawListJSON), &listPayload); err != nil {
-		t.Fatalf("app list --json output not parseable as JSON: %v\nraw:\n%s", err, rawListJSON)
+		t.Fatalf("app ls --json output not parseable as JSON: %v\nraw:\n%s", err, rawListJSON)
 	}
 	if len(listPayload.Apps) == 0 {
-		t.Fatalf("app list --json returned no apps after deploy:\n%s", rawListJSON)
+		t.Fatalf("app ls --json returned no apps after deploy:\n%s", rawListJSON)
 	}
 	found := false
 	for _, listed := range listPayload.Apps {
@@ -2744,7 +2744,7 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("app list --json missing api/production/web process:\n%+v", listPayload.Apps)
+		t.Fatalf("app ls --json missing api/production/web process:\n%+v", listPayload.Apps)
 	}
 
 	// A container with no stdout/stderr is not a silent success.
@@ -3542,7 +3542,7 @@ func appListEnvByAppClassBranch(t *testing.T, payload smokeAppListPayload, app, 
 			}
 		}
 	}
-	t.Fatalf("app list missing %s %s %s: %+v", app, class, branch, payload.Apps)
+	t.Fatalf("app ls missing %s %s %s: %+v", app, class, branch, payload.Apps)
 	return smokeAppListEnv{}
 }
 

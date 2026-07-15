@@ -71,7 +71,7 @@ func TestForkAppDataVacuumCopiesSQLiteUploadsAndLeavesProdUnchanged(t *testing.T
 	}
 	prodBefore := hashTree(t, prodDir)
 
-	summary, err := forkAppData(app, prod, preview, dataForkOptions{})
+	summary, err := forkAppData(app, preview, dataForkOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestForkAppDataPreservesSymlinksWithoutFollowingThemAsRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	summary, err := forkAppData(app, productionEnvName, preview, dataForkOptions{})
+	summary, err := forkAppData(app, preview, dataForkOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestForkAppDataFailureBeforeSwapLeavesPreviewDataIntact(t *testing.T) {
 	wantPreview := hashTree(t, previewDir)
 	errBoom := errors.New("boom before swap")
 
-	_, err := forkAppData(app, productionEnvName, "feature-crash-abcd", dataForkOptions{BeforeSwap: func() error {
+	_, err := forkAppData(app, "feature-crash-abcd", dataForkOptions{BeforeSwap: func() error {
 		return errBoom
 	}})
 	if !errors.Is(err, errBoom) {

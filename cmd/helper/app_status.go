@@ -65,14 +65,14 @@ func (c appStatusCmd) Run() error {
 	return nil
 }
 
-// appListCmd merges durable env identity anchors with live process labels.
+// appLsCmd merges durable env identity anchors with live process labels.
 // Static-only apps have no containers, so the identity file is the source
 // for "this env exists"; process rows still come from Podman labels.
-type appListCmd struct {
+type appLsCmd struct {
 	JSON bool `name:"json" help:"Emit structured JSON instead of the text table."`
 }
 
-func (c appListCmd) Run() error {
+func (c appLsCmd) Run() error {
 	authorizeOrDie(helperVerbRead, authTargetForBox("status"))
 	apps, err := appListStatuses()
 	if err != nil {
@@ -248,7 +248,6 @@ type statusRelease struct {
 	Dirty          bool   `json:"dirty,omitempty"`
 	BaseCommit     string `json:"base_commit,omitempty"`
 	CreatedAt      string `json:"created_at,omitempty"`
-	Source         string `json:"source"`
 	Mixed          bool   `json:"mixed,omitempty"`
 	ProcessRelease string `json:"process_release,omitempty"`
 	StaticRelease  string `json:"static_release,omitempty"`
@@ -676,26 +675,24 @@ func activeStatusRelease(processes []processStatus, static *staticStatus) *statu
 	}
 	switch {
 	case processMixed:
-		release := statusRelease{Source: "mixed", Mixed: true, ProcessRelease: "mixed", StaticRelease: staticRelease}
+		release := statusRelease{Mixed: true, ProcessRelease: "mixed", StaticRelease: staticRelease}
 		return &release
 	case processRelease != "" && staticRelease != "" && processRelease != staticRelease:
 		return &statusRelease{
-			Source:         "mixed",
 			Mixed:          true,
 			ProcessRelease: processRelease,
 			StaticRelease:  staticRelease,
 		}
 	case processRelease != "":
-		release := statusRelease{Release: processRelease, Source: "process"}
+		release := statusRelease{Release: processRelease}
 		copyProcessReleaseMetadata(processes, processRelease, &release)
 		if staticRelease == processRelease {
-			release.Source = "mixed"
 			release.StaticRelease = staticRelease
 			release.ProcessRelease = processRelease
 		}
 		return &release
 	case staticRelease != "":
-		release := statusRelease{Release: staticRelease, Source: "static"}
+		release := statusRelease{Release: staticRelease}
 		copyStaticReleaseMetadata(static, &release)
 		return &release
 	default:

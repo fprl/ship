@@ -42,7 +42,7 @@ func CmdBoxAppLs(server string, jsonFlag bool) {
 	}
 	defer runner.Close()
 
-	out := runSSHChecked(runner, server, serverAppListCommand(jsonFlag), "app list failed", "ship box app ls "+server)
+	out := runSSHChecked(runner, server, serverAppLsCommand(jsonFlag), "app ls failed", "ship box app ls "+server)
 	fmt.Print(out)
 }
 

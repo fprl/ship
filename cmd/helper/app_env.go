@@ -42,6 +42,7 @@ func (c appSetupEnvCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
+	authorizeOrDie(helperVerbShip, authTargetForAppEnv(c.App, c.Env, "setup-env"))
 	withAppEnvLock(c.App, c.Env, func() {
 		c.runLocked(true)
 	})

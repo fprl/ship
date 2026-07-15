@@ -17,7 +17,7 @@ func CmdBoxApprovalLs(server string, jsonFlag bool) {
 	}
 	defer runner.Close()
 
-	stdout, stderr, code, err := runner.RunSSH(server, serverApprovalListCommand(jsonFlag))
+	stdout, stderr, code, err := runner.RunSSH(server, serverApprovalLsCommand(jsonFlag))
 	if err != nil || code != 0 {
 		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
 		if outcome.TransportCoded != nil {
@@ -46,7 +46,7 @@ func CmdBoxApprovalGrant(server, id string) {
 	}
 	defer runner.Close()
 
-	stdout, stderr, code, err := runner.RunSSH(server, serverApprovalApproveCommand(id))
+	stdout, stderr, code, err := runner.RunSSH(server, serverApprovalGrantCommand(id))
 	if err != nil || code != 0 {
 		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
 		if outcome.TransportCoded != nil {
@@ -58,7 +58,7 @@ func CmdBoxApprovalGrant(server, id string) {
 		}
 		detail := outcome.Detail
 		if detail == "" {
-			detail = "approve failed"
+			detail = "grant failed"
 		}
 		utils.DieError(operationError(detail, "ship box approval grant "+id+" "+server), 1)
 	}

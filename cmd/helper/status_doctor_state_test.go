@@ -161,8 +161,7 @@ func TestDoctorReportJSONShape(t *testing.T) {
 }
 
 func TestDoctorServiceFindingsRequireCaddy(t *testing.T) {
-	desired := validDoctorHostDesired()
-	findings := doctorServiceFindingsFor(desired, func(service string) string {
+	findings := doctorServiceFindingsFor(func(service string) string {
 		if service == "caddy" {
 			return "failed"
 		}
@@ -175,8 +174,7 @@ func TestDoctorServiceFindingsRequireCaddy(t *testing.T) {
 }
 
 func TestDoctorServiceFindingsAllowInactiveOptionalServices(t *testing.T) {
-	desired := validDoctorHostDesired()
-	findings := doctorServiceFindingsFor(desired, func(service string) string {
+	findings := doctorServiceFindingsFor(func(service string) string {
 		if service == "caddy" {
 			return "active"
 		}
@@ -276,8 +274,8 @@ func TestDoctorChecksIncludeDoctorTimerAndReportItDegraded(t *testing.T) {
 			if check.Status != doctorStatusDegraded {
 				t.Fatalf("doctor timer status = %s, want %s (%+v)", check.Status, doctorStatusDegraded, check)
 			}
-			if !strings.Contains(check.Evidence, "self-check") {
-				t.Fatalf("doctor timer evidence should explain the self-check window: %+v", check)
+			if !strings.Contains(check.Evidence, "records the check") || !strings.Contains(check.Evidence, "surfaces the recorded result") {
+				t.Fatalf("doctor timer evidence should explain the recorded check/result flow: %+v", check)
 			}
 			return
 		}

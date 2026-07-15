@@ -89,11 +89,11 @@ func serverAppStatusCommand(appName, envName string) string {
 	return serverCommand("app", "status", "--json", appName, envName)
 }
 
-func serverAppListCommand(jsonFlag bool) string {
+func serverAppLsCommand(jsonFlag bool) string {
 	if jsonFlag {
-		return serverCommand("app", "list", "--json")
+		return serverCommand("app", "ls", "--json")
 	}
-	return serverCommand("app", "list")
+	return serverCommand("app", "ls")
 }
 
 func serverAppDestroyCommand(appName string) string {
@@ -115,15 +115,15 @@ func serverKeyRmCommand(name string) string {
 	return serverCommand("key", "rm", name)
 }
 
-func serverApprovalListCommand(jsonFlag bool) string {
+func serverApprovalLsCommand(jsonFlag bool) string {
 	if jsonFlag {
-		return serverCommand("approval", "list", "--json")
+		return serverCommand("approval", "ls", "--json")
 	}
-	return serverCommand("approval", "list")
+	return serverCommand("approval", "ls")
 }
 
-func serverApprovalApproveCommand(id string) string {
-	return serverCommand("approval", "approve", id)
+func serverApprovalGrantCommand(id string) string {
+	return serverCommand("approval", "grant", id)
 }
 
 func serverBoxWebhookGetCommand() string {
@@ -228,8 +228,8 @@ func serverAppPreviewShareCommand(appName, envName string, rotate bool) string {
 	return serverCommand(args...)
 }
 
-func serverAppDataForkCommand(appName, prodEnv, previewEnv string) string {
-	return serverCommand("app", "data", "fork", appName, prodEnv, previewEnv)
+func serverAppDataForkCommand(appName, previewEnv string) string {
+	return serverCommand("app", "data", "fork", appName, previewEnv)
 }
 
 func serverAppDataResetCommand(appName, previewEnv string) string {

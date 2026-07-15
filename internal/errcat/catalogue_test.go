@@ -72,7 +72,7 @@ func TestBoxGrammarRemediations(t *testing.T) {
 		want   string
 	}{
 		{
-			name: "app list target",
+			name: "app ls target",
 			code: CodeBoxTargetRequired,
 			want: "ship box app ls <box>",
 		},

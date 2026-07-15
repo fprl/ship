@@ -442,15 +442,14 @@ func doctorServiceHealthCheck(stateStore store.Store, serviceStatus func(string)
 	if err != nil || !installed {
 		return doctorCheck(doctorCheckServiceHealth, doctorStatusDegraded, "host state unavailable; required services cannot be determined", doctorBoxSetupCommand(boxTarget))
 	}
-	hostFile, err := stateStore.ReadHost()
-	if err != nil {
+	if _, err := stateStore.ReadHost(); err != nil {
 		return doctorCheck(doctorCheckServiceHealth, doctorStatusDegraded, "host state invalid; required services cannot be determined", doctorBoxSetupCommand(boxTarget))
 	}
-	findings := doctorServiceFindingsFor(hostFile.Desired, serviceStatus)
+	findings := doctorServiceFindingsFor(serviceStatus)
 	if len(findings) > 0 {
-		return doctorCheck(doctorCheckServiceHealth, doctorStatusFailed, strings.Join(findings, "; "), doctorRestartServicesCommand(boxTarget, hostFile.Desired))
+		return doctorCheck(doctorCheckServiceHealth, doctorStatusFailed, strings.Join(findings, "; "), doctorRestartServicesCommand(boxTarget))
 	}
-	required := requiredServicesFor(hostFile.Desired)
+	required := requiredServicesFor()
 	return doctorCheck(doctorCheckServiceHealth, doctorStatusOK, fmt.Sprintf("%s active", strings.Join(required, ", ")), doctorRerunCommand(boxTarget))
 }
 
@@ -527,7 +526,6 @@ func diskUsageForPath(path string) (diskUsage, error) {
 type tlsCertStatus struct {
 	Host     string
 	NotAfter time.Time
-	Path     string
 	Found    bool
 }
 
@@ -591,11 +589,10 @@ func routedTLSCertStatuses(now time.Time) ([]tlsCertStatus, error) {
 	statuses := make([]tlsCertStatus, 0, len(sortedHosts))
 	for _, host := range sortedHosts {
 		status := tlsCertStatus{Host: host}
-		cert, path, err := readCaddyCertificate(host)
+		cert, _, err := readCaddyCertificate(host)
 		if err == nil {
 			status.Found = true
 			status.NotAfter = cert.NotAfter
-			status.Path = path
 		} else if !os.IsNotExist(err) {
 			return nil, err
 		}
@@ -665,7 +662,6 @@ func readCaddyCertificate(host string) (*x509.Certificate, string, error) {
 func findCaddyCertificatePath(host string) (string, error) {
 	patterns := []string{
 		filepath.Join(caddyDataDir(), "caddy", "certificates", "*", host, host+".crt"),
-		filepath.Join(caddyDataDir(), "certificates", "*", host, host+".crt"),
 	}
 	for _, pattern := range patterns {
 		matches, err := filepath.Glob(pattern)
@@ -703,7 +699,7 @@ func doctorReaperTimerCheck(timerState func(string) systemdUnitState, boxTarget 
 func doctorDoctorTimerCheck(timerState func(string) systemdUnitState, boxTarget string) store.DoctorCheck {
 	state := timerState(doctorTimerUnit)
 	remediation := doctorTimerStartCommand(boxTarget, doctorTimerUnit)
-	const selfCheckNote = "; self-check is observed when doctor runs (timer, manual doctor, or box status)"
+	const selfCheckNote = "; doctor timer/manual run records the check; box status surfaces the recorded result"
 	if !state.Present {
 		return doctorCheck(doctorCheckDoctorTimer, doctorStatusFailed, fmt.Sprintf("%s missing at %s%s", state.Name, state.Path, selfCheckNote), remediation)
 	}
@@ -774,9 +770,9 @@ func doctorDeployJournalsCheck(appEnvs func() ([]appEnvStatus, error), boxTarget
 	return doctorCheck(doctorCheckDeployJournals, doctorStatusOK, strings.Join(readable, "; "), doctorRerunCommand(boxTarget))
 }
 
-func doctorServiceFindingsFor(desired store.HostDesired, serviceStatus func(string) string) []string {
+func doctorServiceFindingsFor(serviceStatus func(string) string) []string {
 	var findings []string
-	for _, service := range requiredServicesFor(desired) {
+	for _, service := range requiredServicesFor() {
 		status := serviceStatus(service)
 		if status != "active" {
 			findings = append(findings, fmt.Sprintf("%s service is %s (expected active)", service, status))
@@ -785,7 +781,7 @@ func doctorServiceFindingsFor(desired store.HostDesired, serviceStatus func(stri
 	return findings
 }
 
-func requiredServicesFor(store.HostDesired) []string {
+func requiredServicesFor() []string {
 	return []string{"caddy"}
 }
 
@@ -873,9 +869,9 @@ func doctorTimerStartCommand(target, unit string) string {
 	return doctorSSHCommand(target, fmt.Sprintf("sudo systemctl enable %s && sudo systemctl start %s", utils.ShellEscape(unit), utils.ShellEscape(unit)))
 }
 
-func doctorRestartServicesCommand(target string, desired store.HostDesired) string {
+func doctorRestartServicesCommand(target string) string {
 	var commands []string
-	for _, service := range requiredServicesFor(desired) {
+	for _, service := range requiredServicesFor() {
 		commands = append(commands, fmt.Sprintf("sudo systemctl restart %s.service", utils.ShellEscape(service)))
 	}
 	return doctorSSHCommand(target, strings.Join(commands, " && "))

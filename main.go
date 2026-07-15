@@ -665,7 +665,7 @@ type boxApprovalCmd struct {
 type boxApprovalLsCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
 	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
-	JSON   bool   `name:"json" help:"Emit structured JSON for the pending approval list."`
+	JSON   bool   `name:"json" help:"Emit structured JSON for pending approvals."`
 }
 
 func (c boxApprovalLsCmd) Run() error {

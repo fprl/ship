@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -279,24 +277,6 @@ func (s *webhookTestSink) singlePayload(t *testing.T) map[string]any {
 		t.Fatalf("webhook payload is not JSON: %v\nraw:\n%s", err, s.bodies[0])
 	}
 	return payload
-}
-
-func writeAppliedWebhookManifest(t *testing.T, app, env, webhookURL string) {
-	t.Helper()
-	root := identity.EnvRoot(app, env)
-	if err := os.MkdirAll(root, 0755); err != nil {
-		t.Fatal(err)
-	}
-	manifest := `name = "` + app + `"
-box = "fake-vps"
-webhook = "` + webhookURL + `"
-
-[processes]
-web = { port = 3000 }
-`
-	if err := os.WriteFile(filepath.Join(root, "ship.toml"), []byte(manifest), 0644); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func assertWebhookField(t *testing.T, payload map[string]any, field, want string) {
