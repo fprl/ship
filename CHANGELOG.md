@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+A leaner ship that says the right thing when it fails. A whole-repo
+compat-and-quality sweep deleted every shim, fallback, and dead branch
+that only a never-shipped version could have needed (~1,400 lines gone),
+and the bugs the sweep tripped over got fixed for real.
+
+### Fixed
+
+- A failed `ship rollback` always leaves the previous release serving:
+  old workers are stopped, not deleted, and every failure path restores
+  traffic, containers, env, and manifest — restart problems included in
+  the error, and a journal hiccup after a successful switch is a warning,
+  not a false failure.
+- `ship box update` / `box setup` converge now actually reapply the
+  member key file and restart a running service whose unit file changed
+  (previously both quietly kept the old state until reboot).
+- `ship exec -- --json` no longer flips ship's own error output to JSON
+  — flags after `--` belong to your command.
+- `ship box setup --check` works on a box that has never seen ship
+  (missing ufw is a pending change, not an error), and its error copy no
+  longer claims a fresh box "predates" anything.
+- Production `ship data restore` says restore — its own error code and a
+  runnable `--confirm` remediation instead of borrowing `ship rm`'s
+  wording; failed remote commands now suggest a retry command that
+  matches what you ran.
+
+### Changed
+
+- A key without a member record is not a member (ADR-0020): the store is
+  the identity truth, `authorized_keys` a rendered artifact; unrecorded
+  keys don't authorize and are dropped on the next render. `member add`
+  writes the record first, `box setup` is a real recovery path (re-runs
+  re-enroll the keys it's given — including refreshing their recorded
+  name — and rebuild a corrupt register with a loud warning), and the
+  deploy-preparation verbs (`setup-env`, preview create) answer to the
+  same role rules as shipping.
+- `ship init` scaffolds and nothing else: `--name`/`--box`/`--host`
+  deleted per spec; edit ship.toml.
+- Missing required arguments print ship's own answer with a runnable
+  next step instead of the parser's generic error (July 14 packet).
+- Hidden helper wire verbs renamed to match the public grammar
+  (`app ls`, `approval ls|grant`); update your box after installing.
+
 ## v0.6.0
 
 One grammar, one webhook, previews on your own domain, and member
