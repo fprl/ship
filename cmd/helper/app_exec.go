@@ -76,7 +76,10 @@ func (c appExecCmd) run() error {
 }
 
 func resolveExecTarget(app, env string) (execTarget, error) {
-	entry, err := readLatestSuccessfulDeployJournalEntry(app, env)
+	entry, torn, err := readLatestSuccessfulDeployJournalEntryWithStatus(app, env)
+	if torn {
+		warnTornDeployJournal(identity.DeployJournalFile(app, env))
+	}
 	if err != nil {
 		return execTarget{}, err
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/journal"
 	"github.com/fprl/ship/internal/secrets"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
@@ -321,21 +322,11 @@ func doctorChecksFor(opts doctorOptions) []store.DoctorCheck {
 }
 
 func doctorBoxUpdateCheck(stateStore store.Store, boxTarget string) store.DoctorCheck {
-	file, err := os.Open(stateStore.UpdatesJournalPath())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return doctorBoxUpdateVersionCheck(stateStore, boxTarget)
-		}
-		return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "cannot read update journal: "+singleLine(err.Error()), doctorBoxUpdateCommand(boxTarget))
-	}
-	defer file.Close()
-
 	pending := make(map[string]bool)
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
+	torn, err := journal.Read(stateStore.UpdatesJournalPath(), func(line []byte) error {
 		var entry updateJournalEntry
-		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
-			return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "invalid update journal entry", doctorBoxUpdateCommand(boxTarget))
+		if err := json.Unmarshal(line, &entry); err != nil {
+			return fmt.Errorf("invalid update journal entry: %w", err)
 		}
 		switch entry.Event {
 		case "started":
@@ -343,13 +334,17 @@ func doctorBoxUpdateCheck(stateStore store.Store, boxTarget string) store.Doctor
 		case "completed":
 			delete(pending, entry.Version)
 		case "config_set", "config_unset":
-			continue
+			return nil
 		default:
-			return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "invalid update journal event", doctorBoxUpdateCommand(boxTarget))
+			return fmt.Errorf("invalid update journal event")
 		}
-	}
-	if err := scanner.Err(); err != nil {
+		return nil
+	})
+	if err != nil {
 		return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "cannot read update journal: "+singleLine(err.Error()), doctorBoxUpdateCommand(boxTarget))
+	}
+	if torn {
+		fmt.Fprintln(os.Stderr, "warning: update journal has an incomplete final entry (interrupted write); run ship box doctor")
 	}
 	if len(pending) > 0 {
 		versions := make([]string, 0, len(pending))
@@ -358,6 +353,9 @@ func doctorBoxUpdateCheck(stateStore store.Store, boxTarget string) store.Doctor
 		}
 		sort.Strings(versions)
 		return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "incomplete update started for "+strings.Join(versions, ", "), doctorBoxUpdateCommand(boxTarget))
+	}
+	if torn {
+		return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "update journal has an incomplete final entry", doctorBoxUpdateCommand(boxTarget))
 	}
 	return doctorBoxUpdateVersionCheck(stateStore, boxTarget)
 }
@@ -750,9 +748,10 @@ func doctorDeployJournalsCheck(appEnvs func() ([]appEnvStatus, error), boxTarget
 
 	var readable []string
 	var findings []string
+	var degraded []string
 	var firstBadPath string
 	for _, app := range apps {
-		entries, err := readDeployJournalEntries(app.App, app.Env)
+		entries, torn, err := readDeployJournalEntriesWithStatus(app.App, app.Env)
 		name := app.App + "/" + app.Env
 		if err != nil {
 			path := identity.DeployJournalFile(app.App, app.Env)
@@ -763,9 +762,16 @@ func doctorDeployJournalsCheck(appEnvs func() ([]appEnvStatus, error), boxTarget
 			continue
 		}
 		readable = append(readable, fmt.Sprintf("%s (%d entries)", name, len(entries)))
+		if torn {
+			warnTornDeployJournal(identity.DeployJournalFile(app.App, app.Env))
+			degraded = append(degraded, name+": incomplete final entry")
+		}
 	}
 	if len(findings) > 0 {
 		return doctorCheck(doctorCheckDeployJournals, doctorStatusFailed, strings.Join(findings, "; "), doctorJournalPermissionsCommand(boxTarget, firstBadPath))
+	}
+	if len(degraded) > 0 {
+		return doctorCheck(doctorCheckDeployJournals, doctorStatusDegraded, strings.Join(append(readable, degraded...), "; "), doctorRerunCommand(boxTarget))
 	}
 	return doctorCheck(doctorCheckDeployJournals, doctorStatusOK, strings.Join(readable, "; "), doctorRerunCommand(boxTarget))
 }

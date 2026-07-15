@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/identity"
 )
 
 const (
@@ -44,12 +45,15 @@ func pruneReleaseImagesAfterDeploy(app, env, liveFallback string, current deploy
 	if err != nil {
 		return "", err
 	}
-	entries, err := readDeployJournalEntries(app, env)
+	entries, torn, err := readDeployJournalEntriesWithStatus(app, env)
 	if err != nil {
 		if !errcat.Is(err, errcat.CodeNoDeploys) {
 			return "", err
 		}
 		entries = nil
+	}
+	if torn {
+		warnTornDeployJournal(identity.DeployJournalFile(app, env))
 	}
 	liveRelease := currentActiveReleaseBestEffort(app, env)
 	if liveRelease == "" {

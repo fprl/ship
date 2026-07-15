@@ -637,7 +637,13 @@ func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 			return err
 		}
 		apps[i].Static = static
-		if entry, err := readLatestSuccessfulDeployJournalEntry(apps[i].App, apps[i].Env); err == nil {
+		if entry, torn, err := readLatestSuccessfulDeployJournalEntryWithStatus(apps[i].App, apps[i].Env); torn {
+			warnTornDeployJournal(identity.DeployJournalFile(apps[i].App, apps[i].Env))
+			if err == nil {
+				actor := entry.Identity
+				apps[i].ShippedBy = &actor
+			}
+		} else if err == nil {
 			actor := entry.Identity
 			apps[i].ShippedBy = &actor
 		}

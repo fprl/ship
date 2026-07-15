@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -17,7 +18,10 @@ func (c appWhyCmd) Run() error {
 		utils.DieError(err, 1)
 	}
 	authorizeOrDie(helperVerbRead, authTargetForAppEnv(c.App, c.Env, "why"))
-	entry, err := readLatestDeployJournalEntry(c.App, c.Env)
+	entry, torn, err := readLatestDeployJournalEntryWithStatus(c.App, c.Env)
+	if torn {
+		warnTornDeployJournal(identity.DeployJournalFile(c.App, c.Env))
+	}
 	if err != nil {
 		utils.DieError(err, 1)
 	}

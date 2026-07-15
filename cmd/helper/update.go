@@ -2,7 +2,6 @@ package helper
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/host"
+	"github.com/fprl/ship/internal/journal"
 	"github.com/fprl/ship/internal/provision"
 	"github.com/fprl/ship/internal/provision/local"
 	"github.com/fprl/ship/internal/release"
@@ -158,21 +158,6 @@ type updateJournalEntry struct {
 func appendUpdateJournal(entry updateJournalEntry) error {
 	entry.SchemaVersion = 1
 	entry.At = time.Now().UTC().Format(time.RFC3339Nano)
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
 	path := store.Default().UpdatesJournalPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	if _, err := file.Write(append(data, '\n')); err != nil {
-		return err
-	}
-	return file.Sync()
+	return journal.Append(path, entry)
 }

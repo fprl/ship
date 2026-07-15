@@ -88,6 +88,52 @@ func TestApprovalFlowIsOneShotAndJournaled(t *testing.T) {
 	assertApprovalJournalEvent(t, events, "consumed", "alice", "agent")
 }
 
+func TestApprovalGrantAndConsumeSurviveAuditJournalFailure(t *testing.T) {
+	setupAuthTest(t, map[string]store.MemberRecord{
+		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
+		bobFingerprint:   {Name: "bob", Role: store.MemberRoleOwner},
+	})
+	target := authTargetForAppEnv("api", productionEnvName, "ship", "release=abc123")
+
+	setServerMemberFingerprint(aliceFingerprint)
+	_, approvalErr := authorizeHelper(helperVerbShip, target)
+	if !errcat.Is(approvalErr, errcat.CodeApprovalRequired) {
+		t.Fatalf("initial authorization error = %v, want approval_required", approvalErr)
+	}
+	coded, _ := errcat.As(approvalErr)
+	id := approvalIDFromRemediation(t, coded.Remediation())
+	journalPath := store.Default().ApprovalsJournalPath()
+	if err := os.Remove(journalPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(journalPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	var grantErr, consumeErr error
+	stderr := captureStderr(t, func() {
+		setServerMemberFingerprint(bobFingerprint)
+		approver, err := authorizeApprovalGrant(id)
+		if err != nil {
+			grantErr = err
+			return
+		}
+		_, grantErr = approveRequest(id, approver)
+		if grantErr != nil {
+			return
+		}
+
+		setServerMemberFingerprint(aliceFingerprint)
+		_, consumeErr = authorizeHelper(helperVerbShip, target)
+	})
+	if grantErr != nil || consumeErr != nil {
+		t.Fatalf("grant error = %v, consume error = %v", grantErr, consumeErr)
+	}
+	if !strings.Contains(stderr, journalPath) || strings.Count(stderr, "approval mutation succeeded but failed to write approval journal") != 2 {
+		t.Fatalf("audit failure warnings = %q", stderr)
+	}
+}
+
 func TestApprovalGrantRequiresCoveredRoleAndDifferentFingerprint(t *testing.T) {
 	setupAuthTest(t, map[string]store.MemberRecord{
 		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},

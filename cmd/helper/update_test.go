@@ -66,6 +66,30 @@ func TestDoctorFlagsStartedUpdateWithoutCompletion(t *testing.T) {
 	}
 }
 
+func TestDoctorPreservesIncompleteUpdateDetectionWithTornTail(t *testing.T) {
+	root := t.TempDir()
+	stateStore := store.Store{Root: root}
+	if err := appendUpdateJournalForStore(stateStore, updateJournalEntry{Event: "started", Version: "v0.4.1"}); err != nil {
+		t.Fatal(err)
+	}
+	path := stateStore.UpdatesJournalPath()
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"event":"completed"`); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	check := doctorBoxUpdateCheck(stateStore, "fake-vps")
+	if check.Status != doctorStatusDegraded || !strings.Contains(check.Evidence, "incomplete update started for v0.4.1") {
+		t.Fatalf("unexpected partial update check: %+v", check)
+	}
+}
+
 func appendUpdateJournalForStore(stateStore store.Store, entry updateJournalEntry) error {
 	previous := os.Getenv("SHIP_STATE_DIR")
 	if err := os.Setenv("SHIP_STATE_DIR", stateStore.Root); err != nil {

@@ -2,6 +2,7 @@ package helper
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/identity"
 )
 
 func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
@@ -117,6 +119,54 @@ func TestLatestDeployJournalEntryNoDeploysError(t *testing.T) {
 	want := "deploy journal lookup failed\nno deploys recorded for api (production)\nnext: ship"
 	if !errcat.Is(err, errcat.CodeNoDeploys) || err.Error() != want {
 		t.Fatalf("unexpected no_deploys error:\n%s", err.Error())
+	}
+}
+
+func TestExecReleaseSelectionSurvivesTornDeployJournalTail(t *testing.T) {
+	setupJournalHostTest(t)
+	release := "abcdef1"
+	manifestPath := identity.ReleaseManifestFile("api", "production", release)
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte("name = \"api\"\nbox = \"example.com\"\n\n[processes]\nweb = { cmd = \"run-web\" }\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	payload := fmt.Sprintf(`[{"Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"%s","ship.release":"%s"}}]`, identity.InfraID("api", "production"), release)
+	writeFakeCommand(t, bin, "podman", fmt.Sprintf("#!/usr/bin/env sh\nprintf '%%s\\n' '%s'\n", payload))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	journalPath := identity.DeployJournalFile("api", "production")
+	entry := deployJournalEntry{Outcome: "deployed", AttemptedRelease: release}
+	if err := appendDeployJournalEntry("api", "production", entry, nil); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(journalPath, os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"outcome":"deployed","attempted_release":"newer"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	var target execTarget
+	var resolveErr error
+	stderr := captureStderr(t, func() {
+		target, resolveErr = resolveExecTarget("api", "production")
+	})
+	if resolveErr != nil {
+		t.Fatal(resolveErr)
+	}
+	defer target.Cleanup()
+	if target.Release != release {
+		t.Fatalf("exec release = %q, want %q", target.Release, release)
+	}
+	if got := strings.Count(stderr, tornDeployJournalWarning+"\n"); got != 1 {
+		t.Fatalf("torn warning count = %d, stderr = %q", got, stderr)
 	}
 }
 

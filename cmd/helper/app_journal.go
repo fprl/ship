@@ -1,22 +1,39 @@
 package helper
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/journal"
 	"github.com/fprl/ship/internal/utils"
 )
 
 const deployJournalSchemaVersion = 1
+
+const tornDeployJournalWarning = "warning: deploy journal has an incomplete final entry (interrupted write); run ship box doctor"
+
+var tornDeployJournalWarnings = struct {
+	sync.Mutex
+	paths map[string]bool
+}{paths: map[string]bool{}}
+
+func warnTornDeployJournal(path string) {
+	tornDeployJournalWarnings.Lock()
+	defer tornDeployJournalWarnings.Unlock()
+	if tornDeployJournalWarnings.paths[path] {
+		return
+	}
+	tornDeployJournalWarnings.paths[path] = true
+	fmt.Fprintln(os.Stderr, tornDeployJournalWarning)
+}
 
 type deployIdentity struct {
 	SSHKeyComment string `json:"ssh_key_comment"`
@@ -116,24 +133,8 @@ func appendSanitizedDeployJournalEntry(app, env string, entry deployJournalEntry
 		return err
 	}
 	path := identity.DeployJournalFile(app, env)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("mkdir deploy journal dir: %v", err)
-	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return fmt.Errorf("open deploy journal: %v", err)
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("write deploy journal: %v", err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close deploy journal: %v", err)
+	if err := journal.Append(path, entry); err != nil {
+		return fmt.Errorf("append deploy journal: %w", err)
 	}
 	if _, err := utils.RunChecked("chown", []string{"root:root", path}, ""); err != nil {
 		return fmt.Errorf("chown deploy journal: %v", err)
@@ -142,63 +143,74 @@ func appendSanitizedDeployJournalEntry(app, env string, entry deployJournalEntry
 }
 
 func readLatestDeployJournalEntry(app, env string) (deployJournalEntry, error) {
-	entries, err := readDeployJournalEntries(app, env)
+	entry, _, err := readLatestDeployJournalEntryWithStatus(app, env)
+	return entry, err
+}
+
+func readLatestDeployJournalEntryWithStatus(app, env string) (deployJournalEntry, bool, error) {
+	entries, torn, err := readDeployJournalEntriesWithStatus(app, env)
 	if err != nil {
-		return deployJournalEntry{}, err
+		return deployJournalEntry{}, torn, err
 	}
 	if len(entries) == 0 {
-		return deployJournalEntry{}, noDeployJournalError(app, env)
+		return deployJournalEntry{}, torn, noDeployJournalError(app, env)
 	}
-	return entries[len(entries)-1], nil
+	return entries[len(entries)-1], torn, nil
 }
 
 func readLatestSuccessfulDeployJournalEntry(app, env string) (deployJournalEntry, error) {
-	entries, err := readDeployJournalEntries(app, env)
+	entry, _, err := readLatestSuccessfulDeployJournalEntryWithStatus(app, env)
+	return entry, err
+}
+
+func readLatestSuccessfulDeployJournalEntryWithStatus(app, env string) (deployJournalEntry, bool, error) {
+	entries, torn, err := readDeployJournalEntriesWithStatus(app, env)
 	if err != nil {
-		return deployJournalEntry{}, err
+		return deployJournalEntry{}, torn, err
 	}
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Outcome == "deployed" || entries[i].Outcome == "rolled_back" {
-			return entries[i], nil
+			return entries[i], torn, nil
 		}
 	}
-	return deployJournalEntry{}, noDeployJournalError(app, env)
+	return deployJournalEntry{}, torn, noDeployJournalError(app, env)
 }
 
 func readDeployJournalEntries(app, env string) ([]deployJournalEntry, error) {
+	entries, _, err := readDeployJournalEntriesWithStatus(app, env)
+	if err == nil && len(entries) == 0 {
+		return nil, noDeployJournalError(app, env)
+	}
+	return entries, err
+}
+
+func readDeployJournalEntriesWithStatus(app, env string) ([]deployJournalEntry, bool, error) {
 	if err := validateAppEnv(app, env); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	path := identity.DeployJournalFile(app, env)
-	file, err := os.Open(path)
-	if err != nil {
+	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
-			return nil, noDeployJournalError(app, env)
+			return nil, false, noDeployJournalError(app, env)
 		}
-		return nil, fmt.Errorf("read deploy journal %s: %v", path, err)
+		return nil, false, fmt.Errorf("stat deploy journal %s: %w", path, err)
 	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var entries []deployJournalEntry
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
+	torn, err := journal.Read(path, func(line []byte) error {
 		var entry deployJournalEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			return nil, fmt.Errorf("parse deploy journal %s: %v", path, err)
+		if err := json.Unmarshal(line, &entry); err != nil {
+			return err
 		}
 		if entry.SchemaVersion != deployJournalSchemaVersion {
-			return nil, fmt.Errorf("unsupported deploy journal schema version %d", entry.SchemaVersion)
+			return fmt.Errorf("unsupported deploy journal schema version %d", entry.SchemaVersion)
 		}
 		entries = append(entries, entry)
+		return nil
+	})
+	if err != nil {
+		return nil, torn, fmt.Errorf("read deploy journal %s: %w", path, err)
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read deploy journal %s: %v", path, err)
-	}
-	return entries, nil
+	return entries, torn, nil
 }
 
 func noDeployJournalError(app, env string) error {

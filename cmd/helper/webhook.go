@@ -251,7 +251,10 @@ func webhookEnvLabel(app, env string, ctx *config.AppContext) string {
 }
 
 func latestSuccessfulRelease(app, env string) string {
-	entry, err := readLatestSuccessfulDeployJournalEntry(app, env)
+	entry, torn, err := readLatestSuccessfulDeployJournalEntryWithStatus(app, env)
+	if torn {
+		warnTornDeployJournal(identity.DeployJournalFile(app, env))
+	}
 	if err != nil {
 		return ""
 	}

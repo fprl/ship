@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/journal"
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
@@ -142,7 +143,7 @@ func authorizeHelperWithPolicy(verb helperVerb, requiredRole store.MemberRole, t
 		return serverMember{}, err
 	}
 	if minted {
-		appendApprovalJournalEntry("requested", request, member)
+		recordApprovalJournalEntry("requested", request, member)
 		webhookApprovalRequested(request, approvalNow())
 	}
 	return serverMember{}, approvalRequiredError(request)
@@ -428,7 +429,7 @@ func consumeApprovedRequest(member serverMember, verb helperVerb, target authTar
 		if err := store.Default().WriteApprovals(*file); err != nil {
 			return false, err
 		}
-		appendApprovalJournalEntry("consumed", request, member)
+		recordApprovalJournalEntry("consumed", request, member)
 		return true, nil
 	}
 	pruned := pruneExpiredApprovals(file, now)
@@ -487,7 +488,7 @@ func approveRequest(id string, approver serverMember) (store.ApprovalRequest, er
 		if err := store.Default().WriteApprovals(*file); err != nil {
 			return store.ApprovalRequest{}, err
 		}
-		appendApprovalJournalEntry("approved", request, approver)
+		recordApprovalJournalEntry("approved", request, approver)
 		return request, nil
 	}
 	pruned := pruneExpiredApprovals(file, now)
@@ -638,7 +639,7 @@ type approvalJournalEntry struct {
 	TS            string               `json:"ts"`
 }
 
-func appendApprovalJournalEntry(event string, request store.ApprovalRequest, actor serverMember) {
+func appendApprovalJournalEntry(event string, request store.ApprovalRequest, actor serverMember) error {
 	entry := approvalJournalEntry{
 		SchemaVersion: 1,
 		Event:         event,
@@ -653,20 +654,14 @@ func appendApprovalJournalEntry(event string, request store.ApprovalRequest, act
 		Target: request.Target,
 		TS:     approvalNow().Format(time.RFC3339Nano),
 	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return
-	}
 	path := store.Default().ApprovalsJournalPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return
+	return journal.Append(path, entry)
+}
+
+func recordApprovalJournalEntry(event string, request store.ApprovalRequest, actor serverMember) {
+	if err := appendApprovalJournalEntry(event, request, actor); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: approval mutation succeeded but failed to write approval journal %s: %v\n", store.Default().ApprovalsJournalPath(), err)
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-	_, _ = file.Write(append(data, '\n'))
 }
 
 func currentServerMemberForJournal() *journalMember {

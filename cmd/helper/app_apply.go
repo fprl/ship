@@ -218,7 +218,10 @@ func (c appApplyCmd) runLockedE() (err error) {
 
 func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRelease string, startedAt time.Time, result applyReleaseResult) error {
 	removeContainers(result.containersToRemove)
-	previousJournal, previousJournalErr := readLatestDeployJournalEntry(c.App, c.Env)
+	previousJournal, previousJournalTorn, previousJournalErr := readLatestDeployJournalEntryWithStatus(c.App, c.Env)
+	if previousJournalTorn {
+		warnTornDeployJournal(identity.DeployJournalFile(c.App, c.Env))
+	}
 	entry := sanitizeDeployJournalEntry(c.App, c.Env, deployJournalEntry{
 		SchemaVersion:    deployJournalSchemaVersion,
 		App:              c.App,
