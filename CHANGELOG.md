@@ -27,6 +27,22 @@ and the bugs the sweep tripped over got fixed for real.
   wording; failed remote commands now suggest a retry command that
   matches what you ran.
 
+### Added
+
+- Members are fully manageable in place (ADR-0021): `ship box member
+  rename <old> <new>` fixes a name without touching keys, `ship box
+  member role <name> <role>` changes what a teammate can do without
+  remove-and-reinvite, and `ship box member rm <name> --key <id>`
+  retires one key — so rotating your laptop key is add → verify →
+  retire, with the exact commands printed as you go. `member ls` opens
+  to every enrolled member, groups keys under their member with a
+  copy-pasteable short id, and marks the key you're connected with.
+  One rule guards it all: every change must leave at least one working
+  owner key.
+- `ship docs` now teaches ship.toml: a complete manifest reference with
+  a worked example that CI validates against the real parser, plus a
+  role matrix and the output contract up front.
+
 ### Changed
 
 - A key without a member record is not a member (ADR-0020): the store is
