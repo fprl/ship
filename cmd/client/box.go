@@ -267,6 +267,9 @@ func CmdBoxUpdate(server string) {
 		}
 		utils.DieError(operationError(outcome.Detail, "ship box update "+server), 1)
 	}
+	if strings.TrimSpace(stderr) != "" {
+		fmt.Fprint(os.Stderr, stderr)
+	}
 	fmt.Print(stdout)
 }
 
@@ -378,6 +381,9 @@ func runBoxMemberAdd(server, source, name, role, confirm string) error {
 	if err != nil || code != 0 {
 		return sshResultError(stdout, stderr, code, err, "", "member add failed", "ship box member add "+source+" "+server)
 	}
+	if strings.TrimSpace(stderr) != "" {
+		fmt.Fprint(os.Stderr, stderr)
+	}
 	fmt.Print(stdout)
 	return nil
 }
@@ -397,6 +403,9 @@ func CmdBoxMemberLs(server string, jsonFlag bool) {
 		if err := sshResultError(stdout, stderr, code, err, "", "box member ls failed", "ship box member ls "+server); err != nil {
 			utils.DieError(err, 1)
 		}
+	}
+	if strings.TrimSpace(stderr) != "" {
+		fmt.Fprint(os.Stderr, stderr)
 	}
 	fmt.Print(stdout)
 }
@@ -421,6 +430,9 @@ func CmdBoxMemberRm(server, name, key string) {
 			utils.DieError(err, 1)
 		}
 	}
+	if strings.TrimSpace(stderr) != "" {
+		fmt.Fprint(os.Stderr, stderr)
+	}
 	fmt.Print(stdout)
 }
 
@@ -439,6 +451,9 @@ func CmdBoxMemberRename(server, oldName, newName string) {
 			utils.DieError(err, 1)
 		}
 	}
+	if strings.TrimSpace(stderr) != "" {
+		fmt.Fprint(os.Stderr, stderr)
+	}
 	fmt.Print(stdout)
 }
 
@@ -456,6 +471,9 @@ func CmdBoxMemberRole(server, name, role string) {
 		if err := sshResultError(stdout, stderr, code, err, "", "member role failed", "ship box member role "+name+" "+role+" "+server); err != nil {
 			utils.DieError(err, 1)
 		}
+	}
+	if strings.TrimSpace(stderr) != "" {
+		fmt.Fprint(os.Stderr, stderr)
 	}
 	fmt.Print(stdout)
 }
