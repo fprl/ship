@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.7.0
 
 A leaner ship that says the right thing when it fails. A whole-repo
 compat-and-quality sweep deleted every shim, fallback, and dead branch
