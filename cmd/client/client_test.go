@@ -808,6 +808,30 @@ func TestResolveReadPreviewEnvPropagatesUnknownBranchError(t *testing.T) {
 	}
 }
 
+func TestResolvePreviewEnvUsesRunnablePublicRemediations(t *testing.T) {
+	ctx := &config.AppContext{AppName: "api", EnvName: "production", Server: "example.com"}
+	readCommand := serverAppPreviewResolveCommand("api", "feat/x")
+	deployCommand := serverAppPreviewResolveOrCreateCommand("api", "feat/x")
+
+	t.Run("read resolution", func(t *testing.T) {
+		runner := &fakeSSHRunner{failures: map[string]string{readCommand: "host unavailable"}}
+		_, err := resolveReadPreviewEnv(runner, ctx, readAddress{PreviewBranch: "feat/x"})
+		coded, ok := errcat.As(err)
+		if !ok || coded.Remediation() != "ship status" {
+			t.Fatalf("read remediation = %q for %v, want ship status", coded.Remediation(), err)
+		}
+	})
+
+	t.Run("deploy resolution", func(t *testing.T) {
+		runner := &fakeSSHRunner{failures: map[string]string{deployCommand: "host unavailable"}}
+		_, err := resolveDeployPreviewEnv(runner, ctx, deployAddress{PreviewBranch: "feat/x"})
+		coded, ok := errcat.As(err)
+		if !ok || coded.Remediation() != "ship" {
+			t.Fatalf("deploy remediation = %q for %v, want ship", coded.Remediation(), err)
+		}
+	})
+}
+
 func TestCommandRunnerWithoutEnvKeyPinsShipIdentity(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

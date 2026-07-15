@@ -312,8 +312,9 @@ ship box member ls [<box>] [--json]
                           fingerprint
 ship box member rm <name> [<box>]
                           revoke all of a member's keys; refuses to
-                          remove the last remaining key (lockout
-                          guard). Roles shipped in v0.4 (owner /
+                          remove the last recorded member (lockout
+                          guard — stray unrecorded lines don't count,
+                          ADR-0020). Roles shipped in v0.4 (owner /
                           shipper / agent, §17); RFD-0003 records the
                           original post-v1 plan.
 ship box doctor [--json]  existing doctor, output upgraded per §9
@@ -917,9 +918,11 @@ ship box update [<box>]          converge the box to this client's
   (summary / list / examine), none folded into another. Status must
   not fetch data it discards (the v0.4.0 implementation pulled the
   full app list and doctor JSON for counts — fix as plumbing).
-- **`ship box update`** pushes the client-matched helper binary over the
-  existing setup transfer path and re-applies **version-owned artifacts**
-  (systemd units, sudoers fragment, agent-shell) idempotently. Journals
+- **`ship box update`** has the box download and checksum-verify the
+  released helper binary (ADR-0011; the client pushes nothing) and
+  re-applies **version-owned artifacts** (systemd units, sudoers
+  fragment, agent-shell forced keys — rendered from the member store,
+  ADR-0020) idempotently. Journals
   box-side; narrates changes only (narration diet); exact no-op when
   already current. Requires owner; others → `approval_required`.
   `box setup` remains day-0 (and the recovery path); `update` is day-N.

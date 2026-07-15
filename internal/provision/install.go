@@ -70,7 +70,7 @@ func RunVersionConverge(ctx context.Context, runner host.Runner, opts VersionCon
 	var ops []operation
 	installOpts := InstallOptions{HelperBinaryPath: opts.HelperBinaryPath}
 	addHelper(&ops, installOpts)
-	addDeployMembersStore(&ops, stateStore, defaultDeployUser, &summary, "", true)
+	addDeployMembersStore(&ops, stateStore, defaultDeployUser, &summary, "", true, false)
 	addPreviewReaper(&ops)
 	addDoctorTimer(&ops)
 
@@ -198,7 +198,7 @@ func installOperations(opts InstallOptions, stateStore store.Store, summary *Ins
 	addAuthorizedKeys(&ops, defaultDeployUser, opts.DeploySSHPublicKeys, func(results []memberkeys.AddResult) {
 		summary.DeployKeyResults = results
 	})
-	addDeployMembersStore(&ops, stateStore, defaultDeployUser, summary, opts.MemberName, false)
+	addDeployMembersStore(&ops, stateStore, defaultDeployUser, summary, opts.MemberName, false, true)
 
 	add("timezone", func(apply host.Apply) (bool, error) {
 		return host.EnsureTimezone(apply, defaultTimezone)
@@ -251,7 +251,7 @@ func addAuthorizedKeys(ops *[]operation, user string, keyLines []string, capture
 	}})
 }
 
-func addDeployMembersStore(ops *[]operation, stateStore store.Store, deployUser string, summary *InstallSummary, memberName string, renderAuthorizedKeys bool) {
+func addDeployMembersStore(ops *[]operation, stateStore store.Store, deployUser string, summary *InstallSummary, memberName string, renderAuthorizedKeys bool, rebuildCorruptMembers bool) {
 	path := filepath.Join("/home", deployUser, ".ssh", "authorized_keys")
 	*ops = append(*ops, operation{name: "members store", run: func(apply host.Apply) (bool, error) {
 		current, err := apply.Runner.ReadFile(apply.ContextOrBackground(), path)
@@ -261,9 +261,13 @@ func addDeployMembersStore(ops *[]operation, stateStore store.Store, deployUser 
 		keys := memberkeys.Parse(current.Content)
 		members, err := stateStore.ReadMembers()
 		if err != nil {
-			return false, err
+			if !rebuildCorruptMembers {
+				return false, err
+			}
+			fmt.Fprintf(os.Stderr, "WARNING: %s is unreadable or invalid; rebuilding it from the keys provided to setup\n", stateStore.MembersPath())
+			members = &store.MembersFile{Version: store.CurrentVersion, Members: map[string]store.MemberRecord{}}
 		}
-		overrides := setupMemberRoleOverrides(keys, summary.DeployKeyResults, memberName)
+		overrides := setupMemberRoleOverridesForMembers(keys, summary.DeployKeyResults, *members, memberName)
 		next := memberkeys.ReconciledMembersFile(keys, *members, overrides)
 		for i := range summary.DeployKeyResults {
 			fingerprint := summary.DeployKeyResults[i].Key.Fingerprint
@@ -296,35 +300,25 @@ func addDeployMembersStore(ops *[]operation, stateStore store.Store, deployUser 
 	}})
 }
 
-func setupMemberRoleOverrides(keys []memberkeys.AuthorizedKey, results []memberkeys.AddResult, memberName string) map[string]store.MemberRecord {
-	parseableCount := 0
-	for _, key := range keys {
-		if key.Material != "" {
-			parseableCount++
-		}
+func setupMemberRoleOverridesForMembers(_ []memberkeys.AuthorizedKey, results []memberkeys.AddResult, current store.MembersFile, memberName string) map[string]store.MemberRecord {
+	defaultRole := store.MemberRoleShipper
+	if len(results) == 1 {
+		defaultRole = store.MemberRoleOwner
 	}
-	addedCount := 0
-	for _, result := range results {
-		if result.Added {
-			addedCount++
-		}
-	}
-	role := store.MemberRoleShipper
-	if addedCount > 0 && parseableCount == addedCount {
-		role = store.MemberRoleOwner
-	}
-
+	name := strings.Join(strings.Fields(memberName), " ")
 	overrides := map[string]store.MemberRecord{}
 	for _, result := range results {
-		if !result.Added {
-			continue
+		role := defaultRole
+		if existing, ok := current.Members[result.Key.Fingerprint]; ok {
+			role = existing.Role
+		}
+		member := result.Key.Comment
+		if name != "" {
+			member = name
 		}
 		overrides[result.Key.Fingerprint] = store.MemberRecord{
-			Name: result.Key.Comment,
+			Name: member,
 			Role: role,
-		}
-		if strings.TrimSpace(memberName) != "" {
-			overrides[result.Key.Fingerprint] = store.MemberRecord{Name: strings.Join(strings.Fields(memberName), " "), Role: role}
 		}
 	}
 	return overrides

@@ -173,6 +173,50 @@ func TestAppendDeployAuthorizedKeysHealsHalfEnrollment(t *testing.T) {
 	}
 }
 
+func TestAppendDeployAuthorizedKeysWritesMembersBeforeAuthorizedKeys(t *testing.T) {
+	root := t.TempDir()
+	authorizedKeysPath := filepath.Join(root, "authorized_keys")
+	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
+	t.Setenv("SHIP_STATE_DIR", root)
+	setHelperBoxClientAddress(t, "203.0.113.7")
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := os.WriteFile(authorizedKeysPath, []byte(alicePublicKey+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Default().WriteMembers(store.MembersFile{
+		Version: store.CurrentVersion,
+		Members: map[string]store.MemberRecord{
+			aliceFingerprint: {Name: "alice", Role: store.MemberRoleOwner},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := normalizeAuthorizedKeys(bobPublicKey, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0700) })
+
+	if _, err := appendDeployAuthorizedKeys("deploy", keys, store.MemberRoleShipper); err == nil {
+		t.Fatal("expected members store write failure")
+	}
+	content, err := os.ReadFile(authorizedKeysPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(content), alicePublicKey+"\n"; got != want {
+		t.Fatalf("authorized_keys = %q, want unchanged %q", got, want)
+	}
+}
+
 func TestAppendDeployAuthorizedKeysDropsStrayButKeepsRecordedOwner(t *testing.T) {
 	root := t.TempDir()
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")

@@ -36,8 +36,10 @@ and the forced-command line, but contributes no identity.
   records for the keys it enrolls (single-key → owner).
 - Half-enrollment (crash between the two writes) stays self-healing:
   the retry carries its own name and role and rewrites both files.
-  Until then the half-enrolled key is loudly non-functional instead of
-  silently owner-shaped.
+  `member add` writes the record BEFORE the key line (senior-review
+  fix): a crash leaves a record without access, never an unrecorded
+  line that sshd would still honor. `member rm` keeps the opposite
+  order — access is revoked before identity.
 - `member rm` refuses to remove the last *recorded* member; stray
   unrecorded lines no longer count toward that guard (the old count
   could leave a box whose only remaining "member" was a dead stray
@@ -55,6 +57,16 @@ does not canonicalize strays); add/rm and converge do canonicalize.
 ## Consequences
 
 - Recovery from a wrong `members.json` is root + `ship box setup`
-  (re-enrollment), same as every other box-state repair.
+  (re-enrollment), same as every other box-state repair. For that to
+  be true (senior-review fixes): setup enrolls every key it was
+  GIVEN, whether or not its line already exists in the file; an
+  unreadable/invalid store is rebuilt at setup with a loud warning
+  (converge/`box update` still fails loudly — unattended runs never
+  wipe the register); and the setup role default is computed from the
+  provided keys, not from whatever lines sit in the file — existing
+  record's role wins, else owner for a single provided key, else
+  shipper.
+- Rendering is fully canonical: lines the parser cannot read
+  (comments, unsupported key types) are dropped too, not preserved.
 - The unread `AuthorizedKey.Options` field went with the fabrication;
   rendered lines are fully regenerated from the role.

@@ -1,7 +1,9 @@
 package provision
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,10 +89,172 @@ func TestSetupMemberRoleOverridesUsesExplicitGitDerivedMemberName(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	overrides := setupMemberRoleOverrides(keys, []memberkeys.AddResult{{Key: keys[0], Added: true}}, "Franco Pablo")
+	overrides := setupMemberRoleOverridesForMembers(keys, []memberkeys.AddResult{{Key: keys[0], Added: true}}, store.MembersFile{}, "Franco Pablo")
 	got := overrides[keys[0].Fingerprint]
 	if got.Name != "Franco Pablo" || got.Role != store.MemberRoleOwner {
 		t.Fatalf("setup override = %+v, want explicit owner name", got)
+	}
+}
+
+func TestSetupMemberRoleOverridesPreservesExistingRoleForProvidedKey(t *testing.T) {
+	keys, err := memberkeys.Normalize(deployTestPublicKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	overrides := setupMemberRoleOverridesForMembers(keys, []memberkeys.AddResult{{Key: keys[0], Added: false}}, store.MembersFile{
+		Version: store.CurrentVersion,
+		Members: map[string]store.MemberRecord{
+			keys[0].Fingerprint: {Name: "old name", Role: store.MemberRoleAgent},
+		},
+	}, "")
+	got := overrides[keys[0].Fingerprint]
+	if got.Name != "deploy" || got.Role != store.MemberRoleAgent {
+		t.Fatalf("provided key override = %+v, want key comment with existing agent role", got)
+	}
+}
+
+func TestRunInstallReenrollsExistingDeployKeyWithoutMemberRecord(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "ship")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &installFakeRunner{files: map[string]host.FileState{
+		"/home/deploy/.ssh/authorized_keys": {
+			Content: []byte(deployTestPublicKey + "\n"),
+			Owner:   "deploy",
+			Group:   "deploy",
+			Mode:    0600,
+		},
+	}}
+
+	summary, err := RunInstall(context.Background(), runner, InstallOptions{
+		DeploySSHPublicKeys: []string{deployTestPublicKey},
+		StateRoot:           root,
+		HelperBinaryPath:    helper,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summary.DeployKeyResults) != 1 || summary.DeployKeyResults[0].Added {
+		t.Fatalf("deploy enrollment results = %+v, want one existing key", summary.DeployKeyResults)
+	}
+	members, err := (store.Store{Root: root}).ReadMembers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := members.Members[summary.DeployKeyResults[0].Key.Fingerprint]
+	if member.Name != "deploy" || member.Role != store.MemberRoleOwner {
+		t.Fatalf("re-enrolled member = %+v, want deploy owner", member)
+	}
+}
+
+func TestRunInstallIgnoresStrayAuthorizedKeyWhenChoosingSetupOwner(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "ship")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	stray := strings.Replace(operatorTestPublicKey, " operator", " stray", 1)
+	runner := &installFakeRunner{files: map[string]host.FileState{
+		"/home/deploy/.ssh/authorized_keys": {
+			Content: []byte(stray + "\n"),
+			Owner:   "deploy",
+			Group:   "deploy",
+			Mode:    0600,
+		},
+	}}
+
+	summary, err := RunInstall(context.Background(), runner, InstallOptions{
+		DeploySSHPublicKeys: []string{deployTestPublicKey},
+		StateRoot:           root,
+		HelperBinaryPath:    helper,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, err := (store.Store{Root: root}).ReadMembers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	member := members.Members[summary.DeployKeyResults[0].Key.Fingerprint]
+	if member.Name != "deploy" || member.Role != store.MemberRoleOwner {
+		t.Fatalf("setup member = %+v, want deploy owner despite stray line", member)
+	}
+}
+
+func TestRunInstallRebuildsCorruptMembersStoreWithWarning(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "ship")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	stateStore := store.Store{Root: root}
+	if err := os.WriteFile(stateStore.MembersPath(), []byte("not json\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &installFakeRunner{files: map[string]host.FileState{}}
+
+	stderr := captureProvisionStderr(t, func() {
+		if _, err := RunInstall(context.Background(), runner, InstallOptions{
+			DeploySSHPublicKeys: []string{deployTestPublicKey},
+			StateRoot:           root,
+			HelperBinaryPath:    helper,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(stderr, stateStore.MembersPath()) || !strings.Contains(stderr, "rebuilding it from the keys provided to setup") {
+		t.Fatalf("rebuild warning = %q", stderr)
+	}
+	members, err := stateStore.ReadMembers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := memberkeys.Normalize(deployTestPublicKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := members.Members[keys[0].Fingerprint]; got.Role != store.MemberRoleOwner {
+		t.Fatalf("rebuilt member = %+v, want owner", got)
+	}
+}
+
+func TestRunVersionConvergeStillRejectsCorruptMembersStore(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "ship")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	stateStore := store.Store{Root: root}
+	if err := stateStore.WriteHostDesired(store.HostDesired{
+		Users:    store.HostUsers{Operator: "operator", Deploy: "deploy"},
+		Ingress:  store.HostIngressDesired{Expose: store.ExposePublic},
+		Packages: map[string]store.DesiredPackage{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := stateStore.WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stateStore.MembersPath(), []byte("not json\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &installFakeRunner{files: map[string]host.FileState{
+		"/home/deploy/.ssh/authorized_keys": {
+			Content: []byte(deployTestPublicKey + "\n"),
+			Owner:   "deploy",
+			Group:   "deploy",
+			Mode:    0600,
+		},
+	}}
+
+	_, err := RunVersionConverge(context.Background(), runner, VersionConvergeOptions{
+		StateRoot:        root,
+		HelperBinaryPath: helper,
+	})
+	if err == nil || !strings.Contains(err.Error(), "members store") {
+		t.Fatalf("converge error = %v, want corrupt members store failure", err)
 	}
 }
 
@@ -231,8 +395,8 @@ func TestRunInstallEnrollsAuthorizedKeysWithoutReplacingExistingMembers(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(summary.DeployKeyResults) != 1 || !summary.DeployKeyResults[0].Added || summary.DeployKeyResults[0].Role != "shipper" {
-		t.Fatalf("deploy enrollment results = %+v, want one added shipper key", summary.DeployKeyResults)
+	if len(summary.DeployKeyResults) != 1 || !summary.DeployKeyResults[0].Added || summary.DeployKeyResults[0].Role != "owner" {
+		t.Fatalf("deploy enrollment results = %+v, want one added owner key", summary.DeployKeyResults)
 	}
 	deployKeys := string(runner.files["/home/deploy/.ssh/authorized_keys"].Content)
 	assertAuthorizedKeysLines(t, deployKeys, []string{existingDeploy, deployTestPublicKey})
@@ -243,8 +407,8 @@ func TestRunInstallEnrollsAuthorizedKeysWithoutReplacingExistingMembers(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(summary.DeployKeyResults) != 1 || summary.DeployKeyResults[0].Added || summary.DeployKeyResults[0].Role != "shipper" {
-		t.Fatalf("second deploy enrollment results = %+v, want already authorized shipper", summary.DeployKeyResults)
+	if len(summary.DeployKeyResults) != 1 || summary.DeployKeyResults[0].Added || summary.DeployKeyResults[0].Role != "owner" {
+		t.Fatalf("second deploy enrollment results = %+v, want already authorized owner", summary.DeployKeyResults)
 	}
 	assertAuthorizedKeysLines(t, string(runner.files["/home/deploy/.ssh/authorized_keys"].Content), []string{existingDeploy, deployTestPublicKey})
 	assertAuthorizedKeysLines(t, string(runner.files["/home/operator/.ssh/authorized_keys"].Content), []string{existingOperator, operatorTestPublicKey})
@@ -703,6 +867,25 @@ func assertAuthorizedKeysLines(t *testing.T, got string, want []string) {
 	if got != wantText {
 		t.Fatalf("authorized_keys mismatch\nwant:\n%s\ngot:\n%s", wantText, got)
 	}
+}
+
+func captureProvisionStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	fn()
+	_ = w.Close()
+	data, err := io.ReadAll(r)
+	_ = r.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(bytes.TrimSpace(data))
 }
 
 type installFakeRunner struct {

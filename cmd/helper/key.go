@@ -203,10 +203,10 @@ func appendDeployAuthorizedKeys(user string, keys []authorizedKey, role store.Me
 	}
 	records := memberkeys.EffectiveMemberRecords(mergedKeys, *members, overrides)
 	rendered := memberkeys.RenderAuthorizedKeyLines(mergedKeys, records)
-	if err := writeDeployAuthorizedKeys(user, sshDir, path, rendered); err != nil {
+	if err := writeReconciledMembers(mergedKeys, *members, overrides); err != nil {
 		return nil, err
 	}
-	if err := writeReconciledMembers(mergedKeys, *members, overrides); err != nil {
+	if err := writeDeployAuthorizedKeys(user, sshDir, path, rendered); err != nil {
 		return nil, err
 	}
 	return results, nil

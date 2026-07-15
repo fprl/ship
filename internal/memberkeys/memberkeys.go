@@ -165,10 +165,6 @@ func Content(lines []string) []byte {
 func RenderAuthorizedKeyLines(keys []AuthorizedKey, records map[string]store.MemberRecord) []string {
 	lines := make([]string, 0, len(keys))
 	for _, key := range keys {
-		if key.Material == "" {
-			lines = append(lines, key.Line)
-			continue
-		}
 		record, ok := records[key.Fingerprint]
 		if !ok {
 			continue

@@ -29,6 +29,8 @@ type appRollbackCmd struct {
 
 var rollbackCaddyPath = caddyfilePath
 
+var appendRollbackDeployJournal = appendDeployJournalEntry
+
 func (c appRollbackCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
@@ -60,7 +62,11 @@ func (c appRollbackCmd) runLocked() {
 	if err != nil {
 		utils.DieError(err, 1)
 	}
-	if err := appendDeployJournalEntry(c.App, c.Env, deployJournalEntry{
+	c.recordRollbackSuccess(result, startedAt)
+}
+
+func (c appRollbackCmd) recordRollbackSuccess(result rollbackPayload, startedAt time.Time) {
+	if err := appendRollbackDeployJournal(c.App, c.Env, deployJournalEntry{
 		SchemaVersion:    deployJournalSchemaVersion,
 		App:              c.App,
 		Env:              c.Env,
@@ -72,7 +78,7 @@ func (c appRollbackCmd) runLocked() {
 		Identity:         c.actor(),
 		Member:           currentServerMemberForJournal(),
 	}, nil); err != nil {
-		utils.DieError(err, 1)
+		fmt.Fprintf(os.Stderr, "warning: rollback succeeded but failed to write deploy journal: %v; run ship box doctor\n", err)
 	}
 	fmt.Print(renderRollbackText(result))
 }
@@ -146,9 +152,9 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 	var prevExisted bool
 	var caddySnapshotReady bool
 	var trafficSwitched bool
-	cleanupStarted := func() {
+	cleanupStarted := func() error {
 		removeContainers(started)
-		warnOnRestartFailure(uniqueContainerNames(stoppedOld))
+		return startContainers(uniqueContainerNames(stoppedOld))
 	}
 	defer func() {
 		if err == nil {
@@ -165,7 +171,9 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 				}
 			}
 		}
-		cleanupStarted()
+		if restartErr := cleanupStarted(); restartErr != nil {
+			restoreErrs = append(restoreErrs, restartErr)
+		}
 		for _, restore := range []func() error{
 			func() error { return restoreEnvFile(c.App, c.Env, envSnapshot) },
 			func() error { return restoreStaticCurrent(c.App, c.Env, staticSnapshot) },

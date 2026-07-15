@@ -1,11 +1,13 @@
 package helper
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/identity"
@@ -145,6 +147,16 @@ func TestRollbackTargetStartupFailureRestartsStoppedOldWorkers(t *testing.T) {
 	}
 }
 
+func TestRollbackTargetStartupFailureReportsOldWorkerRestartFailure(t *testing.T) {
+	app, oldWorker, _, _, _, _ := setupRollbackFailureTest(t, true, false)
+	t.Setenv("PODMAN_FAIL_START", "1")
+
+	_, err := (appRollbackCmd{App: "api", Env: "production"}).rollbackToTarget("3333333", "2222222", app)
+	if err == nil || !strings.Contains(err.Error(), "rollback restore failed") || !strings.Contains(err.Error(), "restart containers "+oldWorker) {
+		t.Fatalf("rollback error = %v, want restart failure joined to restore error", err)
+	}
+}
+
 func TestRollbackPersistFailureRestoresLiveState(t *testing.T) {
 	app, oldWorker, targetWorker, logPath, oldEnv, oldManifest := setupRollbackFailureTest(t, false, true)
 	oldCaddy := []byte("old caddy fragment\n")
@@ -173,6 +185,35 @@ func TestRollbackPersistFailureRestoresLiveState(t *testing.T) {
 	}
 	if strings.Count(log, "exec caddy caddy reload") < 2 {
 		t.Fatalf("Caddy was not reloaded for both the switch and restore:\n%s", log)
+	}
+}
+
+func TestRollbackJournalFailureWarnsAfterRollbackSuccess(t *testing.T) {
+	oldAppend := appendRollbackDeployJournal
+	appendRollbackDeployJournal = func(string, string, deployJournalEntry, []string) error {
+		return errors.New("journal disk is read-only")
+	}
+	t.Cleanup(func() { appendRollbackDeployJournal = oldAppend })
+
+	cmd := appRollbackCmd{App: "api", Env: "production"}
+	result := rollbackPayload{
+		App:       "api",
+		Env:       "production",
+		Previous:  "3333333",
+		Release:   "2222222",
+		Processes: []string{"worker"},
+	}
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureApplyStdout(t, func() {
+			cmd.recordRollbackSuccess(result, time.Now().UTC())
+		})
+	})
+	if !strings.Contains(stderr, "warning: rollback succeeded but failed to write deploy journal: journal disk is read-only; run ship box doctor\n") {
+		t.Fatalf("journal warning = %q", stderr)
+	}
+	if !strings.Contains(stdout, "Rolled back api (production) from 3333333 to 2222222") {
+		t.Fatalf("rollback summary = %q", stdout)
 	}
 }
 
@@ -221,6 +262,10 @@ fi
 printf '%s\n' "$*" >> "$PODMAN_LOG"
 if [ "$1" = "run" ] && [ "${PODMAN_FAIL_RUN:-0}" = "1" ]; then
   echo "forced target startup failure" >&2
+  exit 1
+fi
+if [ "$1" = "start" ] && [ "${PODMAN_FAIL_START:-0}" = "1" ]; then
+  echo "forced old worker restart failure" >&2
   exit 1
 fi
 exit 0
