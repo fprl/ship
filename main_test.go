@@ -39,7 +39,6 @@ func TestPublicCLIParsesV2Contract(t *testing.T) {
 		{"--branch", "feat/x"},
 		{"--tls", "internal"},
 		{"init"},
-		{"init", "--box", "example.com"},
 		{"init", "--config", "apps/api/ship.toml"},
 		{"status"},
 		{"status", "--json"},
@@ -901,6 +900,26 @@ func TestCLIArgsKeepsExplicitArgs(t *testing.T) {
 	want := []string{"status", "--json"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("cliArgs kept args = %v, want %v", got, want)
+	}
+}
+
+func TestWantsJSONErrorStopsAtPassthroughSeparator(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "command argument json", args: []string{"exec", "--", "--json"}},
+		{name: "command argument json equals", args: []string{"exec", "--", "--json=pretty"}},
+		{name: "global json before command", args: []string{"--json", "exec", "--", "cmd"}, want: true},
+		{name: "command json before passthrough", args: []string{"exec", "--json", "--", "cmd"}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := wantsJSONError(tt.args); got != tt.want {
+				t.Fatalf("wantsJSONError(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
 	}
 }
 

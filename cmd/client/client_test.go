@@ -2063,7 +2063,7 @@ func TestSuccessfulRemoteStderrIsForwarded(t *testing.T) {
 			"detail":   {{stdout: "detail output", stderr: "warning: detail\n"}},
 			"required": {{stdout: "required output", stderr: "warning: required\n"}},
 		}}
-		if _, err := runSSHDetail(runner, "example.com", "detail"); err != nil {
+		if _, err := runSSHDetail(runner, "example.com", "detail", "ship detail"); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := runSSHRequired(runner, "example.com", "required", "required failed", "ship status"); err != nil {
@@ -2327,6 +2327,12 @@ func TestReadBoxVersionMapsPreUpdateBoxesToSetupRequired(t *testing.T) {
 	if !strings.Contains(coded.Remediation(), "ship box setup 203.0.113.7") {
 		t.Fatalf("remediation should name box setup, got %q", coded.Remediation())
 	}
+	if coded.Message() != "box is not set up for ship" {
+		t.Fatalf("message = %q", coded.Message())
+	}
+	if coded.Cause() != "the ship helper (or its sudo rules) is missing or stale on this box" {
+		t.Fatalf("cause = %q", coded.Cause())
+	}
 
 	usageError := &fakeSSHRunner{sequences: map[string][]fakeSSHResult{
 		version: {{stdout: `{"error":{"code":"usage_error","message":"command usage failed","cause":"unexpected argument version","remediation":"ship help"}}`, code: 2}},
@@ -2346,7 +2352,7 @@ func TestReadBoxVersionMapsPreUpdateBoxesToSetupRequired(t *testing.T) {
 	}
 }
 
-func TestReadBoxStatusUsesVersionSummaryOnly(t *testing.T) {
+func TestReadBoxStatusDecodesFullVersionSummary(t *testing.T) {
 	command := serverBoxStatusCommand()
 	runner := &fakeSSHRunner{responses: map[string]string{
 		command: `{"version":"v0.4.1","disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"members":{"total":3,"owners":1},"pending_approvals":1,"doctor":{"status":"degraded","recorded_at":"2026-07-14T08:00:00Z"}}`,
@@ -2364,23 +2370,12 @@ func TestReadBoxStatusUsesVersionSummaryOnly(t *testing.T) {
 	}
 }
 
-func TestReadBoxStatusKeepsEmptyAppsAsJSONArray(t *testing.T) {
+func TestReadBoxStatusRejectsVersionOnlyPayload(t *testing.T) {
 	runner := &fakeSSHRunner{responses: map[string]string{
-		serverBoxStatusCommand(): `{"version":"v0.4.1","disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":null}`,
+		serverBoxStatusCommand(): `{"version":"v0.4.1"}`,
 	}}
-	payload, err := readBoxStatus(runner, "203.0.113.7")
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), `"apps":[]`) {
-		t.Fatalf("box status JSON = %s, want apps array", data)
-	}
-	if strings.Contains(string(data), `"members"`) {
-		t.Fatalf("box status JSON = %s, want members omitted", data)
+	if _, err := readBoxStatus(runner, "203.0.113.7"); err == nil {
+		t.Fatal("version-only payload should not decode as box status")
 	}
 }
 

@@ -186,9 +186,6 @@ func codedRemotePreflightIssue(report remotePreflightReport) error {
 
 func splitPreflightIssueRemediation(message string) (string, string) {
 	message = strings.TrimSpace(message)
-	if lines := strings.Split(message, "\n"); len(lines) >= 3 && strings.HasPrefix(lines[len(lines)-1], "next: ") {
-		return strings.TrimSpace(lines[1]), strings.TrimSpace(strings.TrimPrefix(lines[len(lines)-1], "next: "))
-	}
 	if cause, rest, ok := strings.Cut(message, "; run `"); ok {
 		return strings.TrimSpace(cause), strings.TrimSuffix(strings.TrimSpace(rest), "`")
 	}

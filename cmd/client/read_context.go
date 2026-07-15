@@ -26,7 +26,7 @@ func resolvePreviewEnv(runner sshRunner, ctx *config.AppContext, branch string, 
 	if create {
 		command = serverAppPreviewResolveOrCreateCommand(ctx.AppName, branch)
 	}
-	out, err := runSSHDetail(runner, ctx.Server, command)
+	out, err := runSSHDetail(runner, ctx.Server, command, "ship "+command)
 	if err != nil {
 		return "", err
 	}

@@ -19,19 +19,9 @@ func CmdBoxApprovalLs(server string, jsonFlag bool) {
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverApprovalLsCommand(jsonFlag))
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
-		if outcome.TransportCoded != nil {
-			utils.DieError(outcome.TransportCoded, 1)
+		if err := sshResultError(stdout, stderr, code, err, "", "approvals failed", "ship box approval ls "+server); err != nil {
+			utils.DieError(err, 1)
 		}
-		if outcome.RemoteCoded != nil {
-			writeRemoteStderr(outcome)
-			utils.DieError(outcome.RemoteCoded, 1)
-		}
-		detail := outcome.Detail
-		if detail == "" {
-			detail = "approvals failed"
-		}
-		utils.DieError(operationError(detail, "ship box approval ls "+server), 1)
 	}
 	fmt.Print(stdout)
 }
@@ -48,19 +38,9 @@ func CmdBoxApprovalGrant(server, id string) {
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverApprovalGrantCommand(id))
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
-		if outcome.TransportCoded != nil {
-			utils.DieError(outcome.TransportCoded, 1)
+		if err := sshResultError(stdout, stderr, code, err, "", "grant failed", "ship box approval grant "+id+" "+server); err != nil {
+			utils.DieError(err, 1)
 		}
-		if outcome.RemoteCoded != nil {
-			writeRemoteStderr(outcome)
-			utils.DieError(outcome.RemoteCoded, 1)
-		}
-		detail := outcome.Detail
-		if detail == "" {
-			detail = "grant failed"
-		}
-		utils.DieError(operationError(detail, "ship box approval grant "+id+" "+server), 1)
 	}
 	fmt.Print(stdout)
 }

@@ -45,6 +45,7 @@ const (
 	CodeBoxTargetRequired                 Code = "box_target_required"
 	CodeInvalidBoxTarget                  Code = "invalid_box_target"
 	CodeRmConfirmationRequired            Code = "rm_confirmation_required"
+	CodeDataRestoreConfirmationRequired   Code = "data_restore_confirmation_required"
 	CodeBoxAppRmConfirmationRequired      Code = "box_app_rm_confirmation_required"
 	CodeKeysURLUnavailable                Code = "keys_url_unavailable"
 	CodeSSHPublicKeyInvalid               Code = "ssh_public_key_invalid"
@@ -307,6 +308,12 @@ var catalogue = map[Code]Entry{
 		CauseTemplate:       "Production rm requires --confirm {app}",
 		RemediationTemplate: "ship rm {branch} --confirm {app}",
 	},
+	CodeDataRestoreConfirmationRequired: {
+		Code:                CodeDataRestoreConfirmationRequired,
+		MessageTemplate:     "Production restore confirmation failed",
+		CauseTemplate:       "Production restore requires --confirm {app}",
+		RemediationTemplate: "ship data restore {id_or_path} --confirm {app}",
+	},
 	CodeBoxAppRmConfirmationRequired: {
 		Code:                CodeBoxAppRmConfirmationRequired,
 		MessageTemplate:     "box app rm confirmation failed",
@@ -553,8 +560,8 @@ var catalogue = map[Code]Entry{
 	},
 	CodeBoxSetupRequired: {
 		Code:                CodeBoxSetupRequired,
-		MessageTemplate:     "box predates one-command update",
-		CauseTemplate:       "this box's helper and sudo rules are older than ship box update",
+		MessageTemplate:     "box is not set up for ship",
+		CauseTemplate:       "the ship helper (or its sudo rules) is missing or stale on this box",
 		RemediationTemplate: "ship box setup {server}",
 	},
 	CodeBoxConfigKeyUnknown: {

@@ -461,18 +461,9 @@ type sshRunner interface {
 func runSSHRequired(runner sshRunner, server string, command string, errMsg string, remediation string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
-		if outcome.TransportCoded != nil {
-			return "", outcome.TransportCoded
+		if err := sshResultError(stdout, stderr, code, err, errMsg, errMsg, remediation); err != nil {
+			return "", err
 		}
-		if outcome.RemoteCoded != nil {
-			writeRemoteStderr(outcome)
-			return "", outcome.RemoteCoded
-		}
-		if outcome.Detail != "" {
-			return "", operationError(fmt.Sprintf("%s: %s", errMsg, outcome.Detail), remediation)
-		}
-		return "", operationError(errMsg, remediation)
 	}
 	if strings.TrimSpace(stderr) != "" {
 		fmt.Fprint(os.Stderr, stderr)
@@ -480,23 +471,36 @@ func runSSHRequired(runner sshRunner, server string, command string, errMsg stri
 	return stdout, nil
 }
 
-func runSSHDetail(runner sshRunner, server string, command string) (string, error) {
+func runSSHDetail(runner sshRunner, server string, command string, remediation string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "remote command failed")
-		if outcome.TransportCoded != nil {
-			return "", outcome.TransportCoded
+		if err := sshResultError(stdout, stderr, code, err, "", "remote command failed", remediation); err != nil {
+			return "", err
 		}
-		if outcome.RemoteCoded != nil {
-			writeRemoteStderr(outcome)
-			return "", outcome.RemoteCoded
-		}
-		return "", operationError(outcome.Detail, "ship box doctor")
 	}
 	if strings.TrimSpace(stderr) != "" {
 		fmt.Fprint(os.Stderr, stderr)
 	}
 	return stdout, nil
+}
+
+func sshResultError(stdout, stderr string, code int, err error, prefix string, fallback string, remediation string) error {
+	outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+	if outcome.TransportCoded != nil {
+		return outcome.TransportCoded
+	}
+	if outcome.RemoteCoded != nil {
+		writeRemoteStderr(outcome)
+		return outcome.RemoteCoded
+	}
+	detail := outcome.Detail
+	if detail != "" && prefix != "" {
+		detail = fmt.Sprintf("%s: %s", prefix, detail)
+	}
+	if detail == "" {
+		detail = fallback
+	}
+	return operationError(detail, remediation)
 }
 
 type remoteOutcome struct {

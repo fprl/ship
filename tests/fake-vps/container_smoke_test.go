@@ -641,7 +641,15 @@ func (e *smokeEnv) testPhase1AcceptanceAndZeroDNS(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "Dockerfile"), `FROM alpine
 CMD ["/bin/sh", "-c", "sleep 3600"]
 `)
-	e.ship(t, app, nil, "init", "--box", "fake-vps", "--name", "phaseone", "--host", "phaseone.example.com")
+	mustWrite(t, filepath.Join(app, "ship.toml"), `name = "phaseone"
+box = "fake-vps"
+
+[processes]
+web = {}
+
+[routes]
+"phaseone.example.com" = "web"
+`)
 	e.commitFixture(t, app)
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "main")
 
@@ -1744,7 +1752,7 @@ func (e *smokeEnv) testDataForks(t *testing.T) {
 	if prodRestore.err == nil {
 		t.Fatal("production data restore without --confirm should fail")
 	}
-	assertContains(t, prodRestore.stdout+prodRestore.stderr, "Production rm requires --confirm dataapi")
+	assertContains(t, prodRestore.stdout+prodRestore.stderr, "Production restore requires --confirm dataapi")
 	onProd := e.runShip(t, app, nil, "data", "fork")
 	if onProd.err == nil {
 		t.Fatal("data fork on production branch should fail")

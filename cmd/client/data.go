@@ -220,8 +220,8 @@ func RunDataRestore(root, idOrPath, confirm string) error {
 
 func runDataRestore(data dataRestoreContext, idOrPath, confirm string) error {
 	if data.Address.ProductionBranch && confirm != data.AppContext.AppName {
-		return errcat.New(errcat.CodeRmConfirmationRequired, errcat.Fields{
-			"app": data.AppContext.AppName, "branch": data.AppContext.ProductionBranch,
+		return errcat.New(errcat.CodeDataRestoreConfirmationRequired, errcat.Fields{
+			"app": data.AppContext.AppName, "id_or_path": idOrPath,
 		})
 	}
 	path, err := resolveDataSnapshotPath(data.AppContext.AppName, idOrPath)
@@ -471,7 +471,7 @@ func dataPreviewURL(data dataContext) (string, error) {
 }
 
 func runDataFork(data dataContext) (dataForkResult, error) {
-	out, err := runSSHDetail(data.Runner, data.AppContext.Server, serverAppDataForkCommand(data.AppContext.AppName, data.EnvName))
+	out, err := runSSHDetail(data.Runner, data.AppContext.Server, serverAppDataForkCommand(data.AppContext.AppName, data.EnvName), "ship data fork")
 	if err != nil {
 		return dataForkResult{}, err
 	}
@@ -484,7 +484,7 @@ func runDataFork(data dataContext) (dataForkResult, error) {
 }
 
 func runDataReset(data dataContext) (dataResetResult, error) {
-	if _, err := runSSHDetail(data.Runner, data.AppContext.Server, serverAppDataResetCommand(data.AppContext.AppName, data.EnvName)); err != nil {
+	if _, err := runSSHDetail(data.Runner, data.AppContext.Server, serverAppDataResetCommand(data.AppContext.AppName, data.EnvName), "ship data reset"); err != nil {
 		return dataResetResult{}, err
 	}
 	url, err := dataPreviewURL(data)
@@ -492,7 +492,7 @@ func runDataReset(data dataContext) (dataResetResult, error) {
 }
 
 func liveEnvURL(runner sshRunner, server, app, env string) (string, error) {
-	out, err := runSSHDetail(runner, server, serverAppLsCommand(true))
+	out, err := runSSHDetail(runner, server, serverAppLsCommand(true), "ship status")
 	if err != nil {
 		return "", err
 	}

@@ -305,7 +305,7 @@ func resolveBoxIPv4(runner sshRunner, server string) string {
 		return "127.0.0.1"
 	}
 	command := "hostname -I 2>/dev/null | tr ' ' '\\n' | sed -n '/^[0-9][0-9.]*$/p' | head -n1"
-	if out, err := runSSHDetail(runner, server, command); err == nil {
+	if out, err := runSSHDetail(runner, server, command, "ship box doctor "+server); err == nil {
 		for _, field := range strings.Fields(out) {
 			if ip := net.ParseIP(field); ip != nil {
 				if v4 := ip.To4(); v4 != nil {

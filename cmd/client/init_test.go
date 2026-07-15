@@ -10,11 +10,7 @@ import (
 
 func TestRunInitWritesOnlyShipToml(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "Example App")
-	result, err := RunInit(root, InitOptions{
-		Name:   "example-app",
-		Server: "example.com",
-		Host:   "api.example.com",
-	})
+	result, err := RunInit(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +29,7 @@ func TestRunInitWritesOnlyShipToml(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`name = "example-app"`, `box = "example.com"`, "[processes]", "web = {}", "[routes]", `"api.example.com" = "web"`,
+		`name = "example-app"`, `box = "203.0.113.7"`, "[processes]", "web = {}",
 	} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("manifest missing %q:\n%s", want, body)
@@ -41,9 +37,9 @@ func TestRunInitWritesOnlyShipToml(t *testing.T) {
 	}
 }
 
-func TestRunInitWithoutHostOmitsRoutes(t *testing.T) {
-	root := t.TempDir()
-	if _, err := RunInit(root, InitOptions{Name: "api", Server: "example.com"}); err != nil {
+func TestRunInitUsesOnlyDefaultManifestFields(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "api")
+	if _, err := RunInit(root); err != nil {
 		t.Fatal(err)
 	}
 	body, err := os.ReadFile(filepath.Join(root, ManifestFile))
@@ -51,9 +47,9 @@ func TestRunInitWithoutHostOmitsRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(body), "[routes]") {
-		t.Fatalf("manifest should omit routes without --host:\n%s", body)
+		t.Fatalf("manifest should omit routes:\n%s", body)
 	}
-	for _, want := range []string{`name = "api"`, `box = "example.com"`, "[processes]", "web = {}"} {
+	for _, want := range []string{`name = "api"`, `box = "203.0.113.7"`, "[processes]", "web = {}"} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("manifest missing %q:\n%s", want, body)
 		}
@@ -66,7 +62,7 @@ func TestRunInitUsesPackageJSONName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := RunInit(root, InitOptions{Server: "example.com"})
+	result, err := RunInit(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +83,7 @@ func TestRunInitNeverOverwritesExistingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := RunInit(root, InitOptions{Name: "api", Server: "example.com"})
+	result, err := RunInit(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,31 +106,9 @@ func TestRunInitNeverOverwritesExistingFiles(t *testing.T) {
 	}
 }
 
-func TestRunInitRejectsInvalidExplicitName(t *testing.T) {
-	_, err := RunInit(t.TempDir(), InitOptions{Name: "My App", Server: "example.com"})
-	if err == nil || !strings.Contains(err.Error(), "invalid app name") {
-		t.Fatalf("expected invalid explicit name error, got %v", err)
-	}
-}
-
-func TestRunInitRejectsUserAtBox(t *testing.T) {
-	_, err := RunInit(t.TempDir(), InitOptions{Name: "api", Server: "deploy@203.0.113.7"})
-	if err == nil {
-		t.Fatal("expected user@ box rejection")
-	}
-	for _, want := range []string{
-		"--box must be a host; remove the user part",
-		"next: ship init --box 203.0.113.7",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("expected %q in error:\n%v", want, err)
-		}
-	}
-}
-
 func TestRenderInitResultIncludesConfigPathOutsideCwd(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "app")
-	result, err := RunInit(root, InitOptions{Name: "api", Server: "example.com"})
+	result, err := RunInit(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +130,7 @@ func TestRenderInitResultDoesNotCreateNestedGitRepoInMonorepo(t *testing.T) {
 	repo := t.TempDir()
 	runGit(t, repo, "init")
 	root := filepath.Join(repo, "apps", "api")
-	result, err := RunInit(root, InitOptions{Name: "api", Server: "example.com"})
+	result, err := RunInit(root)
 	if err != nil {
 		t.Fatal(err)
 	}

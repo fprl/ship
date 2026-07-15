@@ -7,16 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/names"
 	"github.com/fprl/ship/internal/utils"
 )
-
-type InitOptions struct {
-	Name   string
-	Server string
-	Host   string
-}
 
 type InitResult struct {
 	AppName    string
@@ -29,20 +22,19 @@ type InitResult struct {
 type normalizedInit struct {
 	name   string
 	server string
-	host   string
 }
 
 // CmdInit writes a v1 manifest. Existing files are never overwritten.
-func CmdInit(root string, opts InitOptions) {
-	result, err := RunInit(root, opts)
+func CmdInit(root string) {
+	result, err := RunInit(root)
 	if err != nil {
 		utils.DieError(err, 1)
 	}
 	renderInitResult(result)
 }
 
-func RunInit(root string, opts InitOptions) (InitResult, error) {
-	normalized, err := normalizeInitOptions(root, opts)
+func RunInit(root string) (InitResult, error) {
+	normalized, err := normalizeInitOptions(root)
 	if err != nil {
 		return InitResult{}, err
 	}
@@ -81,44 +73,16 @@ func RunInit(root string, opts InitOptions) (InitResult, error) {
 	return result, nil
 }
 
-func normalizeInitOptions(root string, opts InitOptions) (normalizedInit, error) {
-	var name string
-	if opts.Name != "" {
-		name = strings.TrimSpace(opts.Name)
-		if !names.AppRe.MatchString(name) {
-			return normalizedInit{}, usageError(fmt.Sprintf("invalid app name %q: must match %s", opts.Name, names.AppPattern), "ship init --name <app>")
-		}
-	} else {
-		name = defaultAppName(root)
-		if pkgName := packageJSONName(root); pkgName != "" {
-			name = pkgName
-		}
-		name = normalizeAppName(name)
+func normalizeInitOptions(root string) (normalizedInit, error) {
+	name := defaultAppName(root)
+	if pkgName := packageJSONName(root); pkgName != "" {
+		name = pkgName
 	}
+	name = normalizeAppName(name)
 	if !names.AppRe.MatchString(name) {
-		return normalizedInit{}, usageError(fmt.Sprintf("invalid app name %q: must match %s", name, names.AppPattern), "ship init --name <app>")
+		return normalizedInit{}, usageError(fmt.Sprintf("invalid app name %q: must match %s", name, names.AppPattern), "ship init")
 	}
-
-	server := strings.TrimSpace(opts.Server)
-	if server == "" {
-		server = DefaultBoxTarget
-	}
-	if host, ok := config.UserHostBoxHost(server); ok {
-		return normalizedInit{}, usageError("--box must be a host; remove the user part (use --box "+host+")", "ship init --box "+host)
-	}
-	if !config.ValidateBoxHost(server) {
-		return normalizedInit{}, usageError("--box must be a host like 203.0.113.7", "ship init --box 203.0.113.7")
-	}
-
-	host := strings.ToLower(strings.TrimSpace(opts.Host))
-	if host != "" {
-		host = strings.TrimSuffix(host, ".")
-		if !config.ValidateHost(host) {
-			return normalizedInit{}, usageError("--host must be a valid hostname", "ship init --host api.example.com")
-		}
-	}
-
-	return normalizedInit{name: name, server: server, host: host}, nil
+	return normalizedInit{name: name, server: DefaultBoxTarget}, nil
 }
 
 func packageJSONName(root string) string {
@@ -160,19 +124,12 @@ func writeNewInitFile(path string, body string) error {
 }
 
 func initManifest(init normalizedInit) string {
-	manifest := fmt.Sprintf(`name = "%s"
+	return fmt.Sprintf(`name = "%s"
 box = "%s"
 
 [processes]
 web = {}
 `, init.name, init.server)
-	if init.host == "" {
-		return manifest
-	}
-	return fmt.Sprintf(`%s
-[routes]
-"%s" = "web"
-`, manifest, init.host)
 }
 
 func renderInitResult(result InitResult) {

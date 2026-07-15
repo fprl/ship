@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/errcat"
 )
 
 func TestRunDataSaveKeepsExplicitPath(t *testing.T) {
@@ -184,6 +185,21 @@ func TestRunDataRestoreCleansRemoteStagingOnFailure(t *testing.T) {
 				t.Fatalf("mkdir command %q did not use cleanup dir %q", runner.commands[0], remoteDir)
 			}
 		})
+	}
+}
+
+func TestRunDataRestoreUsesRestoreConfirmationErrorOnProduction(t *testing.T) {
+	err := runDataRestore(dataRestoreContext{
+		AppContext: &config.AppContext{AppName: "api", Server: "example.com"},
+		Address:    readAddress{ProductionBranch: true},
+		EnvName:    "production",
+		Runner:     &fakeDataRestoreRunner{},
+	}, "backup-id", "")
+	if !errcat.Is(err, errcat.CodeDataRestoreConfirmationRequired) {
+		t.Fatalf("error = %v, want data_restore_confirmation_required", err)
+	}
+	if !strings.Contains(err.Error(), "Production restore requires --confirm api") || !strings.Contains(err.Error(), "ship data restore backup-id --confirm api") {
+		t.Fatalf("confirmation error = %v", err)
 	}
 }
 

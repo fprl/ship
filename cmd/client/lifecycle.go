@@ -8,7 +8,6 @@ import (
 	"github.com/fprl/ship/internal/names"
 	"github.com/fprl/ship/internal/utils"
 	"os"
-	"regexp"
 	"strings"
 )
 
@@ -130,11 +129,13 @@ func CmdPreviewPin(root string, branch string, pinned bool) {
 	}
 	defer runner.Close()
 
+	remediation := "ship preview pin <preview-branch>"
 	command := serverAppPreviewPinCommand(ctx.AppName, branch)
 	if !pinned {
+		remediation = "ship preview unpin <preview-branch>"
 		command = serverAppPreviewUnpinCommand(ctx.AppName, branch)
 	}
-	out, err := runSSHDetail(runner, ctx.Server, command)
+	out, err := runSSHDetail(runner, ctx.Server, command, remediation)
 	if err != nil {
 		utils.DieError(err, 1)
 	}
@@ -146,11 +147,8 @@ func CmdPreviewPin(root string, branch string, pinned bool) {
 	fmt.Printf("Unpinned Preview %s\n", branch)
 }
 
-// envKeyValid mirrors `secrets.SecretKeyRe` without taking a dep on
-// the helper-only `internal/secrets` package — keeps the client
-// binary's surface narrow.
 func envKeyValid(key string) error {
-	if !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(key) {
+	if !names.EnvKeyRe.MatchString(key) {
 		return errcat.New(errcat.CodeInvalidSecretKey, errcat.Fields{"key": fmt.Sprintf("%q", key)})
 	}
 	return nil

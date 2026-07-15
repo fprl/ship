@@ -49,6 +49,11 @@ func CmdBoxAppLs(server string, jsonFlag bool) {
 type boxVersionPayload struct {
 	Version           string `json:"version"`
 	LastClientVersion string `json:"last_client_version"`
+}
+
+type boxStatusSummaryPayload struct {
+	Version           string `json:"version"`
+	LastClientVersion string `json:"last_client_version"`
 	Disk              struct {
 		Status   string `json:"status"`
 		Evidence string `json:"evidence"`
@@ -164,25 +169,22 @@ func renderBoxStatus(payload boxStatusPayload, server string, now time.Time) str
 
 func readBoxStatus(runner sshRunner, server string) (boxStatusPayload, error) {
 	var payload boxStatusPayload
-	versionPayload, err := readBoxStatusSummary(runner, server)
+	summary, err := readBoxStatusSummary(runner, server)
 	if err != nil {
 		return payload, err
 	}
-	payload.HelperVersion = versionPayload.Version
+	payload.HelperVersion = summary.Version
 	payload.ClientVersion = version.Version
-	payload.LastClientVersion = versionPayload.LastClientVersion
-	cmp, ok := version.Compare(versionPayload.Version, version.Version)
+	payload.LastClientVersion = summary.LastClientVersion
+	cmp, ok := version.Compare(summary.Version, version.Version)
 	payload.UpdateAvailable = ok && cmp < 0
-	payload.HelperAhead = (ok && cmp > 0) || ((!ok || cmp == 0) && versionPayload.Version != version.Version)
+	payload.HelperAhead = (ok && cmp > 0) || ((!ok || cmp == 0) && summary.Version != version.Version)
 
-	payload.Disk = versionPayload.Disk
-	payload.Apps = versionPayload.Apps
-	if payload.Apps == nil {
-		payload.Apps = []boxStatusApp{}
-	}
-	payload.Members = versionPayload.Members
-	payload.PendingApprovals = versionPayload.PendingApprovals
-	payload.Doctor = versionPayload.Doctor
+	payload.Disk = summary.Disk
+	payload.Apps = summary.Apps
+	payload.Members = summary.Members
+	payload.PendingApprovals = summary.PendingApprovals
+	payload.Doctor = summary.Doctor
 	return payload, nil
 }
 
@@ -190,34 +192,46 @@ func readBoxStatus(runner sshRunner, server string) (boxStatusPayload, error) {
 // denies the verb has never completed `ship box setup` — map that shape to
 // the day-0 recovery path instead of surfacing a raw sudo error.
 func readBoxVersion(runner sshRunner, server string) (boxVersionPayload, error) {
-	return readBoxVersionCommand(runner, server, serverVersionCommand(true))
-}
-
-func readBoxStatusSummary(runner sshRunner, server string) (boxVersionPayload, error) {
-	return readBoxVersionCommand(runner, server, serverBoxStatusCommand())
-}
-
-func readBoxVersionCommand(runner sshRunner, server, command string) (boxVersionPayload, error) {
-	stdout, stderr, code, err := runner.RunSSH(server, command)
-	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "box version probe failed")
-		if outcome.TransportCoded != nil {
-			return boxVersionPayload{}, outcome.TransportCoded
-		}
-		if outcome.RemoteCoded != nil {
-			writeRemoteStderr(outcome)
-			return boxVersionPayload{}, outcome.RemoteCoded
-		}
-		if strings.HasPrefix(outcome.Detail, "sudo:") {
-			return boxVersionPayload{}, errcat.New(errcat.CodeBoxSetupRequired, errcat.Fields{"server": server})
-		}
-		return boxVersionPayload{}, operationError(outcome.Detail, "ship box status "+server)
+	stdout, err := runBoxReadCommand(runner, server, serverVersionCommand(true), "box version probe failed")
+	if err != nil {
+		return boxVersionPayload{}, err
 	}
 	var payload boxVersionPayload
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil || payload.Version == "" {
 		return boxVersionPayload{}, operationError("box status failed: invalid helper version JSON", "ship box status "+server)
 	}
 	return payload, nil
+}
+
+func readBoxStatusSummary(runner sshRunner, server string) (boxStatusSummaryPayload, error) {
+	stdout, err := runBoxReadCommand(runner, server, serverBoxStatusCommand(), "box status failed")
+	if err != nil {
+		return boxStatusSummaryPayload{}, err
+	}
+	var payload boxStatusSummaryPayload
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil || payload.Version == "" || payload.Apps == nil {
+		return boxStatusSummaryPayload{}, operationError("box status failed: invalid helper summary JSON", "ship box status "+server)
+	}
+	return payload, nil
+}
+
+func runBoxReadCommand(runner sshRunner, server, command, fallback string) (string, error) {
+	stdout, stderr, code, err := runner.RunSSH(server, command)
+	if err != nil || code != 0 {
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, fallback)
+		if outcome.TransportCoded != nil {
+			return "", outcome.TransportCoded
+		}
+		if outcome.RemoteCoded != nil {
+			writeRemoteStderr(outcome)
+			return "", outcome.RemoteCoded
+		}
+		if strings.HasPrefix(outcome.Detail, "sudo:") {
+			return "", errcat.New(errcat.CodeBoxSetupRequired, errcat.Fields{"server": server})
+		}
+		return "", operationError(outcome.Detail, "ship box status "+server)
+	}
+	return stdout, nil
 }
 
 func CmdBoxUpdate(server string) {
@@ -362,19 +376,7 @@ func runBoxMemberAdd(server, source, name, role, confirm string) error {
 	stdin := []byte(strings.Join(input.Keys, "\n") + "\n")
 	stdout, stderr, code, err := runner.RunSSHWithStdin(server, serverKeyAddCommand(name, role), stdin)
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
-		if outcome.TransportCoded != nil {
-			return outcome.TransportCoded
-		}
-		if outcome.RemoteCoded != nil {
-			writeRemoteStderr(outcome)
-			return outcome.RemoteCoded
-		}
-		detail := outcome.Detail
-		if detail == "" {
-			detail = "member add failed"
-		}
-		return operationError(detail, "ship box member add "+source+" "+server)
+		return sshResultError(stdout, stderr, code, err, "", "member add failed", "ship box member add "+source+" "+server)
 	}
 	fmt.Print(stdout)
 	return nil
@@ -392,19 +394,9 @@ func CmdBoxMemberLs(server string, jsonFlag bool) {
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverKeyListCommand(jsonFlag))
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
-		if outcome.TransportCoded != nil {
-			utils.DieError(outcome.TransportCoded, 1)
+		if err := sshResultError(stdout, stderr, code, err, "", "box member ls failed", "ship box member ls "+server); err != nil {
+			utils.DieError(err, 1)
 		}
-		if outcome.RemoteCoded != nil {
-			writeRemoteStderr(outcome)
-			utils.DieError(outcome.RemoteCoded, 1)
-		}
-		detail := outcome.Detail
-		if detail == "" {
-			detail = "box member ls failed"
-		}
-		utils.DieError(operationError(detail, "ship box member ls "+server), 1)
 	}
 	fmt.Print(stdout)
 }
@@ -421,19 +413,9 @@ func CmdBoxMemberRm(server, name string) {
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverKeyRmCommand(name))
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
-		if outcome.TransportCoded != nil {
-			utils.DieError(outcome.TransportCoded, 1)
+		if err := sshResultError(stdout, stderr, code, err, "", "member rm failed", "ship box member rm "+name+" "+server); err != nil {
+			utils.DieError(err, 1)
 		}
-		if outcome.RemoteCoded != nil {
-			writeRemoteStderr(outcome)
-			utils.DieError(outcome.RemoteCoded, 1)
-		}
-		detail := outcome.Detail
-		if detail == "" {
-			detail = "member rm failed"
-		}
-		utils.DieError(operationError(detail, "ship box member rm "+name+" "+server), 1)
 	}
 	fmt.Print(stdout)
 }
@@ -681,7 +663,7 @@ func runBoxConfigMutation(runner sshRunner, server, command, remediation string)
 }
 
 func readBoxConfig(runner sshRunner, server string) (boxConfigPayload, error) {
-	out, err := runSSHDetail(runner, server, serverBoxConfigGetCommand())
+	out, err := runSSHDetail(runner, server, serverBoxConfigGetCommand(), "ship box config "+server)
 	if err != nil {
 		return boxConfigPayload{}, err
 	}

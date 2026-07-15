@@ -137,7 +137,7 @@ func CmdWhy(root, branch string, jsonFlag bool) {
 	}
 	defer read.Runner.Close()
 
-	out, err := runSSHDetail(read.Runner, read.AppContext.Server, serverAppWhyCommand(read.AppContext.AppName, read.EnvName))
+	out, err := runSSHDetail(read.Runner, read.AppContext.Server, serverAppWhyCommand(read.AppContext.AppName, read.EnvName), "ship why")
 	if err != nil {
 		utils.DieError(err, 1)
 	}
@@ -275,14 +275,6 @@ func statusFromAppList(ctx *config.AppContext, raw string) (statusPayload, error
 }
 
 func statusEnvFromAppListItem(ctx *config.AppContext, item appListEnvJSON) statusEnvJSON {
-	class := item.Class
-	if class == "" {
-		class = "preview"
-	}
-	branch := item.Branch
-	if branch == "" && class == "production" {
-		branch = ctx.ProductionBranch
-	}
 	url := item.URL
 	if item.Class == "preview" && item.CapabilityURL != "" {
 		url = item.CapabilityURL
@@ -291,8 +283,8 @@ func statusEnvFromAppListItem(ctx *config.AppContext, item appListEnvJSON) statu
 		url = deploymentURL(ctx, item.Env)
 	}
 	return statusEnvJSON{
-		Class:         class,
-		Branch:        branch,
+		Class:         item.Class,
+		Branch:        item.Branch,
 		URL:           url,
 		CapabilityURL: item.CapabilityURL,
 		Env:           item.Env,
@@ -303,15 +295,8 @@ func statusEnvFromAppListItem(ctx *config.AppContext, item appListEnvJSON) statu
 		Pinned:        item.Pinned,
 		Dirty:         item.Dirty,
 		ShippedBy:     item.ShippedBy,
-		Processes:     nonNilProcessJSON(item.Processes),
+		Processes:     item.Processes,
 	}
-}
-
-func nonNilProcessJSON(processes []processJSON) []processJSON {
-	if processes == nil {
-		return []processJSON{}
-	}
-	return processes
 }
 
 func renderStatusSummary(payload statusPayload) string {
@@ -362,7 +347,7 @@ type remoteApprovalListPayload struct {
 }
 
 func fetchPendingApprovalCount(runner sshRunner, server string) (int, error) {
-	out, err := runSSHDetail(runner, server, serverApprovalLsCommand(true))
+	out, err := runSSHDetail(runner, server, serverApprovalLsCommand(true), "ship box approval ls "+server)
 	if err != nil {
 		return 0, err
 	}

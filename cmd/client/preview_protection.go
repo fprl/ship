@@ -52,7 +52,7 @@ func CmdPreviewShare(root string, rotate bool) {
 }
 
 func runPreviewShare(read previewShareContext, rotate bool) (previewShareResult, error) {
-	out, err := runSSHDetail(read.Runner, read.AppContext.Server, serverAppPreviewShareCommand(read.AppContext.AppName, read.EnvName, rotate))
+	out, err := runSSHDetail(read.Runner, read.AppContext.Server, serverAppPreviewShareCommand(read.AppContext.AppName, read.EnvName, rotate), "ship preview share")
 	if err != nil {
 		return previewShareResult{}, err
 	}

@@ -461,12 +461,13 @@ App events go only to the affected app manifest `webhook` URL: `deploy_aborted`,
 - `box_config_value_invalid`: box config value is invalid; cause: {key}: {detail}; remediation: `{command}`.
 - `box_missing_tool`: box preflight failed; cause: required server tool is missing on {target}: {tool}; remediation: `ship box setup {target}`.
 - `box_not_initialized`: box preflight failed; cause: ship server API is missing at /usr/local/bin/ship on {target}; remediation: `ship box setup {target}`.
-- `box_setup_required`: box predates one-command update; cause: this box's helper and sudo rules are older than ship box update; remediation: `ship box setup {server}`.
+- `box_setup_required`: box is not set up for ship; cause: the ship helper (or its sudo rules) is missing or stale on this box; remediation: `ship box setup {server}`.
 - `box_target_required`: target a box; cause: {known_boxes}; remediation: `{command}`; defaults: `command="ship box app ls <box>", known_boxes="known boxes (~/.config/ship/known_hosts):\n  none known yet"`.
 - `box_version_ambiguous`: box update cannot order these builds; cause: helper {helper_version} and client {client_version} are different builds of the same release; remediation: `ship box setup {server}`.
 - `branch_flag_requires_detached_head`: branch resolution failed; cause: --branch is only accepted on ship when HEAD is detached; remediation: `ship`.
 - `client_behind_helper`: client is behind the box helper; cause: helper version {helper_version} is newer than client version {client_version}; remediation: `curl -fsSL https://github.com/fprl/ship/releases/latest/download/install.sh | bash`.
 - `data_fork_on_production`: data command refused on Production; cause: branch {branch} maps to Production; data commands target Preview branches only; remediation: `git checkout <preview-branch>`.
+- `data_restore_confirmation_required`: Production restore confirmation failed; cause: Production restore requires --confirm {app}; remediation: `ship data restore {id_or_path} --confirm {app}`.
 - `data_snapshot_invalid`: data snapshot is invalid; cause: {detail}; remediation: `ship data ls`; defaults: `detail="snapshot metadata or data payload is invalid"`.
 - `deploy_blocked_local_checks`: deploy blocked by local checks; cause: {detail}; remediation: `{command}`; defaults: `command="fix local checks", detail="local checks reported errors; see stderr above"`.
 - `deploy_key_missing`: bootstrap SSH key is missing; cause: {detail}; remediation: `{command}`; defaults: `command="ssh-copy-id -i ~/.ssh/ship.pub root@<ip>", detail="provider gave a password; this installs your ship key using it once; hardening then disables password login permanently"`.

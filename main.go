@@ -109,9 +109,6 @@ func (p projectArgs) projectRoot() (string, error) {
 
 type initCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" help:"Path to ship.toml."`
-	Name   string `name:"name" help:"App name. Defaults to package.json name or directory name."`
-	Box    string `name:"box" help:"Box host."`
-	Host   string `name:"host" help:"Optional route host."`
 }
 
 func (c initCmd) Run() error {
@@ -119,11 +116,7 @@ func (c initCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdInit(root, client.InitOptions{
-		Name:   c.Name,
-		Server: c.Box,
-		Host:   c.Host,
-	})
+	client.CmdInit(root)
 	return nil
 }
 
@@ -935,6 +928,9 @@ func main() {
 
 func wantsJSONError(args []string) bool {
 	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
 		if arg == "--json" || strings.HasPrefix(arg, "--json=") {
 			return true
 		}
