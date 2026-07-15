@@ -1366,15 +1366,22 @@ web = { port = 3000 }
 	assertContains(t, authorized, keyComment)
 
 	list := e.ship(t, app, nil, "box", "member", "ls")
-	assertContains(t, list, keyComment+" shipper ssh-ed25519 "+fingerprint)
-	assertContains(t, list, "fake-vps-smoke owner ssh-ed25519 SHA256:")
+	assertContains(t, list, "NAME ROLE KEY-ID TYPE CURRENT")
+	assertContains(t, list, keyComment)
+	assertContains(t, list, "SHA256:")
+	assertContains(t, list, "ssh-ed25519")
+	assertContains(t, list, "CURRENT")
 
 	var members struct {
 		Members []struct {
-			Name        string `json:"name"`
-			Role        string `json:"role"`
-			KeyType     string `json:"key_type"`
-			Fingerprint string `json:"fingerprint"`
+			Name string `json:"name"`
+			Role string `json:"role"`
+			Keys []struct {
+				ID          string `json:"id"`
+				Fingerprint string `json:"fingerprint"`
+				Type        string `json:"type"`
+				Current     bool   `json:"current"`
+			} `json:"keys"`
 		} `json:"members"`
 	}
 	if err := json.Unmarshal([]byte(e.ship(t, app, nil, "box", "member", "ls", "--json")), &members); err != nil {
@@ -1382,13 +1389,40 @@ web = { port = 3000 }
 	}
 	foundMember := false
 	for _, member := range members.Members {
-		if member.Name == keyComment && member.Role == "shipper" && member.KeyType == "ssh-ed25519" && member.Fingerprint == fingerprint {
-			foundMember = true
+		if member.Name == keyComment && member.Role == "shipper" {
+			for _, key := range member.Keys {
+				if key.Type == "ssh-ed25519" && key.Fingerprint == fingerprint && key.Current {
+					foundMember = true
+				}
+			}
 		}
 	}
 	if !foundMember {
 		t.Fatalf("member ls --json missing added member: %+v", members.Members)
 	}
+
+	rename := keyComment + "-renamed"
+	e.ship(t, app, nil, "box", "member", "rename", keyComment, rename)
+	assertContains(t, e.ship(t, app, nil, "box", "member", "ls"), rename)
+	e.ship(t, app, nil, "box", "member", "role", rename, "owner")
+	e.ship(t, app, nil, "box", "member", "role", rename, "shipper")
+	rotationKeyPath := filepath.Join(e.tmp, "rotation-key")
+	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "rotation-key", "-f", rotationKeyPath)
+	rotationOutput := e.ship(t, app, nil, "box", "member", "add", rotationKeyPath+".pub", "--name", rename)
+	assertContains(t, rotationOutput, "rotation: verify a fresh connection with the new key")
+	oldShortID := ""
+	for _, line := range strings.Split(rotationOutput, "\n") {
+		fields := strings.Fields(line)
+		for i := 0; i+1 < len(fields); i++ {
+			if fields[i] == "--key" {
+				oldShortID = fields[i+1]
+			}
+		}
+	}
+	if !strings.HasPrefix(oldShortID, "SHA256:") {
+		t.Fatalf("rotation output missing printed SHA256 short key id: %q", rotationOutput)
+	}
+	assertContains(t, rotationOutput, "--key "+oldShortID)
 
 	unknown := e.runShip(t, app, nil, "box", "member", "rm", "ghost")
 	if unknown.err == nil {
@@ -1419,8 +1453,8 @@ web = { port = 3000 }
 		t.Fatalf("ship with added key should attribute the teammate key, got %+v", status.ShippedBy)
 	}
 
-	rmOut := e.ship(t, app, nil, "box", "member", "rm", keyComment)
-	assertContains(t, rmOut, "removed 1 SSH key for "+keyComment)
+	rmOut := e.ship(t, app, nil, "box", "member", "rm", rename, "--key", oldShortID)
+	assertContains(t, rmOut, "removed 1 SSH key for "+rename)
 	e.pathPrefix = teammatePrefix
 	revoked := e.runCommand(t, app, teammateEnv, nil, e.goBin)
 	if revoked.err == nil {
@@ -1432,8 +1466,8 @@ web = { port = 3000 }
 	if guard.err == nil {
 		t.Fatal("member rm should refuse to remove the last key")
 	}
-	assertContains(t, guard.stderr, "member rm refused")
-	assertContains(t, guard.stderr, "last remaining authorized key")
+	assertContains(t, guard.stderr, "member mutation refused")
+	assertContains(t, guard.stderr, "no effective owner key")
 }
 
 func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {

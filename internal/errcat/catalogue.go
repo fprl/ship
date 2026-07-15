@@ -50,8 +50,11 @@ const (
 	CodeKeysURLUnavailable                Code = "keys_url_unavailable"
 	CodeSSHPublicKeyInvalid               Code = "ssh_public_key_invalid"
 	CodeMemberNotFound                    Code = "member_not_found"
-	CodeMemberLastKey                     Code = "member_last_key"
+	CodeMemberLastOwner                   Code = "member_last_owner"
 	CodeMemberUnknown                     Code = "member_unknown"
+	CodeMemberKeyNotFound                 Code = "member_key_not_found"
+	CodeMemberKeyAmbiguous                Code = "member_key_ambiguous"
+	CodeMemberNameTaken                   Code = "member_name_taken"
 	CodeRoleDenied                        Code = "role_denied"
 	CodeApprovalRequired                  Code = "approval_required"
 	CodeApprovalExpired                   Code = "approval_expired"
@@ -342,11 +345,11 @@ var catalogue = map[Code]Entry{
 		RemediationTemplate: "ship box member ls {box}",
 		Defaults:            Fields{"box": "<box>"},
 	},
-	CodeMemberLastKey: {
-		Code:                CodeMemberLastKey,
-		MessageTemplate:     "member rm refused",
-		CauseTemplate:       "removing {name} would remove the last remaining authorized key",
-		RemediationTemplate: "ship box member add <https-url|key|path> {box} --name <name>",
+	CodeMemberLastOwner: {
+		Code:                CodeMemberLastOwner,
+		MessageTemplate:     "member mutation refused",
+		CauseTemplate:       "the mutation would leave no effective owner key (an owner record with a matching authorized_keys line)",
+		RemediationTemplate: "ship box member add <https-url|key|path> {box} --name <new-owner> --role owner",
 		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeMemberUnknown: {
@@ -354,6 +357,27 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "member identity is not authorized",
 		CauseTemplate:       "fingerprint {fingerprint} is not in authorized_keys",
 		RemediationTemplate: "ship box member add <https-url|key|path> {box} --name <name>",
+		Defaults:            Fields{"box": "<box>"},
+	},
+	CodeMemberKeyNotFound: {
+		Code:                CodeMemberKeyNotFound,
+		MessageTemplate:     "member key selector failed",
+		CauseTemplate:       "no such key for member {name}",
+		RemediationTemplate: "ship box member ls {box}",
+		Defaults:            Fields{"box": "<box>", "name": "<name>"},
+	},
+	CodeMemberKeyAmbiguous: {
+		Code:                CodeMemberKeyAmbiguous,
+		MessageTemplate:     "member key selector is ambiguous",
+		CauseTemplate:       "key selector {selector} matches multiple keys: {matches}",
+		RemediationTemplate: "ship box member rm {name} --key <full-fingerprint> {box}",
+		Defaults:            Fields{"box": "<box>", "name": "<name>"},
+	},
+	CodeMemberNameTaken: {
+		Code:                CodeMemberNameTaken,
+		MessageTemplate:     "member rename refused",
+		CauseTemplate:       "member name {name} already exists",
+		RemediationTemplate: "ship box member ls {box}",
 		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeRoleDenied: {

@@ -108,8 +108,8 @@ func TestSetupMemberRoleOverridesPreservesExistingRoleForProvidedKey(t *testing.
 		},
 	}, "")
 	got := overrides[keys[0].Fingerprint]
-	if got.Name != "deploy" || got.Role != store.MemberRoleAgent {
-		t.Fatalf("provided key override = %+v, want key comment with existing agent role", got)
+	if got.Name != "old name" || got.Role != store.MemberRoleAgent {
+		t.Fatalf("provided key override = %+v, want preserved name and existing agent role", got)
 	}
 }
 

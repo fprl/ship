@@ -32,7 +32,12 @@ type Row struct {
 	Role        string `json:"role"`
 	KeyType     string `json:"key_type"`
 	Fingerprint string `json:"fingerprint"`
+	KeyID       string `json:"-"`
+	Body        string `json:"-"`
+	Current     bool   `json:"-"`
 }
+
+const MinKeySelectorLength = 12
 
 func Normalize(raw, comment string) ([]AuthorizedKey, error) {
 	var keys []AuthorizedKey
@@ -193,9 +198,13 @@ func RenderAuthorizedKeyLine(key AuthorizedKey, record store.MemberRecord) strin
 	return fmt.Sprintf("command=\"/usr/local/bin/ship server agent-shell --member-fingerprint %s\",restrict %s", key.Fingerprint, public)
 }
 
-func RowsWithMembers(keys []AuthorizedKey, members store.MembersFile) []Row {
+func RowsWithMembers(keys []AuthorizedKey, members store.MembersFile, current ...string) []Row {
 	records := EffectiveMemberRecords(keys, members, nil)
 	rows := make([]Row, 0, len(keys))
+	currentFingerprint := ""
+	if len(current) > 0 {
+		currentFingerprint = current[0]
+	}
 	for _, key := range keys {
 		if key.Material == "" {
 			continue
@@ -209,6 +218,8 @@ func RowsWithMembers(keys []AuthorizedKey, members store.MembersFile) []Row {
 			Role:        string(record.Role),
 			KeyType:     key.Type,
 			Fingerprint: key.Fingerprint,
+			Body:        key.Body,
+			Current:     key.Fingerprint == currentFingerprint,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -224,6 +235,104 @@ func RowsWithMembers(keys []AuthorizedKey, members store.MembersFile) []Row {
 		return rows[i].Fingerprint < rows[j].Fingerprint
 	})
 	return rows
+}
+
+// ShortestUniqueKeyIDs returns copy-pasteable ids for the fingerprint
+// payloads. The floor is deliberate: short prefixes are too easy to collide
+// on a real box.
+func ShortestUniqueKeyIDs(keys []AuthorizedKey) map[string]string {
+	ids := make(map[string]string)
+	for i, key := range keys {
+		payload, ok := fingerprintPayload(key.Fingerprint)
+		if !ok || payload == "" {
+			continue
+		}
+		length := len(payload)
+		for candidate := MinKeySelectorLength; candidate < len(payload); candidate++ {
+			prefix := payload[:candidate]
+			unique := true
+			for j, other := range keys {
+				otherPayload, otherOK := fingerprintPayload(other.Fingerprint)
+				if i != j && otherOK && strings.HasPrefix(otherPayload, prefix) {
+					unique = false
+					break
+				}
+			}
+			if unique {
+				length = candidate
+				break
+			}
+		}
+		ids[key.Fingerprint] = "SHA256:" + payload[:length]
+	}
+	return ids
+}
+
+func fingerprintPayload(fingerprint string) (string, bool) {
+	if !strings.HasPrefix(fingerprint, "SHA256:") {
+		return "", false
+	}
+	return strings.TrimPrefix(fingerprint, "SHA256:"), true
+}
+
+// ResolveKeySelector resolves a full fingerprint or a unique fingerprint
+// payload prefix. It does not inspect member records, so callers can use it
+// without leaking another member's identity in a belongs-to check.
+func ResolveKeySelector(keys []AuthorizedKey, selector string) ([]AuthorizedKey, error) {
+	selector = strings.TrimSpace(selector)
+	for _, key := range keys {
+		if key.Fingerprint == selector {
+			return []AuthorizedKey{key}, nil
+		}
+	}
+	payloadSelector := selector
+	if strings.HasPrefix(payloadSelector, "SHA256:") {
+		payloadSelector = strings.TrimPrefix(payloadSelector, "SHA256:")
+	}
+	if len(payloadSelector) < MinKeySelectorLength {
+		return nil, errcat.New(errcat.CodeUsageError, errcat.Fields{
+			"detail":  fmt.Sprintf("key selector must be at least %d characters", MinKeySelectorLength),
+			"command": "ship box member ls {box}",
+		})
+	}
+	var matches []AuthorizedKey
+	for _, key := range keys {
+		payload, ok := fingerprintPayload(key.Fingerprint)
+		if ok && strings.HasPrefix(payload, payloadSelector) {
+			matches = append(matches, key)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return nil, errcat.New(errcat.CodeMemberKeyNotFound, errcat.Fields{"selector": selector})
+	case 1:
+		return matches, nil
+	default:
+		fingerprints := make([]string, 0, len(matches))
+		for _, key := range matches {
+			fingerprints = append(fingerprints, key.Fingerprint)
+		}
+		sort.Strings(fingerprints)
+		return nil, errcat.New(errcat.CodeMemberKeyAmbiguous, errcat.Fields{
+			"selector": selector,
+			"matches":  strings.Join(fingerprints, ", "),
+		})
+	}
+}
+
+// ValidateEffectiveOwner is the single guard used by every member
+// mutation. An owner record that has no matching authorized_keys line is not
+// effective and therefore cannot satisfy the invariant.
+func ValidateEffectiveOwner(keys []AuthorizedKey, records map[string]store.MemberRecord, box string) error {
+	for _, key := range keys {
+		if key.Material == "" {
+			continue
+		}
+		if record, ok := records[key.Fingerprint]; ok && record.Role == store.MemberRoleOwner {
+			return nil
+		}
+	}
+	return errcat.New(errcat.CodeMemberLastOwner, errcat.Fields{"box": box})
 }
 
 func ReconciledMembersFile(keys []AuthorizedKey, current store.MembersFile, overrides map[string]store.MemberRecord) store.MembersFile {

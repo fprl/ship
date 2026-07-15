@@ -111,8 +111,20 @@ func serverKeyListCommand(jsonFlag bool) string {
 	return serverCommand("key", "ls")
 }
 
-func serverKeyRmCommand(name string) string {
-	return serverCommand("key", "rm", name)
+func serverKeyRmCommand(name string, keyArg ...string) string {
+	args := []string{"key", "rm", name}
+	if len(keyArg) > 0 && keyArg[0] != "" {
+		args = append(args, "--key", keyArg[0])
+	}
+	return serverCommand(args...)
+}
+
+func serverKeyRenameCommand(oldName, newName string) string {
+	return serverCommand("key", "rename", oldName, newName)
+}
+
+func serverKeyRoleCommand(name, role string) string {
+	return serverCommand("key", "role", name, role)
 }
 
 func serverApprovalLsCommand(jsonFlag bool) string {

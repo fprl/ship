@@ -262,25 +262,39 @@ Secret scoping:
 - Purpose: Authorize SSH public key access for a deploy member.
 - Usage: `ship box member add <key|path|https-url> [<box>] --name <n> [--role owner|shipper|agent] [--confirm <name>@sha256:<digest>]`
 - Arguments and flags: `key|path|https-url`: A literal SSH public key, a path to a .pub/.pem file, or an HTTPS keys-URL such as https://github.com/alice.keys; `box`: Box host. Defaults to ship.toml box when run in an app directory; `--name <n>`: Box-global member name recorded for the keys. Always required; identity never derives from key comments or filenames; `--role owner|shipper|agent` default `shipper`: Role recorded for newly added keys; `--confirm <name>@sha256:<digest>`: Commit a previously printed keys-URL plan. The digest binds box, source, name, role, and key material.
-- Notes: Literal keys and local files write immediately. An HTTPS keys-URL alone fetches and prints every key with its SHA256 fingerprint, the source URL, and the proposed name and role — it writes nothing — then emits the exact `--confirm <name>@sha256:<digest>` command. Confirm refetches the URL and requires a byte-identical match, so what was reviewed is exactly what installs. Existing keys are deduplicated by key material. Agent-role keys are installed with a forced `agent-shell` command; owner and shipper keys remain plain authorized_keys entries.
+- Notes: Literal keys and local files write immediately. An HTTPS keys-URL alone fetches and prints every key with its SHA256 fingerprint, the source URL, and the proposed name and role — it writes nothing — then emits the exact `--confirm <name>@sha256:<digest>` command. Confirm refetches the URL and requires a byte-identical match, so what was reviewed is exactly what installs. Existing keys are deduplicated by key material. Agent-role keys are installed with a forced `agent-shell` command; owner and shipper keys remain plain authorized_keys entries. Adding a key to an existing member prints the real short id for the verify-then-`member rm --key` rotation step.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_target_required`, `invalid_box_target`, `keys_url_unavailable`, `ssh_public_key_invalid`, `approval_required`, `member_unknown`, `host_key_changed`, `operation_failed`
 
 ### `box member ls`
-- Purpose: List deploy members from authorized_keys.
+- Purpose: List enrolled deploy members and their keys.
 - Usage: `ship box member ls [<box>] [--json]`
 - Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit structured JSON.
-- `--json` stdout schema: `{"members":[{"name":"alice","role":"shipper","key_type":"ssh-ed25519","fingerprint":"SHA256:..."}]}`
+- `--json` stdout schema: `{"members":[{"name":"alice","role":"shipper","keys":[{"id":"SHA256:DUvOnIMvzMmJ","fingerprint":"SHA256:...","type":"ssh-ed25519","current":true}]}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_target_required`, `invalid_box_target`, `member_unknown`, `host_key_changed`, `operation_failed`
 
 ### `box member rm`
-- Purpose: Remove all SSH keys for a deploy member.
-- Usage: `ship box member rm <name> [<box>]`
-- Arguments and flags: `name`: Member name, matching the authorized key comment; `box`: Box host. Defaults to ship.toml box when run in an app directory.
-- Notes: Removes every key whose comment equals the member name. Refuses to remove the last remaining authorized key.
+- Purpose: Remove all or one SSH key for a deploy member.
+- Usage: `ship box member rm <name> [--key <id>] [<box>]`
+- Arguments and flags: `name`: Member name, matching the authorized key comment; `--key <id>`: Remove exactly one key by full fingerprint or unique fingerprint-payload prefix (minimum 12 characters); `box`: Box host. Defaults to ship.toml box when run in an app directory.
+- Notes: Without --key, removes every key for the member. With --key, the selector must identify exactly one key belonging to that member. Every mutation must leave an effective owner key.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `box_target_required`, `invalid_box_target`, `member_not_found`, `member_last_key`, `approval_required`, `member_unknown`, `host_key_changed`, `operation_failed`
+- Common error codes: `box_target_required`, `invalid_box_target`, `member_not_found`, `member_key_not_found`, `member_key_ambiguous`, `member_last_owner`, `approval_required`, `member_unknown`, `host_key_changed`, `operation_failed`
+
+### `box member rename`
+- Purpose: Rename a deploy member without changing key material or role.
+- Usage: `ship box member rename <old> <new> [<box>]`
+- Arguments and flags: `old`: Existing box-global member name; `new`: Unused box-global member name; `box`: Box host. Defaults to ship.toml box when run in an app directory.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `box_target_required`, `invalid_box_target`, `member_not_found`, `member_name_taken`, `member_last_owner`, `approval_required`, `member_unknown`, `host_key_changed`, `operation_failed`
+
+### `box member role`
+- Purpose: Change a deploy member's role across every key.
+- Usage: `ship box member role <name> <owner|shipper|agent> [<box>]`
+- Arguments and flags: `name`: Existing box-global member name; `role owner|shipper|agent`: Role to apply to every key for the member; `box`: Box host. Defaults to ship.toml box when run in an app directory.
+- Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
+- Common error codes: `box_target_required`, `invalid_box_target`, `member_not_found`, `member_last_owner`, `approval_required`, `member_unknown`, `host_key_changed`, `operation_failed`
 
 ### `box approval ls`
 - Purpose: List pending one-shot approvals for out-of-role requests.
@@ -498,7 +512,10 @@ App events go only to the affected app manifest `webhook` URL: `deploy_aborted`,
 - `keys_url_unavailable`: remote SSH key lookup failed; cause: no public SSH keys found at {source}; remediation: `ship box member add {source} {box} --name {name}`; defaults: `box="<box>", name="<name>", source="<https-url>"`.
 - `logs_follow_json_conflict`: logs command is invalid; cause: logs --json cannot be combined with --follow; remediation: `ship logs`.
 - `manifest_invalid`: ship.toml validation failed; cause: {details}; remediation: `{command}`; defaults: `command="fix ship.toml"`.
-- `member_last_key`: member rm refused; cause: removing {name} would remove the last remaining authorized key; remediation: `ship box member add <https-url|key|path> {box} --name <name>`; defaults: `box="<box>"`.
+- `member_key_ambiguous`: member key selector is ambiguous; cause: key selector {selector} matches multiple keys: {matches}; remediation: `ship box member rm {name} --key <full-fingerprint> {box}`; defaults: `box="<box>", name="<name>"`.
+- `member_key_not_found`: member key selector failed; cause: no such key for member {name}; remediation: `ship box member ls {box}`; defaults: `box="<box>", name="<name>"`.
+- `member_last_owner`: member mutation refused; cause: the mutation would leave no effective owner key (an owner record with a matching authorized_keys line); remediation: `ship box member add <https-url|key|path> {box} --name <new-owner> --role owner`; defaults: `box="<box>"`.
+- `member_name_taken`: member rename refused; cause: member name {name} already exists; remediation: `ship box member ls {box}`; defaults: `box="<box>"`.
 - `member_not_found`: member rm failed; cause: no authorized keys found for member {name}; current members: {members}; remediation: `ship box member ls {box}`; defaults: `box="<box>"`.
 - `member_unknown`: member identity is not authorized; cause: fingerprint {fingerprint} is not in authorized_keys; remediation: `ship box member add <https-url|key|path> {box} --name <name>`; defaults: `box="<box>"`.
 - `missing_tool`: host preflight failed; cause: missing host tool: {tool}; remediation: `ship box setup <ssh-target>`.

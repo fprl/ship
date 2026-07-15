@@ -591,9 +591,11 @@ func (c boxWebhookCmd) Run() error {
 }
 
 type boxMemberCmd struct {
-	Add boxMemberAddCmd `cmd:"" help:"Authorize a member's SSH public key for deploy access."`
-	Ls  boxMemberLsCmd  `cmd:"" help:"List deploy SSH members."`
-	Rm  boxMemberRmCmd  `cmd:"rm" help:"Revoke a deploy member's SSH keys."`
+	Add    boxMemberAddCmd    `cmd:"" help:"Authorize a member's SSH public key for deploy access."`
+	Ls     boxMemberLsCmd     `cmd:"" help:"List deploy SSH members."`
+	Rm     boxMemberRmCmd     `cmd:"rm" help:"Revoke a deploy member's SSH keys."`
+	Rename boxMemberRenameCmd `cmd:"rename" help:"Rename a deploy member."`
+	Role   boxMemberRoleCmd   `cmd:"role" help:"Change a deploy member's role."`
 }
 
 type boxMemberAddCmd struct {
@@ -636,6 +638,7 @@ type boxMemberRmCmd struct {
 	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
 	Name   string `arg:"" optional:"" help:"Member name to revoke."`
 	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
+	Key    string `name:"key" help:"Full fingerprint or unique key-body prefix."`
 }
 
 func (c boxMemberRmCmd) Run() error {
@@ -646,8 +649,55 @@ func (c boxMemberRmCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdBoxMemberRm(target, c.Name)
+	client.CmdBoxMemberRm(target, c.Name, c.Key)
 	return nil
+}
+
+type boxMemberRenameCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Old    string `arg:"" optional:"" help:"Current member name."`
+	New    string `arg:"" optional:"" help:"New member name."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
+}
+
+func (c boxMemberRenameCmd) Run() error {
+	box := boxTargetForRemediation(c.Config, c.Target)
+	if c.Old == "" || c.New == "" {
+		return cliUsageError("box member rename requires <old> <new>", "ship box member rename "+nonEmptyCLI(c.Old, "<old>")+" "+nonEmptyCLI(c.New, "<new>")+" "+box)
+	}
+	target, err := boxTargetFor(c.Config, c.Target, "ship box member rename <old> <new> <box>")
+	if err != nil {
+		return err
+	}
+	client.CmdBoxMemberRename(target, c.Old, c.New)
+	return nil
+}
+
+type boxMemberRoleCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Name   string `arg:"" optional:"" help:"Member name."`
+	Role   string `arg:"" optional:"" help:"New member role."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
+}
+
+func (c boxMemberRoleCmd) Run() error {
+	box := boxTargetForRemediation(c.Config, c.Target)
+	if c.Name == "" || c.Role == "" {
+		return cliUsageError("box member role requires <name> <owner|shipper|agent>", "ship box member role "+nonEmptyCLI(c.Name, "<name>")+" "+nonEmptyCLI(c.Role, "<role>")+" "+box)
+	}
+	target, err := boxTargetFor(c.Config, c.Target, "ship box member role <name> <owner|shipper|agent> <box>")
+	if err != nil {
+		return err
+	}
+	client.CmdBoxMemberRole(target, c.Name, c.Role)
+	return nil
+}
+
+func nonEmptyCLI(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 type boxApprovalCmd struct {

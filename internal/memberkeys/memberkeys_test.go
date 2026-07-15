@@ -78,3 +78,60 @@ func TestMergeReportsEveryProvidedKey(t *testing.T) {
 		t.Fatalf("merge results = %+v, want existing false and new true", results)
 	}
 }
+
+func TestShortestUniqueKeyIDsUseFingerprintPayload(t *testing.T) {
+	keys := []AuthorizedKey{
+		{Fingerprint: "SHA256:abcdefghijklmnop", Body: "AAAAC3NzaC1lZDI1NTE5AAAAIshared-one"},
+		{Fingerprint: "SHA256:abcdefghijkqwert", Body: "AAAAC3NzaC1lZDI1NTE5AAAAIshared-two"},
+		{Fingerprint: "SHA256:zzzzzzzzzzzzzzzz", Body: "AAAAC3NzaC1lZDI1NTE5AAAAIshared-three"},
+	}
+	ids := ShortestUniqueKeyIDs(keys)
+	if got, want := ids[keys[0].Fingerprint], "SHA256:abcdefghijkl"; got != want {
+		t.Fatalf("first key id = %q, want %q", got, want)
+	}
+	if got, want := ids[keys[1].Fingerprint], "SHA256:abcdefghijkq"; got != want {
+		t.Fatalf("second key id = %q, want %q", got, want)
+	}
+	if got, want := ids[keys[2].Fingerprint], "SHA256:zzzzzzzzzzzz"; got != want {
+		t.Fatalf("third key id = %q, want %q", got, want)
+	}
+}
+
+func TestResolveKeySelectorUsesFingerprintPayload(t *testing.T) {
+	keys := []AuthorizedKey{
+		{Fingerprint: "SHA256:abcdefghijklmnop", Body: "AAAAC3NzaC1lZDI1NTE5AAAAIshared-one"},
+		{Fingerprint: "SHA256:abcdefghijklmnoq", Body: "AAAAC3NzaC1lZDI1NTE5AAAAIshared-two"},
+		{Fingerprint: "SHA256:zzzzzzzzzzzzzzzz", Body: "AAAAC3NzaC1lZDI1NTE5AAAAIshared-three"},
+	}
+	if _, err := ResolveKeySelector(keys, "abcdefghijk"); !errcat.Is(err, errcat.CodeUsageError) || !strings.Contains(err.Error(), "at least 12") {
+		t.Fatalf("short selector error = %v", err)
+	}
+	if _, err := ResolveKeySelector(keys, "abcdefghijkl"); !errcat.Is(err, errcat.CodeMemberKeyAmbiguous) || !strings.Contains(err.Error(), keys[0].Fingerprint) || !strings.Contains(err.Error(), keys[1].Fingerprint) {
+		t.Fatalf("ambiguous selector error = %v", err)
+	}
+	matched, err := ResolveKeySelector(keys, "SHA256:zzzzzzzzzzzz")
+	if err != nil || len(matched) != 1 || matched[0].Fingerprint != keys[2].Fingerprint {
+		t.Fatalf("unique selector = %+v, %v", matched, err)
+	}
+	matched, err = ResolveKeySelector(keys, "zzzzzzzzzzzz")
+	if err != nil || len(matched) != 1 || matched[0].Fingerprint != keys[2].Fingerprint {
+		t.Fatalf("unprefixed unique selector = %+v, %v", matched, err)
+	}
+	matched, err = ResolveKeySelector(keys, keys[0].Fingerprint)
+	if err != nil || len(matched) != 1 || matched[0].Fingerprint != keys[0].Fingerprint {
+		t.Fatalf("full fingerprint selector = %+v, %v", matched, err)
+	}
+	if _, err := ResolveKeySelector(keys, "AAAAC3NzaC1l"); !errcat.Is(err, errcat.CodeMemberKeyNotFound) {
+		t.Fatalf("body selector error = %v, want member_key_not_found", err)
+	}
+}
+
+func TestValidateEffectiveOwnerRequiresRecordedAuthorizedOwner(t *testing.T) {
+	keys := []AuthorizedKey{{Fingerprint: "SHA256:owner", Material: "owner"}}
+	if err := ValidateEffectiveOwner(keys, map[string]store.MemberRecord{"SHA256:owner": {Name: "alice", Role: store.MemberRoleShipper}}, "box"); !errcat.Is(err, errcat.CodeMemberLastOwner) {
+		t.Fatalf("non-owner validation error = %v", err)
+	}
+	if err := ValidateEffectiveOwner(keys, map[string]store.MemberRecord{"SHA256:owner": {Name: "alice", Role: store.MemberRoleOwner}}, "box"); err != nil {
+		t.Fatalf("effective owner rejected: %v", err)
+	}
+}

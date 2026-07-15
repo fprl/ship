@@ -401,7 +401,7 @@ func CmdBoxMemberLs(server string, jsonFlag bool) {
 	fmt.Print(stdout)
 }
 
-func CmdBoxMemberRm(server, name string) {
+func CmdBoxMemberRm(server, name, key string) {
 	if !config.ValidateBoxHost(server) {
 		utils.DieError(invalidBoxTargetError(server, "ship box member rm "+name), 2)
 	}
@@ -411,9 +411,49 @@ func CmdBoxMemberRm(server, name string) {
 	}
 	defer runner.Close()
 
-	stdout, stderr, code, err := runner.RunSSH(server, serverKeyRmCommand(name))
+	stdout, stderr, code, err := runner.RunSSH(server, serverKeyRmCommand(name, key))
 	if err != nil || code != 0 {
-		if err := sshResultError(stdout, stderr, code, err, "", "member rm failed", "ship box member rm "+name+" "+server); err != nil {
+		command := "ship box member rm " + name
+		if key != "" {
+			command += " --key " + key
+		}
+		if err := sshResultError(stdout, stderr, code, err, "", "member rm failed", command+" "+server); err != nil {
+			utils.DieError(err, 1)
+		}
+	}
+	fmt.Print(stdout)
+}
+
+func CmdBoxMemberRename(server, oldName, newName string) {
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box member rename "+oldName+" "+newName), 2)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer runner.Close()
+	stdout, stderr, code, err := runner.RunSSH(server, serverKeyRenameCommand(oldName, newName))
+	if err != nil || code != 0 {
+		if err := sshResultError(stdout, stderr, code, err, "", "member rename failed", "ship box member rename "+oldName+" "+newName+" "+server); err != nil {
+			utils.DieError(err, 1)
+		}
+	}
+	fmt.Print(stdout)
+}
+
+func CmdBoxMemberRole(server, name, role string) {
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box member role "+name+" "+role), 2)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer runner.Close()
+	stdout, stderr, code, err := runner.RunSSH(server, serverKeyRoleCommand(name, role))
+	if err != nil || code != 0 {
+		if err := sshResultError(stdout, stderr, code, err, "", "member role failed", "ship box member role "+name+" "+role+" "+server); err != nil {
 			utils.DieError(err, 1)
 		}
 	}

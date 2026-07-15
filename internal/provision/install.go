@@ -309,11 +309,13 @@ func setupMemberRoleOverridesForMembers(_ []memberkeys.AuthorizedKey, results []
 	overrides := map[string]store.MemberRecord{}
 	for _, result := range results {
 		role := defaultRole
-		if existing, ok := current.Members[result.Key.Fingerprint]; ok {
-			role = existing.Role
-		}
 		member := result.Key.Comment
-		if name != "" {
+		if existing, ok := current.Members[result.Key.Fingerprint]; ok {
+			// A normal setup rerun is convergence, not an identity mutation.
+			// Setup naming applies only to new or rebuilt records.
+			member = existing.Name
+			role = existing.Role
+		} else if name != "" {
 			member = name
 		}
 		overrides[result.Key.Fingerprint] = store.MemberRecord{

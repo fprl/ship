@@ -95,7 +95,7 @@ func TestMemberOutputExamples(t *testing.T) {
 	}
 
 	list := formatMemberRow(row)
-	wantList := "alice shipper ssh-ed25519 " + aliceFingerprint
+	wantList := "alice                shipper  SHA256:DUvOnIMvzMmJ ssh-ed25519                  "
 	if list != wantList {
 		t.Fatalf("list output = %q, want %q", list, wantList)
 	}
@@ -386,7 +386,7 @@ func TestMemberRemediationsUseRecordedBoxAddress(t *testing.T) {
 		wantRemediation string
 	}{
 		{name: "missing member", member: "nobody", code: errcat.CodeMemberNotFound, wantRemediation: "ship box member ls 203.0.113.7"},
-		{name: "last member key", member: "alice", code: errcat.CodeMemberLastKey, wantRemediation: "ship box member add <https-url|key|path> 203.0.113.7 --name <name>"},
+		{name: "last effective owner", member: "alice", code: errcat.CodeMemberLastOwner, wantRemediation: "ship box member add <https-url|key|path> 203.0.113.7 --name <new-owner> --role owner"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -416,7 +416,7 @@ func TestNormalizeAuthorizedKeysUsesRecordedBoxAddress(t *testing.T) {
 }
 
 func TestEmptyHelperListPayloadsEncodeArrays(t *testing.T) {
-	members, err := json.Marshal(memberKeyListPayload{Members: memberRows(nil, store.MembersFile{})})
+	members, err := json.Marshal(memberKeyListPayload{Members: groupMemberRows(memberRows(nil, store.MembersFile{}))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,6 +430,18 @@ func TestEmptyHelperListPayloadsEncodeArrays(t *testing.T) {
 	}
 	if got, want := string(approvals), `{"approvals":[]}`; got != want {
 		t.Fatalf("empty approval payload = %s, want %s", got, want)
+	}
+}
+
+func TestMemberListPayloadIsNested(t *testing.T) {
+	rows := []memberKeyRow{{Name: "alice", Role: "owner", KeyID: "SHA256:abcdefghijkl", KeyType: "ssh-ed25519", Fingerprint: aliceFingerprint, Current: true}}
+	data, err := json.Marshal(memberKeyListPayload{Members: groupMemberRows(rows)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"members":[{"name":"alice","role":"owner","keys":[{"id":"SHA256:abcdefghijkl","fingerprint":"` + aliceFingerprint + `","type":"ssh-ed25519","current":true}]}]}`
+	if string(data) != want {
+		t.Fatalf("nested member payload = %s, want %s", data, want)
 	}
 }
 
