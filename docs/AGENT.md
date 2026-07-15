@@ -166,7 +166,7 @@ fields, or preview fields fail parsing. The accepted schema is:
 - `release` (string, optional, default empty): container release command.
 - `probe` (string, optional, default empty): container probe path; when set it must start with `/`.
 - `webhook` (URL string, optional, default empty): app webhook; only `http` and `https` URLs are accepted.
-- `[processes]` maps process names to a command string shorthand or a `[processes.<name>]` table. Its `cmd` is a string (default empty), `port` is an optional integer 1..65535, `preview` defaults to `true`, and nested `[processes.<name>.resources]` accepts `memory` (a byte string such as `512m`) or `cpus` (a positive number). A port-holding process has `port` and may receive HTTP routes; a portless process is a worker and cannot be a process route. A routed process with no explicit port inherits the sole Dockerfile `EXPOSE` port, or `3000` when there is no sole exposed port.
+- `[processes]` maps process names to a command string shorthand or a `[processes.<name>]` table. Its `cmd` is a string (default empty), `port` is an optional integer 1..65535, `preview` defaults to `true`, and nested `[processes.<name>.resources]` accepts `memory` only as a positive integer with a lowercase `k`, `m`, or `g` suffix (for example `512m` or `2g`), or `cpus` (a positive number). A port-holding process has `port` and may receive HTTP routes; a portless process is a worker and cannot be a process route. A routed process with no explicit port inherits the sole Dockerfile `EXPOSE` port, or `3000` when there is no sole exposed port.
 - `[routes]` maps `host` or `host/path` keys to a process-name string, or to exactly one target table: `{ static = "relative-dir" }` or `{ redirect = "host" }`. Process targets must name a process with a port; static directories are relative to the repo and redirects target a hostname.
 - `[preview]` accepts `base` (bare DNS suffix, default empty, which keeps synthesized sslip.io addressing) and `aliases` (boolean, default `false`).
 - `[env]` accepts dynamic environment-name keys whose values are strings; `"@secret"` refers to the secret with the same key. `[env.preview]` is the only supported env subtable and overlays `[env]` for Preview. There are no other `[env.<name>]` tables.
@@ -240,8 +240,8 @@ aliases = true
 
 ### `logs`
 - Purpose: Print logs for the current branch environment.
-- Usage: `ship logs [process] [--follow] [--tail N] [--json] [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `process`: Process name. Optional only when one process exists; `--follow`: Stream new log lines; `--tail <N>` default `100`: Number of trailing lines. With --follow, use 0 to stream new lines only; `--json`: Emit captured log lines as JSON. Cannot be combined with --follow.
+- Usage: `ship logs [process] [--follow|-f] [--tail N] [--json] [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `process`: Process name. Optional only when one process exists; `--follow / -f`: Stream new log lines. `-f` is the shorthand; `--tail <N>` default `100`: Number of trailing lines. With --follow, use 0 to stream new lines only; `--json`: Emit captured log lines as JSON. Cannot be combined with --follow.
 - `--json` stdout schema: `{"app":"api","env":"production","process":"web","lines":["line 1","line 2"]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `logs_follow_json_conflict`, `unknown_preview_branch`, `host_key_changed`, `operation_failed`
@@ -390,6 +390,7 @@ aliases = true
 - Usage: `ship box member ls [<box>] [--json]`
 - Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit structured JSON.
 - `--json` stdout schema: `{"members":[{"name":"alice","role":"shipper","keys":[{"id":"SHA256:DUvOnIMvzMmJ","fingerprint":"SHA256:...","type":"ssh-ed25519","current":true}]}]}`
+- Notes: Text output has one row per key, with rows sorted so a member's keys are adjacent. JSON groups those key rows under each member.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_target_required`, `invalid_box_target`, `member_unknown`, `host_key_changed`, `operation_failed`
 
@@ -397,7 +398,7 @@ aliases = true
 - Purpose: Remove all or one SSH key for a deploy member.
 - Usage: `ship box member rm <name> [--key <id>] [<box>]`
 - Arguments and flags: `name`: Stored box-global member name; `--key <id>`: Remove exactly one key by full fingerprint or unique fingerprint-payload prefix (minimum 12 characters); `box`: Box host. Defaults to ship.toml box when run in an app directory.
-- Notes: Without --key, removes every key for the member. With --key, the selector must identify exactly one key belonging to that member. Every mutation must leave an effective owner key.
+- Notes: Without --key, removes every key for the member and also clears a stray unrecorded authorized_keys line whose comment matches the name; this is the deliberate way to drop such a stray without setup. With --key, the selector must identify exactly one key belonging to that member. Every mutation must leave an effective owner key.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_target_required`, `invalid_box_target`, `member_not_found`, `member_key_not_found`, `member_key_ambiguous`, `member_last_owner`, `approval_required`, `member_unknown`, `host_key_changed`, `operation_failed`
 
@@ -611,7 +612,7 @@ aliases = true
 - `ssh_private_key_missing`: SSH private key is missing; cause: SSH private key file not found: {path}; remediation: `{command}`.
 - `ssh_public_key_file_empty`: SSH public key file is empty; cause: SSH public key file is empty: {path}; remediation: `{command}`.
 - `ssh_public_key_file_missing`: SSH public key file is missing; cause: SSH public key file not found: {path}; remediation: `{command}`.
-- `ssh_public_key_invalid`: SSH public key is invalid; cause: {detail}; remediation: `ship box member add <https-url|key|path> {box} --name <name>`; defaults: `box="<box>"`.
+- `ssh_public_key_invalid`: SSH public key is invalid; cause: {detail}; remediation: `ship box member add <https-url|key|path> {box} --name {name}`; defaults: `box="<box>", name="<name>"`.
 - `ssh_unreachable`: box preflight failed; cause: SSH failed for {target}: {detail}; remediation: `ssh {target}`.
 - `unknown_preview_branch`: preview environment lookup failed; cause: no preview environment is mapped for branch {branch}; remediation: `{command}`; defaults: `command="git checkout <branch> && ship"`.
 - `unmappable_branch_name`: branch resolution failed; cause: branch {branch} does not produce a valid environment name; remediation: `git branch -m <new-name>`.

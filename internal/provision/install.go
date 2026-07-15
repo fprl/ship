@@ -318,12 +318,28 @@ func setupMemberRoleOverridesForMembers(_ []memberkeys.AuthorizedKey, results []
 		} else if name != "" {
 			member = name
 		}
+		if existing, ok := existingMemberByNormalizedName(current, member); ok {
+			// A setup-provided key joining an existing member inherits that
+			// member's role, even when the key material is new.
+			member = existing.Name
+			role = existing.Role
+		}
 		overrides[result.Key.Fingerprint] = store.MemberRecord{
 			Name: member,
 			Role: role,
 		}
 	}
 	return overrides
+}
+
+func existingMemberByNormalizedName(current store.MembersFile, name string) (store.MemberRecord, bool) {
+	name = strings.Join(strings.Fields(name), " ")
+	for _, member := range current.Members {
+		if strings.Join(strings.Fields(member.Name), " ") == name {
+			return member, true
+		}
+	}
+	return store.MemberRecord{}, false
 }
 
 func addSSHHardening(ops *[]operation) {

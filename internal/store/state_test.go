@@ -209,6 +209,26 @@ func TestStoreWritesADR0002Files(t *testing.T) {
 	}
 }
 
+func TestMembersRejectNormalizedNameRoleCollision(t *testing.T) {
+	state := Store{Root: t.TempDir()}
+	file := MembersFile{
+		Version: CurrentVersion,
+		Members: map[string]MemberRecord{
+			"SHA256:agent": {Name: "shared", Role: MemberRoleAgent},
+			"SHA256:owner": {Name: " shared ", Role: MemberRoleOwner},
+		},
+	}
+	if err := state.WriteMembers(file); err == nil || !strings.Contains(err.Error(), `member "shared" has conflicting roles`) {
+		t.Fatalf("WriteMembers collision error = %v", err)
+	}
+	if err := os.WriteFile(state.MembersPath(), []byte(`{"version":1,"members":{"SHA256:agent":{"name":"shared","role":"agent"},"SHA256:owner":{"name":" shared ","role":"owner"}}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.ReadMembers(); err == nil || !strings.Contains(err.Error(), `member "shared" has conflicting roles`) {
+		t.Fatalf("ReadMembers collision error = %v", err)
+	}
+}
+
 func TestBoxConfigRefusesUnknownKeysAndWrongTypes(t *testing.T) {
 	state := Store{Root: t.TempDir()}
 	if err := os.WriteFile(state.BoxConfigPath(), []byte(`{"version":1,"values":{"unknown.key":"value"}}`), 0600); err != nil {

@@ -321,7 +321,7 @@ func TestDeployPreparationUsesShipAuthorization(t *testing.T) {
 func TestFingerprintResolutionRejectsSameNameRoleCollision(t *testing.T) {
 	setupAuthTest(t, map[string]store.MemberRecord{
 		aliceFingerprint: {Name: "shared", Role: store.MemberRoleAgent},
-		bobFingerprint:   {Name: "shared", Role: store.MemberRoleOwner},
+		bobFingerprint:   {Name: "shared", Role: store.MemberRoleAgent},
 	})
 	setServerMemberFingerprint(aliceFingerprint)
 	member, err := authorizeHelper(helperVerbShip, authTargetForPreviewBranch("api", "feat/pin", "ship", "release=abc123"))

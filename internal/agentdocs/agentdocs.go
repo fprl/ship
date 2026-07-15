@@ -593,11 +593,11 @@ var verbs = []Verb{
 	{
 		Verb:    "logs",
 		Purpose: "Print logs for the current branch environment.",
-		Usage:   "ship logs [process] [--follow] [--tail N] [--json] [--config <path>]",
+		Usage:   "ship logs [process] [--follow|-f] [--tail N] [--json] [--config <path>]",
 		Flags: []Flag{
 			configFlag,
 			{Name: "process", Purpose: "Process name. Optional only when one process exists."},
-			{Name: "--follow", Purpose: "Stream new log lines."},
+			{Name: "--follow / -f", Purpose: "Stream new log lines. `-f` is the shorthand."},
 			{Name: "--tail", Value: "<N>", Default: "100", Purpose: "Number of trailing lines. With --follow, use 0 to stream new lines only."},
 			{Name: "--json", Purpose: "Emit captured log lines as JSON. Cannot be combined with --follow."},
 		},
@@ -860,6 +860,7 @@ var verbs = []Verb{
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"box_target_required", "invalid_box_target", "member_unknown", "host_key_changed", "operation_failed"},
+		Notes:     []string{"Text output has one row per key, with rows sorted so a member's keys are adjacent. JSON groups those key rows under each member."},
 	},
 	{
 		Verb:    "box member rm",
@@ -872,7 +873,7 @@ var verbs = []Verb{
 		},
 		ExitCodes: normalExit,
 		Errors:    []string{"box_target_required", "invalid_box_target", "member_not_found", "member_key_not_found", "member_key_ambiguous", "member_last_owner", "approval_required", "member_unknown", "host_key_changed", "operation_failed"},
-		Notes:     []string{"Without --key, removes every key for the member. With --key, the selector must identify exactly one key belonging to that member. Every mutation must leave an effective owner key."},
+		Notes:     []string{"Without --key, removes every key for the member and also clears a stray unrecorded authorized_keys line whose comment matches the name; this is the deliberate way to drop such a stray without setup. With --key, the selector must identify exactly one key belonging to that member. Every mutation must leave an effective owner key."},
 	},
 	{
 		Verb:    "box member rename",
@@ -1217,7 +1218,7 @@ fields, or preview fields fail parsing. The accepted schema is:
 - ` + "`release`" + ` (string, optional, default empty): container release command.
 - ` + "`probe`" + ` (string, optional, default empty): container probe path; when set it must start with ` + "`/`" + `.
 - ` + "`webhook`" + ` (URL string, optional, default empty): app webhook; only ` + "`http`" + ` and ` + "`https`" + ` URLs are accepted.
-- ` + "`[processes]`" + ` maps process names to a command string shorthand or a ` + "`[processes.<name>]`" + ` table. Its ` + "`cmd`" + ` is a string (default empty), ` + "`port`" + ` is an optional integer 1..65535, ` + "`preview`" + ` defaults to ` + "`true`" + `, and nested ` + "`[processes.<name>.resources]`" + ` accepts ` + "`memory`" + ` (a byte string such as ` + "`512m`" + `) or ` + "`cpus`" + ` (a positive number). A port-holding process has ` + "`port`" + ` and may receive HTTP routes; a portless process is a worker and cannot be a process route. A routed process with no explicit port inherits the sole Dockerfile ` + "`EXPOSE`" + ` port, or ` + "`3000`" + ` when there is no sole exposed port.
+- ` + "`[processes]`" + ` maps process names to a command string shorthand or a ` + "`[processes.<name>]`" + ` table. Its ` + "`cmd`" + ` is a string (default empty), ` + "`port`" + ` is an optional integer 1..65535, ` + "`preview`" + ` defaults to ` + "`true`" + `, and nested ` + "`[processes.<name>.resources]`" + ` accepts ` + "`memory`" + ` only as a positive integer with a lowercase ` + "`k`" + `, ` + "`m`" + `, or ` + "`g`" + ` suffix (for example ` + "`512m`" + ` or ` + "`2g`" + `), or ` + "`cpus`" + ` (a positive number). A port-holding process has ` + "`port`" + ` and may receive HTTP routes; a portless process is a worker and cannot be a process route. A routed process with no explicit port inherits the sole Dockerfile ` + "`EXPOSE`" + ` port, or ` + "`3000`" + ` when there is no sole exposed port.
 - ` + "`[routes]`" + ` maps ` + "`host`" + ` or ` + "`host/path`" + ` keys to a process-name string, or to exactly one target table: ` + "`{ static = \"relative-dir\" }`" + ` or ` + "`{ redirect = \"host\" }`" + `. Process targets must name a process with a port; static directories are relative to the repo and redirects target a hostname.
 - ` + "`[preview]`" + ` accepts ` + "`base`" + ` (bare DNS suffix, default empty, which keeps synthesized sslip.io addressing) and ` + "`aliases`" + ` (boolean, default ` + "`false`" + `).
 - ` + "`[env]`" + ` accepts dynamic environment-name keys whose values are strings; ` + "`\"@secret\"`" + ` refers to the secret with the same key. ` + "`[env.preview]`" + ` is the only supported env subtable and overlays ` + "`[env]`" + ` for Preview. There are no other ` + "`[env.<name>]`" + ` tables.

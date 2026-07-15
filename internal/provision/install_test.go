@@ -113,6 +113,24 @@ func TestSetupMemberRoleOverridesPreservesExistingRoleForProvidedKey(t *testing.
 	}
 }
 
+func TestSetupMemberRoleOverridesPreservesRoleForNewKeyJoiningExistingMember(t *testing.T) {
+	keys, err := memberkeys.Normalize(deployTestPublicKey, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := store.MembersFile{
+		Version: store.CurrentVersion,
+		Members: map[string]store.MemberRecord{
+			"SHA256:old": {Name: "alice", Role: store.MemberRoleOwner},
+		},
+	}
+	overrides := setupMemberRoleOverridesForMembers(keys, []memberkeys.AddResult{{Key: keys[0], Added: true}}, current, "")
+	got := overrides[keys[0].Fingerprint]
+	if got.Name != "alice" || got.Role != store.MemberRoleOwner {
+		t.Fatalf("new key joining existing member = %+v, want alice owner", got)
+	}
+}
+
 func TestRunInstallReenrollsExistingDeployKeyWithoutMemberRecord(t *testing.T) {
 	root := t.TempDir()
 	helper := filepath.Join(root, "ship")

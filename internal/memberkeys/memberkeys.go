@@ -278,8 +278,12 @@ func fingerprintPayload(fingerprint string) (string, bool) {
 // ResolveKeySelector resolves a full fingerprint or a unique fingerprint
 // payload prefix. It does not inspect member records, so callers can use it
 // without leaking another member's identity in a belongs-to check.
-func ResolveKeySelector(keys []AuthorizedKey, selector string) ([]AuthorizedKey, error) {
+func ResolveKeySelector(keys []AuthorizedKey, selector string, memberName ...string) ([]AuthorizedKey, error) {
 	selector = strings.TrimSpace(selector)
+	name := ""
+	if len(memberName) > 0 {
+		name = memberName[0]
+	}
 	for _, key := range keys {
 		if key.Fingerprint == selector {
 			return []AuthorizedKey{key}, nil
@@ -304,7 +308,11 @@ func ResolveKeySelector(keys []AuthorizedKey, selector string) ([]AuthorizedKey,
 	}
 	switch len(matches) {
 	case 0:
-		return nil, errcat.New(errcat.CodeMemberKeyNotFound, errcat.Fields{"selector": selector})
+		fields := errcat.Fields{"selector": selector}
+		if name != "" {
+			fields["name"] = name
+		}
+		return nil, errcat.New(errcat.CodeMemberKeyNotFound, fields)
 	case 1:
 		return matches, nil
 	default:

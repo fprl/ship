@@ -217,6 +217,119 @@ func TestAppendDeployAuthorizedKeysWritesMembersBeforeAuthorizedKeys(t *testing.
 	}
 }
 
+func TestMemberMutationWriteOrderingFailsClosedOnWriteFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func(t *testing.T, root, keysPath string, oldKeys []authorizedKey, oldMembers store.MembersFile, next store.MembersFile)
+	}{
+		{name: "grant store failure", fn: func(t *testing.T, root, keysPath string, oldKeys []authorizedKey, oldMembers store.MembersFile, next store.MembersFile) {
+			if err := os.Chmod(root, 0500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(root, 0700) })
+			if err := writeMemberGrant("deploy", []authorizedKey{oldKeys[0], mustNormalizeKey(t, bobPublicKey, "bob")[0]}, next); err == nil {
+				t.Fatal("expected members store write failure")
+			}
+			assertMemberPairHasNoUnrecordedKeys(t)
+		},
+		},
+		{name: "grant authorized_keys failure", fn: func(t *testing.T, root, keysPath string, oldKeys []authorizedKey, oldMembers store.MembersFile, next store.MembersFile) {
+			if err := os.Chmod(filepath.Dir(keysPath), 0500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(filepath.Dir(keysPath), 0700) })
+			if err := writeMemberGrant("deploy", []authorizedKey{oldKeys[0], mustNormalizeKey(t, bobPublicKey, "bob")[0]}, next); err == nil {
+				t.Fatal("expected authorized_keys write failure")
+			}
+			assertMemberPairHasNoUnrecordedKeys(t)
+		},
+		},
+		{name: "revocation authorized_keys failure", fn: func(t *testing.T, root, keysPath string, oldKeys []authorizedKey, oldMembers store.MembersFile, next store.MembersFile) {
+			if err := os.Chmod(filepath.Dir(keysPath), 0500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(filepath.Dir(keysPath), 0700) })
+			if err := writeMemberRevocation("deploy", filepath.Dir(keysPath), keysPath, memberkeys.RenderAuthorizedKeyLines(oldKeys[:1], next.Members), next); err == nil {
+				t.Fatal("expected authorized_keys write failure")
+			}
+			assertMemberPairHasNoUnrecordedKeys(t)
+		},
+		},
+		{name: "revocation store failure", fn: func(t *testing.T, root, keysPath string, oldKeys []authorizedKey, oldMembers store.MembersFile, next store.MembersFile) {
+			if err := os.Chmod(root, 0500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(root, 0700) })
+			if err := writeMemberRevocation("deploy", filepath.Dir(keysPath), keysPath, memberkeys.RenderAuthorizedKeyLines(oldKeys[:1], next.Members), next); err == nil {
+				t.Fatal("expected members store write failure")
+			}
+			assertMemberPairHasNoUnrecordedKeys(t)
+		},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			keysDir := filepath.Join(root, "keys")
+			if err := os.MkdirAll(keysDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			keysPath := filepath.Join(keysDir, "authorized_keys")
+			t.Setenv("SHIP_STATE_DIR", root)
+			t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", keysPath)
+			bin := filepath.Join(root, "bin")
+			if err := os.MkdirAll(bin, 0755); err != nil {
+				t.Fatal(err)
+			}
+			writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			oldKeys := mustNormalizeKey(t, alicePublicKey, "alice")
+			bob := mustNormalizeKey(t, bobPublicKey, "bob")[0]
+			oldMembers := store.MembersFile{Version: store.CurrentVersion, Members: map[string]store.MemberRecord{aliceFingerprint: {Name: "alice", Role: store.MemberRoleOwner}, bobFingerprint: {Name: "bob", Role: store.MemberRoleShipper}}}
+			next := store.MembersFile{Version: store.CurrentVersion, Members: map[string]store.MemberRecord{aliceFingerprint: {Name: "alice", Role: store.MemberRoleOwner}, bobFingerprint: {Name: "bob", Role: store.MemberRoleShipper}}}
+			if strings.Contains(tt.name, "revocation") {
+				next.Members = map[string]store.MemberRecord{aliceFingerprint: {Name: "alice", Role: store.MemberRoleOwner}}
+			}
+			if err := os.WriteFile(keysPath, []byte(alicePublicKey+"\n"+bobPublicKey+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Default().WriteMembers(oldMembers); err != nil {
+				t.Fatal(err)
+			}
+			tt.fn(t, root, keysPath, append(oldKeys, bob), oldMembers, next)
+		})
+	}
+}
+
+func mustNormalizeKey(t *testing.T, raw, comment string) []authorizedKey {
+	t.Helper()
+	keys, err := normalizeAuthorizedKeys(raw, comment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return keys
+}
+
+func assertMemberPairHasNoUnrecordedKeys(t *testing.T) {
+	t.Helper()
+	keys, err := readDeployAuthorizedKeys("deploy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	members, err := store.Default().ReadMembers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := memberkeys.EffectiveMemberRecords(keys, *members, nil)
+	for _, key := range keys {
+		if key.Material != "" {
+			if _, ok := records[key.Fingerprint]; !ok {
+				t.Fatalf("authorized key %s has no store record: %+v", key.Fingerprint, members.Members)
+			}
+		}
+	}
+}
+
 func TestAppendDeployAuthorizedKeysDropsStrayButKeepsRecordedOwner(t *testing.T) {
 	root := t.TempDir()
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
@@ -410,7 +523,7 @@ func TestNormalizeAuthorizedKeysUsesRecordedBoxAddress(t *testing.T) {
 		t.Fatalf("normalize error = %v, want ssh_public_key_invalid", err)
 	}
 	coded, _ := errcat.As(err)
-	if got, want := coded.Remediation(), "ship box member add <https-url|key|path> 203.0.113.7 --name <name>"; got != want {
+	if got, want := coded.Remediation(), "ship box member add <https-url|key|path> 203.0.113.7 --name alice"; got != want {
 		t.Fatalf("remediation = %q, want %q", got, want)
 	}
 }

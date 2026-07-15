@@ -129,14 +129,14 @@ func (c keyAddCmd) run() error {
 			added = added || result.Added
 		}
 		if added {
-			fmt.Println("rotation: verify a fresh connection with the new key before retiring an old key")
+			fmt.Fprintln(os.Stderr, "rotation: verify a fresh connection with the new key before retiring an old key")
 			currentKeys, readErr := readDeployAuthorizedKeys(user)
 			if readErr != nil {
 				return readErr
 			}
 			ids := memberkeys.ShortestUniqueKeyIDs(currentKeys)
 			for _, fingerprint := range oldIDs {
-				fmt.Printf("next: ship box member rm %s --key %s %s\n", name, ids[fingerprint], boxClientAddress())
+				fmt.Fprintf(os.Stderr, "next: ship box member rm %s --key %s %s\n", name, ids[fingerprint], boxClientAddress())
 			}
 		}
 	}
@@ -236,6 +236,15 @@ func (c keyRenameCmd) run() error {
 		return unknownMemberMutationError(oldName, records)
 	}
 	if oldName == newName {
+		if !authorizedKeysMatchRendering(keys, records) {
+			next := memberkeys.ReconciledMembersFile(keys, *members, nil)
+			if err := memberkeys.ValidateEffectiveOwner(keys, next.Members, boxClientAddress()); err != nil {
+				return err
+			}
+			if err := writeMemberGrant(user, keys, next); err != nil {
+				return err
+			}
+		}
 		fmt.Printf("member %s already named %s\n", oldName, newName)
 		return nil
 	}
@@ -244,7 +253,7 @@ func (c keyRenameCmd) run() error {
 	}
 	overrides := map[string]store.MemberRecord{}
 	for fingerprint, record := range records {
-		if record.Name == oldName {
+		if normalizedMemberName(record.Name) == oldName {
 			record.Name = newName
 			overrides[fingerprint] = record
 		}
@@ -253,7 +262,7 @@ func (c keyRenameCmd) run() error {
 	if err := memberkeys.ValidateEffectiveOwner(keys, next.Members, boxClientAddress()); err != nil {
 		return err
 	}
-	if err := writeMemberMutation(user, keys, next); err != nil {
+	if err := writeMemberGrant(user, keys, next); err != nil {
 		return err
 	}
 	fmt.Printf("member renamed: %s -> %s\n", oldName, newName)
@@ -297,20 +306,13 @@ func (c keyRoleCmd) run() error {
 	if !memberNameExists(records, name) {
 		return unknownMemberMutationError(name, records)
 	}
-	currentRole := ""
-	for _, record := range records {
-		if record.Name == name {
-			currentRole = string(record.Role)
-			break
-		}
-	}
-	if currentRole == string(role) {
+	if memberRoleAndRenderingMatch(name, role, keys, records) {
 		fmt.Printf("member %s already role %s\n", name, role)
 		return nil
 	}
 	overrides := map[string]store.MemberRecord{}
 	for fingerprint, record := range records {
-		if record.Name == name {
+		if normalizedMemberName(record.Name) == name {
 			record.Role = role
 			overrides[fingerprint] = record
 		}
@@ -319,7 +321,7 @@ func (c keyRoleCmd) run() error {
 	if err := memberkeys.ValidateEffectiveOwner(keys, next.Members, boxClientAddress()); err != nil {
 		return err
 	}
-	if err := writeMemberMutation(user, keys, next); err != nil {
+	if err := writeMemberMutationForRole(user, keys, next, role); err != nil {
 		return err
 	}
 	fmt.Printf("member role changed: %s -> %s\n", name, role)
@@ -373,11 +375,11 @@ func appendDeployAuthorizedKeys(user string, keys []authorizedKey, role store.Me
 		result.Role = string(role)
 	}
 	records := memberkeys.EffectiveMemberRecords(mergedKeys, *members, overrides)
-	rendered := memberkeys.RenderAuthorizedKeyLines(mergedKeys, records)
-	if err := writeReconciledMembers(mergedKeys, *members, overrides); err != nil {
-		return nil, err
+	if err := memberkeys.ValidateEffectiveOwner(mergedKeys, records, boxClientAddress()); err != nil {
+		return nil, errcat.WithRemediation(err, "ship box setup "+boxClientAddress())
 	}
-	if err := writeDeployAuthorizedKeys(user, sshDir, path, rendered); err != nil {
+	next := store.MembersFile{Version: store.CurrentVersion, Members: records}
+	if err := writeMemberGrant(user, mergedKeys, next); err != nil {
 		return nil, err
 	}
 	return results, nil
@@ -394,7 +396,7 @@ func validateMemberEnrollment(existing []authorizedKey, existingRecords map[stri
 				if !recorded {
 					continue
 				}
-				if record.Name != key.Comment {
+				if normalizedMemberName(record.Name) != normalizedMemberName(key.Comment) {
 					return errcat.New(errcat.CodeUsageError, errcat.Fields{
 						"detail":  fmt.Sprintf("key %s already belongs to member %q", key.Fingerprint, record.Name),
 						"command": "ship box member add <https-url|key|path> " + boxClientAddress() + " --name " + record.Name,
@@ -411,7 +413,7 @@ func validateMemberEnrollment(existing []authorizedKey, existingRecords map[stri
 			if !recorded {
 				continue
 			}
-			if record.Name == key.Comment && record.Role != role {
+			if normalizedMemberName(record.Name) == normalizedMemberName(key.Comment) && record.Role != role {
 				return errcat.New(errcat.CodeUsageError, errcat.Fields{
 					"detail":  fmt.Sprintf("member %q already has role %q; additional keys must use that role", key.Comment, record.Role),
 					"command": "ship box member add <https-url|key|path> " + boxClientAddress() + " --name " + key.Comment + " --role " + string(record.Role),
@@ -448,7 +450,7 @@ func removeDeployAuthorizedKeysWithSelector(user, name, selector string) (int, e
 	}
 	records := memberkeys.EffectiveMemberRecords(existing, *members, nil)
 	if selector != "" {
-		matches, resolveErr := memberkeys.ResolveKeySelector(existing, selector)
+		matches, resolveErr := memberkeys.ResolveKeySelector(existing, selector, name)
 		if resolveErr != nil {
 			if errcat.Is(resolveErr, errcat.CodeUsageError) {
 				return 0, errcat.New(errcat.CodeUsageError, errcat.Fields{
@@ -471,7 +473,7 @@ func removeDeployAuthorizedKeysWithSelector(user, name, selector string) (int, e
 		}
 		key := matches[0]
 		record, ok := records[key.Fingerprint]
-		if !ok || record.Name != name {
+		if !ok || normalizedMemberName(record.Name) != name {
 			return 0, errcat.New(errcat.CodeMemberKeyNotFound, errcat.Fields{"name": name, "box": boxClientAddress()})
 		}
 		remaining := make([]authorizedKey, 0, len(existing)-1)
@@ -496,7 +498,7 @@ func removeDeployAuthorizedKeysWithSelector(user, name, selector string) (int, e
 		if record, ok := records[key.Fingerprint]; ok {
 			memberName = record.Name
 		}
-		if memberName == name {
+		if normalizedMemberName(memberName) == name {
 			removed++
 			continue
 		}
@@ -525,11 +527,8 @@ func removeAuthorizedKeySet(user string, remaining []authorizedKey, current stor
 	if err != nil {
 		return err
 	}
-	if err := store.Default().WriteMembers(next); err != nil {
-		return err
-	}
 	rendered := memberkeys.RenderAuthorizedKeyLines(remaining, next.Members)
-	return writeDeployAuthorizedKeys(user, sshDir, path, rendered)
+	return writeMemberRevocation(user, sshDir, path, rendered, next)
 }
 
 func deployAuthorizedKeysPaths(user string) (string, string, error) {
@@ -599,6 +598,7 @@ func normalizeAuthorizedKeys(raw, comment string) ([]authorizedKey, error) {
 	return nil, errcat.New(errcat.CodeSSHPublicKeyInvalid, errcat.Fields{
 		"detail": coded.Cause(),
 		"box":    boxClientAddress(),
+		"name":   normalizedMemberName(comment),
 	})
 }
 
@@ -668,7 +668,7 @@ func groupMemberRows(rows []memberKeyRow) []memberListMember {
 
 func memberNameExists(records map[string]store.MemberRecord, name string) bool {
 	for _, record := range records {
-		if record.Name == name {
+		if normalizedMemberName(record.Name) == normalizedMemberName(name) {
 			return true
 		}
 	}
@@ -698,7 +698,7 @@ func nonEmptyOr(value, fallback string) string {
 	return value
 }
 
-func writeMemberMutation(user string, keys []authorizedKey, next store.MembersFile) error {
+func writeMemberGrant(user string, keys []authorizedKey, next store.MembersFile) error {
 	sshDir, path, err := deployAuthorizedKeysPaths(user)
 	if err != nil {
 		return err
@@ -708,6 +708,55 @@ func writeMemberMutation(user string, keys []authorizedKey, next store.MembersFi
 	}
 	rendered := memberkeys.RenderAuthorizedKeyLines(keys, next.Members)
 	return writeDeployAuthorizedKeys(user, sshDir, path, rendered)
+}
+
+func writeMemberRevocation(user, sshDir, path string, rendered []string, next store.MembersFile) error {
+	if err := writeDeployAuthorizedKeys(user, sshDir, path, rendered); err != nil {
+		return err
+	}
+	return store.Default().WriteMembers(next)
+}
+
+func writeMemberMutationForRole(user string, keys []authorizedKey, next store.MembersFile, role store.MemberRole) error {
+	if role == store.MemberRoleAgent {
+		sshDir, path, err := deployAuthorizedKeysPaths(user)
+		if err != nil {
+			return err
+		}
+		return writeMemberRevocation(user, sshDir, path, memberkeys.RenderAuthorizedKeyLines(keys, next.Members), next)
+	}
+	return writeMemberGrant(user, keys, next)
+}
+
+func memberRoleAndRenderingMatch(name string, role store.MemberRole, keys []authorizedKey, records map[string]store.MemberRecord) bool {
+	found := false
+	for _, record := range records {
+		if normalizedMemberName(record.Name) != name {
+			continue
+		}
+		found = true
+		if record.Role != role {
+			return false
+		}
+	}
+	return found && authorizedKeysMatchRendering(keys, records)
+}
+
+func authorizedKeysMatchRendering(keys []authorizedKey, records map[string]store.MemberRecord) bool {
+	expected := memberkeys.RenderAuthorizedKeyLines(keys, records)
+	if len(keys) != len(expected) {
+		return false
+	}
+	for i := range expected {
+		if keys[i].Line != expected[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizedMemberName(name string) string {
+	return strings.Join(strings.Fields(name), " ")
 }
 
 func existingMemberRotationKeys(user, name string) (bool, []string) {
@@ -722,7 +771,7 @@ func existingMemberRotationKeys(user, name string) (bool, []string) {
 	records := memberkeys.EffectiveMemberRecords(keys, *members, nil)
 	var oldIDs []string
 	for _, key := range keys {
-		if record, ok := records[key.Fingerprint]; ok && record.Name == name {
+		if record, ok := records[key.Fingerprint]; ok && normalizedMemberName(record.Name) == name {
 			oldIDs = append(oldIDs, key.Fingerprint)
 		}
 	}
@@ -736,11 +785,6 @@ func memberAddTargetArgs(name string, role store.MemberRole, keys []authorizedKe
 		args = append(args, "fingerprint="+key.Fingerprint)
 	}
 	return args
-}
-
-func writeReconciledMembers(keys []authorizedKey, current store.MembersFile, overrides map[string]store.MemberRecord) error {
-	file := memberkeys.ReconciledMembersFile(keys, current, overrides)
-	return store.Default().WriteMembers(file)
 }
 
 func memberNamesList(names map[string]bool) string {

@@ -1429,7 +1429,7 @@ web = { port = 3000 }
 		t.Fatal("member rm unknown should fail")
 	}
 	assertContains(t, unknown.stderr, "member rm failed")
-	assertContains(t, unknown.stderr, "current members: fake-vps-smoke, "+keyComment)
+	assertContains(t, unknown.stderr, "current members: fake-vps-smoke, "+rename)
 
 	teammatePrefix := e.configureSSHWithKey(t, keyPath)
 	oldPrefix := e.pathPrefix

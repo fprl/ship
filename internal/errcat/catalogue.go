@@ -335,8 +335,8 @@ var catalogue = map[Code]Entry{
 		Code:                CodeSSHPublicKeyInvalid,
 		MessageTemplate:     "SSH public key is invalid",
 		CauseTemplate:       "{detail}",
-		RemediationTemplate: "ship box member add <https-url|key|path> {box} --name <name>",
-		Defaults:            Fields{"box": "<box>"},
+		RemediationTemplate: "ship box member add <https-url|key|path> {box} --name {name}",
+		Defaults:            Fields{"box": "<box>", "name": "<name>"},
 	},
 	CodeMemberNotFound: {
 		Code:                CodeMemberNotFound,
@@ -773,6 +773,16 @@ func WithMessage(err error, message string) error {
 	}
 	next := *coded
 	next.message = message
+	return &next
+}
+
+func WithRemediation(err error, remediation string) error {
+	coded, ok := As(err)
+	if !ok {
+		return err
+	}
+	next := *coded
+	next.remediation = remediation
 	return &next
 }
 

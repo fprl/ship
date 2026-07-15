@@ -108,16 +108,22 @@ func validateVersion(scope string, version int) error {
 }
 
 func validateMembersFile(file MembersFile) error {
+	names := map[string]MemberRole{}
 	for fingerprint, member := range file.Members {
 		if strings.TrimSpace(fingerprint) == "" {
 			return errors.New("members cannot contain empty fingerprints")
 		}
-		if strings.TrimSpace(member.Name) == "" {
+		name := strings.Join(strings.Fields(member.Name), " ")
+		if name == "" {
 			return fmt.Errorf("members.%s.name is required", fingerprint)
 		}
 		if !ValidMemberRole(member.Role) {
 			return fmt.Errorf("members.%s.role must be owner, shipper, or agent", fingerprint)
 		}
+		if previous, ok := names[name]; ok && previous != member.Role {
+			return fmt.Errorf("member %q has conflicting roles %q and %q", name, previous, member.Role)
+		}
+		names[name] = member.Role
 	}
 	return nil
 }

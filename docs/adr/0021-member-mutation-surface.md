@@ -65,7 +65,14 @@ ship box member rm <name> [--key <id>] [<box>]
   to new records or when rebuilding an invalid/missing store. Silent
   identity mutation during convergence fails the obvious-thing test;
   deliberate renames now have their own verb.
-- Write order per ADR-0020: store first, then rendered file.
+- Write order fails closed, per direction (refines ADR-0020): grants
+  (add; role changes away from agent, owner↔shipper) write the store
+  first, then the rendered file; revocations (rm, rm --key, role
+  change TO agent — the forced command restricts shell access) write
+  the rendered file first. A crash between the two writes never leaves
+  a key line whose access exceeds what the store records. Idempotent
+  paths verify the rendered file and re-render on drift instead of
+  returning early.
 
 ## Rejected
 

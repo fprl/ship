@@ -678,18 +678,26 @@ func TestAgentDocsFlagDrift(t *testing.T) {
 			if !ok {
 				t.Fatalf("documented verb %q has no Kong leaf", verb)
 			}
-			documented := map[string]bool{}
+			documentedLong := map[string]bool{}
+			documentedShort := map[rune]bool{}
 			item, ok := agentdocs.Lookup(verb)
 			if !ok {
 				t.Fatalf("documented verb %q missing from agentdocs", verb)
 			}
 			for _, flag := range item.Flags {
-				if strings.HasPrefix(flag.Name, "--") {
-					documented[flag.Name] = true
+				for _, name := range strings.Split(flag.Name, " / ") {
+					name = strings.TrimSpace(name)
+					switch {
+					case strings.HasPrefix(name, "--"):
+						documentedLong[name] = true
+					case len(name) == 2 && strings.HasPrefix(name, "-"):
+						documentedShort[rune(name[1])] = true
+					}
 				}
 			}
 
 			kongFlags := map[string]bool{}
+			kongShorts := map[rune]bool{}
 			for _, group := range node.AllFlags(false) {
 				for _, flag := range group {
 					// Kong's synthesized help flag is not a field on the
@@ -698,16 +706,29 @@ func TestAgentDocsFlagDrift(t *testing.T) {
 						continue
 					}
 					kongFlags["--"+flag.Name] = flag.Hidden
+					if flag.Short != 0 {
+						kongShorts[flag.Short] = flag.Hidden
+					}
 				}
 			}
-			for name := range documented {
+			for name := range documentedLong {
 				if _, ok := kongFlags[name]; !ok {
 					t.Errorf("documented long flag %s is absent from Kong metadata for %s", name, verb)
 				}
 			}
+			for short := range documentedShort {
+				if _, ok := kongShorts[short]; !ok {
+					t.Errorf("documented short flag -%c is absent from Kong metadata for %s", short, verb)
+				}
+			}
 			for name, hidden := range kongFlags {
-				if !hidden && !documented[name] {
+				if !hidden && !documentedLong[name] {
 					t.Errorf("visible Kong long flag %s is undocumented for %s", name, verb)
+				}
+			}
+			for short, hidden := range kongShorts {
+				if !hidden && !documentedShort[short] {
+					t.Errorf("visible Kong short flag -%c is undocumented for %s", short, verb)
 				}
 			}
 		})
