@@ -1388,17 +1388,30 @@ web = { port = 3000 }
 		t.Fatal(err)
 	}
 	foundMember := false
+	foundCurrentOwnerKey := false
 	for _, member := range members.Members {
 		if member.Name == keyComment && member.Role == "shipper" {
 			for _, key := range member.Keys {
-				if key.Type == "ssh-ed25519" && key.Fingerprint == fingerprint && key.Current {
+				// The owner runs this ls, so the teammate's key must
+				// NOT carry the current-connection marker.
+				if key.Type == "ssh-ed25519" && key.Fingerprint == fingerprint && !key.Current {
 					foundMember = true
+				}
+			}
+		}
+		if member.Role == "owner" {
+			for _, key := range member.Keys {
+				if key.Current {
+					foundCurrentOwnerKey = true
 				}
 			}
 		}
 	}
 	if !foundMember {
 		t.Fatalf("member ls --json missing added member: %+v", members.Members)
+	}
+	if !foundCurrentOwnerKey {
+		t.Fatalf("member ls --json missing CURRENT marker on the connecting owner key: %+v", members.Members)
 	}
 
 	rename := keyComment + "-renamed"
