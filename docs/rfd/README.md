@@ -24,3 +24,11 @@ section with acceptance criteria, the same bar ship-spec sets.
   gateway; decision record with revisit triggers (July 13).
 - [RFD-0007](0007-scheduled-offbox-backup.md) — scheduled off-box
   backup: R2/S3 push on a timer, on the box-config foundation; parked.
+- [RFD-0008](0008-member-invite-flow.md) — member invite flow; parked.
+- [RFD-0009](0009-state-diet-and-activation-model.md) — state diet and
+  activation model: four kinds of state, crash-only deploy lifecycle,
+  automatic-first convergence. **Accepted, in implementation** (the
+  exception to this directory's not-scheduled rule; spec sections land
+  with the stages).
+- [RFD-0010](0010-member-change-journal.md) — member change journal:
+  durable who-changed-what for the member register; parked.
