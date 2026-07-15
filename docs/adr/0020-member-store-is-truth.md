@@ -21,6 +21,12 @@ unknown keys into the store with invented identities.
 
 ## Decision
 
+`members.json` follows the ADR-0014 config doctrine — one canonical
+schema-validated file, atomic writes, verbs as sugar, derived artifacts
+converged from it — in its own register, separate from box config
+because key material and the guarded enrollment ceremony don't fit flat
+key=value semantics.
+
 `members.json` is the authoritative register of who can use the box.
 `authorized_keys` is a rendered artifact: it carries the key material
 and the forced-command line, but contributes no identity.
