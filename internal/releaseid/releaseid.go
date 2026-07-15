@@ -22,7 +22,6 @@ var (
 )
 
 type Info struct {
-	Raw        string
 	Base       string
 	Dirty      bool
 	Timestamp  string
@@ -40,7 +39,7 @@ func Parse(release string) (Info, error) {
 	if err := Validate(release); err != nil {
 		return Info{}, err
 	}
-	info := Info{Raw: release}
+	info := Info{}
 	baseRelease := release
 	if match := staticSuffixRe.FindStringSubmatch(release); match != nil {
 		info.StaticHash = match[1]

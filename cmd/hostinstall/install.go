@@ -59,7 +59,6 @@ type Plan struct {
 type Installer struct {
 	Stdout io.Writer
 	Stderr io.Writer
-	Stdin  io.Reader
 	Env    map[string]string
 
 	geteuid    func() int
@@ -81,7 +80,6 @@ func NewInstaller() *Installer {
 	return &Installer{
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
-		Stdin:  os.Stdin,
 		Env:    environMap(),
 		geteuid: func() int {
 			return os.Geteuid()
@@ -95,10 +93,6 @@ func (i *Installer) RunOptions(opts Options) error {
 	plan, err := BuildPlan(opts, i.geteuid() == 0, fileExists("/etc/os-release"))
 	if err != nil {
 		return err
-	}
-
-	if envBool(i.Env, "SHIP_INSTALLER_DUMP_PLAN", false) {
-		return i.dumpInstallPlan(plan)
 	}
 
 	cleanupKnownHosts := func() {}
@@ -115,7 +109,7 @@ func (i *Installer) RunOptions(opts Options) error {
 	}
 	defer cleanupKnownHosts()
 
-	keyPlan, err := resolveSSHKeyPlan(plan, true, "", sshCopyIDTarget(plan))
+	keyPlan, err := resolveSSHKeyPlan(plan, true, sshCopyIDTarget(plan))
 	if err != nil {
 		return err
 	}
@@ -378,25 +372,6 @@ func (i *Installer) runLocal(plan Plan, keyPlan keyPlan) (provision.InstallSumma
 	}
 	i.info("provisioning %s %d changes", summary.ApplyID, summary.OperationsChanged)
 	return summary, nil
-}
-
-func (i *Installer) dumpInstallPlan(plan Plan) error {
-	keyPlan, err := resolveSSHKeyPlan(plan, true, "", sshCopyIDTarget(plan))
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintf(i.Stdout, "plan.mode=%s\n", plan.Mode)
-	fmt.Fprintf(i.Stdout, "plan.target_host=%s\n", plan.TargetHost)
-	fmt.Fprintf(i.Stdout, "plan.bootstrap_user=%s\n", plan.BootstrapUser)
-	fmt.Fprintf(i.Stdout, "plan.check_mode=%s\n", boolText(plan.CheckMode))
-	fmt.Fprintf(i.Stdout, "plan.operator_key=%s\n", presentOrMissingKeys(keyPlan.Operator, "present", "missing"))
-	fmt.Fprintf(i.Stdout, "plan.deploy_key=%s\n", presentOrMissingKeys(keyPlan.Deploy, "present", "missing"))
-	if plan.Mode == "remote" {
-		fmt.Fprintln(i.Stdout, "--- remote-local-command ---")
-		fmt.Fprintln(i.Stdout, remoteLocalInstallCommand(remoteHelperExample, plan, "/tmp/ship-operator.pub", "/tmp/ship-deploy.pub"))
-	}
-	return nil
 }
 
 func (i *Installer) prepareGoHelperBinaries(repoRoot string, target string) (string, func(), error) {
@@ -736,7 +711,7 @@ type keyPlan struct {
 
 type plannedKey = memberkeys.AuthorizedKey
 
-func resolveSSHKeyPlan(plan Plan, requireOperator bool, _ string, passwordTarget string) (keyPlan, error) {
+func resolveSSHKeyPlan(plan Plan, requireOperator bool, passwordTarget string) (keyPlan, error) {
 	operatorKeys, err := readPublicKeyFile(plan.OperatorSSHPublicKeyFile)
 	if err != nil {
 		return keyPlan{}, err
@@ -896,13 +871,6 @@ func sshCopyIDTarget(plan Plan) string {
 	return bootstrapSSHTarget(plan)
 }
 
-func presentOrMissingKeys(value []plannedKey, present string, missing string) string {
-	if len(value) != 0 {
-		return present
-	}
-	return missing
-}
-
 func runCaptured(name string, args []string, cwd string) (string, string, error) {
 	return runCapturedInput(name, args, cwd, nil)
 }
@@ -944,21 +912,6 @@ func envDefault(env map[string]string, name string, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func envBool(env map[string]string, name string, fallback bool) bool {
-	value := strings.ToLower(strings.TrimSpace(env[name]))
-	if value == "" {
-		return fallback
-	}
-	return value == "true" || value == "1" || value == "yes"
-}
-
-func boolText(value bool) string {
-	if value {
-		return "true"
-	}
-	return "false"
 }
 
 func installUsageError(detail, command string) error {

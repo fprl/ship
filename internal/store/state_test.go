@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestStoreWritesADR0002Files(t *testing.T) {
@@ -564,40 +563,5 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := info.Mode().Perm(); got != want {
 		t.Fatalf("expected %s mode %o, got %o", path, want, got)
-	}
-}
-
-func TestReadApprovalsDropsInvalidExpiredEntriesOnly(t *testing.T) {
-	root := t.TempDir()
-	s := Store{Root: root}
-	live := time.Now().UTC().Add(10 * time.Minute).Format(time.RFC3339Nano)
-	past := time.Now().UTC().Add(-10 * time.Minute).Format(time.RFC3339Nano)
-	// A pre-required_role row (the shape an old helper wrote) that has
-	// expired must never brick reads of the live entries.
-	raw := `{"version":1,"requests":[` +
-		`{"id":"stale123","member":{"fingerprint":"SHA256:aaa","name":"alice","role":"shipper"},"verb":"app","target":{"summary":"rm app=x"},"match_key":"k1","status":"pending","created":"` + past + `","expires":"` + past + `"},` +
-		`{"id":"live4567","member":{"fingerprint":"SHA256:bbb","name":"bob","role":"agent"},"required_role":"shipper","verb":"app","target":{"summary":"ship app=y"},"match_key":"k2","status":"pending","created":"` + live + `","expires":"` + live + `"}]}`
-	if err := os.MkdirAll(filepath.Dir(s.ApprovalsPath()), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(s.ApprovalsPath(), []byte(raw), 0644); err != nil {
-		t.Fatal(err)
-	}
-	file, err := s.ReadApprovals()
-	if err != nil {
-		t.Fatalf("read approvals: %v", err)
-	}
-	if len(file.Requests) != 1 || file.Requests[0].ID != "live4567" {
-		t.Fatalf("requests = %+v, want only live4567", file.Requests)
-	}
-
-	// The same invalid shape while still live must keep failing loudly.
-	rawLiveInvalid := `{"version":1,"requests":[` +
-		`{"id":"badlive1","member":{"fingerprint":"SHA256:ccc","name":"cara","role":"shipper"},"verb":"app","target":{"summary":"rm app=z"},"match_key":"k3","status":"pending","created":"` + live + `","expires":"` + live + `"}]}`
-	if err := os.WriteFile(s.ApprovalsPath(), []byte(rawLiveInvalid), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.ReadApprovals(); err == nil {
-		t.Fatal("live invalid entry should fail validation")
 	}
 }

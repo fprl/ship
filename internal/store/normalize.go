@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/fprl/ship/internal/names"
 )
@@ -63,11 +62,6 @@ func normalizeApprovalsFile(file *ApprovalsFile) {
 	file.Version = CurrentVersion
 	if file.Requests == nil {
 		file.Requests = []ApprovalRequest{}
-	}
-	for i := range file.Requests {
-		if file.Requests[i].Status == "" {
-			file.Requests[i].Status = ApprovalStatusPending
-		}
 	}
 }
 
@@ -143,25 +137,6 @@ func validateApprovalsFile(file ApprovalsFile) error {
 		}
 	}
 	return nil
-}
-
-// dropInvalidExpiredApprovals removes requests that fail validation AND are
-// already past their expiry (or carry an unparseable expiry). Approvals are
-// 15-minute objects: an expired entry is prunable garbage whatever its
-// shape, and it must never brick reads of the live entries. Invalid entries
-// that are still live keep failing validation loudly.
-func dropInvalidExpiredApprovals(file *ApprovalsFile, now time.Time) {
-	kept := file.Requests[:0]
-	for _, request := range file.Requests {
-		if validateApprovalRequest(request) != nil {
-			expires, err := time.Parse(time.RFC3339Nano, request.ExpiresAt)
-			if err != nil || !expires.After(now) {
-				continue
-			}
-		}
-		kept = append(kept, request)
-	}
-	file.Requests = kept
 }
 
 func validateApprovalRequest(request ApprovalRequest) error {

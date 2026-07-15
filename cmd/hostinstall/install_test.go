@@ -78,7 +78,7 @@ func TestBuildPlanAndRemoteLocalInstallCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = resolveSSHKeyPlan(plan, false, "", "root@203.0.113.10")
+	_, err = resolveSSHKeyPlan(plan, false, "root@203.0.113.10")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,22 +208,10 @@ func TestRunRemoteUsesUniqueHelperPathAndCleansItUp(t *testing.T) {
 	}
 }
 
-func TestResolveSSHKeyPlanDoesNotPromoteBootstrapKeys(t *testing.T) {
-	plan := Plan{Mode: "remote"}
-
-	_, err := resolveSSHKeyPlan(plan, false, alicePublicKey+"\n"+bobPublicKey+"\n", "root@203.0.113.10")
-	if err == nil {
-		t.Fatal("expected missing deploy key error")
-	}
-	if !errcat.Is(err, errcat.CodeDeployKeyMissing) {
-		t.Fatalf("code = %v, want %s", err, errcat.CodeDeployKeyMissing)
-	}
-}
-
 func TestResolveSSHKeyPlanMissingDeployKeyUsesErrcat(t *testing.T) {
 	plan := Plan{Mode: "remote"}
 
-	_, err := resolveSSHKeyPlan(plan, false, "", "root@203.0.113.10")
+	_, err := resolveSSHKeyPlan(plan, false, "root@203.0.113.10")
 	if err == nil {
 		t.Fatal("expected missing deploy key error")
 	}

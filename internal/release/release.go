@@ -32,7 +32,7 @@ func IsVersion(value string) bool {
 func DownloadVerifiedAsset(env map[string]string, tag, name string) ([]byte, error) {
 	baseURL := strings.TrimRight(envDefault(env, "SHIP_RELEASE_BASE_URL", DefaultBaseURL), "/")
 	client := http.Client{Timeout: 2 * time.Minute}
-	token := downloadToken(env)
+	token := DownloadToken(env)
 
 	data, err := downloadAsset(&client, env, tag, name, token, baseURL+"/"+tag+"/"+name, baseURL)
 	if err != nil {
@@ -165,7 +165,8 @@ func canUseAPI(env map[string]string, baseURL string) bool {
 	return strings.TrimSpace(env["SHIP_RELEASE_API_BASE_URL"]) != "" || baseURL == DefaultBaseURL
 }
 
-func downloadToken(env map[string]string) string {
+// DownloadToken resolves the token used for authenticated release downloads.
+func DownloadToken(env map[string]string) string {
 	for _, key := range []string{"SHIP_RELEASE_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"} {
 		if token := strings.TrimSpace(env[key]); token != "" {
 			return token

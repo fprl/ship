@@ -2,9 +2,8 @@ package provision
 
 import (
 	"context"
-	"crypto/sha256"
-	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -184,53 +183,6 @@ func TestRunInstallEnrollsAuthorizedKeysWithoutReplacingExistingMembers(t *testi
 	}
 	assertAuthorizedKeysLines(t, string(runner.files["/home/deploy/.ssh/authorized_keys"].Content), []string{existingDeploy, deployTestPublicKey})
 	assertAuthorizedKeysLines(t, string(runner.files["/home/operator/.ssh/authorized_keys"].Content), []string{existingOperator, operatorTestPublicKey})
-}
-
-func TestOSReleaseValue(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		key     string
-		want    string
-	}{
-		{
-			name:    "plain",
-			content: "VERSION_CODENAME=jammy\n",
-			key:     "VERSION_CODENAME",
-			want:    "jammy",
-		},
-		{
-			name:    "double quoted",
-			content: "VERSION_CODENAME=\"noble\"\n",
-			key:     "VERSION_CODENAME",
-			want:    "noble",
-		},
-		{
-			name:    "single quoted crlf",
-			content: "VERSION_CODENAME='oracular'\r\n",
-			key:     "VERSION_CODENAME",
-			want:    "oracular",
-		},
-		{
-			name:    "ignores comments",
-			content: "# VERSION_CODENAME=wrong\nUBUNTU_CODENAME=plucky\n",
-			key:     "UBUNTU_CODENAME",
-			want:    "plucky",
-		},
-		{
-			name:    "missing",
-			content: "ID=ubuntu\n",
-			key:     "VERSION_CODENAME",
-			want:    "",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := osReleaseValue([]byte(tt.content), tt.key); got != tt.want {
-				t.Fatalf("osReleaseValue() = %q, want %q", got, tt.want)
-			}
-		})
-	}
 }
 
 // --- Podman provisioner coverage (ADR-0005 cutover items 23, 24; ADR-0006 Cut 2) ---
@@ -627,6 +579,33 @@ func TestRunInstallWritesPodmanHostBaseline(t *testing.T) {
 	}
 }
 
+func TestRunInstallCheckModeTreatsMissingUfwAsPending(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "ship")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &installFakeRunner{
+		files:        map[string]host.FileState{},
+		missingFiles: map[string]bool{"/etc/ufw/before.rules": true},
+		runErrors: map[string]error{
+			"ufw status verbose": exec.ErrNotFound,
+			"ufw status":         exec.ErrNotFound,
+		},
+	}
+
+	_, err := RunInstall(context.Background(), runner, InstallOptions{
+		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
+		DeploySSHPublicKeys:   []string{deployTestPublicKey},
+		StateRoot:             root,
+		HelperBinaryPath:      helper,
+		CheckMode:             true,
+	})
+	if err != nil {
+		t.Fatalf("check mode should report missing UFW as pending: %v", err)
+	}
+}
+
 func TestRunInstallSkipsIngressNetworkCreationWhenPresent(t *testing.T) {
 	root := t.TempDir()
 	helper := filepath.Join(root, "ship")
@@ -652,17 +631,6 @@ func TestRunInstallSkipsIngressNetworkCreationWhenPresent(t *testing.T) {
 	}
 }
 
-func TestUbuntuCodenameFallsBackToNoble(t *testing.T) {
-	runner := &installFakeRunner{files: map[string]host.FileState{}}
-	got, err := ubuntuCodename(host.Apply{Context: context.Background(), Runner: runner})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "noble" {
-		t.Fatalf("ubuntuCodename() = %q, want noble", got)
-	}
-}
-
 func assertAuthorizedKeysLines(t *testing.T, got string, want []string) {
 	t.Helper()
 	got = strings.TrimSpace(got)
@@ -674,11 +642,16 @@ func assertAuthorizedKeysLines(t *testing.T, got string, want []string) {
 
 type installFakeRunner struct {
 	files          map[string]host.FileState
+	missingFiles   map[string]bool
 	commands       []host.Command
 	commandResults map[string]host.CommandResult
+	runErrors      map[string]error
 }
 
 func (r *installFakeRunner) ReadFile(_ context.Context, path string) (host.FileState, error) {
+	if r.missingFiles[path] {
+		return host.FileState{}, host.ErrNotExist
+	}
 	if file, ok := r.files[path]; ok {
 		return file, nil
 	}
@@ -723,6 +696,9 @@ func (r *installFakeRunner) Validate(_ context.Context, _ host.Validation) error
 
 func (r *installFakeRunner) Run(_ context.Context, command host.Command) (host.CommandResult, error) {
 	r.commands = append(r.commands, command)
+	if err, ok := r.runErrors[installCommandKey(command)]; ok {
+		return host.CommandResult{}, err
+	}
 	if result, ok := r.commandResults[installCommandKey(command)]; ok {
 		return result, nil
 	}
@@ -744,75 +720,12 @@ func (r *installFakeRunner) Run(_ context.Context, command host.Command) (host.C
 		}
 	case "localectl":
 		return host.CommandResult{Stdout: []byte("System Locale: LANG=en_US.UTF-8\n")}, nil
-	case "gpg":
-		return r.runGPG(command)
-	case "curl":
-		return r.runCurl(command), nil
-	case "sha256sum":
-		return r.runSHA256Sum(command), nil
-	case "mktemp":
-		if len(command.Args) == 2 && command.Args[0] == "-d" {
-			return host.CommandResult{Stdout: []byte(strings.TrimSuffix(command.Args[1], ".XXXXXX") + ".TEST\n")}, nil
-		}
 	}
 	return host.CommandResult{}, nil
 }
 
-func (r *installFakeRunner) runCurl(command host.Command) host.CommandResult {
-	output := ""
-	url := ""
-	for i := 0; i < len(command.Args); i++ {
-		arg := command.Args[i]
-		switch {
-		case arg == "-o" && i+1 < len(command.Args):
-			output = command.Args[i+1]
-			i++
-		case strings.HasPrefix(arg, "-"):
-		default:
-			url = arg
-		}
-	}
-	if output != "" {
-		r.files[output] = host.FileState{
-			Content: []byte("fake curl content for " + url + "\n"),
-			Owner:   "root",
-			Group:   "root",
-			Mode:    0644,
-		}
-	}
-	return host.CommandResult{}
-}
-
-func (r *installFakeRunner) runSHA256Sum(command host.Command) host.CommandResult {
-	if len(command.Args) != 1 {
-		return host.CommandResult{ExitCode: 1, Stderr: []byte("unsupported fake sha256sum command")}
-	}
-	path := command.Args[0]
-	file, ok := r.files[path]
-	if !ok {
-		return host.CommandResult{ExitCode: 1, Stderr: []byte("missing fake file")}
-	}
-	sum := sha256.Sum256(file.Content)
-	return host.CommandResult{Stdout: []byte(fmt.Sprintf("%x  %s\n", sum, path))}
-}
-
-func (r *installFakeRunner) runGPG(command host.Command) (host.CommandResult, error) {
-	joined := strings.Join(command.Args, " ")
-	if strings.Contains(joined, "--dearmor") {
-		return host.CommandResult{}, nil
-	}
-	if !strings.Contains(joined, "--show-keys") {
-		return host.CommandResult{ExitCode: 1, Stderr: []byte("unsupported fake gpg command")}, nil
-	}
-	return host.CommandResult{ExitCode: 1, Stderr: []byte("unknown fake gpg key")}, nil
-}
-
 func installCommandKey(command host.Command) string {
 	return command.Program + " " + strings.Join(command.Args, " ")
-}
-
-func gpgFingerprintOutput(fingerprint string) string {
-	return "pub:::::::::\nfpr:::::::::" + fingerprint + ":\n"
 }
 
 func (r *installFakeRunner) ranCommand(program string, args string) bool {

@@ -1,23 +1,13 @@
 package host
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 )
-
-type AptRepo struct {
-	Name           string
-	KeyURL         string
-	KeyPath        string
-	KeyFingerprint string
-	KeyDearmor     bool
-	SourcePath     string
-	SourceLine     string
-}
 
 type User struct {
 	Name         string
@@ -117,235 +107,6 @@ func EnsurePackage(apply Apply, name string) (bool, error) {
 		return false, err
 	}
 	return true, RequireZero(result, "apt-get", []string{"install", "-y", name})
-}
-
-func EnsureAptRepo(apply Apply, repo AptRepo) (bool, error) {
-	if apply.Runner == nil {
-		return false, errors.New("provision runner is required")
-	}
-	if strings.TrimSpace(repo.Name) == "" {
-		return false, errors.New("apt repo name is required")
-	}
-	if strings.TrimSpace(repo.SourcePath) == "" || strings.TrimSpace(repo.SourceLine) == "" {
-		return false, fmt.Errorf("apt repo %s source path and line are required", repo.Name)
-	}
-
-	changed := false
-	if repo.KeyURL != "" || repo.KeyPath != "" || repo.KeyFingerprint != "" {
-		keyChanged, err := ensureAptRepoKey(apply, repo)
-		if err != nil {
-			return false, err
-		}
-		changed = changed || keyChanged
-	}
-
-	sourceChanged, err := EnsureFile(apply, File{
-		Path:    repo.SourcePath,
-		Content: []byte(strings.TrimSpace(repo.SourceLine) + "\n"),
-		Owner:   "root",
-		Group:   "root",
-		Mode:    0644,
-	})
-	if err != nil {
-		return false, err
-	}
-	changed = changed || sourceChanged
-	if changed && !apply.CheckMode {
-		if err := markAptNeedsUpdate(apply); err != nil {
-			return false, err
-		}
-	}
-	return changed, nil
-}
-
-func ensureAptRepoKey(apply Apply, repo AptRepo) (bool, error) {
-	if strings.TrimSpace(repo.KeyURL) == "" || strings.TrimSpace(repo.KeyPath) == "" {
-		return false, fmt.Errorf("apt repo %s key URL and path are required", repo.Name)
-	}
-	expected, err := normalizeAptKeyFingerprint(repo.KeyFingerprint)
-	if err != nil {
-		return false, fmt.Errorf("apt repo %s key fingerprint: %w", repo.Name, err)
-	}
-
-	keyExists := true
-	var currentKey FileState
-	if file, err := apply.Runner.ReadFile(apply.ContextOrBackground(), repo.KeyPath); err != nil {
-		if !errors.Is(err, ErrNotExist) {
-			return false, err
-		}
-		keyExists = false
-	} else {
-		currentKey = file
-	}
-	if keyExists {
-		// gpg is a hard dependency here; RunInstall installs gnupg with the
-		// essential packages before any third-party apt repo setup runs.
-		trusted, err := aptKeyHasFingerprint(apply, repo.KeyPath, expected)
-		if err != nil {
-			return false, err
-		}
-		if trusted && !aptKeyNeedsDearmor(repo, currentKey) {
-			return false, nil
-		}
-	}
-
-	if apply.CheckMode {
-		return true, nil
-	}
-	if err := downloadTrustedAptKey(apply, repo, expected); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func aptKeyNeedsDearmor(repo AptRepo, current FileState) bool {
-	// A trusted armored key still gets replaced when the repo expects the
-	// canonical dearmored keyring form.
-	return repo.KeyDearmor && bytes.Contains(current.Content, []byte("-----BEGIN PGP"))
-}
-
-func normalizeAptKeyFingerprint(fingerprint string) (string, error) {
-	var normalized strings.Builder
-	for _, r := range fingerprint {
-		switch {
-		case r >= '0' && r <= '9':
-			normalized.WriteRune(r)
-		case r >= 'a' && r <= 'f':
-			normalized.WriteRune(r - 'a' + 'A')
-		case r >= 'A' && r <= 'F':
-			normalized.WriteRune(r)
-		case r == ':' || r == ' ' || r == '\t' || r == '\n' || r == '\r':
-		default:
-			return "", fmt.Errorf("contains non-hex character %q", r)
-		}
-	}
-	got := normalized.String()
-	if len(got) != 40 && len(got) != 64 {
-		return "", fmt.Errorf("must be 40 or 64 hex characters, got %d", len(got))
-	}
-	return got, nil
-}
-
-func aptKeyHasFingerprint(apply Apply, path string, expected string) (bool, error) {
-	result, err := apply.Runner.Run(apply.ContextOrBackground(), Command{Program: "gpg", Args: []string{"--show-keys", "--with-colons", "--fingerprint", path}})
-	if err != nil {
-		return false, err
-	}
-	if result.ExitCode != 0 {
-		return false, nil
-	}
-	return gpgOutputHasFingerprint(result.Stdout, expected), nil
-}
-
-func requireAptKeyFingerprint(apply Apply, repo AptRepo, path string, expected string) error {
-	result, err := apply.Runner.Run(apply.ContextOrBackground(), Command{Program: "gpg", Args: []string{"--show-keys", "--with-colons", "--fingerprint", path}})
-	if err != nil {
-		return err
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("apt repo %s key fingerprint check failed: %s", repo.Name, bytes.TrimSpace(result.Stderr))
-	}
-	if !gpgOutputHasFingerprint(result.Stdout, expected) {
-		return fmt.Errorf("apt repo %s key fingerprint mismatch: expected %s", repo.Name, expected)
-	}
-	return nil
-}
-
-func gpgOutputHasFingerprint(output []byte, expected string) bool {
-	wantPrimaryFingerprint := false
-	for _, line := range strings.Split(string(output), "\n") {
-		fields := strings.Split(line, ":")
-		if len(fields) == 0 {
-			continue
-		}
-		if fields[0] == "pub" {
-			wantPrimaryFingerprint = true
-			continue
-		}
-		if wantPrimaryFingerprint && len(fields) > 9 && fields[0] == "fpr" {
-			got, err := normalizeAptKeyFingerprint(fields[9])
-			if err == nil && got == expected {
-				return true
-			}
-			wantPrimaryFingerprint = false
-		}
-	}
-	return false
-}
-
-func downloadTrustedAptKey(apply Apply, repo AptRepo, expected string) error {
-	tempDir, err := createAptRepoTempDir(apply, repo.Name)
-	if err != nil {
-		return err
-	}
-	defer cleanupAptRepoTempDir(apply, tempDir)
-
-	keyPath := tempDir + "/key"
-	installPath := keyPath
-	if repo.KeyDearmor {
-		installPath = tempDir + "/key.gpg"
-	}
-
-	result, err := apply.Runner.Run(apply.ContextOrBackground(), Command{Program: "curl", Args: []string{"-fsSL", repo.KeyURL, "-o", keyPath}})
-	if err != nil {
-		return err
-	}
-	if err := RequireZero(result, "curl", []string{"-fsSL", repo.KeyURL, "-o", keyPath}); err != nil {
-		return err
-	}
-	if err := requireAptKeyFingerprint(apply, repo, keyPath, expected); err != nil {
-		return err
-	}
-	if repo.KeyDearmor {
-		args := []string{"--dearmor", "--yes", "-o", installPath, keyPath}
-		result, err := apply.Runner.Run(apply.ContextOrBackground(), Command{Program: "gpg", Args: args})
-		if err != nil {
-			return err
-		}
-		if err := RequireZero(result, "gpg", args); err != nil {
-			return err
-		}
-		if err := requireAptKeyFingerprint(apply, repo, installPath, expected); err != nil {
-			return err
-		}
-	}
-	args := []string{"-o", "root", "-g", "root", "-m", "0644", installPath, repo.KeyPath}
-	result, err = apply.Runner.Run(apply.ContextOrBackground(), Command{Program: "install", Args: args})
-	if err != nil {
-		return err
-	}
-	return RequireZero(result, "install", args)
-}
-
-func createAptRepoTempDir(apply Apply, name string) (string, error) {
-	args := []string{"-d", aptRepoTempTemplate(name)}
-	result, err := apply.Runner.Run(apply.ContextOrBackground(), Command{Program: "mktemp", Args: args})
-	if err != nil {
-		return "", err
-	}
-	if err := RequireZero(result, "mktemp", args); err != nil {
-		return "", err
-	}
-	path := strings.TrimSpace(string(result.Stdout))
-	if path == "" {
-		return "", fmt.Errorf("apt repo %s temp dir creation returned empty path", name)
-	}
-	return path, nil
-}
-
-func cleanupAptRepoTempDir(apply Apply, path string) {
-	args := []string{"-rf", "--", path}
-	_, _ = apply.Runner.Run(apply.ContextOrBackground(), Command{Program: "rm", Args: args})
-}
-
-func aptRepoTempTemplate(name string) string {
-	safe := strings.ToLower(strings.TrimSpace(name))
-	safe = regexp.MustCompile(`[^a-z0-9_.-]+`).ReplaceAllString(safe, "-")
-	safe = strings.Trim(safe, "-.")
-	if safe == "" {
-		safe = "repo"
-	}
-	return "/tmp/ship-" + safe + "-apt.XXXXXX"
 }
 
 func EnsureUser(apply Apply, user User) (bool, error) {
@@ -545,6 +306,9 @@ func EnsureUfwRule(apply Apply, rule UfwRule) (bool, error) {
 	}
 	applied, err := ufwRuleApplied(apply, rule)
 	if err != nil {
+		if apply.CheckMode && (errors.Is(err, os.ErrNotExist) || errors.Is(err, exec.ErrNotFound)) {
+			return true, nil
+		}
 		return false, err
 	}
 	if applied {
@@ -675,13 +439,6 @@ func ensureAptUpdated(apply Apply) error {
 		apply.State.AptUpdated = true
 	}
 	return nil
-}
-
-func markAptNeedsUpdate(apply Apply) error {
-	if apply.State != nil {
-		apply.State.AptUpdated = false
-	}
-	return ensureAptUpdated(apply)
 }
 
 func splitLines(content []byte) ([]string, bool) {

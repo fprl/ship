@@ -2,6 +2,8 @@
 set -euo pipefail
 
 SHIP_VERSION="${SHIP_VERSION:-latest}"
+# SHIP_RELEASE_BASE_URL / SHIP_RELEASE_API_BASE_URL are the release-endpoint
+# override seam used by the install smoke suite.
 SHIP_RELEASE_BASE_URL="${SHIP_RELEASE_BASE_URL:-https://github.com/fprl/ship/releases/download}"
 SHIP_RELEASE_API_BASE_URL="${SHIP_RELEASE_API_BASE_URL:-https://api.github.com/repos/fprl/ship}"
 SHIP_INSTALL_DIR="${SHIP_INSTALL_DIR:-$HOME/.local/bin}"

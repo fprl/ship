@@ -163,7 +163,7 @@ func EnsureSystemdUnit(apply Apply, unit SystemdUnit) (bool, error) {
 
 	actionRequested := unit.Action != NoSystemdAction
 	if apply.CheckMode {
-		actionChanged, err := systemdActionWouldChange(apply, unit)
+		actionChanged, err := systemdActionWouldChange(apply, unit, unitChanged)
 		if err != nil {
 			return false, err
 		}
@@ -179,7 +179,7 @@ func EnsureSystemdUnit(apply Apply, unit SystemdUnit) (bool, error) {
 	switch unit.Action {
 	case NoSystemdAction:
 	case Started:
-		changed, err := ensureServiceStarted(apply, unit.Name)
+		changed, err := ensureServiceStarted(apply, unit.Name, unitChanged)
 		if err != nil {
 			return false, err
 		}
@@ -193,13 +193,13 @@ func EnsureSystemdUnit(apply Apply, unit SystemdUnit) (bool, error) {
 	return unitChanged || actionRequested, nil
 }
 
-func systemdActionWouldChange(apply Apply, unit SystemdUnit) (bool, error) {
+func systemdActionWouldChange(apply Apply, unit SystemdUnit, unitChanged bool) (bool, error) {
 	switch unit.Action {
 	case NoSystemdAction:
 		return false, nil
 	case Started:
 		active, err := serviceIsActive(apply, unit.Name)
-		return !active, err
+		return unitChanged || !active, err
 	case Restarted:
 		return true, nil
 	default:
@@ -216,12 +216,18 @@ func validSystemdAction(action SystemdAction) bool {
 	}
 }
 
-func ensureServiceStarted(apply Apply, name string) (bool, error) {
+func ensureServiceStarted(apply Apply, name string, restartIfActive bool) (bool, error) {
 	active, err := serviceIsActive(apply, name)
 	if err != nil {
 		return false, err
 	}
 	if active {
+		if restartIfActive {
+			if err := runSystemctl(apply, "restart", name); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
 		return false, nil
 	}
 	if err := runSystemctl(apply, "start", name); err != nil {

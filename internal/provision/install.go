@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -151,7 +152,7 @@ func installOperations(opts InstallOptions, stateStore store.Store, summary *Ins
 	}
 
 	add("write host desired state", func(apply host.Apply) (bool, error) {
-		desired := desiredHost(opts)
+		desired := desiredHost()
 		changed, err := hostDesiredChanged(stateStore, desired)
 		if err != nil {
 			return false, err
@@ -206,14 +207,14 @@ func installOperations(opts InstallOptions, stateStore store.Store, summary *Ins
 		return host.EnsureLocale(apply, defaultLocale)
 	})
 	addSSHHardening(&ops)
-	addSecurity(&ops, opts)
+	addSecurity(&ops)
 	addHelper(&ops, opts)
 	addPreviewReaper(&ops)
 	addDoctorTimer(&ops)
 	addPodman(&ops)
 	addPodmanHostBaseline(&ops)
 	addDeployTmpDir(&ops)
-	addCaddy(&ops, opts)
+	addCaddy(&ops)
 	return ops
 }
 
@@ -356,7 +357,7 @@ func ensureSSHHardening(apply host.Apply) (bool, error) {
 	return true, nil
 }
 
-func addSecurity(ops *[]operation, opts InstallOptions) {
+func addSecurity(ops *[]operation) {
 	for _, file := range []host.File{
 		{
 			Path:    "/etc/apt/apt.conf.d/20auto-upgrades",
@@ -411,6 +412,9 @@ func addSecurity(ops *[]operation, opts InstallOptions) {
 func ufwActive(apply host.Apply) (bool, error) {
 	result, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "ufw", Args: []string{"status"}})
 	if err != nil {
+		if apply.CheckMode && (errors.Is(err, os.ErrNotExist) || errors.Is(err, exec.ErrNotFound)) {
+			return false, nil
+		}
 		return false, err
 	}
 	if result.ExitCode != 0 {
@@ -701,6 +705,9 @@ func ensurePodmanUfwBeforeRules(apply host.Apply) (bool, error) {
 	const path = "/etc/ufw/before.rules"
 	current, err := apply.Runner.ReadFile(apply.ContextOrBackground(), path)
 	if err != nil {
+		if apply.CheckMode && errors.Is(err, host.ErrNotExist) {
+			return true, nil
+		}
 		return false, fmt.Errorf("read %s: %w", path, err)
 	}
 	next, changed, err := injectPodmanUfwBlock(string(current.Content), podmanUfwBlock())
@@ -813,7 +820,7 @@ func ensureIngressNetwork(apply host.Apply) (bool, error) {
 // and systemd loops through Restart=on-failure until "start request
 // repeated too quickly" kills the service. We learned that the hard
 // way on real-box smoke.
-func addCaddy(ops *[]operation, opts InstallOptions) {
+func addCaddy(ops *[]operation) {
 	appsRoot := identity.AppsRoot()
 	for _, dir := range []host.Directory{
 		{Path: "/etc/caddy", Owner: "root", Group: "root", Mode: 0755},
@@ -887,7 +894,7 @@ func caddyUnit() string {
 	}, "\n")
 }
 
-func desiredHost(InstallOptions) store.HostDesired {
+func desiredHost() store.HostDesired {
 	packages := map[string]store.DesiredPackage{
 		"podman":  {Source: "ubuntu", Track: "noble"},
 		"sqlite3": {Source: "ubuntu", Track: "noble"},
@@ -969,36 +976,4 @@ func essentialPackages() []string {
 		"unzip",
 		"wget",
 	}
-}
-
-func ubuntuCodename(apply host.Apply) (string, error) {
-	file, err := apply.Runner.ReadFile(apply.ContextOrBackground(), "/etc/os-release")
-	if err != nil {
-		if errors.Is(err, host.ErrNotExist) {
-			return "noble", nil
-		}
-		return "", err
-	}
-	if codename := osReleaseValue(file.Content, "VERSION_CODENAME"); codename != "" {
-		return codename, nil
-	}
-	if codename := osReleaseValue(file.Content, "UBUNTU_CODENAME"); codename != "" {
-		return codename, nil
-	}
-	return "noble", nil
-}
-
-func osReleaseValue(content []byte, key string) string {
-	for _, line := range strings.Split(strings.ReplaceAll(string(content), "\r\n", "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		name, value, ok := strings.Cut(line, "=")
-		if !ok || name != key {
-			continue
-		}
-		return strings.Trim(strings.TrimSpace(value), `"'`)
-	}
-	return ""
 }

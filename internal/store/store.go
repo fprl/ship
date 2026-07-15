@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 type Store struct {
@@ -240,7 +239,6 @@ func (s Store) ReadApprovals() (*ApprovalsFile, error) {
 		return nil, err
 	}
 	normalizeApprovalsFile(&file)
-	dropInvalidExpiredApprovals(&file, time.Now().UTC())
 	if err := validateApprovalsFile(file); err != nil {
 		return nil, fmt.Errorf("invalid approvals.json: %w", err)
 	}

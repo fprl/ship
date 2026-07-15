@@ -18,11 +18,6 @@ const (
 	defaultReleaseBaseURL = release.DefaultBaseURL
 )
 
-// PrepareHelperBinaryForArch resolves the Linux helper used by box setup.
-func (i *Installer) PrepareHelperBinaryForArch(target, arch string) (string, func(), error) {
-	return i.prepareRemoteHelperBinary(Plan{TargetHost: target}, arch)
-}
-
 func (i *Installer) prepareRemoteHelperBinary(plan Plan, arch string) (string, func(), error) {
 	name := "ship-linux-" + arch
 	if helper, ok, err := i.localHelperBinary(plan, name, arch); err != nil {
@@ -144,7 +139,7 @@ func (i *Installer) downloadReleaseHelperBinary(plan Plan, tag string, name stri
 	downloadURL := baseURL + "/" + tag + "/" + name
 	i.info("Downloading ship Linux helper binary from %s", downloadURL)
 
-	token := releaseDownloadToken(i.Env)
+	token := release.DownloadToken(i.Env)
 	remediation := helperDownloadCommand(plan.TargetHost, baseURL, token)
 	data, err := release.DownloadVerifiedAsset(i.Env, tag, name)
 	if err != nil {
@@ -188,15 +183,6 @@ func writeExecutableTempFile(name string, reader io.Reader) (string, func(), err
 		})
 	}
 	return path, cleanup, nil
-}
-
-func releaseDownloadToken(env map[string]string) string {
-	for _, key := range []string{"SHIP_RELEASE_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"} {
-		if token := strings.TrimSpace(env[key]); token != "" {
-			return token
-		}
-	}
-	return ""
 }
 
 func isReleaseVersion(value string) bool {
