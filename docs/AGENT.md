@@ -104,9 +104,9 @@ Secret scoping:
 
 ### `init`
 - Purpose: Create a ship.toml manifest.
-- Usage: `ship init [--name <app>] [--box <box>] [--host <host>] [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--name <app>`: App name. Defaults to package.json name or the directory name; `--box <box>` default `203.0.113.7`: Box host written to the manifest; `--host <host>`: Optional route host. Omitted: the manifest has no [routes] and the first deploy prints the automatic sslip.io URL.
-- Notes: Never overwrites existing files; kept files are reported on stdout.
+- Usage: `ship init [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest.
+- Notes: Never overwrites existing files; kept files are reported on stdout. Writes a skeleton only: name (package.json name or directory name), a placeholder box, and [processes] web = {}. Edit ship.toml to set the real box, ports, [routes], and [preview]; without [routes] the first deploy prints the automatic sslip.io URL.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `usage_error`, `manifest_invalid`
 

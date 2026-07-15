@@ -563,16 +563,16 @@ var verbs = []Verb{
 	{
 		Verb:    "init",
 		Purpose: "Create a ship.toml manifest.",
-		Usage:   "ship init [--name <app>] [--box <box>] [--host <host>] [--config <path>]",
+		Usage:   "ship init [--config <path>]",
 		Flags: []Flag{
 			configFlag,
-			{Name: "--name", Value: "<app>", Purpose: "App name. Defaults to package.json name or the directory name."},
-			{Name: "--box", Value: "<box>", Default: "203.0.113.7", Purpose: "Box host written to the manifest."},
-			{Name: "--host", Value: "<host>", Purpose: "Optional route host. Omitted: the manifest has no [routes] and the first deploy prints the automatic sslip.io URL."},
 		},
 		ExitCodes: normalExit,
 		Errors:    []string{"usage_error", "manifest_invalid"},
-		Notes:     []string{"Never overwrites existing files; kept files are reported on stdout."},
+		Notes: []string{
+			"Never overwrites existing files; kept files are reported on stdout.",
+			"Writes a skeleton only: name (package.json name or directory name), a placeholder box, and [processes] web = {}. Edit ship.toml to set the real box, ports, [routes], and [preview]; without [routes] the first deploy prints the automatic sslip.io URL.",
+		},
 	},
 	{
 		Verb:    "status",
