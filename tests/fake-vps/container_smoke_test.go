@@ -1421,8 +1421,16 @@ web = { port = 3000 }
 	e.ship(t, app, nil, "box", "member", "role", rename, "shipper")
 	rotationKeyPath := filepath.Join(e.tmp, "rotation-key")
 	e.mustRun(t, e.repoRoot, nil, "ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "rotation-key", "-f", rotationKeyPath)
-	rotationOutput := e.ship(t, app, nil, "box", "member", "add", rotationKeyPath+".pub", "--name", rename)
-	assertContains(t, rotationOutput, "rotation: verify a fresh connection with the new key")
+	rotationResult := e.runShip(t, app, nil, "box", "member", "add", rotationKeyPath+".pub", "--name", rename)
+	if rotationResult.err != nil {
+		t.Fatalf("rotation member add failed: %v\nstdout:\n%s\nstderr:\n%s", rotationResult.err, rotationResult.stdout, rotationResult.stderr)
+	}
+	assertContains(t, rotationResult.stdout, "member added: "+rename)
+	// The rotation guidance is progress/next-step text, so it rides
+	// stderr per the output contract; the retire command with --key is
+	// part of that guidance.
+	assertContains(t, rotationResult.stderr, "rotation: verify a fresh connection with the new key")
+	rotationOutput := rotationResult.stderr
 	oldShortID := ""
 	for _, line := range strings.Split(rotationOutput, "\n") {
 		fields := strings.Fields(line)
