@@ -1058,6 +1058,12 @@ ship data ls [--json]            list local snapshots for this app
   the old design. Box dies → `box setup` → `ship` → re-import via
   `secret set --from .env` → `data restore`.
 - Roles: like `data fork` — shipper/owner; agent → `approval_required`.
+  Production `data save` additionally authorizes through the
+  owner-required class: owners direct, shippers via the normal
+  request-and-grant approval (July 14 review M2).
+- **Accepted risk (July 14 review M1)**: restore extraction is not
+  size-capped — the archive is owner-run against the operator's own
+  box. Revisit when boxes routinely have multiple members.
   Restore **into prod** is owner-only (§13: replacing prod data
   wholesale is an owner act), on top of the `--confirm` guard.
 - The whole-app `ship save`/`ship restore` verbs and their engine

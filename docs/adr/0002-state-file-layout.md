@@ -5,6 +5,10 @@
 - **Updated**: 2026-05-28
 - **Depends on**: ADR-0001 (bounded Go provisioner).
 - **Amended by**: ADR-0005, ADR-0006, ADR-0008.
+- **Superseded (July 2026)**: RFD-0009's state diet deleted `host.json`
+  and re-homed state by kind (`/etc/ship` intent, `/var/lib/ship`
+  evidence, `/run/ship` ephemera, per-env `active.json` + release
+  envelopes). This ADR remains as historical rationale only.
 
 > ADR-0008 supersedes this ADR's app/env host-path examples and runtime
 > identity details. Current env roots are `/var/apps/<app>.<env>/`; runtime
