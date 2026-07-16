@@ -144,14 +144,25 @@ exit 0
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
+	aged := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(oldActivation, aged, aged); err != nil {
+		t.Fatal(err)
+	}
+	oldNow := gcNow
+	t.Cleanup(func() { gcNow = oldNow })
+	now := time.Now()
+	gcNow = func() time.Time { return now }
 	if _, err := gcEnv("api", "production"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(oldDir); err != nil {
 		t.Fatalf("protected static release removed: %v", err)
 	}
-	if _, err := os.Stat(oldActivation); err != nil {
-		t.Fatalf("protected activation removed: %v", err)
+	// The protected release keeps its artifacts, not its frozen env: only the
+	// active activation's env file is ever read, so a non-active activation
+	// past the grace period is old-secret residue and goes.
+	if _, err := os.Stat(oldActivation); !os.IsNotExist(err) {
+		t.Fatalf("non-active activation env survived GC: %v", err)
 	}
 	log, err := os.ReadFile(logPath)
 	if err != nil {

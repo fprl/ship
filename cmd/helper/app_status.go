@@ -740,7 +740,7 @@ func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, 
 		// The exact predicate reproduces the converge-time render, including
 		// the ownership-checked alias attach — a fragment carrying an alias
 		// this env no longer owns must read as not converged.
-		if err := addConfiguredPreviewAlias(app, env, ctx); err != nil {
+		if _, _, err := attachOwnedPreviewAlias(app, env, ctx); err != nil {
 			return false
 		}
 	}

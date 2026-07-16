@@ -633,6 +633,7 @@ aliases = true
 - `probe_failed`: probe failed; cause: {detail}; remediation: `ship why`.
 - `production_branch_not_preview`: preview command failed; cause: branch {branch} maps to Production; remediation: `{command}`; defaults: `command="ship preview pin <preview-branch>"`.
 - `release_command_failed`: release command failed; cause: {detail}; remediation: `ship why`.
+- `release_immutable`: release artifacts are immutable; cause: {detail}; remediation: `create a new commit, then ship`.
 - `remote_preflight_after_prepare_failed`: deploy preflight failed after preparing the app environment; cause: {detail}; remediation: `ship box doctor`.
 - `remote_preflight_failed`: deploy preflight failed before upload/build/mutation; cause: {detail}; remediation: `ship box doctor`.
 - `rm_confirmation_required`: Production rm confirmation failed; cause: Production rm requires --confirm {app}; remediation: `ship rm {branch} --confirm {app}`.

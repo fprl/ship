@@ -31,6 +31,12 @@ and built as five gated stages in one night.
   canonical route's published files (it previously pointed at a
   directory that was never created), and a converged aliased preview
   reports healthy instead of permanently "committed, not converged".
+- **Committed release images are immutable.** Redeploying the same
+  commit reuses its committed image instead of rebuilding over it — so
+  secret rotation and retries got faster — and a deploy that would
+  replace committed bytes under the same release (`--rebuild`, or a
+  changed TLS/route configuration on an already-committed commit)
+  refuses with `release_immutable`; ship a new commit instead.
 
 ### Added
 

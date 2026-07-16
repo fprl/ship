@@ -39,14 +39,16 @@ a runnable `next:` step at 3am, not a timer to wait for.
   after every successful deploy/rollback — replacing the ad-hoc
   post-deploy image prune. Retention is a fixed policy, not a chore:
   keep the active release plus the newest verified rollback candidates
-  (5 for production, 2 for previews), each with its image, static
-  release directory, and activation env file; 10-minute grace for
-  fresh artifacts. Deletion requires positive proof: an unverifiable
-  release is protected in full, and any journal uncertainty (torn
-  tail, parse failure) skips the env's sweep entirely rather than
-  shrinking retention. Old activation env files are the security
-  motivation — they hold pre-rotation secret values and must not
-  accumulate.
+  (5 for production, 2 for previews), each with its image and static
+  release directory; 10-minute grace for fresh artifacts. Activation
+  env files are runtime state, not rollback artifacts: only the active
+  activation's frozen env is retained — rollback mints a fresh
+  activation and re-resolves current secrets, so a non-active
+  activation env is an unread copy of old secret values and is
+  collected. Deletion of release artifacts requires positive proof: an
+  unverifiable release is protected in full, and any journal
+  uncertainty (torn tail, parse failure) skips the env's sweep
+  entirely rather than shrinking retention.
 
 **Verbs second (the escape hatch):**
 

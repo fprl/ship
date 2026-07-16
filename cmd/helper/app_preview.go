@@ -396,24 +396,37 @@ func addPreviewAliasRoutes(app, env, alias string, ctx *config.AppContext) error
 // rotation, and rollback) on the same ownership authority. A conflict is a
 // successful deploy without the optional alias; canonical routes stay intact.
 func addConfiguredPreviewAlias(app, env string, ctx *config.AppContext) error {
+	skippedAlias, owner, err := attachOwnedPreviewAlias(app, env, ctx)
+	if err != nil {
+		return err
+	}
+	if skippedAlias != "" {
+		fmt.Fprintf(os.Stderr, "warning: preview alias %s for %s (%s) skipped; already owned by %s\n", skippedAlias, app, env, owner)
+	}
+	return nil
+}
+
+// attachOwnedPreviewAlias mutates ctx with the alias routes when this env
+// owns the alias host, and reports a skipped alias without printing — read
+// paths (the status convergence predicate) must stay silent.
+func attachOwnedPreviewAlias(app, env string, ctx *config.AppContext) (string, previewHostOwner, error) {
 	alias, ok := previewAliasForContext(app, env, ctx)
 	if !ok {
-		return nil
+		return "", previewHostOwner{}, nil
 	}
 	hostLock, err := acquirePreviewHostLabelLock()
 	if err != nil {
-		return err
+		return "", previewHostOwner{}, err
 	}
 	defer func() { _ = hostLock.Release() }()
 	owner, found, err := previewAliasOwner(alias, app, env, ctx.Routes)
 	if err != nil {
-		return err
+		return "", previewHostOwner{}, err
 	}
 	if found {
-		fmt.Fprintf(os.Stderr, "warning: preview alias %s for %s (%s) skipped; already owned by %s\n", alias, app, env, owner)
-		return nil
+		return alias, owner, nil
 	}
-	return addPreviewAliasRoutes(app, env, alias, ctx)
+	return "", previewHostOwner{}, addPreviewAliasRoutes(app, env, alias, ctx)
 }
 
 func ensurePreviewCapability(app, env string) (string, error) {

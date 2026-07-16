@@ -462,6 +462,10 @@ type containerApplyResult struct {
 }
 
 func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, existing []containerEntry) (containerApplyResult, error) {
+	skipBuild, err := c.containerBuildPlan()
+	if err != nil {
+		return containerApplyResult{}, err
+	}
 	var containersToRemove []string
 	startedAt := time.Now().UTC().Format("20060102t150405000000000z")
 	started, err := startReleaseProcesses(startReleaseProcessesParams{
@@ -472,9 +476,11 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		Context:     app,
 		OnlyPortful: true,
 		BeforeStart: func(runtime processStartRuntime) error {
-			buildArgs := podmanBuildArgsWithEnvelope(c.App, c.Env, runtime.ImageTag, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild, c.EnvelopeLabel)
-			if _, err := utils.RunChecked("podman", buildArgs, ""); err != nil {
-				return newJournalStepError("build", fmt.Errorf("podman build: %w", err), runtime.ScrubValues, nil)
+			if !skipBuild {
+				buildArgs := podmanBuildArgsWithEnvelope(c.App, c.Env, runtime.ImageTag, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild, c.EnvelopeLabel)
+				if _, err := utils.RunChecked("podman", buildArgs, ""); err != nil {
+					return newJournalStepError("build", fmt.Errorf("podman build: %w", err), runtime.ScrubValues, nil)
+				}
 			}
 			if app.Release != "" {
 				if err := runReleaseCommandWithActivation(c.App, c.Env, app.Release, runtime.ImageTag, runtime.UserID, runtime.GroupID, c.SHA, c.ActivationID, runtime.EnvFile); err != nil {
@@ -512,6 +518,63 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		containersToRemove: uniqueContainerNames(containersToRemove),
 		processNames:       started.ProcessName,
 	}, nil
+}
+
+// containerBuildPlan decides whether the deploy may build. A committed image
+// (active or in a committed journal entry) is immutable: an exact
+// envelope-hash match under the release tag is reused instead of rebuilt —
+// this keeps same-release redeploys (secret rotation, retries) working —
+// while --rebuild or a changed envelope on a committed release refuses
+// rather than replace committed bytes under the same tag. Debris from a
+// never-committed prepare may be rebuilt freely.
+func (c appApplyCmd) containerBuildPlan() (bool, error) {
+	images, err := podmanImagesForRelease(c.App, c.Env, c.SHA)
+	if err != nil || len(images) == 0 {
+		return false, nil
+	}
+	envelopeHash := envelope.HashLabel(c.EnvelopeLabel)
+	if !c.Rebuild {
+		for _, image := range images {
+			if image.Release == c.SHA && image.EnvelopeHash == envelopeHash {
+				return true, nil
+			}
+		}
+	}
+	if releaseArtifactsCommitted(c.App, c.Env, c.SHA) {
+		detail := fmt.Sprintf("release %s already has a committed image with a different configuration; deploying would replace it", c.SHA)
+		if c.Rebuild {
+			detail = fmt.Sprintf("release %s already has a committed image; --rebuild would replace it", c.SHA)
+		}
+		return false, errcat.New(errcat.CodeReleaseImmutable, errcat.Fields{"detail": detail})
+	}
+	return false, nil
+}
+
+// releaseArtifactsCommitted reports whether a release's artifacts are part of
+// committed history. Unreadable pointer or journal state fails closed: with a
+// conflicting image present, ship refuses to replace what it cannot prove
+// uncommitted.
+func releaseArtifactsCommitted(app, env, release string) bool {
+	if pointer, err := readActive(app, env); err == nil {
+		if pointer.Release == release {
+			return true
+		}
+	} else if !errcat.Is(err, errcat.CodeNoDeploys) {
+		return true
+	}
+	entries, torn, err := readDeployJournalEntriesWithStatus(app, env)
+	if err != nil && !errcat.Is(err, errcat.CodeNoDeploys) {
+		return true
+	}
+	if torn {
+		return true
+	}
+	for _, entry := range entries {
+		if entry.AttemptedRelease == release && (entry.Outcome == "deployed" || entry.Outcome == "rolled_back") {
+			return true
+		}
+	}
+	return false
 }
 
 func nextProcessContainerName(entries []containerEntry, app, env, processName, release, instance string) string {

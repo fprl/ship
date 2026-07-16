@@ -12,6 +12,7 @@ import (
 
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/secrets"
@@ -120,6 +121,124 @@ func TestResolveEnvDoesNotMutateInputMaps(t *testing.T) {
 
 func ptrTime(t time.Time) *time.Time {
 	return &t
+}
+
+func TestContainerBuildPlanProtectsCommittedImages(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	release := "abcdef1234ab"
+	meta, err := newReleaseMetadata(release, false, release, "2026-07-16T12:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := []byte("name = \"api\"\nbox = \"example.com\"\n\n[processes]\nweb = { port = 3000 }\n\n[routes]\n\"api.example.com\" = \"web\"\n")
+	_, label, err := releaseEnvelope(manifest, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherManifest := []byte("name = \"api\"\nbox = \"example.com\"\n\n[processes]\nweb = { port = 3001 }\n\n[routes]\n\"api.example.com\" = \"web\"\n")
+	_, otherLabel, err := releaseEnvelope(otherManifest, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	imageJSON, err := json.Marshal([]map[string]any{{
+		"Labels": map[string]string{
+			"ship.app": "api", "ship.env": "production",
+			"ship.infra_id":         identity.InfraID("api", "production"),
+			"ship.release":          release,
+			"ship.release_envelope": label,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imagePath := filepath.Join(root, "image.json")
+	if err := os.WriteFile(imagePath, imageJSON, 0644); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then cat \"$SHIP_TEST_IMAGE_JSON\"; exit 0; fi\nexit 1\n")
+	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
+
+	commit := func(t *testing.T) {
+		t.Helper()
+		if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: release, Activation: release + "-a1b2", EnvelopeHash: envelope.HashLabel(label)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("exact envelope match reuses the image", func(t *testing.T) {
+		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
+		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
+		commit(t)
+		skip, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: label}).containerBuildPlan()
+		if err != nil || !skip {
+			t.Fatalf("skip=%v err=%v, want reuse", skip, err)
+		}
+	})
+	t.Run("rebuild of a committed release refuses", func(t *testing.T) {
+		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
+		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
+		commit(t)
+		_, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: label, Rebuild: true}).containerBuildPlan()
+		if !errcat.Is(err, errcat.CodeReleaseImmutable) {
+			t.Fatalf("err=%v, want release_immutable", err)
+		}
+	})
+	t.Run("changed envelope on a committed release refuses", func(t *testing.T) {
+		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
+		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
+		commit(t)
+		_, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: otherLabel}).containerBuildPlan()
+		if !errcat.Is(err, errcat.CodeReleaseImmutable) {
+			t.Fatalf("err=%v, want release_immutable", err)
+		}
+	})
+	t.Run("never-committed debris may be rebuilt", func(t *testing.T) {
+		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
+		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
+		skip, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: otherLabel, Rebuild: true}).containerBuildPlan()
+		if err != nil || skip {
+			t.Fatalf("skip=%v err=%v, want fresh build over debris", skip, err)
+		}
+	})
+	t.Run("torn journal with a conflicting image refuses", func(t *testing.T) {
+		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
+		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
+		if err := appendDeployJournalEntry("api", "production", deployJournalEntry{
+			Outcome: "deployed", StartedAt: "2026-07-16T10:00:00Z", EndedAt: "2026-07-16T10:00:01Z", AttemptedRelease: release,
+		}, nil); err != nil {
+			t.Fatal(err)
+		}
+		file, err := os.OpenFile(identity.DeployJournalFile("api", "production"), os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := file.WriteString(`{"outcome":"deployed"`); err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Close(); err != nil {
+			t.Fatal(err)
+		}
+		_, planErr := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: otherLabel}).containerBuildPlan()
+		if !errcat.Is(planErr, errcat.CodeReleaseImmutable) {
+			t.Fatalf("err=%v, want fail-closed release_immutable", planErr)
+		}
+	})
+	t.Run("missing tag builds freely", func(t *testing.T) {
+		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
+		t.Setenv("SHIP_TEST_IMAGE_JSON", filepath.Join(root, "missing.json"))
+		commit(t)
+		skip, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: otherLabel}).containerBuildPlan()
+		if err != nil || skip {
+			t.Fatalf("skip=%v err=%v, want build", skip, err)
+		}
+	})
 }
 
 func TestCaddyStageActionErrorReportsCommittedFragmentAndRetry(t *testing.T) {

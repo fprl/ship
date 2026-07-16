@@ -521,7 +521,8 @@ URL), `SHIP_BRANCH`, `SHIP_ENV` (`production` | `preview`),
   release metadata): outcome (`deployed | failed | committed_unconverged |
   committed_degraded | rolled_back | converged | gc` — a pre-commit failure
   is `failed`; after the commit ship rolls forward, never restores), failing
-  step (`apply | build | release | probe | converge | caddy`), captured
+  step (`apply | build | release | probe | converge | caddy | static |
+  process | worker | containers | durability`), captured
   stderr tail (last ~40 lines),
   timestamps, release ids involved, and the deploying identity (SSH key
   comment + git author) — `ship status` and `why` show who shipped what.

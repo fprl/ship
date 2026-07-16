@@ -41,6 +41,7 @@ const (
 	CodeDeployCommittedUnconverged        Code = "deploy_committed_unconverged"
 	CodeDeployCommittedDegraded           Code = "deploy_committed_degraded"
 	CodeReleaseCommandFailed              Code = "release_command_failed"
+	CodeReleaseImmutable                  Code = "release_immutable"
 	CodeProbeFailed                       Code = "probe_failed"
 	CodeInvalidSecretKey                  Code = "invalid_secret_key"
 	CodeLogsFollowJSONConflict            Code = "logs_follow_json_conflict"
@@ -286,6 +287,12 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "release command failed",
 		CauseTemplate:       "{detail}",
 		RemediationTemplate: "ship why",
+	},
+	CodeReleaseImmutable: {
+		Code:                CodeReleaseImmutable,
+		MessageTemplate:     "release artifacts are immutable",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "create a new commit, then ship",
 	},
 	CodeProbeFailed: {
 		Code:                CodeProbeFailed,

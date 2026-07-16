@@ -325,6 +325,17 @@ func TestConvergedAliasPreviewReportsConverged(t *testing.T) {
 	if err != nil || !activePointerRuntimeConverged("api", env, pointer, nil, static) {
 		t.Fatalf("converged alias preview should report converged: static=%+v err=%v", static, err)
 	}
+
+	// Another env claiming the alias host makes the installed alias-bearing
+	// fragment stale: the exact predicate must report not converged.
+	writeIdentityForTest(t, identity.EnvIdentity{
+		Version: 1, App: "rival", Env: "production", InfraID: identity.InfraID("rival", "production"),
+	})
+	rivalManifest := "name = \"rival\"\nbox = \"example.com\"\n\n[routes]\n\"" + alias + "\" = { static = \"dist\" }\n"
+	writeActiveEnvelopeForPreviewAliasTest(t, "rival", "production", rivalManifest)
+	if activePointerRuntimeConverged("api", env, pointer, nil, static) {
+		t.Fatal("a fragment carrying an alias owned by another env must not report converged")
+	}
 }
 
 func TestCrashOnlyJournalOutcomeTable(t *testing.T) {

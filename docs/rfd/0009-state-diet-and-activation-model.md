@@ -169,10 +169,11 @@ itself.**
   ADR-0021's drift self-heal).
 - **GC is a retention policy, not a chore**: after every deploy and on
   the existing timer, keep the active release + verified rollback
-  candidates (and their activation env files — old ones hold
-  pre-rotation secret values, so retention here is hygiene, not just
-  disk), delete the rest, print what was removed. Conservative grace
-  period for fresh debris.
+  candidates, delete the rest, print what was removed. Only the active
+  activation's frozen env file is retained — rollback mints a fresh
+  activation and re-resolves current secrets, so older activation env
+  files are unread copies of pre-rotation secret values and are
+  collected as hygiene. Conservative grace period for fresh debris.
 - **Public verbs — the agent escape hatch**: box-scope converge
   (members render, sudoers, timers, Caddy baseline), app-scope converge
   (env runtime ← active.json), box-scope gc. Every failure that
