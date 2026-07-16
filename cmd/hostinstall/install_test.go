@@ -612,6 +612,9 @@ func TestAutoModeChoosesLocalOnlyOnRootHost(t *testing.T) {
 	if plan.Mode != "local" {
 		t.Fatalf("expected local mode, got %s", plan.Mode)
 	}
+	if plan.ClientAddress != "" {
+		t.Fatalf("pure-local setup should leave unknown client address unset, got %q", plan.ClientAddress)
+	}
 
 	_, err = BuildPlan(opts, false, false)
 	if err == nil || !strings.Contains(err.Error(), "TARGET_HOST is required") {

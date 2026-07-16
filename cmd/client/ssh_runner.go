@@ -461,7 +461,7 @@ type sshRunner interface {
 func runSSHRequired(runner sshRunner, server string, command string, errMsg string, remediation string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
-		if err := sshResultError(stdout, stderr, code, err, errMsg, errMsg, remediation); err != nil {
+		if err := sshResultError(server, stdout, stderr, code, err, errMsg, errMsg, remediation); err != nil {
 			return "", err
 		}
 	}
@@ -474,7 +474,7 @@ func runSSHRequired(runner sshRunner, server string, command string, errMsg stri
 func runSSHDetail(runner sshRunner, server string, command string, remediation string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
-		if err := sshResultError(stdout, stderr, code, err, "", "remote command failed", remediation); err != nil {
+		if err := sshResultError(server, stdout, stderr, code, err, "", "remote command failed", remediation); err != nil {
 			return "", err
 		}
 	}
@@ -484,8 +484,8 @@ func runSSHDetail(runner sshRunner, server string, command string, remediation s
 	return stdout, nil
 }
 
-func sshResultError(stdout, stderr string, code int, err error, prefix string, fallback string, remediation string) error {
-	outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+func sshResultError(server, stdout, stderr string, code int, err error, prefix string, fallback string, remediation string) error {
+	outcome := decodeRemoteOutcome(stdout, stderr, code, err, "", server)
 	if outcome.TransportCoded != nil {
 		return outcome.TransportCoded
 	}
@@ -511,14 +511,14 @@ type remoteOutcome struct {
 	ForwardStderr  bool
 }
 
-func decodeRemoteOutcome(stdout, stderr string, code int, err error, fallback string) remoteOutcome {
+func decodeRemoteOutcome(stdout, stderr string, code int, err error, fallback string, target ...string) remoteOutcome {
 	outcome := remoteOutcome{Stderr: stderr}
 	if coded, ok := errcat.As(err); ok {
 		outcome.TransportCoded = coded
 		return outcome
 	}
 	if coded, ok := errcat.ParseJSON(stdout); ok {
-		outcome.RemoteCoded = coded
+		outcome.RemoteCoded = remoteErrorForTarget(coded, target...)
 		if strings.TrimSpace(stderr) != "" {
 			if _, stderrIsErrorJSON := errcat.ParseJSON(stderr); !stderrIsErrorJSON {
 				outcome.ForwardStderr = true
@@ -527,7 +527,7 @@ func decodeRemoteOutcome(stdout, stderr string, code int, err error, fallback st
 		return outcome
 	}
 	if coded, ok := errcat.ParseJSON(stderr); ok {
-		outcome.RemoteCoded = coded
+		outcome.RemoteCoded = remoteErrorForTarget(coded, target...)
 		return outcome
 	}
 	outcome.Detail = cleanRemoteErrorText(stderr)
@@ -538,6 +538,14 @@ func decodeRemoteOutcome(stdout, stderr string, code int, err error, fallback st
 		outcome.Detail = fallback
 	}
 	return outcome
+}
+
+func remoteErrorForTarget(coded *errcat.Error, target ...string) *errcat.Error {
+	if len(target) == 0 || strings.TrimSpace(target[0]) == "" || !strings.Contains(coded.Remediation(), "<box>") {
+		return coded
+	}
+	bound, _ := errcat.As(errcat.WithRemediation(coded, strings.ReplaceAll(coded.Remediation(), "<box>", target[0])))
+	return bound
 }
 
 func cleanRemoteErrorText(text string) string {

@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -198,6 +199,10 @@ func validateBoxConfigValue(spec store.BoxConfigKey, raw string) (string, error)
 func boxConfigTargetArg(key, value string) string {
 	if key == "webhook.url" {
 		return "key=" + key + " " + boxWebhookTargetArg(value)
+	}
+	if key == "box.address" {
+		digest := sha256.Sum256([]byte(value))
+		return "key=" + key + " address_sha256=" + fmt.Sprintf("%x", digest[:])
 	}
 	return "key=" + key
 }

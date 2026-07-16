@@ -339,7 +339,7 @@ func deployAuthorizedKeysUser() (string, error) {
 	if user != "" {
 		return user, nil
 	}
-	return "deploy", nil
+	return "", fmt.Errorf("deploy user is unknown; run through sudo as the deploy user or run ship box setup")
 }
 
 func appendDeployAuthorizedKeys(user string, keys []authorizedKey, role store.MemberRole) ([]keyAddResult, error) {

@@ -149,7 +149,7 @@ func TestReadBoxStatusSummaryOmitsDoctorBeforeFirstRecord(t *testing.T) {
 	if string(payload["apps"]) != "[]" {
 		t.Fatalf("apps JSON = %s, want empty array", data)
 	}
-	if got := string(payload["members"]); got != `{"total":0,"owners":0}` {
-		t.Fatalf("members JSON = %s, want empty member summary", data)
+	if _, ok := payload["members"]; ok {
+		t.Fatalf("members JSON = %s, want members omitted when deploy user is unknown", data)
 	}
 }

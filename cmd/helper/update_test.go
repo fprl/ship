@@ -69,7 +69,7 @@ func TestDoctorFlagsStartedUpdateWithoutCompletion(t *testing.T) {
 
 func TestDoctorPreservesIncompleteUpdateDetectionWithTornTail(t *testing.T) {
 	root := t.TempDir()
-	stateStore := store.Store{Root: root}
+	stateStore := store.Store{Root: root, VarRoot: filepath.Join(root, "var"), RunRoot: filepath.Join(root, "run")}
 	if err := appendUpdateJournalForStore(stateStore, updateJournalEntry{Event: "started", Version: "v0.4.1"}); err != nil {
 		t.Fatal(err)
 	}

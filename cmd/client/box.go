@@ -217,7 +217,7 @@ func readBoxStatusSummary(runner sshRunner, server string) (boxStatusSummaryPayl
 func runBoxReadCommand(runner sshRunner, server, command, fallback string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, fallback)
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, fallback, server)
 		if outcome.TransportCoded != nil {
 			return "", outcome.TransportCoded
 		}
@@ -256,7 +256,7 @@ func CmdBoxUpdate(server string) {
 	}
 	stdout, stderr, code, err := runner.RunSSH(server, serverUpdateCommand(version.Version))
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "box update failed")
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "box update failed", server)
 		if outcome.TransportCoded != nil {
 			utils.DieError(outcome.TransportCoded, 1)
 		}
@@ -378,7 +378,7 @@ func runBoxMemberAdd(server, source, name, role, confirm string) error {
 	stdin := []byte(strings.Join(input.Keys, "\n") + "\n")
 	stdout, stderr, code, err := runner.RunSSHWithStdin(server, serverKeyAddCommand(name, role), stdin)
 	if err != nil || code != 0 {
-		return sshResultError(stdout, stderr, code, err, "", "member add failed", "ship box member add "+source+" "+server)
+		return sshResultError(server, stdout, stderr, code, err, "", "member add failed", "ship box member add "+source+" "+server)
 	}
 	if strings.TrimSpace(stderr) != "" {
 		fmt.Fprint(os.Stderr, stderr)
@@ -399,7 +399,7 @@ func CmdBoxMemberLs(server string, jsonFlag bool) {
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverKeyListCommand(jsonFlag))
 	if err != nil || code != 0 {
-		if err := sshResultError(stdout, stderr, code, err, "", "box member ls failed", "ship box member ls "+server); err != nil {
+		if err := sshResultError(server, stdout, stderr, code, err, "", "box member ls failed", "ship box member ls "+server); err != nil {
 			utils.DieError(err, 1)
 		}
 	}
@@ -425,7 +425,7 @@ func CmdBoxMemberRm(server, name, key string) {
 		if key != "" {
 			command += " --key " + key
 		}
-		if err := sshResultError(stdout, stderr, code, err, "", "member rm failed", command+" "+server); err != nil {
+		if err := sshResultError(server, stdout, stderr, code, err, "", "member rm failed", command+" "+server); err != nil {
 			utils.DieError(err, 1)
 		}
 	}
@@ -446,7 +446,7 @@ func CmdBoxMemberRename(server, oldName, newName string) {
 	defer runner.Close()
 	stdout, stderr, code, err := runner.RunSSH(server, serverKeyRenameCommand(oldName, newName))
 	if err != nil || code != 0 {
-		if err := sshResultError(stdout, stderr, code, err, "", "member rename failed", "ship box member rename "+oldName+" "+newName+" "+server); err != nil {
+		if err := sshResultError(server, stdout, stderr, code, err, "", "member rename failed", "ship box member rename "+oldName+" "+newName+" "+server); err != nil {
 			utils.DieError(err, 1)
 		}
 	}
@@ -467,7 +467,7 @@ func CmdBoxMemberRole(server, name, role string) {
 	defer runner.Close()
 	stdout, stderr, code, err := runner.RunSSH(server, serverKeyRoleCommand(name, role))
 	if err != nil || code != 0 {
-		if err := sshResultError(stdout, stderr, code, err, "", "member role failed", "ship box member role "+name+" "+role+" "+server); err != nil {
+		if err := sshResultError(server, stdout, stderr, code, err, "", "member role failed", "ship box member role "+name+" "+role+" "+server); err != nil {
 			utils.DieError(err, 1)
 		}
 	}
@@ -528,7 +528,7 @@ func CmdBoxDoctor(server string, jsonFlag bool) {
 
 	stdout, stderr, code, err := runner.RunSSH(server, serverDoctorCommand(server, jsonFlag))
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "", server)
 		if outcome.TransportCoded != nil {
 			utils.DieError(outcome.TransportCoded, 1)
 		}
@@ -602,7 +602,7 @@ func runBoxWebhook(runner sshRunner, server, url string, remove, jsonFlag bool) 
 	}
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "", server)
 		if outcome.TransportCoded != nil {
 			return "", outcome.TransportCoded
 		}
@@ -699,7 +699,7 @@ func CmdBoxConfigMutation(server, command, remediation string) {
 func runBoxConfigMutation(runner sshRunner, server, command, remediation string) (string, error) {
 	stdout, stderr, code, err := runner.RunSSH(server, command)
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "")
+		outcome := decodeRemoteOutcome(stdout, stderr, code, err, "", server)
 		if outcome.TransportCoded != nil {
 			return "", outcome.TransportCoded
 		}

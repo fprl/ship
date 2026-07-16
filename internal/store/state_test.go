@@ -1,7 +1,6 @@
 package store
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -38,6 +37,12 @@ func TestStoreUsesSeparatedStateRootsAndModes(t *testing.T) {
 	assertMode(t, runRoot, 0700)
 	assertMode(t, state.DoctorPath(), 0644)
 	assertMode(t, state.ApprovalsPath(), 0600)
+	assertStableRewrite(t, state.DoctorPath(), func() error {
+		return state.WriteDoctor(DoctorFile{Version: CurrentVersion, RecordedAt: "2026-07-16T10:00:00Z", Checks: []DoctorCheck{{ID: "disk_space", Status: "ok"}}})
+	})
+	assertStableRewrite(t, state.ApprovalsPath(), func() error {
+		return state.WriteApprovals(ApprovalsFile{Version: CurrentVersion, Requests: []ApprovalRequest{}})
+	})
 
 	if _, err := os.Stat(filepath.Join(state.Root, "doctor.json")); !os.IsNotExist(err) {
 		t.Fatalf("doctor unexpectedly written under intent root: %v", err)
@@ -105,12 +110,12 @@ func TestBoxConfigAcceptsAddressAndMirrorsWebhookPolicy(t *testing.T) {
 	if key.WriteRole != webhook.WriteRole || key.OutOfRoleNeedsApproval != webhook.OutOfRoleNeedsApproval {
 		t.Fatalf("box.address policy = %+v, webhook policy = %+v", key, webhook)
 	}
-	for _, value := range []string{"example.com", "203.0.113.7:8443"} {
+	for _, value := range []string{"example.com", "203.0.113.7"} {
 		if err := ValidateBoxConfigValue("box.address", value); err != nil {
 			t.Errorf("address %q rejected: %v", value, err)
 		}
 	}
-	for _, value := range []string{"", "https://example.com", "example.com:0", "example.com:65536", "example.com:not-a-port", "bad host"} {
+	for _, value := range []string{"", "https://example.com", "203.0.113.7:8443", "example.com:0", "example.com:65536", "example.com:not-a-port", "bad host"} {
 		if err := ValidateBoxConfigValue("box.address", value); err == nil {
 			t.Errorf("address %q accepted", value)
 		}
@@ -173,9 +178,12 @@ func TestStoreWritesMembersAndBoxConfigInEtcRoot(t *testing.T) {
 	}
 	assertMode(t, state.MembersPath(), 0644)
 	assertMode(t, state.BoxConfigPath(), 0600)
-	if _, err := json.Marshal(state); err != nil {
-		t.Fatal(err)
-	}
+	assertStableRewrite(t, state.MembersPath(), func() error {
+		return state.WriteMembers(MembersFile{Version: CurrentVersion, Members: map[string]MemberRecord{"SHA256:abc": {Name: "alice", Role: MemberRoleOwner}}})
+	})
+	assertStableRewrite(t, state.BoxConfigPath(), func() error {
+		return state.WriteBoxConfig(BoxConfigFile{Version: CurrentVersion, Values: map[string]string{"box.address": "example.com"}})
+	})
 }
 
 func TestGoSourcesContainNoLegacyHostStateReference(t *testing.T) {
@@ -224,5 +232,30 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 	if got := info.Mode().Perm(); got != want {
 		t.Fatalf("expected %s mode %o, got %o", path, want, got)
+	}
+}
+
+func assertStableRewrite(t *testing.T, path string, rewrite func() error) {
+	t.Helper()
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rewrite(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("rewrite of %s changed bytes:\nbefore=%safter=%s", path, before, after)
+	}
+	temps, err := filepath.Glob(filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(temps) != 0 {
+		t.Fatalf("rewrite of %s left temporary files: %v", path, temps)
 	}
 }

@@ -2,7 +2,6 @@ package store
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/fprl/ship/internal/config"
@@ -52,7 +51,7 @@ type BoxConfigValueType string
 
 const (
 	BoxConfigValueTypeURLOrEmpty BoxConfigValueType = "url_or_empty"
-	BoxConfigValueTypeAddress    BoxConfigValueType = "host_or_host_port"
+	BoxConfigValueTypeAddress    BoxConfigValueType = "host"
 )
 
 type BoxConfigKey struct {
@@ -138,20 +137,9 @@ func ValidateBoxConfigValue(key, value string) error {
 
 func validateBoxAddress(value string) error {
 	if value == "" || value != strings.TrimSpace(value) {
-		return fmt.Errorf("must be a host or host:port")
+		return fmt.Errorf("must be a host")
 	}
-	host := value
-	if strings.Count(value, ":") == 1 {
-		var port string
-		host, port, _ = strings.Cut(value, ":")
-		n, err := strconv.Atoi(port)
-		if err != nil || n < 1 || n > 65535 {
-			return fmt.Errorf("port must be between 1 and 65535")
-		}
-	} else if strings.Contains(value, ":") {
-		return fmt.Errorf("must be a host or host:port")
-	}
-	if !config.ValidateHost(host) {
+	if !config.ValidateHost(value) {
 		return fmt.Errorf("host is invalid")
 	}
 	return nil

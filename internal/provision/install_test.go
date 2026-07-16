@@ -85,6 +85,29 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 	}
 }
 
+func TestRunInstallLeavesBoxAddressUnsetWhenClientAddressIsUnknown(t *testing.T) {
+	root := t.TempDir()
+	helper := filepath.Join(root, "ship")
+	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	runner := &installFakeRunner{files: map[string]host.FileState{}}
+	if _, err := RunInstall(context.Background(), runner, InstallOptions{
+		DeploySSHPublicKeys: []string{deployTestPublicKey},
+		StateRoot:           root,
+		HelperBinaryPath:    helper,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	config, err := (store.Store{Root: root}).ReadBoxConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := config.Values["box.address"]; ok {
+		t.Fatalf("box.address = %q, want unset when client address is unknown", config.Values["box.address"])
+	}
+}
+
 func TestSetupMemberRoleOverridesUsesExplicitGitDerivedMemberName(t *testing.T) {
 	keys, err := memberkeys.Normalize(deployTestPublicKey, "")
 	if err != nil {
@@ -664,18 +687,22 @@ func TestEnsureSystemdUnitEnabledRunsEnableWhenDisabled(t *testing.T) {
 }
 
 func TestEnsureSystemdUnitEnabledCheckModeReportsPendingWithoutEnable(t *testing.T) {
-	runner := &installFakeRunner{
-		files: map[string]host.FileState{},
-		commandResults: map[string]host.CommandResult{
-			"systemctl is-enabled --quiet caddy.service": {ExitCode: 1},
-		},
-	}
-	changed, err := ensureSystemdUnitEnabled(host.Apply{Context: context.Background(), Runner: runner, CheckMode: true}, "caddy.service")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !changed || runner.ranCommand("systemctl", "enable caddy.service") {
-		t.Fatalf("check mode changed=%v commands=%+v, want pending without enable", changed, runner.commands)
+	for _, unit := range []string{"caddy.service", "ship-preview-reaper.timer", "ship-doctor.timer"} {
+		t.Run(unit, func(t *testing.T) {
+			runner := &installFakeRunner{
+				files: map[string]host.FileState{},
+				commandResults: map[string]host.CommandResult{
+					"systemctl is-enabled --quiet " + unit: {ExitCode: 1},
+				},
+			}
+			changed, err := ensureSystemdUnitEnabled(host.Apply{Context: context.Background(), Runner: runner, CheckMode: true}, unit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !changed || runner.ranCommand("systemctl", "enable "+unit) {
+				t.Fatalf("check mode changed=%v commands=%+v, want pending without enable", changed, runner.commands)
+			}
+		})
 	}
 }
 

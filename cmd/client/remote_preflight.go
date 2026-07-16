@@ -107,7 +107,7 @@ func fetchRemotePreflightReport(runner sshRunner, ctx *config.AppContext) (remot
 	if err == nil && code == 0 {
 		return remotePreflightReport{}, deployPreflightError("invalid preflight response from host")
 	}
-	outcome := decodeRemoteOutcome(stdout, stderr, code, err, "no error detail")
+	outcome := decodeRemoteOutcome(stdout, stderr, code, err, "no error detail", ctx.Server)
 	if outcome.TransportCoded != nil {
 		return remotePreflightReport{}, outcome.TransportCoded
 	}

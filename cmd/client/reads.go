@@ -390,7 +390,7 @@ func CmdLogs(root string, process string, follow bool, tail *int, jsonFlag bool)
 	}
 	out, stderr, code, err := read.Runner.RunSSH(read.AppContext.Server, cmdStr)
 	if err != nil || code != 0 {
-		outcome := decodeRemoteOutcome(out, stderr, code, err, "logs failed")
+		outcome := decodeRemoteOutcome(out, stderr, code, err, "logs failed", read.AppContext.Server)
 		if outcome.TransportCoded != nil {
 			utils.DieError(outcome.TransportCoded, 1)
 		}

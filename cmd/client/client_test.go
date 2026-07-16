@@ -263,6 +263,18 @@ func TestRunSSHRequiredUsesCallerRemediation(t *testing.T) {
 	}
 }
 
+func TestRemoteCodedRemediationUsesLiteralTargetWhenBoxAddressIsUnknown(t *testing.T) {
+	coded := errcat.New(errcat.CodeMemberUnknown, errcat.Fields{"box": "<box>", "fingerprint": "SHA256:unknown"})
+	err := sshResultError("203.0.113.44", coded.JSONLine(), "", 1, nil, "", "member failed", "ship box member ls 203.0.113.44")
+	remote, ok := errcat.As(err)
+	if !ok {
+		t.Fatalf("error = %v, want coded remote error", err)
+	}
+	if got, want := remote.Remediation(), "ship box member add <https-url|key|path> 203.0.113.44 --name <name>"; got != want {
+		t.Fatalf("remediation = %q, want %q", got, want)
+	}
+}
+
 func TestRenderStatusSummaryWithApprovalsUsesApprovalLs(t *testing.T) {
 	got := renderStatusSummaryWithApprovals(statusPayload{App: "api"}, 1, "203.0.113.7")
 	want := "No live envs for api\n1 approvals pending — ship box approval ls 203.0.113.7\n"

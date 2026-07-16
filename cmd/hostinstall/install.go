@@ -195,7 +195,9 @@ func BuildPlan(opts Options, isRoot bool, osReleaseExists bool) (Plan, error) {
 			return Plan{}, err
 		}
 		opts.TargetHost = targetHost
-		opts.ClientAddress = targetHost
+		if opts.ClientAddress == "" {
+			opts.ClientAddress = targetHost
+		}
 		opts.BootstrapUser = bootstrapUser
 		if opts.BootstrapUser == "" {
 			return Plan{}, installUsageError("BOOTSTRAP_USER is required in remote mode", boxSetupCommand(opts.TargetHost, "--bootstrap-user", "root"))

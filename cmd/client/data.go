@@ -165,7 +165,7 @@ func runDataSave(data dataSaveContext, outPath string, now time.Time) (string, e
 	failure, stderr, code, runErr := data.Runner.RunSSHToFile(data.AppContext.Server, serverAppDataSaveCommand(data.AppContext.AppName, data.EnvName), tmpPath)
 	if runErr != nil || code != 0 {
 		_ = os.Remove(tmpPath)
-		outcome := decodeRemoteOutcome(failure, stderr, code, runErr, "data save failed")
+		outcome := decodeRemoteOutcome(failure, stderr, code, runErr, "data save failed", data.AppContext.Server)
 		if outcome.TransportCoded != nil {
 			return "", outcome.TransportCoded
 		}
@@ -248,7 +248,7 @@ func runDataRestore(data dataRestoreContext, idOrPath, confirm string) error {
 	}
 	stdout, stderr, code, runErr := data.Runner.RunSSH(data.AppContext.Server, serverAppDataRestoreCommand(data.AppContext.AppName, data.EnvName, remote))
 	if runErr != nil || code != 0 {
-		outcome := decodeRemoteOutcome(stdout, stderr, code, runErr, "data restore failed")
+		outcome := decodeRemoteOutcome(stdout, stderr, code, runErr, "data restore failed", data.AppContext.Server)
 		if outcome.TransportCoded != nil {
 			return outcome.TransportCoded
 		}

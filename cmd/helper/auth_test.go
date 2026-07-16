@@ -88,6 +88,56 @@ func TestApprovalFlowIsOneShotAndJournaled(t *testing.T) {
 	assertApprovalJournalEvent(t, events, "consumed", "alice", "agent")
 }
 
+func TestBoxAddressApprovalDoesNotAuthorizeDifferentValue(t *testing.T) {
+	setupAuthTest(t, map[string]store.MemberRecord{
+		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
+		bobFingerprint:   {Name: "bob", Role: store.MemberRoleOwner},
+	})
+	setApprovalNowForTest(t, time.Date(2026, 7, 8, 10, 0, 0, 0, time.UTC))
+	spec, ok := store.LookupBoxConfigKey("box.address")
+	if !ok {
+		t.Fatal("box.address schema key missing")
+	}
+	targetA := authTargetForBox("set box config box.address", boxConfigTargetArg("box.address", "203.0.113.8"))
+	setServerMemberFingerprint(aliceFingerprint)
+	_, err := authorizeBoxConfigMutation(spec, targetA)
+	if !errcat.Is(err, errcat.CodeApprovalRequired) {
+		t.Fatalf("address A authorization = %v, want approval_required", err)
+	}
+	coded, ok := errcat.As(err)
+	if !ok {
+		t.Fatalf("address A authorization was not coded: %v", err)
+	}
+	id := approvalIDFromRemediation(t, coded.Remediation())
+
+	setServerMemberFingerprint(bobFingerprint)
+	approver, err := authorizeApprovalGrant(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := approveRequest(id, approver); err != nil {
+		t.Fatal(err)
+	}
+
+	targetB := authTargetForBox("set box config box.address", boxConfigTargetArg("box.address", "203.0.113.9"))
+	setServerMemberFingerprint(aliceFingerprint)
+	_, err = authorizeBoxConfigMutation(spec, targetB)
+	if !errcat.Is(err, errcat.CodeApprovalRequired) {
+		t.Fatalf("address B authorization = %v, want a distinct approval", err)
+	}
+	requests, err := store.Default().ReadApprovals()
+	if err != nil {
+		t.Fatal(err)
+	}
+	statuses := map[string]store.ApprovalStatus{}
+	for _, request := range requests.Requests {
+		statuses[request.Target.Args[0]] = request.Status
+	}
+	if len(requests.Requests) != 2 || statuses[boxConfigTargetArg("box.address", "203.0.113.8")] != store.ApprovalStatusApproved || statuses[boxConfigTargetArg("box.address", "203.0.113.9")] != store.ApprovalStatusPending {
+		t.Fatalf("address approvals = %+v, want approved A and pending B", requests.Requests)
+	}
+}
+
 func TestApprovalGrantAndConsumeSurviveAuditJournalFailure(t *testing.T) {
 	setupAuthTest(t, map[string]store.MemberRecord{
 		aliceFingerprint: {Name: "alice", Role: store.MemberRoleAgent},
