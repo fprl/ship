@@ -7,6 +7,7 @@
 package identity
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -109,9 +110,14 @@ func RuntimeDir(app, env string) string {
 	return EnvRoot(app, env) + "/runtime"
 }
 
-// EnvFile is the resolved runtime env file passed to Podman via --env-file.
-func EnvFile(app, env string) string {
-	return RuntimeDir(app, env) + "/.env"
+// ActivationsDir holds immutable resolved env files, one per activation.
+func ActivationsDir(app, env string) string {
+	return filepath.Join(RuntimeDir(app, env), "activations")
+}
+
+// ActivationEnvFile is the resolved runtime env file for one activation.
+func ActivationEnvFile(app, env, activation string) string {
+	return filepath.Join(ActivationsDir(app, env), activation+".env")
 }
 
 // StaticDir is the root for static assets/releases.
@@ -119,20 +125,10 @@ func StaticDir(app, env string) string {
 	return EnvRoot(app, env) + "/static"
 }
 
-// ReleaseDir stores per-release metadata such as manifest snapshots.
+// ReleaseDir stores the deploy journal. Release payloads live in images or
+// static release directories; no manifest/metadata snapshots are written.
 func ReleaseDir(app, env string) string {
 	return EnvRoot(app, env) + "/releases"
-}
-
-// ReleaseManifestFile is the manifest snapshot that produced one release.
-func ReleaseManifestFile(app, env, release string) string {
-	return ReleaseDir(app, env) + "/" + release + "/ship.toml"
-}
-
-// ReleaseMetadataFile stores mandatory release details such as dirty state,
-// base commit, creation time, and static asset hash.
-func ReleaseMetadataFile(app, env, release string) string {
-	return ReleaseDir(app, env) + "/" + release + "/release.json"
 }
 
 // DeployJournalFile stores append-only deploy/rollback attempts for one env.
@@ -140,9 +136,9 @@ func DeployJournalFile(app, env string) string {
 	return ReleaseDir(app, env) + "/journal.jsonl"
 }
 
-// ManifestFile is the last manifest successfully applied for one `(app, env)`.
-func ManifestFile(app, env string) string {
-	return EnvRoot(app, env) + "/ship.toml"
+// ActiveFile is the single durable intent pointer for one environment.
+func ActiveFile(app, env string) string {
+	return filepath.Join(EnvRoot(app, env), "active.json")
 }
 
 // IdentityFile is the durable env identity anchor.
@@ -169,4 +165,17 @@ type PreviewIdentity struct {
 	Branch     string     `json:"branch"`
 	LastShipAt time.Time  `json:"last_ship_at"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+}
+
+// NewActivationID returns a release-scoped activation identity. The random
+// suffix prevents a redeploy of the same release from reusing its env file.
+func NewActivationID(release string) (string, error) {
+	if release == "" || strings.ContainsAny(release, "/\\") {
+		return "", fmt.Errorf("invalid release for activation: %q", release)
+	}
+	suffix := make([]byte, 4)
+	if _, err := rand.Read(suffix); err != nil {
+		return "", fmt.Errorf("generate activation id: %w", err)
+	}
+	return release + "-" + hex.EncodeToString(suffix), nil
 }

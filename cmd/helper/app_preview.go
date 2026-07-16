@@ -329,15 +329,14 @@ func previewAliasOwner(host, currentApp, currentEnv string, incoming map[string]
 		if item.App == currentApp && item.Env == currentEnv {
 			continue
 		}
-		if _, err := os.Stat(identity.ManifestFile(item.App, item.Env)); os.IsNotExist(err) {
+		manifest, cleanup, err := loadAppliedAppContext(item.App, item.Env)
+		if os.IsNotExist(err) {
 			continue
-		} else if err != nil {
-			return previewHostOwner{}, false, fmt.Errorf("stat applied manifest for %s (%s): %w", item.App, item.Env, err)
 		}
-		manifest, err := config.ReadManifest(identity.EnvRoot(item.App, item.Env))
 		if err != nil {
-			return previewHostOwner{}, false, fmt.Errorf("read applied manifest for %s (%s): %w", item.App, item.Env, err)
+			return previewHostOwner{}, false, fmt.Errorf("read active release for %s (%s): %w", item.App, item.Env, err)
 		}
+		defer cleanup()
 		for _, route := range manifest.Routes {
 			if route.Host == host {
 				return previewHostOwner{App: item.App, Env: item.Env, Kind: "route"}, true, nil

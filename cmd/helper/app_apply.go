@@ -9,11 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
-	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -21,26 +22,29 @@ import (
 // streamed source tarball and a manifest, it:
 //
 //  1. Validates the manifest.
-//  2. Resolves vars/secrets into runtime/.env for container apps.
+//  2. Resolves vars/secrets into an immutable activation env file.
 //  3. Builds the image or snapshots static assets.
 //  4. Starts new versioned process containers and verifies web health.
 //  5. Synthesizes a Caddyfile fragment, validates, reloads, and only
 //     then removes old routed containers.
 type appApplyCmd struct {
-	App           string `arg:"" help:"App name."`
-	Env           string `arg:"" help:"Env name."`
-	Tarball       string `name:"tarball" required:"" help:"Path to the streamed source tarball."`
-	Manifest      string `name:"manifest" required:"" help:"Path to the uploaded ship.toml."`
-	SHA           string `name:"sha" required:"" help:"Release identifier."`
-	Dirty         bool   `name:"dirty" help:"Mark this release as built from a dirty worktree snapshot."`
-	BaseCommit    string `name:"base-commit" required:"" help:"Git commit the release is based on."`
-	CreatedAt     string `name:"created-at" required:"" help:"Release creation time in RFC3339."`
-	Rebuild       bool   `name:"rebuild" help:"Pass --no-cache --pull=always to podman build."`
-	TLS           string `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode stamped by the client for this deploy."`
-	PreviewAlias  string `name:"preview-alias" hidden:"" help:"Preview branch alias host derived by the client."`
-	SSHKeyComment string `name:"ssh-key-comment" help:"SSH public key comment for the deploying key."`
-	GitAuthor     string `name:"git-author" help:"Git author configured by the deploying client."`
-	ClientVersion string `name:"client-version" hidden:"" help:"Client version contacting the helper."`
+	App           string            `arg:"" help:"App name."`
+	Env           string            `arg:"" help:"Env name."`
+	Tarball       string            `name:"tarball" required:"" help:"Path to the streamed source tarball."`
+	Manifest      string            `name:"manifest" required:"" help:"Path to the uploaded ship.toml."`
+	SHA           string            `name:"sha" required:"" help:"Release identifier."`
+	Dirty         bool              `name:"dirty" help:"Mark this release as built from a dirty worktree snapshot."`
+	BaseCommit    string            `name:"base-commit" required:"" help:"Git commit the release is based on."`
+	CreatedAt     string            `name:"created-at" required:"" help:"Release creation time in RFC3339."`
+	Rebuild       bool              `name:"rebuild" help:"Pass --no-cache --pull=always to podman build."`
+	TLS           string            `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode stamped by the client for this deploy."`
+	PreviewAlias  string            `name:"preview-alias" hidden:"" help:"Preview branch alias host derived by the client."`
+	SSHKeyComment string            `name:"ssh-key-comment" help:"SSH public key comment for the deploying key."`
+	GitAuthor     string            `name:"git-author" help:"Git author configured by the deploying client."`
+	ClientVersion string            `name:"client-version" hidden:"" help:"Client version contacting the helper."`
+	ActivationID  string            `kong:"-"`
+	Envelope      envelope.Envelope `kong:"-"`
+	EnvelopeLabel string            `kong:"-"`
 }
 
 type applyReleaseResult struct {
@@ -48,7 +52,6 @@ type applyReleaseResult struct {
 	startedContainers  []string
 	stoppedContainers  []string
 	processNames       map[string]string
-	staticSnapshot     *staticCurrentSnapshot
 	staticReleaseDir   string
 	staticReleaseNew   bool
 }
@@ -134,52 +137,42 @@ func (c appApplyCmd) runLockedE() (err error) {
 	}
 	applyRouteTLS(app, c.TLS)
 
-	var envSnapshot *fileSnapshot
-	if app.NeedsImage {
-		snapshot, err := snapshotEnvFile(c.App, c.Env)
-		if err != nil {
-			return fmt.Errorf("snapshot runtime env file: %v", err)
-		}
-		envSnapshot = &snapshot
-	}
-	manifestSnapshot, err := snapshotCurrentManifest(c.App, c.Env)
-	if err != nil {
-		return fmt.Errorf("snapshot current manifest: %v", err)
-	}
-	deployCommitted := false
-	defer func() {
-		if deployCommitted {
-			return
-		}
-		if envSnapshot != nil {
-			_ = restoreEnvFile(c.App, c.Env, *envSnapshot)
-		}
-		_ = restoreCurrentManifest(c.App, c.Env, manifestSnapshot)
-	}()
-
 	meta, err := c.releaseMetadata()
 	if err != nil {
 		return err
 	}
-	if err := persistReleaseSnapshot(c.App, c.Env, c.SHA, filepath.Join(ctxDir, "ship.toml"), meta); err != nil {
+	manifestData, err := os.ReadFile(filepath.Join(ctxDir, "ship.toml"))
+	if err != nil {
+		return fmt.Errorf("read effective manifest: %v", err)
+	}
+	manifestData, err = effectiveManifestText(manifestData, app)
+	if err != nil {
 		return err
 	}
-	releaseSnapshotActive := false
-	defer func() {
-		if !releaseSnapshotActive {
-			_ = removeReleaseSnapshot(c.App, c.Env, c.SHA)
-		}
-	}()
+	c.ActivationID, err = newActivationID(c.App, c.Env, c.SHA)
+	if err != nil {
+		return err
+	}
+	c.Envelope, c.EnvelopeLabel, err = releaseEnvelope(manifestData, meta)
+	if err != nil {
+		return err
+	}
+	resolved, err := resolveEnv(c.App, c.Env, app.Vars, app.SecretRefs)
+	if err != nil {
+		return err
+	}
+	for key, value := range shipInjectedEnv(c.App, c.Env, c.SHA, app) {
+		resolved[key] = value
+	}
+	if _, err := writeActivationEnvFile(c.App, c.Env, c.ActivationID, resolved); err != nil {
+		return err
+	}
 
 	result, err := c.applyRelease(ctxDir, app)
 	if err != nil {
 		return err
 	}
 
-	if err := persistCurrentManifestFromRelease(c.App, c.Env, c.SHA); err != nil {
-		result.cleanupFailed(c.App, c.Env)
-		return err
-	}
 	if err := refreshPreviewShip(c.App, c.Env, time.Now().UTC()); err != nil {
 		result.cleanupFailed(c.App, c.Env)
 		return err
@@ -188,8 +181,12 @@ func (c appApplyCmd) runLockedE() (err error) {
 		result.cleanupFailed(c.App, c.Env)
 		return err
 	}
-	releaseSnapshotActive = true
-	deployCommitted = true
+	if err := writeActive(c.App, c.Env, activation.Pointer{
+		Version: 1, Release: c.SHA, Activation: c.ActivationID,
+		EnvelopeHash: envelope.HashLabel(c.EnvelopeLabel),
+	}); err != nil {
+		return err
+	}
 	return c.completeCommittedDeploy(app, previousRelease, startedAt, result)
 }
 
@@ -309,24 +306,12 @@ func (c appApplyCmd) applyRelease(ctxDir string, app *config.AppContext) (applyR
 	}()
 
 	if app.HasStaticRoutes {
-		snapshot, err := snapshotStaticCurrent(c.App, c.Env)
-		if err != nil {
-			return applyReleaseResult{}, fmt.Errorf("snapshot static current: %v", err)
-		}
-		result.staticSnapshot = &snapshot
 		releaseDir, isNew, err := c.applyStatic(ctxDir, app)
 		result.staticReleaseDir = releaseDir
 		result.staticReleaseNew = isNew
 		if err != nil {
 			return applyReleaseResult{}, err
 		}
-	} else if snapshot, err := snapshotStaticCurrent(c.App, c.Env); err == nil && snapshot.Existed {
-		result.staticSnapshot = &snapshot
-		if err := clearStaticCurrent(c.App, c.Env); err != nil {
-			return applyReleaseResult{}, err
-		}
-	} else if err != nil {
-		return applyReleaseResult{}, fmt.Errorf("snapshot static current: %v", err)
 	}
 
 	existing, err := podmanPSContainers(c.App, c.Env)
@@ -381,21 +366,7 @@ func (c appApplyCmd) switchTraffic(app *config.AppContext, result applyReleaseRe
 	// one we restore the old. A previously-healthy app would otherwise
 	// lose its route on the next reload from anywhere.
 	caddyPath := caddyfilePath(c.App, c.Env)
-	prevFragment, prevExisted, err := snapshotCaddyFragment(caddyPath)
-	if err != nil {
-		return fmt.Errorf("snapshot existing fragment: %v", err)
-	}
-	if err := writeAppCaddyfileWithProcessNames(c.App, c.Env, app, c.SHA, result.processNames); err != nil {
-		_ = restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
-		if result.staticSnapshot != nil {
-			_ = restoreStaticCurrent(c.App, c.Env, *result.staticSnapshot)
-		}
-		return err
-	}
-	if err := reloadCaddyOrRestore(caddyPath, prevFragment, prevExisted); err != nil {
-		if result.staticSnapshot != nil {
-			_ = restoreStaticCurrent(c.App, c.Env, *result.staticSnapshot)
-		}
+	if err := renderAndReloadAppCaddy(caddyPath, c.App, c.Env, app, c.SHA, result.processNames); err != nil {
 		return caddyStageActionError(err, "deploy", caddyPath)
 	}
 	return nil
@@ -443,50 +414,9 @@ func warnOnRestartFailure(stopped []string) {
 func (r applyReleaseResult) cleanupFailed(app, env string) {
 	removeContainers(r.startedContainers)
 	warnOnRestartFailure(r.stoppedContainers)
-	if r.staticSnapshot != nil {
-		_ = restoreStaticCurrent(app, env, *r.staticSnapshot)
-	}
 	if r.staticReleaseNew && r.staticReleaseDir != "" {
 		_ = os.RemoveAll(r.staticReleaseDir)
 	}
-}
-
-func persistReleaseSnapshot(app, env, release, manifestPath string, meta releaseMetadata) error {
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return fmt.Errorf("read applied manifest: %v", err)
-	}
-	if err := writeManifestSnapshot(app, env, release, data); err != nil {
-		return err
-	}
-	if err := writeReleaseMetadata(app, env, meta); err != nil {
-		return err
-	}
-	return nil
-}
-
-func removeReleaseSnapshot(app, env, release string) error {
-	if err := validateRelease(release); err != nil {
-		return err
-	}
-	return os.RemoveAll(filepath.Join(identity.ReleaseDir(app, env), release))
-}
-
-func writeManifestSnapshot(app, env, release string, data []byte) error {
-	if err := validateRelease(release); err != nil {
-		return err
-	}
-	dst := identity.ReleaseManifestFile(app, env, release)
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return fmt.Errorf("mkdir release manifest dir: %v", err)
-	}
-	if err := store.AtomicWrite(dst, data, 0644); err != nil {
-		return fmt.Errorf("write release manifest: %v", err)
-	}
-	if _, err := utils.RunChecked("chown", []string{"root:root", dst}, ""); err != nil {
-		return fmt.Errorf("chown release manifest: %v", err)
-	}
-	return nil
 }
 
 type containerApplyResult struct {
@@ -501,17 +431,18 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 	containersToRemove := containersForRemovedProcesses(existing, app.Processes)
 	startedAt := time.Now().UTC().Format("20060102t150405000000000z")
 	started, err := startReleaseProcesses(startReleaseProcessesParams{
-		App:     c.App,
-		Env:     c.Env,
-		Release: c.SHA,
-		Context: app,
+		App:        c.App,
+		Env:        c.Env,
+		Release:    c.SHA,
+		Activation: c.ActivationID,
+		Context:    app,
 		BeforeStart: func(runtime processStartRuntime) error {
-			buildArgs := podmanBuildArgs(c.App, c.Env, runtime.ImageTag, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild)
+			buildArgs := podmanBuildArgsWithEnvelope(c.App, c.Env, runtime.ImageTag, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild, c.EnvelopeLabel)
 			if _, err := utils.RunChecked("podman", buildArgs, ""); err != nil {
 				return newJournalStepError("build", fmt.Errorf("podman build: %w", err), runtime.ScrubValues, nil)
 			}
 			if app.Release != "" {
-				if err := runReleaseCommand(c.App, c.Env, app.Release, runtime.ImageTag, runtime.UserID, runtime.GroupID, c.SHA); err != nil {
+				if err := runReleaseCommand(c.App, c.Env, app.Release, runtime.ImageTag, runtime.UserID, runtime.GroupID, c.SHA, runtime.EnvFile); err != nil {
 					return newJournalStepError("release", err, runtime.ScrubValues, nil)
 				}
 			}
@@ -654,11 +585,8 @@ func (c appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string,
 		return "", false, err
 	}
 	if _, err := os.Stat(releaseDir); err == nil {
-		if _, manifestErr := os.Stat(identity.ReleaseManifestFile(c.App, c.Env, c.SHA)); manifestErr == nil {
+		if _, envelopeErr := readStaticReleaseEnvelope(c.App, c.Env, c.SHA); envelopeErr == nil {
 			if err := verifyStaticRelease(c.App, c.Env, c.SHA, app.Routes); err != nil {
-				return "", false, err
-			}
-			if err := activateStaticRelease(c.App, c.Env, c.SHA); err != nil {
 				return "", false, err
 			}
 			return releaseDir, false, nil
@@ -700,7 +628,7 @@ func (c appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string,
 		return "", false, fmt.Errorf("publish static release: %v", err)
 	}
 	staged = true
-	if err := activateStaticRelease(c.App, c.Env, c.SHA); err != nil {
+	if err := writeStaticReleaseEnvelope(c.App, c.Env, c.SHA, c.Envelope); err != nil {
 		return releaseDir, true, err
 	}
 	return releaseDir, true, nil
@@ -760,21 +688,6 @@ func annotateSecretMissingRef(err error, envKey string) error {
 		return err
 	}
 	return errcat.WithCause(coded, fmt.Sprintf("%s (referenced by %s)", coded.Cause(), envKey))
-}
-
-func writeEnvFile(app, env string, vals map[string]string) error {
-	path := identity.EnvFile(app, env)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	if err := store.AtomicWrite(path, []byte(renderEnvFile(vals)), 0600); err != nil {
-		return err
-	}
-	user := identity.SystemUser(app, env)
-	if _, err := utils.RunChecked("chown", []string{user + ":" + user, path}, ""); err != nil {
-		return fmt.Errorf("chown env file: %v", err)
-	}
-	return nil
 }
 
 func sortedKeys[V any](m map[string]V) []string {

@@ -1,17 +1,11 @@
 package helper
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/releaseid"
-	"github.com/fprl/ship/internal/store"
-	"github.com/fprl/ship/internal/utils"
 )
 
 type releaseMetadata struct {
@@ -82,54 +76,4 @@ func validateReleaseMetadata(meta releaseMetadata) error {
 		}
 	}
 	return nil
-}
-
-func writeReleaseMetadata(app, env string, meta releaseMetadata) error {
-	if err := validateReleaseMetadata(meta); err != nil {
-		return err
-	}
-	path := identity.ReleaseMetadataFile(app, env, meta.Release)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("mkdir release metadata dir: %v", err)
-	}
-	data, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if err := store.AtomicWrite(path, data, 0644); err != nil {
-		return fmt.Errorf("write release metadata: %v", err)
-	}
-	if _, err := utils.RunChecked("chown", []string{"root:root", path}, ""); err != nil {
-		return fmt.Errorf("chown release metadata: %v", err)
-	}
-	return nil
-}
-
-func readReleaseMetadata(app, env, release string) (releaseMetadata, error) {
-	if err := validateRelease(release); err != nil {
-		return releaseMetadata{}, err
-	}
-	return readReleaseMetadataFile(identity.ReleaseMetadataFile(app, env, release), release)
-}
-
-func readReleaseMetadataFile(path, release string) (releaseMetadata, error) {
-	if err := validateRelease(release); err != nil {
-		return releaseMetadata{}, err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return releaseMetadata{}, fmt.Errorf("read release metadata %s: %v", path, err)
-	}
-	var meta releaseMetadata
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return releaseMetadata{}, fmt.Errorf("parse release metadata: %v", err)
-	}
-	if err := validateReleaseMetadata(meta); err != nil {
-		return releaseMetadata{}, err
-	}
-	if meta.Release != release {
-		return releaseMetadata{}, fmt.Errorf("release metadata names %s, expected %s", meta.Release, release)
-	}
-	return meta, nil
 }

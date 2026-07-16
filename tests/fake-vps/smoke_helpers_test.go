@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/store"
 	h "github.com/fprl/ship/tests/harness"
@@ -23,6 +24,30 @@ import (
 // functions live here.
 
 const fakeVPSImage = "ship-fake-vps:local"
+
+type smokeReleaseEnvelope struct {
+	Schema   int            `json:"schema"`
+	Manifest string         `json:"manifest"`
+	Metadata map[string]any `json:"metadata"`
+}
+
+func decodeSmokeReleaseEnvelope(t *testing.T, raw string) smokeReleaseEnvelope {
+	t.Helper()
+	var decoded smokeReleaseEnvelope
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		t.Fatalf("release envelope is not valid JSON: %v\nraw:\n%s", err, raw)
+	}
+	if decoded.Schema != 1 || decoded.Manifest == "" || decoded.Metadata == nil {
+		t.Fatalf("invalid release envelope: %+v", decoded)
+	}
+	return decoded
+}
+
+// activeEnvPath is a shell expression so each assertion follows active.json
+// even after old activation env files remain for retention.
+func activeEnvPath(app, env string) string {
+	return identity.ActivationsDir(app, env) + "/$(grep -o '\"activation\": \"[^\"]*\"' " + identity.ActiveFile(app, env) + " | cut -d'\"' -f4).env"
+}
 
 type smokeEnv struct {
 	ctx              context.Context

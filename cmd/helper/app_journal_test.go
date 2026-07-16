@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 )
@@ -122,18 +124,23 @@ func TestLatestDeployJournalEntryNoDeploysError(t *testing.T) {
 	}
 }
 
-func TestExecReleaseSelectionSurvivesTornDeployJournalTail(t *testing.T) {
+func TestExecReleaseSelectionUsesActivePointerDespiteTornDeployJournalTail(t *testing.T) {
 	setupJournalHostTest(t)
 	release := "abcdef1"
-	manifestPath := identity.ReleaseManifestFile("api", "production", release)
-	if err := os.MkdirAll(filepath.Dir(manifestPath), 0755); err != nil {
+	manifest := []byte("name = \"api\"\nbox = \"example.com\"\n\n[processes]\nweb = { cmd = \"run-web\" }\n")
+	meta, err := newReleaseMetadata(release, false, release, "2026-07-14T10:00:00Z")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(manifestPath, []byte("name = \"api\"\nbox = \"example.com\"\n\n[processes]\nweb = { cmd = \"run-web\" }\n"), 0644); err != nil {
+	_, label, err := releaseEnvelope(manifest, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: release, Activation: release + "-activation", EnvelopeHash: envelope.HashLabel(label)}); err != nil {
 		t.Fatal(err)
 	}
 	bin := t.TempDir()
-	payload := fmt.Sprintf(`[{"Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"%s","ship.release":"%s"}}]`, identity.InfraID("api", "production"), release)
+	payload := fmt.Sprintf(`[{"Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"%s","ship.release":"%s","ship.release_envelope":"%s"}}]`, identity.InfraID("api", "production"), release, label)
 	writeFakeCommand(t, bin, "podman", fmt.Sprintf("#!/usr/bin/env sh\nprintf '%%s\\n' '%s'\n", payload))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
@@ -165,8 +172,8 @@ func TestExecReleaseSelectionSurvivesTornDeployJournalTail(t *testing.T) {
 	if target.Release != release {
 		t.Fatalf("exec release = %q, want %q", target.Release, release)
 	}
-	if got := strings.Count(stderr, tornDeployJournalWarning+"\n"); got != 1 {
-		t.Fatalf("torn warning count = %d, stderr = %q", got, stderr)
+	if stderr != "" {
+		t.Fatalf("active exec selection should not consult torn history, stderr = %q", stderr)
 	}
 }
 

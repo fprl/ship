@@ -20,6 +20,18 @@ func TestRunCheckedWithTimeout(t *testing.T) {
 	}
 }
 
+func TestCommandErrorRedactsReleaseEnvelopeFromDisplayAndOutput(t *testing.T) {
+	value := "YWJjMTIzNGRhdGE="
+	err := &CommandError{Name: "podman", Args: []string{"build", "--label", "ship.release_envelope=" + value}, Stderr: "ship.release_envelope=" + value + "\n"}
+	text := err.Error() + "\n" + err.CombinedOutput()
+	if strings.Contains(text, value) {
+		t.Fatalf("envelope leaked in command error: %s", text)
+	}
+	if !strings.Contains(text, "ship.release_envelope=<redacted, "+"16 bytes>") {
+		t.Fatalf("redaction marker missing: %s", text)
+	}
+}
+
 func TestNormalizeRawErrorsDoesNotStringMatchManifestText(t *testing.T) {
 	coded := normalizeExitError(errors.New("ship.toml not found"), 1)
 	if coded.Code() != errcat.CodeOperationFailed {

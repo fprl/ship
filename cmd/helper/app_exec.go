@@ -10,6 +10,7 @@ import (
 
 	"github.com/fprl/ship/internal/cliargs"
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/utils"
@@ -63,61 +64,56 @@ func (c appExecCmd) run() error {
 	if err != nil {
 		return execOperationFailed(err)
 	}
+	envFile, activeErr := activeEnvFile(c.App, c.Env)
 	envFileExists := false
-	if _, err := os.Stat(identity.EnvFile(c.App, c.Env)); err == nil {
+	if activeErr == nil {
 		envFileExists = true
-	} else if err != nil && !os.IsNotExist(err) {
-		return execOperationFailed(fmt.Errorf("stat runtime env file: %v", err))
+	} else if !os.IsNotExist(activeErr) {
+		return execOperationFailed(activeErr)
 	}
 
 	name := identity.ContainerInstanceName(c.App, c.Env, "exec", target.Release, time.Now().UTC().Format("20060102t150405000000000z"))
-	args := buildPodmanExecRunArgs(c.App, c.Env, name, target.Image, userID, groupID, target.Release, command, execInjectedEnv(c.App, c.Env, target.Release, target.Context), envFileExists, previewEnv, c.TTY)
+	args := buildPodmanExecRunArgsWithEnvFile(c.App, c.Env, name, target.Image, userID, groupID, target.Release, command, execInjectedEnv(c.App, c.Env, target.Release, target.Context), envFileExists, previewEnv, c.TTY, envFile)
 	return runPodmanExecContainer(args)
 }
 
 func resolveExecTarget(app, env string) (execTarget, error) {
-	entry, torn, err := readLatestSuccessfulDeployJournalEntryWithStatus(app, env)
-	if torn {
-		warnTornDeployJournal(identity.DeployJournalFile(app, env))
-	}
+	pointer, err := readActive(app, env)
 	if err != nil {
 		return execTarget{}, err
 	}
-	release := entry.AttemptedRelease
-	if release == "" {
-		return execTarget{}, noDeployJournalError(app, env)
+	images, err := podmanImages(app, env)
+	if err != nil {
+		return execTarget{}, err
 	}
-	ctx, cleanup, err := loadReleaseAppContext(app, env, release)
+	var image imageRelease
+	for _, candidate := range images {
+		if candidate.Release == pointer.Release {
+			image = candidate
+			break
+		}
+	}
+	if image.Release == "" {
+		return execTarget{}, execOperationFailed(fmt.Errorf("release %s image is not available locally", pointer.Release))
+	}
+	label, err := image.Envelope.LabelValue()
+	if err != nil || envelope.HashLabel(label) != pointer.EnvelopeHash {
+		return execTarget{}, execOperationFailed(fmt.Errorf("active release envelope hash does not match active.json; next: redeploy release %s", pointer.Release))
+	}
+	ctx, cleanup, err := loadAppContextFromEnvelope(app, env, pointer.Release, image.Envelope, "active release envelope is missing")
 	if err != nil {
 		return execTarget{}, execOperationFailed(err)
 	}
 	if !ctx.NeedsImage {
 		cleanup()
-		return execTarget{}, execOperationFailed(fmt.Errorf("release %s has no container image", release))
-	}
-	if !execImageAvailable(app, env, release) {
-		cleanup()
-		return execTarget{}, execOperationFailed(fmt.Errorf("release %s image is not available locally", release))
+		return execTarget{}, execOperationFailed(fmt.Errorf("release %s has no container image", pointer.Release))
 	}
 	return execTarget{
-		Release: release,
-		Image:   identity.ImageTag(app, env, release),
+		Release: pointer.Release,
+		Image:   image.Image,
 		Context: ctx,
 		Cleanup: cleanup,
 	}, nil
-}
-
-func execImageAvailable(app, env, release string) bool {
-	images, err := podmanImages(app, env)
-	if err != nil {
-		return false
-	}
-	for _, image := range images {
-		if image.Release == release {
-			return true
-		}
-	}
-	return false
 }
 
 func execInjectedEnv(app, env, release string, ctx *config.AppContext) map[string]string {
@@ -173,6 +169,11 @@ func execDeploymentURL(ctx *config.AppContext) string {
 }
 
 func buildPodmanExecRunArgs(app, env, containerName, imageTag, userID, groupID, release string, command []string, injected map[string]string, envFileExists, previewEnv, tty bool) []string {
+	envFile, _ := activeEnvFile(app, env)
+	return buildPodmanExecRunArgsWithEnvFile(app, env, containerName, imageTag, userID, groupID, release, command, injected, envFileExists, previewEnv, tty, envFile)
+}
+
+func buildPodmanExecRunArgsWithEnvFile(app, env, containerName, imageTag, userID, groupID, release string, command []string, injected map[string]string, envFileExists, previewEnv, tty bool, envFile string) []string {
 	resources := effectiveProcessResources(config.Process{}, previewEnv)
 	args := []string{
 		"run", "--rm", "-i",
@@ -196,8 +197,8 @@ func buildPodmanExecRunArgs(app, env, containerName, imageTag, userID, groupID, 
 		args = append(args, "-t")
 	}
 	args = appendResourceArgs(args, resources)
-	if envFileExists {
-		args = append(args, "--env-file", identity.EnvFile(app, env))
+	if envFileExists && envFile != "" {
+		args = append(args, "--env-file", envFile)
 	}
 	for _, key := range sortedKeys(injected) {
 		args = append(args, "--env", key+"="+injected[key])

@@ -314,21 +314,8 @@ func tailLines(text string, n int) string {
 }
 
 func currentActiveReleaseBestEffort(app, env string) string {
-	ctx, cleanup, err := loadAppliedAppContext(app, env)
-	if err == nil {
-		defer cleanup()
-		if release, err := activeRelease(app, env, ctx); err == nil {
-			return release
-		}
-	}
-	containers, err := podmanPSContainers(app, env)
-	if err == nil {
-		if release, err := currentRelease(runningProcesses(containersToProcesses(containers))); err == nil {
-			return release
-		}
-	}
-	if release, err := currentStaticRelease(app, env); err == nil {
-		return release
+	if pointer, err := readActive(app, env); err == nil {
+		return pointer.Release
 	}
 	return ""
 }

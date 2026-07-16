@@ -46,7 +46,7 @@ func rerenderPreviewCapabilityLocked(appName, env string) error {
 	if err := addConfiguredPreviewAlias(appName, env, app); err != nil {
 		return err
 	}
-	release, err := activeRelease(appName, env, app)
+	release, err := activeRelease(appName, env)
 	if err != nil {
 		return err
 	}
@@ -61,14 +61,7 @@ func rerenderPreviewCapabilityLocked(appName, env string) error {
 		}
 	}
 	path := caddyfilePath(appName, env)
-	previous, existed, err := snapshotCaddyFragment(path)
-	if err != nil {
-		return err
-	}
-	if err := writeAppCaddyfileWithProcessNames(appName, env, app, release, names); err != nil {
-		return err
-	}
-	if err := reloadCaddyOrRestore(path, previous, existed); err != nil {
+	if err := renderAndReloadAppCaddy(path, appName, env, app, release, names); err != nil {
 		return caddyStageActionError(err, "updating preview capability", path)
 	}
 	return nil

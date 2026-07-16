@@ -198,20 +198,102 @@ func indent(s string, levels int) string {
 	return strings.Join(lines, "\n")
 }
 
-func writeAppCaddyfile(app, env string, ctx *config.AppContext, release string) error {
-	return writeAppCaddyfileWithProcessNames(app, env, ctx, release, nil)
-}
+// renderAndReloadAppCaddy validates a scratch copy of the complete Caddy
+// configuration before replacing the serving fragment. The serving tree is
+// untouched during validation, so a crash cannot leave a staging *.caddy file
+// for a later reload to import.
+func renderAndReloadAppCaddy(path, app, env string, ctx *config.AppContext, release string, processNames map[string]string) error {
+	reloadLock, err := acquireLockFile(filepath.Join(appEnvLockDir(), "caddy-reload.lock"))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = reloadLock.Release() }()
 
-func writeAppCaddyfileWithProcessNames(app, env string, ctx *config.AppContext, release string, processNames map[string]string) error {
+	previous, existed, err := snapshotCaddyFragment(path)
+	if err != nil {
+		return err
+	}
 	content, err := renderAppCaddyfileWithProcessNames(app, env, ctx, release, processNames)
 	if err != nil {
 		return err
 	}
-	path := caddyfilePath(app, env)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	validationDir, err := prepareCaddyValidationTree(path, content)
+	if err != nil {
 		return err
 	}
-	return store.AtomicWrite(path, []byte(content), caddyFragmentMode([]byte(content)))
+	defer func() { _ = os.RemoveAll(validationDir) }()
+	validationConfig := filepath.Join(validationDir, "Caddyfile")
+	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", validationConfig, "--adapter", "caddyfile"}, ""); err != nil {
+		return caddyReloadStageError{Stage: "validate", Err: err}
+	}
+	// This is the first mutation of the serving fragment. AtomicWrite keeps
+	// the old inode in place until the validated replacement is ready.
+	if err := store.AtomicWrite(path, []byte(content), caddyFragmentMode([]byte(content))); err != nil {
+		return err
+	}
+	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
+		restoreErr := restoreCaddyFragment(path, previous, existed)
+		return caddyReloadStageError{Stage: "reload", Err: err, RestoreErr: restoreErr}
+	}
+	return nil
+}
+
+// prepareCaddyValidationTree builds a private config tree under /etc/caddy
+// (or the corresponding test root). The real serving conf.d directory is
+// copied into it and the replacement is written there, so validation sees
+// the exact assembled config without exposing any temporary *.caddy file to
+// the serving import glob.
+func prepareCaddyValidationTree(path, replacement string) (string, error) {
+	configRoot := filepath.Dir(filepath.Dir(path))
+	validationDir, err := os.MkdirTemp(configRoot, ".ship-caddy-validate-*")
+	if err != nil {
+		return "", err
+	}
+	cleanup := func(err error) (string, error) {
+		_ = os.RemoveAll(validationDir)
+		return "", err
+	}
+	validationConfDir := filepath.Join(validationDir, "conf.d")
+	if err := os.MkdirAll(validationConfDir, 0755); err != nil {
+		return cleanup(err)
+	}
+	mainConfig, err := os.ReadFile("/etc/caddy/Caddyfile")
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return cleanup(fmt.Errorf("read Caddyfile for validation: %v", err))
+		}
+		mainConfig = []byte("import conf.d/*.caddy\n")
+	}
+	if err := store.AtomicWrite(filepath.Join(validationDir, "Caddyfile"), mainConfig, 0644); err != nil {
+		return cleanup(err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		return cleanup(err)
+	}
+	found := false
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".caddy" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(filepath.Dir(path), entry.Name()))
+		if err != nil {
+			return cleanup(err)
+		}
+		if entry.Name() == filepath.Base(path) {
+			data = []byte(replacement)
+			found = true
+		}
+		if err := store.AtomicWrite(filepath.Join(validationConfDir, entry.Name()), data, caddyFragmentMode(data)); err != nil {
+			return cleanup(err)
+		}
+	}
+	if !found {
+		if err := store.AtomicWrite(filepath.Join(validationConfDir, filepath.Base(path)), []byte(replacement), caddyFragmentMode([]byte(replacement))); err != nil {
+			return cleanup(err)
+		}
+	}
+	return validationDir, nil
 }
 
 // caddyFragmentMode keeps fragments carrying a preview capability

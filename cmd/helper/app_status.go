@@ -3,6 +3,7 @@ package helper
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	neturl "net/url"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/names"
 	"github.com/fprl/ship/internal/utils"
@@ -50,6 +52,21 @@ func (c appStatusCmd) Run() error {
 		utils.DieError(err, 1)
 	}
 	release := activeStatusRelease(runningProcesses(processes), static)
+	if pointer, pointerErr := readActive(c.App, c.Env); pointerErr == nil {
+		intended := &statusRelease{Release: pointer.Release}
+		for _, process := range processes {
+			if process.Release == pointer.Release {
+				intended.Dirty = process.Dirty
+				intended.BaseCommit = process.BaseCommit
+				intended.CreatedAt = process.CreatedAt
+				break
+			}
+		}
+		if static != nil && static.Release == pointer.Release {
+			copyStaticReleaseMetadata(static, intended)
+		}
+		release = intended
+	}
 	if c.JSON {
 		if static != nil && static.Routes == nil {
 			static.Routes = []string{}
@@ -348,12 +365,24 @@ func containersToAppEnvs(entries []containerEntry) []appEnvStatus {
 }
 
 func attachProcessReleaseMetadata(app, env string, processes []processStatus) error {
+	images, err := podmanImages(app, env)
+	if err != nil && len(processes) > 0 {
+		return err
+	}
+	byRelease := map[string]imageRelease{}
+	for _, image := range images {
+		byRelease[image.Release] = image
+	}
 	for i := range processes {
 		release := processes[i].Release
 		if release == "" {
 			return fmt.Errorf("process %s for %s (%s) has no release label", processes[i].Process, app, env)
 		}
-		meta, err := readReleaseMetadata(app, env, release)
+		candidate := byRelease[release]
+		if candidate.Envelope.Schema == 0 {
+			candidate.Envelope, err = readStaticReleaseEnvelope(app, env, release)
+		}
+		meta, err := releaseMetadataFromEnvelope(candidate.Envelope, release)
 		if err != nil {
 			return fmt.Errorf("process %s for %s (%s) release %s: %v", processes[i].Process, app, env, release, err)
 		}
@@ -746,27 +775,41 @@ func copyStaticReleaseMetadata(static *staticStatus, target *statusRelease) {
 }
 
 func activeStaticStatus(app, env string) (*staticStatus, error) {
-	current := filepath.Join(identity.StaticDir(app, env), "current")
-	target, err := os.Readlink(current)
+	pointer, err := readActive(app, env)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	release := filepath.Base(target)
-	if err := validateRelease(release); err != nil {
-		return nil, err
+	e, err := readStaticReleaseEnvelope(app, env, pointer.Release)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("static release %s integrity error: %v", pointer.Release, err)
 	}
-	routes, err := staticCurrentRoutes(target)
+	label, labelErr := e.LabelValue()
+	if labelErr != nil || envelope.HashLabel(label) != pointer.EnvelopeHash {
+		return nil, fmt.Errorf("active static release envelope hash does not match active.json")
+	}
+	ctx, cleanup, err := loadAppContextFromEnvelope(app, env, pointer.Release, e, "active static release envelope is missing")
 	if err != nil {
 		return nil, err
 	}
-	if routes == nil {
-		routes = []string{}
+	defer cleanup()
+	if !ctx.HasStaticRoutes {
+		return nil, nil
 	}
-	status := &staticStatus{Release: release, Routes: routes}
-	meta, err := readReleaseMetadata(app, env, release)
+	routes := make([]string, 0, len(ctx.Routes))
+	for name, route := range ctx.Routes {
+		if route.Serve != "" {
+			routes = append(routes, name)
+		}
+	}
+	sort.Strings(routes)
+	status := &staticStatus{Release: pointer.Release, Routes: routes}
+	meta, err := releaseMetadataFromEnvelope(e, pointer.Release)
 	if err != nil {
 		return nil, err
 	}
@@ -774,21 +817,6 @@ func activeStaticStatus(app, env string) (*staticStatus, error) {
 	status.BaseCommit = meta.BaseCommit
 	status.CreatedAt = meta.CreatedAt
 	return status, nil
-}
-
-func staticCurrentRoutes(currentTarget string) ([]string, error) {
-	entries, err := os.ReadDir(currentTarget)
-	if err != nil {
-		return nil, err
-	}
-	routes := []string{}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			routes = append(routes, entry.Name())
-		}
-	}
-	sort.Strings(routes)
-	return routes, nil
 }
 
 // --- podman calls ---

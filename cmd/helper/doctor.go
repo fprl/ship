@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/caddy"
-	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
@@ -702,10 +701,11 @@ func routedTLSCertStatuses(now time.Time) ([]tlsCertStatus, error) {
 	}
 	hosts := map[string]bool{}
 	for _, app := range apps {
-		manifest, err := config.ReadManifest(identity.EnvRoot(app.App, app.Env))
+		manifest, cleanup, err := loadAppliedAppContext(app.App, app.Env)
 		if err != nil {
-			return nil, fmt.Errorf("%s/%s applied manifest: %v", app.App, app.Env, err)
+			return nil, fmt.Errorf("%s/%s active release: %v", app.App, app.Env, err)
 		}
+		defer cleanup()
 		for _, route := range manifest.Routes {
 			if route.Host == "" || normalizeTLS(route.TLS) == "internal" || deployedRouteUsesInternalTLS(app.App, app.Env, route.Host) {
 				continue

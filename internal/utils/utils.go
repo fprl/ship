@@ -43,9 +43,9 @@ type CommandError struct {
 
 func (e *CommandError) Error() string {
 	if e.TimedOut {
-		return fmt.Sprintf("command timed out after %s: %s %v", e.Timeout, e.Name, e.Args)
+		return fmt.Sprintf("command timed out after %s: %s %v", e.Timeout, e.Name, redactedArgs(e.Args))
 	}
-	return fmt.Sprintf("command failed: %s %v: %v", e.Name, e.Args, e.Err)
+	return fmt.Sprintf("command failed: %s %v: %v", e.Name, redactedArgs(e.Args), e.Err)
 }
 
 func (e *CommandError) Unwrap() error {
@@ -53,13 +53,47 @@ func (e *CommandError) Unwrap() error {
 }
 
 func (e *CommandError) CombinedOutput() string {
+	stdout := redactEnvelopeText(e.Stdout)
+	stderr := redactEnvelopeText(e.Stderr)
 	switch {
-	case e.Stderr != "" && e.Stdout != "":
-		return e.Stderr + "\n" + e.Stdout
-	case e.Stderr != "":
-		return e.Stderr
+	case stderr != "" && stdout != "":
+		return stderr + "\n" + stdout
+	case stderr != "":
+		return stderr
 	default:
-		return e.Stdout
+		return stdout
+	}
+}
+
+func redactedArgs(args []string) []string {
+	out := append([]string(nil), args...)
+	for i, arg := range out {
+		const prefix = "ship.release_envelope="
+		if strings.HasPrefix(arg, prefix) {
+			out[i] = prefix + fmt.Sprintf("<redacted, %d bytes>", len(strings.TrimPrefix(arg, prefix)))
+		}
+	}
+	return out
+}
+
+func redactEnvelopeText(text string) string {
+	const prefix = "ship.release_envelope="
+	for {
+		start := strings.Index(text, prefix)
+		if start < 0 {
+			return text
+		}
+		valueStart := start + len(prefix)
+		end := valueStart
+		for end < len(text) && !strings.ContainsRune(" \t\r\n'\"[]", rune(text[end])) {
+			end++
+		}
+		value := text[valueStart:end]
+		if strings.HasPrefix(value, "<redacted,") {
+			return text
+		}
+		replacement := prefix + fmt.Sprintf("<redacted, %d bytes>", len(value))
+		text = text[:start] + replacement + text[end:]
 	}
 }
 
@@ -206,10 +240,10 @@ func runChecked(ctx context.Context, timeout time.Duration, name string, args []
 	err := cmd.Run()
 	if err != nil {
 		if stderr.Len() > 0 {
-			os.Stderr.Write(stderr.Bytes())
+			_, _ = os.Stderr.Write([]byte(redactEnvelopeText(stderr.String())))
 		}
 		if stdout.Len() > 0 {
-			os.Stderr.Write(stdout.Bytes())
+			_, _ = os.Stderr.Write([]byte(redactEnvelopeText(stdout.String())))
 		}
 		cmdErr := &CommandError{
 			Name:     name,

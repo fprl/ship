@@ -9,6 +9,21 @@ import (
 
 const jsonIndent = "  "
 
+var syncParentDirectory = func(dir string) error {
+	directory, err := os.Open(dir)
+	if err != nil {
+		return fmt.Errorf("open parent directory: %w", err)
+	}
+	if err := directory.Sync(); err != nil {
+		_ = directory.Close()
+		return fmt.Errorf("sync parent directory: %w", err)
+	}
+	if err := directory.Close(); err != nil {
+		return fmt.Errorf("close parent directory: %w", err)
+	}
+	return nil
+}
+
 func readJSON(path string, dest any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -29,6 +44,14 @@ func writeJSON(path string, value any, mode os.FileMode) error {
 }
 
 func AtomicWrite(path string, content []byte, mode os.FileMode) error {
+	return AtomicWritePrepared(path, content, mode, nil)
+}
+
+// AtomicWritePrepared writes and syncs content, applies mode, lets the
+// caller prepare the temporary inode, and only then renames it into place.
+// The prepare hook is deliberately before Rename so ownership and other
+// inode properties are part of the atomic publish boundary.
+func AtomicWritePrepared(path string, content []byte, mode os.FileMode, prepare func(string) error) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -58,5 +81,13 @@ func AtomicWrite(path string, content []byte, mode os.FileMode) error {
 	if err := os.Chmod(tmpName, mode); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if prepare != nil {
+		if err := prepare(tmpName); err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	return syncParentDirectory(dir)
 }

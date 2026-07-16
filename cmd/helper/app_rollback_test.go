@@ -64,6 +64,54 @@ func TestSelectRollbackReleaseErrors(t *testing.T) {
 	}
 }
 
+func TestRollbackHistoryTearRefusesAutomaticSelectionButAllowsExplicitEnvelope(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	release := "abc1234"
+	manifest := []byte("name = \"api\"\nbox = \"example.com\"\n\n[routes]\n\"example.com\" = { static = \"dist\" }\n")
+	meta, err := newReleaseMetadata(release, false, release, "2026-07-14T10:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _, err := releaseEnvelope(manifest, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseDir := filepath.Join(identity.StaticDir("api", "production"), "releases", release)
+	if err := os.MkdirAll(filepath.Join(releaseDir, config.RouteStorageName("example.com")), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStaticReleaseEnvelope("api", "production", release, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendDeployJournalEntry("api", "production", deployJournalEntry{Outcome: "deployed", AttemptedRelease: release}, nil); err != nil {
+		t.Fatal(err)
+	}
+	journalPath := identity.DeployJournalFile("api", "production")
+	file, err := os.OpenFile(journalPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = file.WriteString(`{"outcome":"deployed"}`)
+	_ = file.Close()
+	if _, err := availableRollbackReleases("api", "production", ""); err == nil || err.Error() != "history incomplete; pass an explicit release" {
+		t.Fatalf("automatic rollback error = %v", err)
+	}
+	got, err := availableRollbackReleases("api", "production", release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Release != release {
+		t.Fatalf("explicit candidates = %+v", got)
+	}
+}
+
 func TestImageReleasesFromEntriesUsesPodmanLabels(t *testing.T) {
 	entries := []imageEntry{
 		{
@@ -127,15 +175,14 @@ func TestRenderRollbackText(t *testing.T) {
 }
 
 func TestRollbackTargetStartupFailureRestartsStoppedOldWorkers(t *testing.T) {
-	app, oldWorker, targetWorker, logPath, oldEnv, oldManifest := setupRollbackFailureTest(t, true, false)
+	app, oldWorker, targetWorker, logPath, oldEnv, _ := setupRollbackFailureTest(t, true, false)
 
-	_, err := (appRollbackCmd{App: "api", Env: "production"}).rollbackToTarget("3333333", "2222222", app)
+	_, err := (appRollbackCmd{App: "api", Env: "production", ActivationID: "2222222-test"}).rollbackToTarget("3333333", "2222222", app)
 	if err == nil {
 		t.Fatal("expected target startup failure")
 	}
 
-	assertRollbackFile(t, identity.EnvFile("api", "production"), oldEnv)
-	assertRollbackFile(t, identity.ManifestFile("api", "production"), oldManifest)
+	assertRollbackFile(t, identity.ActivationEnvFile("api", "production", "3333333-old"), oldEnv)
 	log := readRollbackLog(t, logPath)
 	for _, want := range []string{"stop " + oldWorker, "rm -f " + targetWorker, "start " + oldWorker} {
 		if !strings.Contains(log, want) {
@@ -151,14 +198,14 @@ func TestRollbackTargetStartupFailureReportsOldWorkerRestartFailure(t *testing.T
 	app, oldWorker, _, _, _, _ := setupRollbackFailureTest(t, true, false)
 	t.Setenv("PODMAN_FAIL_START", "1")
 
-	_, err := (appRollbackCmd{App: "api", Env: "production"}).rollbackToTarget("3333333", "2222222", app)
+	_, err := (appRollbackCmd{App: "api", Env: "production", ActivationID: "2222222-test"}).rollbackToTarget("3333333", "2222222", app)
 	if err == nil || !strings.Contains(err.Error(), "rollback restore failed") || !strings.Contains(err.Error(), "restart containers "+oldWorker) {
 		t.Fatalf("rollback error = %v, want restart failure joined to restore error", err)
 	}
 }
 
 func TestRollbackPersistFailureRestoresLiveState(t *testing.T) {
-	app, oldWorker, targetWorker, logPath, oldEnv, oldManifest := setupRollbackFailureTest(t, false, true)
+	app, oldWorker, targetWorker, logPath, oldEnv, _ := setupRollbackFailureTest(t, false, true)
 	oldCaddy := []byte("old caddy fragment\n")
 	caddyPath := filepath.Join(t.TempDir(), "api.production.caddy")
 	previousCaddyPath := rollbackCaddyPath
@@ -168,13 +215,12 @@ func TestRollbackPersistFailureRestoresLiveState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := (appRollbackCmd{App: "api", Env: "production"}).rollbackToTarget("3333333", "2222222", app)
+	_, err := (appRollbackCmd{App: "api", Env: "production", ActivationID: "2222222-test"}).rollbackToTarget("3333333", "2222222", app)
 	if err == nil {
 		t.Fatal("expected manifest persist failure")
 	}
 
-	assertRollbackFile(t, identity.EnvFile("api", "production"), oldEnv)
-	assertRollbackFile(t, identity.ManifestFile("api", "production"), oldManifest)
+	assertRollbackFile(t, identity.ActivationEnvFile("api", "production", "3333333-old"), oldEnv)
 	assertRollbackFile(t, caddyPath, oldCaddy)
 	log := readRollbackLog(t, logPath)
 	if strings.Count(log, "rm -f "+targetWorker) < 2 {
@@ -271,10 +317,11 @@ fi
 exit 0
 `)
 	markerPath := filepath.Join(root, "manifest-chown.failed")
-	t.Setenv("ROLLBACK_MANIFEST", identity.ManifestFile("api", "production"))
+	t.Setenv("ROLLBACK_MANIFEST", identity.ActiveFile("api", "production"))
 	t.Setenv("ROLLBACK_CHOWN_MARKER", markerPath)
 	writeFakeCommand(t, bin, "chown", `#!/usr/bin/env sh
-if [ "${ROLLBACK_FAIL_PERSIST:-0}" = "1" ] && [ "$1" = "root:root" ] && [ "$2" = "$ROLLBACK_MANIFEST" ] && [ ! -e "$ROLLBACK_CHOWN_MARKER" ]; then
+case "$2" in *active.json*) is_pointer=1 ;; *) is_pointer=0 ;; esac
+if [ "${ROLLBACK_FAIL_PERSIST:-0}" = "1" ] && [ "$1" = "root:root" ] && [ "$is_pointer" = "1" ] && [ ! -e "$ROLLBACK_CHOWN_MARKER" ]; then
   : > "$ROLLBACK_CHOWN_MARKER"
   echo "forced manifest persist failure" >&2
   exit 1
@@ -286,9 +333,7 @@ exit 0
 	oldEnv := []byte("VERSION=old\n")
 	oldManifest := []byte("name = \"api\"\n# old release\n")
 	for path, data := range map[string][]byte{
-		identity.EnvFile("api", "production"):                            oldEnv,
-		identity.ManifestFile("api", "production"):                       oldManifest,
-		identity.ReleaseManifestFile("api", "production", targetRelease): []byte("name = \"api\"\n# target release\n"),
+		identity.ActivationEnvFile("api", "production", "3333333-old"): oldEnv,
 	} {
 		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 			t.Fatal(err)

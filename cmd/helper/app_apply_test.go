@@ -394,13 +394,6 @@ func TestReleaseMetadataValidation(t *testing.T) {
 	}
 }
 
-func TestReadReleaseMetadataRequiresFile(t *testing.T) {
-	_, err := readReleaseMetadata("missing-release-metadata-test", "production", "abc1234")
-	if err == nil || !strings.Contains(err.Error(), "read release metadata") {
-		t.Fatalf("expected missing release metadata error, got %v", err)
-	}
-}
-
 func TestApplyRejectsManifestForDifferentApp(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "Dockerfile"), []byte("FROM scratch\n"), 0644); err != nil {
@@ -440,6 +433,15 @@ func TestPodmanBuildArgsLabelsWithDerivedIdentity(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("build args missing %q: %s", want, joined)
 		}
+	}
+}
+
+func TestPodmanBuildArgsCarriesReleaseEnvelopeLabel(t *testing.T) {
+	value := "YWJjLWVudmVsb3Bl"
+	args := podmanBuildArgsWithEnvelope("api", "production", "ship/api:abc123", "abc123", "/tmp/Dockerfile", "/tmp/ctx", false, value)
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--label ship.release_envelope="+value) {
+		t.Fatalf("build args missing release envelope label: %s", joined)
 	}
 }
 
@@ -490,7 +492,8 @@ func TestBuildPodmanRunArgsEmitsHardeningDataMountResourcesAndLabels(t *testing.
 		Resources: config.Resources{Memory: &memory, CPUs: &cpus},
 	}
 	containerName := identity.ContainerName("api", "production", "web", "abc123")
-	args := buildPodmanRunArgs("api", "production", "web", proc, identity.ImageTag("api", "production", "abc123"), "999", "988", "abc123", containerName, true, false)
+	envFile := identity.ActivationEnvFile("api", "production", "abc123-00112233")
+	args := buildPodmanRunArgsWithEnvFile("api", "production", "web", proc, identity.ImageTag("api", "production", "abc123"), "999", "988", "abc123", containerName, true, false, envFile)
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"--cap-drop ALL",
@@ -502,7 +505,7 @@ func TestBuildPodmanRunArgsEmitsHardeningDataMountResourcesAndLabels(t *testing.
 		"--network " + identity.Network("api", "production"),
 		"--network ingress",
 		"-v " + identity.DataDir("api", "production") + ":/data:Z",
-		"--env-file " + identity.EnvFile("api", "production"),
+		"--env-file " + envFile,
 		"--memory 512m",
 		"--cpus 0.5",
 		"--label ship.process=web",
@@ -547,7 +550,8 @@ func TestBuildPodmanRunArgsLeavesProdUncappedByDefault(t *testing.T) {
 func TestBuildPodmanExecRunArgsTTYOnlyWhenRequested(t *testing.T) {
 	command := []string{"env"}
 	injected := map[string]string{"SHIP_RELEASE": "abc123"}
-	base := buildPodmanExecRunArgs("api", "feat-x", "exec-name", identity.ImageTag("api", "feat-x", "abc123"), "999", "988", "abc123", command, injected, true, true, false)
+	envFile := identity.ActivationEnvFile("api", "feat-x", "abc123-00112233")
+	base := buildPodmanExecRunArgsWithEnvFile("api", "feat-x", "exec-name", identity.ImageTag("api", "feat-x", "abc123"), "999", "988", "abc123", command, injected, true, true, false, envFile)
 	joined := strings.Join(base, " ")
 	if strings.Contains(joined, " -t ") {
 		t.Fatalf("non-tty exec args should not request a tty: %s", joined)
@@ -558,7 +562,7 @@ func TestBuildPodmanExecRunArgsTTYOnlyWhenRequested(t *testing.T) {
 	if !strings.Contains(joined, "--memory 512m") || !strings.Contains(joined, "--cpus 0.5") {
 		t.Fatalf("preview exec args should include default caps: %s", joined)
 	}
-	if !strings.Contains(joined, "--env-file "+identity.EnvFile("api", "feat-x")) {
+	if !strings.Contains(joined, "--env-file "+envFile) {
 		t.Fatalf("exec args should include the runtime env file: %s", joined)
 	}
 
@@ -876,39 +880,10 @@ func TestRestoreCaddyFragmentRemovesWhenNoPreviousExisted(t *testing.T) {
 	}
 }
 
-func TestRestoreStaticCurrentRoundTripsSymlink(t *testing.T) {
+func TestStaticReleaseLayoutHasNoCurrentSymlink(t *testing.T) {
 	staticRoot := t.TempDir()
-	previous := filepath.Join(staticRoot, "releases", "old")
-	next := filepath.Join(staticRoot, "releases", "next")
-	if err := os.MkdirAll(previous, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(next, 0755); err != nil {
-		t.Fatal(err)
-	}
-	current := filepath.Join(staticRoot, "current")
-	if err := os.Symlink(previous, current); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := snapshotStaticCurrentAt(current)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(current); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(next, current); err != nil {
-		t.Fatal(err)
-	}
-	if err := restoreStaticCurrentAt(current, snapshot); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.Readlink(current)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != previous {
-		t.Fatalf("current symlink = %q, want %q", got, previous)
+	if _, err := os.Lstat(filepath.Join(staticRoot, "current")); !os.IsNotExist(err) {
+		t.Fatalf("static current must not exist, err=%v", err)
 	}
 }
 

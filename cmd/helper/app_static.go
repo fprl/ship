@@ -9,60 +9,12 @@ import (
 	"github.com/fprl/ship/internal/identity"
 )
 
-type staticCurrentSnapshot struct {
-	Target  string
-	Existed bool
-}
-
-func snapshotStaticCurrent(app, env string) (staticCurrentSnapshot, error) {
-	path := filepath.Join(identity.StaticDir(app, env), "current")
-	return snapshotStaticCurrentAt(path)
-}
-
-func snapshotStaticCurrentAt(path string) (staticCurrentSnapshot, error) {
-	target, err := os.Readlink(path)
-	if err == nil {
-		return staticCurrentSnapshot{Target: target, Existed: true}, nil
-	}
-	if os.IsNotExist(err) {
-		return staticCurrentSnapshot{}, nil
-	}
-	return staticCurrentSnapshot{}, err
-}
-
-func restoreStaticCurrent(app, env string, snapshot staticCurrentSnapshot) error {
-	path := filepath.Join(identity.StaticDir(app, env), "current")
-	return restoreStaticCurrentAt(path, snapshot)
-}
-
-func restoreStaticCurrentAt(path string, snapshot staticCurrentSnapshot) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if snapshot.Existed {
-		return os.Symlink(snapshot.Target, path)
-	}
-	return nil
-}
-
-func clearStaticCurrent(app, env string) error {
-	path := filepath.Join(identity.StaticDir(app, env), "current")
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
-
 func currentStaticRelease(app, env string) (string, error) {
-	current := filepath.Join(identity.StaticDir(app, env), "current")
-	target, err := os.Readlink(current)
+	pointer, err := readActive(app, env)
 	if err != nil {
-		return "", fmt.Errorf("static current release not found; deploy before rollback or backup")
+		return "", fmt.Errorf("active static release not found; deploy before rollback or backup")
 	}
-	release := filepath.Base(target)
-	if release == "." || release == string(os.PathSeparator) || release == "" {
-		return "", fmt.Errorf("static current release target is invalid: %s", target)
-	}
+	release := pointer.Release
 	if err := validateRelease(release); err != nil {
 		return "", err
 	}
@@ -70,27 +22,6 @@ func currentStaticRelease(app, env string) (string, error) {
 		return "", fmt.Errorf("static release %s not found: %v", release, err)
 	}
 	return release, nil
-}
-
-func activateStaticRelease(app, env, release string) error {
-	if err := validateRelease(release); err != nil {
-		return err
-	}
-	staticDir := identity.StaticDir(app, env)
-	releaseDir := filepath.Join(staticDir, "releases", release)
-	if info, err := os.Stat(releaseDir); err != nil {
-		return fmt.Errorf("static release %s not found: %v", release, err)
-	} else if !info.IsDir() {
-		return fmt.Errorf("static release %s is not a directory", release)
-	}
-	current := filepath.Join(staticDir, "current")
-	if err := os.Remove(current); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.Symlink(releaseDir, current); err != nil {
-		return fmt.Errorf("update static current symlink: %v", err)
-	}
-	return nil
 }
 
 func verifyStaticRelease(app, env, release string, routes map[string]config.Route) error {

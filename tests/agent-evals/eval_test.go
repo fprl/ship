@@ -1141,7 +1141,8 @@ func checkMissingSecretRecovered(e *evalCase, p *evalProject) error {
 	if err := checkCurrentHeadProductionLive(e, p); err != nil {
 		return err
 	}
-	envFile := e.runShell(e.suite.repoRoot, nil, nil, "docker exec "+h.ShellQuote(e.container)+" bash -c "+h.ShellQuote("cat "+identity.EnvFile(p.App, productionEnv)))
+	activeEnv := identity.ActivationsDir(p.App, productionEnv) + "/$(grep -o '\"activation\": \"[^\"]*\"' " + identity.ActiveFile(p.App, productionEnv) + " | cut -d'\"' -f4).env"
+	envFile := e.runShell(e.suite.repoRoot, nil, nil, "docker exec "+h.ShellQuote(e.container)+" bash -c "+h.ShellQuote("cat "+activeEnv))
 	if envFile.err != nil {
 		return fmt.Errorf("read env file failed: %v\nstdout:%s\nstderr:%s", envFile.err, envFile.stdout, envFile.stderr)
 	}

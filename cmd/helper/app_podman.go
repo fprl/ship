@@ -30,6 +30,10 @@ type podmanBaseRunOptions struct {
 }
 
 func podmanBuildArgs(app, env, imageTag, release, dockerfile, ctxDir string, rebuild bool) []string {
+	return podmanBuildArgsWithEnvelope(app, env, imageTag, release, dockerfile, ctxDir, rebuild, "")
+}
+
+func podmanBuildArgsWithEnvelope(app, env, imageTag, release, dockerfile, ctxDir string, rebuild bool, envelopeLabel string) []string {
 	args := []string{"build"}
 	if rebuild {
 		args = append(args, "--no-cache", "--pull=always")
@@ -40,9 +44,11 @@ func podmanBuildArgs(app, env, imageTag, release, dockerfile, ctxDir string, reb
 		"--label", "ship.env="+env,
 		"--label", "ship.infra_id="+identity.InfraID(app, env),
 		"--label", "ship.release="+release,
-		"-f", dockerfile,
-		ctxDir,
 	)
+	if envelopeLabel != "" {
+		args = append(args, "--label", "ship.release_envelope="+envelopeLabel)
+	}
+	args = append(args, "-f", dockerfile, ctxDir)
 	return args
 }
 
@@ -119,8 +125,12 @@ func appendResourceArgs(args []string, resources config.Resources) []string {
 // network by container DNS. Manifest-declared memory and CPU limits
 // render to the closed set of runtime flags.
 func buildPodmanRunArgs(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, envFileExists bool, previewEnv bool) []string {
+	envFile, _ := activeEnvFile(app, env)
+	return buildPodmanRunArgsWithEnvFile(app, env, processName, proc, imageTag, userID, groupID, release, containerName, envFileExists, previewEnv, envFile)
+}
+
+func buildPodmanRunArgsWithEnvFile(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, envFileExists bool, previewEnv bool, envFile string) []string {
 	appNet := identity.Network(app, env)
-	envFile := identity.EnvFile(app, env)
 	resources := effectiveProcessResources(proc, previewEnv)
 
 	args := []string{
@@ -150,7 +160,7 @@ func buildPodmanRunArgs(app, env, processName string, proc config.Process, image
 		args = append(args, "--label", "ship.port="+strconv.Itoa(*proc.Port))
 	}
 	args = appendResourceArgs(args, resources)
-	if envFileExists {
+	if envFileExists && envFile != "" {
 		args = append(args, "--env-file", envFile)
 	}
 	args = append(args, imageTag)
@@ -178,8 +188,7 @@ func effectiveProcessResources(proc config.Process, previewEnv bool) config.Reso
 	return resources
 }
 
-func startProcess(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, probe string, previewEnv bool, scrubValues []string) error {
-	envFile := identity.EnvFile(app, env)
+func startProcess(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, probe string, previewEnv bool, scrubValues []string, envFile string) error {
 
 	_, _ = utils.RunChecked("podman", []string{"rm", "-f", containerName}, "")
 
@@ -187,7 +196,7 @@ func startProcess(app, env, processName string, proc config.Process, imageTag, u
 	if _, err := os.Stat(envFile); err == nil {
 		envFileExists = true
 	}
-	args := buildPodmanRunArgs(app, env, processName, proc, imageTag, userID, groupID, release, containerName, envFileExists, previewEnv)
+	args := buildPodmanRunArgsWithEnvFile(app, env, processName, proc, imageTag, userID, groupID, release, containerName, envFileExists, previewEnv, envFile)
 
 	if _, err := utils.RunChecked("podman", args, ""); err != nil {
 		return fmt.Errorf("podman run %s: %v", containerName, err)
@@ -259,7 +268,7 @@ func probeStatusFromDetail(detail string) int {
 
 const releaseCommandTimeout = 10 * time.Minute
 
-func runReleaseCommand(app, env, command, imageTag, userID, groupID, release string) error {
+func runReleaseCommand(app, env, command, imageTag, userID, groupID, release, envFile string) error {
 	name := identity.ContainerName(app, env, "release", release)
 	_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
 	args := []string{
@@ -278,8 +287,8 @@ func runReleaseCommand(app, env, command, imageTag, userID, groupID, release str
 		Release:     release,
 		Networks:    []string{identity.Network(app, env)},
 	})...)
-	if _, err := os.Stat(identity.EnvFile(app, env)); err == nil {
-		args = append(args, "--env-file", identity.EnvFile(app, env))
+	if envFile != "" {
+		args = append(args, "--env-file", envFile)
 	}
 	args = append(args, imageTag, "/bin/sh", "-c", command)
 	if _, err := utils.RunCheckedWithTimeout("podman", args, "", releaseCommandTimeout); err != nil {

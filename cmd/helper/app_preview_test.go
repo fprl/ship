@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/names"
@@ -616,11 +618,27 @@ web = { port = 3000 }
 
 func writeAppliedManifestForPreviewAliasTest(t *testing.T, app, env, body string) {
 	t.Helper()
-	path := identity.ManifestFile(app, env)
+	release := "abc1234"
+	meta, err := newReleaseMetadata(release, false, release, "2026-07-14T10:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, label, err := releaseEnvelope([]byte(body), meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := activation.Write(app, env, activation.Pointer{Version: 1, Release: release, Activation: release + "-activation", EnvelopeHash: envelope.HashLabel(label)}); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(identity.StaticDir(app, env), "releases", release, ".ship-release")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+	data, err := e.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
 		t.Fatal(err)
 	}
 }

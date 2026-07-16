@@ -11,15 +11,18 @@ func TestEnvRootIsFlatAndHumanReadable(t *testing.T) {
 	}
 }
 
-func TestDataRuntimeStaticAndManifestPaths(t *testing.T) {
+func TestDataRuntimeStaticAndActivationPaths(t *testing.T) {
 	if got := DataDir("api", "production"); got != "/var/apps/api.production/data" {
 		t.Fatalf("DataDir = %q", got)
 	}
 	if got := RuntimeDir("api", "production"); got != "/var/apps/api.production/runtime" {
 		t.Fatalf("RuntimeDir = %q", got)
 	}
-	if got := EnvFile("api", "production"); got != "/var/apps/api.production/runtime/.env" {
-		t.Fatalf("EnvFile = %q", got)
+	if got := ActivationsDir("api", "production"); got != "/var/apps/api.production/runtime/activations" {
+		t.Fatalf("ActivationsDir = %q", got)
+	}
+	if got := ActivationEnvFile("api", "production", "abc123-00112233"); got != "/var/apps/api.production/runtime/activations/abc123-00112233.env" {
+		t.Fatalf("ActivationEnvFile = %q", got)
 	}
 	if got := StaticDir("api", "production"); got != "/var/apps/api.production/static" {
 		t.Fatalf("StaticDir = %q", got)
@@ -27,11 +30,8 @@ func TestDataRuntimeStaticAndManifestPaths(t *testing.T) {
 	if got := ReleaseDir("api", "production"); got != "/var/apps/api.production/releases" {
 		t.Fatalf("ReleaseDir = %q", got)
 	}
-	if got := ReleaseManifestFile("api", "production", "abc123"); got != "/var/apps/api.production/releases/abc123/ship.toml" {
-		t.Fatalf("ReleaseManifestFile = %q", got)
-	}
-	if got := ManifestFile("api", "production"); got != "/var/apps/api.production/ship.toml" {
-		t.Fatalf("ManifestFile = %q", got)
+	if got := ActiveFile("api", "production"); got != "/var/apps/api.production/active.json" {
+		t.Fatalf("ActiveFile = %q", got)
 	}
 	if got := IdentityFile("api", "production"); got != "/var/apps/api.production/ship.json" {
 		t.Fatalf("IdentityFile = %q", got)

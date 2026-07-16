@@ -18,12 +18,14 @@ type processStartRuntime struct {
 	ImageTag    string
 	Routed      map[string]bool
 	PreviewEnv  bool
+	EnvFile     string
 }
 
 type startReleaseProcessesParams struct {
 	App           string
 	Env           string
 	Release       string
+	Activation    string
 	Context       *config.AppContext
 	BeforeStart   func(processStartRuntime) error
 	BeforeProcess func(processName string, proc config.Process) error
@@ -65,7 +67,8 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 		ProcessName: map[string]string{},
 		ScrubValues: scrubValues,
 	}
-	if err := writeEnvFile(params.App, params.Env, resolved); err != nil {
+	envFile, err := writeActivationEnvFile(params.App, params.Env, params.Activation, resolved)
+	if err != nil {
 		return result, err
 	}
 
@@ -78,6 +81,7 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 		UserID:      userID,
 		GroupID:     groupID,
 		ImageTag:    identity.ImageTag(params.App, params.Env, params.Release),
+		EnvFile:     envFile,
 		Routed:      routedProcessNames(params.Context.Routes),
 	}
 	runtime.PreviewEnv, err = isPreviewEnv(params.App, params.Env)
@@ -106,7 +110,7 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 		if proc.Port != nil {
 			result.ProcessName[processName] = containerName
 		}
-		if err := startProcess(params.App, params.Env, processName, proc, runtime.ImageTag, runtime.UserID, runtime.GroupID, params.Release, containerName, processProbe(runtime.Routed, processName, params.Context.Probe), runtime.PreviewEnv, runtime.ScrubValues); err != nil {
+		if err := startProcess(params.App, params.Env, processName, proc, runtime.ImageTag, runtime.UserID, runtime.GroupID, params.Release, containerName, processProbe(runtime.Routed, processName, params.Context.Probe), runtime.PreviewEnv, runtime.ScrubValues, runtime.EnvFile); err != nil {
 			removeContainers(result.Started)
 			return result, processStartError{Process: processName, Err: err}
 		}

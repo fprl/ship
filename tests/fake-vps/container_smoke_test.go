@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/names"
 	h "github.com/fprl/ship/tests/harness"
@@ -510,12 +511,32 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 
 	release := gitRelease(t, e, app)
 	webContainer := identity.ContainerName("api", productionEnv, "web", release)
-	releaseManifest := e.ssh(t, "cat "+identity.ReleaseManifestFile("api", productionEnv, release))
-	assertContains(t, releaseManifest, "port = 3000")
-	releaseMetadata := e.ssh(t, "cat "+identity.ReleaseMetadataFile("api", productionEnv, release))
-	assertContains(t, releaseMetadata, `"release": "`+release+`"`)
-	assertContains(t, releaseMetadata, `"dirty": false`)
-	assertContains(t, releaseMetadata, `"base_commit":`)
+	imageInspect := e.ssh(t, "podman image inspect --format json "+identity.ImageTag("api", productionEnv, release))
+	var inspected []struct {
+		Labels map[string]string `json:"Labels"`
+	}
+	if err := json.Unmarshal([]byte(imageInspect), &inspected); err != nil || len(inspected) != 1 {
+		t.Fatalf("image inspect for release envelope = %q, err=%v", imageInspect, err)
+	}
+	label := inspected[0].Labels[envelope.Label]
+	decoded, err := envelope.DecodeLabel(label)
+	if err != nil {
+		t.Fatalf("image release envelope label invalid: %v", err)
+	}
+	releaseEnvelope := smokeReleaseEnvelope{Schema: decoded.Schema, Manifest: decoded.Manifest}
+	if err := json.Unmarshal(decoded.Metadata, &releaseEnvelope.Metadata); err != nil {
+		t.Fatalf("image release envelope metadata invalid: %v", err)
+	}
+	assertContains(t, releaseEnvelope.Manifest, "port = 3000")
+	if got, _ := releaseEnvelope.Metadata["release"].(string); got != release {
+		t.Fatalf("release envelope metadata release = %q, want %q", got, release)
+	}
+	if dirty, _ := releaseEnvelope.Metadata["dirty"].(bool); dirty {
+		t.Fatal("clean release envelope metadata is marked dirty")
+	}
+	if baseCommit, _ := releaseEnvelope.Metadata["base_commit"].(string); baseCommit == "" {
+		t.Fatal("release envelope metadata has no base_commit")
+	}
 
 	// 3. fake-podman should have logged build + run for the web process.
 	commandsLog := e.ssh(t, "cat /run/fake-podman/commands.log")
@@ -749,7 +770,7 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	e.ship(t, app, []byte(secretValue), "secret", "set", "API_TOKEN")
 	e.ship(t, app, nil)
 	e.dockerExec(t, "test -f "+identity.DataDir("releasefail", productionEnv)+"/release-ok")
-	stableEnv := e.dockerExec(t, "cat "+identity.EnvFile("releasefail", productionEnv))
+	stableEnv := e.dockerExec(t, "cat "+activeEnvPath("releasefail", productionEnv))
 	assertContains(t, stableEnv, "MARKER=stable")
 	statusJSON := e.ship(t, app, nil, "status", "--json")
 	if strings.Contains(statusJSON, `"process":"release"`) || strings.Contains(statusJSON, `"process": "release"`) {
@@ -783,7 +804,7 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	}
 	e.dockerExec(t, "test -e /run/fake-podman/containers/"+stableContainer+".labels")
 	e.dockerExec(t, "test ! -e /tmp/ship-deploy/releasefail-"+productionEnv+"-"+failedRelease)
-	envAfterFailure := e.dockerExec(t, "cat "+identity.EnvFile("releasefail", productionEnv))
+	envAfterFailure := e.dockerExec(t, "cat "+activeEnvPath("releasefail", productionEnv))
 	if envAfterFailure != stableEnv {
 		t.Fatalf("failing release command changed runtime env:\nbefore:\n%s\nafter:\n%s", stableEnv, envAfterFailure)
 	}
@@ -888,10 +909,9 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 
 	e.ship(t, app, nil)
 	stableWorker := currentProcessContainer(t, e, app, "worker")
-	stableEnv := e.dockerExec(t, "cat "+identity.EnvFile("caddyfail", productionEnv))
-	stableManifest := e.dockerExec(t, "cat "+identity.ManifestFile("caddyfail", productionEnv))
+	stableEnv := e.dockerExec(t, "cat "+activeEnvPath("caddyfail", productionEnv))
+	stableManifest := e.dockerExec(t, "cat "+identity.ActiveFile("caddyfail", productionEnv))
 	stableFragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("caddyfail", productionEnv))
-	stableStaticCurrent := e.dockerExec(t, "readlink "+filepath.Join(identity.StaticDir("caddyfail", productionEnv), "current"))
 	e.dockerExec(t, "test -f /run/fake-podman/listeners/"+stableWorker+".pid")
 
 	manifestPath := filepath.Join(app, "ship.toml")
@@ -918,17 +938,14 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 	}
 	assertContains(t, failed.stdout+failed.stderr, "caddy reload")
 
-	if got := e.dockerExec(t, "cat "+identity.EnvFile("caddyfail", productionEnv)); got != stableEnv {
+	if got := e.dockerExec(t, "cat "+activeEnvPath("caddyfail", productionEnv)); got != stableEnv {
 		t.Fatalf("failing Caddy reload changed runtime env:\nbefore:\n%s\nafter:\n%s", stableEnv, got)
 	}
-	if got := e.dockerExec(t, "cat "+identity.ManifestFile("caddyfail", productionEnv)); got != stableManifest {
+	if got := e.dockerExec(t, "cat "+identity.ActiveFile("caddyfail", productionEnv)); got != stableManifest {
 		t.Fatalf("failing Caddy reload changed current manifest:\nbefore:\n%s\nafter:\n%s", stableManifest, got)
 	}
 	if got := e.ssh(t, "cat "+identity.CaddyFragmentFile("caddyfail", productionEnv)); got != stableFragment {
 		t.Fatalf("failing Caddy reload changed traffic:\nbefore:\n%s\nafter:\n%s", stableFragment, got)
-	}
-	if got := e.dockerExec(t, "readlink "+filepath.Join(identity.StaticDir("caddyfail", productionEnv), "current")); got != stableStaticCurrent {
-		t.Fatalf("failing Caddy reload changed static current:\nbefore: %s\nafter: %s", stableStaticCurrent, got)
 	}
 	e.dockerExec(t, "test -f /run/fake-podman/listeners/"+stableWorker+".pid")
 	e.dockerExec(t, "test ! -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "web", failedRelease)+".labels")
@@ -989,9 +1006,13 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	if !strings.HasPrefix(status.Release, baseShort+"-dirty-") {
 		t.Fatalf("dirty release id %q should start with %s-dirty-", status.Release, baseShort)
 	}
-	releaseMetadata := e.ssh(t, "cat "+identity.ReleaseMetadataFile("branchapi", featEnv, status.Release))
-	assertContains(t, releaseMetadata, `"dirty": true`)
-	assertContains(t, releaseMetadata, `"base_commit": "`+baseCommit+`"`)
+	releaseEnvelope := decodeSmokeReleaseEnvelope(t, e.ssh(t, "cat "+filepath.Join(identity.StaticDir("branchapi", featEnv), "releases", status.Release, ".ship-release")))
+	if dirty, _ := releaseEnvelope.Metadata["dirty"].(bool); !dirty {
+		t.Fatal("dirty release envelope metadata is not marked dirty")
+	}
+	if got, _ := releaseEnvelope.Metadata["base_commit"].(string); got != baseCommit {
+		t.Fatalf("release envelope base_commit = %q, want %q", got, baseCommit)
+	}
 	textStatus := e.ship(t, app, nil, "status")
 	assertContains(t, textStatus, "Preview feat/x")
 	assertContains(t, textStatus, "(dirty")
@@ -1981,7 +2002,7 @@ func (e *smokeEnv) testRollback(t *testing.T) {
 	if strings.Contains(rolledBackFragment, ":3333") {
 		t.Fatalf("rollback should restore the old manifest route shape, got:\n%s", rolledBackFragment)
 	}
-	appliedManifest := e.ssh(t, "cat "+identity.ManifestFile("api", productionEnv))
+	appliedManifest := e.ssh(t, "cat "+identity.ActiveFile("api", productionEnv))
 	assertContains(t, appliedManifest, "port = 3000")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: api.example.com' http://127.0.0.1/health", "ok")
 
@@ -2135,8 +2156,8 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 
 	e.ship(t, app, nil)
 	oldRelease := currentStaticReleaseFor(t, e, "site", productionEnv)
-	staticReleaseManifest := e.ssh(t, "cat "+identity.ReleaseManifestFile("site", productionEnv, oldRelease))
-	assertContains(t, staticReleaseManifest, `static = "dist"`)
+	staticReleaseEnvelope := decodeSmokeReleaseEnvelope(t, e.ssh(t, "cat "+filepath.Join(identity.StaticDir("site", productionEnv), "releases", oldRelease, ".ship-release")))
+	assertContains(t, staticReleaseEnvelope.Manifest, `static = "dist"`)
 
 	status := e.ship(t, app, nil, "status")
 	assertContains(t, status, "Production ")
@@ -2338,7 +2359,7 @@ web = { port = 3000 }
 	// 4. deploy: helper resolves DATABASE_URL from bare @secret into the env file
 	// next to the literal LOG_LEVEL.
 	e.ship(t, app, nil)
-	envFile := e.dockerExec(t, "cat "+identity.EnvFile("sec", productionEnv))
+	envFile := e.dockerExec(t, "cat "+activeEnvPath("sec", productionEnv))
 	if !strings.Contains(envFile, "LOG_LEVEL=info\n") {
 		t.Fatalf("env file missing literal LOG_LEVEL:\n%s", envFile)
 	}
@@ -2347,7 +2368,7 @@ web = { port = 3000 }
 	}
 
 	// 5. env file mode + ownership: 0600 owned by the per-env user.
-	envStat := strings.TrimSpace(e.dockerExec(t, "stat -c '%a %U' "+identity.EnvFile("sec", productionEnv)))
+	envStat := strings.TrimSpace(e.dockerExec(t, "stat -c '%a %U' "+activeEnvPath("sec", productionEnv)))
 	wantOwner := identity.SystemUser("sec", productionEnv)
 	if envStat != "600 "+wantOwner {
 		t.Fatalf("env file perms wrong: %q (want `600 %s`)", envStat, wantOwner)
@@ -2395,7 +2416,7 @@ web = { port = 3000 }
 
 	e.ship(t, app, []byte("prod-token"), "secret", "set", "API_TOKEN")
 	e.ship(t, app, nil)
-	prodEnv := e.dockerExec(t, "cat "+identity.EnvFile("scope", productionEnv))
+	prodEnv := e.dockerExec(t, "cat "+activeEnvPath("scope", productionEnv))
 	assertContains(t, prodEnv, "API_TOKEN=prod-token\n")
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/secrets")
@@ -2408,27 +2429,27 @@ web = { port = 3000 }
 		t.Fatalf("secret_missing json shape mismatch\nwant:\n%s\ngot:\n%s\nstderr:\n%s", wantSecretJSON, failed.stdout, failed.stderr)
 	}
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "scope", "feature/secrets")
-	if leaked := e.dockerExec(t, "test ! -f "+identity.EnvFile("scope", previewEnv)+" || cat "+identity.EnvFile("scope", previewEnv)); strings.Contains(leaked, "prod-token") {
+	if leaked := e.dockerExec(t, "test ! -f "+activeEnvPath("scope", previewEnv)+" || cat "+activeEnvPath("scope", previewEnv)); strings.Contains(leaked, "prod-token") {
 		t.Fatalf("preview env received Production secret value:\n%s", leaked)
 	}
 
 	prodEnvBeforeBranchSet := prodEnv
 	e.ship(t, app, []byte("branch-token"), "secret", "set", "API_TOKEN")
-	if prodEnvAfterBranchSet := e.dockerExec(t, "cat "+identity.EnvFile("scope", productionEnv)); prodEnvAfterBranchSet != prodEnvBeforeBranchSet {
+	if prodEnvAfterBranchSet := e.dockerExec(t, "cat "+activeEnvPath("scope", productionEnv)); prodEnvAfterBranchSet != prodEnvBeforeBranchSet {
 		t.Fatalf("bare secret set on a Preview branch changed Production:\nbefore:\n%s\nafter:\n%s", prodEnvBeforeBranchSet, prodEnvAfterBranchSet)
 	}
 	if branchList := e.ship(t, app, nil, "secret", "ls"); !strings.Contains(branchList, "API_TOKEN") {
 		t.Fatalf("bare secret ls should use the current Preview branch, got:\n%s", branchList)
 	}
 	e.ship(t, app, nil)
-	envFile := e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
+	envFile := e.dockerExec(t, "cat "+activeEnvPath("scope", previewEnv))
 	assertContains(t, envFile, "API_TOKEN=branch-token\n")
 
 	e.ship(t, app, []byte("shared-preview-token"), "secret", "set", "API_TOKEN", "--preview")
 	previewList := e.ship(t, app, nil, "secret", "ls", "--preview")
 	assertContains(t, previewList, "API_TOKEN")
 	e.ship(t, app, nil)
-	envFile = e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
+	envFile = e.dockerExec(t, "cat "+activeEnvPath("scope", previewEnv))
 	assertContains(t, envFile, "API_TOKEN=branch-token\n")
 	if strings.Contains(envFile, "prod-token") {
 		t.Fatalf("preview env leaked Production secret value:\n%s", envFile)
@@ -2448,7 +2469,7 @@ web = { port = 3000 }
 		t.Fatalf("unexpected branch secret JSON: %+v", branchPayload)
 	}
 	e.ship(t, app, nil)
-	envFile = e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
+	envFile = e.dockerExec(t, "cat "+activeEnvPath("scope", previewEnv))
 	assertContains(t, envFile, "API_TOKEN=branch-token\n")
 	if strings.Contains(envFile, "shared-preview-token") || strings.Contains(envFile, "prod-token") {
 		t.Fatalf("branch secret should win over shared preview and prod:\n%s", envFile)
@@ -2456,7 +2477,7 @@ web = { port = 3000 }
 
 	e.ship(t, app, nil, "secret", "rm", "API_TOKEN")
 	e.ship(t, app, nil)
-	envFile = e.dockerExec(t, "cat "+identity.EnvFile("scope", previewEnv))
+	envFile = e.dockerExec(t, "cat "+activeEnvPath("scope", previewEnv))
 	assertContains(t, envFile, "API_TOKEN=shared-preview-token\n")
 	if strings.Contains(envFile, "branch-token") || strings.Contains(envFile, "prod-token") {
 		t.Fatalf("branch rm should fall back to shared preview only:\n%s", envFile)
@@ -2520,7 +2541,7 @@ API_KEY='bulk-api'
 	}
 
 	e.ship(t, app, nil)
-	prodEnv := e.dockerExec(t, "cat "+identity.EnvFile("bulksec", productionEnv))
+	prodEnv := e.dockerExec(t, "cat "+activeEnvPath("bulksec", productionEnv))
 	assertContains(t, prodEnv, "DATABASE_URL=postgres://bulk\n")
 	assertContains(t, prodEnv, "API_KEY=bulk-api\n")
 
@@ -2582,7 +2603,7 @@ PREVIEW_TOKEN='preview-token'
 	}
 	e.ship(t, app, nil, "--tls", "internal")
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "bulksec", "feature/bulk")
-	previewEnvFile := e.dockerExec(t, "cat "+identity.EnvFile("bulksec", previewEnv))
+	previewEnvFile := e.dockerExec(t, "cat "+activeEnvPath("bulksec", previewEnv))
 	assertContains(t, previewEnvFile, "DATABASE_URL=sqlite://preview\n")
 	assertContains(t, previewEnvFile, "API_KEY=preview-api\n")
 	assertContains(t, previewEnvFile, "PREVIEW_TOKEN=preview-token\n")
@@ -2628,7 +2649,7 @@ web = { port = 3000 }
 	e.ship(t, app, []byte("shared-preview-prod-token"), "secret", "set", "PROD_TOKEN", "--preview")
 	e.ship(t, app, []byte("shared-preview-token"), "secret", "set", "API_TOKEN", "--preview")
 	e.ship(t, app, nil)
-	prodEnv := e.dockerExec(t, "cat "+identity.EnvFile("overlay", productionEnv))
+	prodEnv := e.dockerExec(t, "cat "+activeEnvPath("overlay", productionEnv))
 	assertContains(t, prodEnv, "LOG_LEVEL=info\n")
 	assertContains(t, prodEnv, "BASE_ONLY=kept\n")
 	assertContains(t, prodEnv, "PROD_TOKEN=prod-base-token\n")
@@ -2639,7 +2660,7 @@ web = { port = 3000 }
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/env-overlay")
 	e.ship(t, app, nil)
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "overlay", "feature/env-overlay")
-	previewEnvFile := e.dockerExec(t, "cat "+identity.EnvFile("overlay", previewEnv))
+	previewEnvFile := e.dockerExec(t, "cat "+activeEnvPath("overlay", previewEnv))
 	assertContains(t, previewEnvFile, "LOG_LEVEL=debug\n")
 	assertContains(t, previewEnvFile, "BASE_ONLY=kept\n")
 	assertContains(t, previewEnvFile, "PREVIEW_ONLY=yes\n")
@@ -3452,7 +3473,7 @@ func staticRouteRoot(app, env, release, routeKey string) string {
 
 func currentStaticReleaseFor(t *testing.T, e *smokeEnv, app, env string) string {
 	t.Helper()
-	return strings.TrimSpace(e.ssh(t, "basename $(readlink "+identity.StaticDir(app, env)+"/current)"))
+	return strings.TrimSpace(e.ssh(t, "grep -o '\"release\": \"[^\"]*\"' "+identity.ActiveFile(app, env)+" | cut -d'\"' -f4"))
 }
 
 func currentWebContainer(t *testing.T, e *smokeEnv, app string) string {

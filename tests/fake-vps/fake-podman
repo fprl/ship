@@ -246,6 +246,57 @@ PY
     sub="${1:-}"
     shift || true
     case "$sub" in
+      inspect)
+        fmt=""
+        declare -a refs=()
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --format)
+              fmt="$2"; shift 2 ;;
+            *)
+              refs+=("$1"); shift ;;
+          esac
+        done
+        if [[ "$fmt" != "json" ]]; then
+          echo "fake podman: unsupported image inspect format: $fmt" >&2
+          exit 1
+        fi
+        python3 - "$state_dir" "${refs[@]}" <<'PY'
+import json, os, sys
+
+state_dir = sys.argv[1]
+refs = sys.argv[2:]
+out = []
+for ref in refs:
+    safe = ref.replace("/", "_").replace(":", "_")
+    image_path = os.path.join(state_dir, "images", safe)
+    if not os.path.exists(image_path):
+        print(f"fake podman: no such image: {ref}", file=sys.stderr)
+        sys.exit(1)
+    labels = {}
+    labels_path = image_path + ".labels"
+    if os.path.exists(labels_path):
+        with open(labels_path) as f:
+            for line in f:
+                line = line.rstrip("\n")
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    labels[key] = value
+    repository = "ship/" + labels["ship.infra_id"] if labels.get("ship.infra_id") else ""
+    tag = labels.get("ship.release", "")
+    name = f"{repository}:{tag}" if repository and tag else ref
+    out.append({
+        "Repository": repository,
+        "Tag": tag,
+        "Names": [name],
+        "RepoTags": [name],
+        "Labels": labels,
+        "Config": {"Labels": labels},
+    })
+print(json.dumps(out))
+PY
+        exit 0
+        ;;
       prune)
         # The real `podman image prune` without `-a` removes dangling
         # untagged images. In fake state, those are image records with

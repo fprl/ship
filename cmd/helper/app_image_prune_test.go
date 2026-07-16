@@ -106,9 +106,13 @@ case "$1" in
     printf '[]\n'
     exit 0
     ;;
-  image)
-    echo "forced image prune failure" >&2
-    exit 42
+	image)
+	if [ "$2" = "inspect" ]; then
+		printf '[]\n'
+		exit 0
+	fi
+	echo "forced image prune failure" >&2
+	exit 42
     ;;
 esac
 exit 0
