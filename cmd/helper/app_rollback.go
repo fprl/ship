@@ -115,10 +115,11 @@ func (c appRollbackCmd) recordRollbackSuccess(result rollbackPayload, startedAt 
 		PreviousRelease:  result.Previous,
 		AttemptedRelease: result.Release,
 		Activation:       c.ActivationID,
+		EnvelopeHash:     envelope.HashLabel(c.TargetEnvelopeLabel()),
 		Identity:         c.actor(),
 		Member:           currentServerMemberForJournal(),
 	}, nil); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: rollback succeeded but failed to write deploy journal: %v; run ship box doctor\n", err)
+		fmt.Fprintf(os.Stderr, "warning: rollback succeeded but failed to write deploy journal %s: %v; cleanup/GC were skipped; run ship box doctor\n", identity.DeployJournalFile(c.App, c.Env), err)
 	} else {
 		removeContainers(result.StaleContainers)
 		bestEffortGCAfterLifecycle(c.App, c.Env)
@@ -143,9 +144,9 @@ func (c *appRollbackCmd) rollbackRelease(currentApp *config.AppContext, startedA
 	}
 	current := pointer.Release
 	var images []imageRelease
-	currentEnvelope, currentEnvelopeErr := readStaticReleaseEnvelope(c.App, c.Env, current)
+	currentEnvelope, currentEnvelopeErr := readStaticReleaseEnvelopeByHash(c.App, c.Env, current, pointer.EnvelopeHash)
 	if currentEnvelopeErr != nil {
-		images, err = podmanImages(c.App, c.Env)
+		images, err = podmanImagesForEnvelopeHash(c.App, c.Env, current, pointer.EnvelopeHash)
 		if err != nil {
 			return rollbackPayload{}, err
 		}
@@ -154,7 +155,7 @@ func (c *appRollbackCmd) rollbackRelease(currentApp *config.AppContext, startedA
 		e := currentEnvelope
 		if currentEnvelopeErr != nil {
 			for _, image := range images {
-				if image.Release == current {
+				if image.Release == current && image.EnvelopeHash == pointer.EnvelopeHash {
 					e = image.Envelope
 					break
 				}
@@ -286,13 +287,15 @@ type rollbackPayload struct {
 }
 
 type imageRelease struct {
-	Release   string
-	Image     string
-	Envelope  envelope.Envelope
-	CreatedAt time.Time
+	Release      string
+	Image        string
+	Envelope     envelope.Envelope
+	EnvelopeHash string
+	CreatedAt    time.Time
 }
 
 type imageEntry struct {
+	ID         string            `json:"Id"`
 	Repository string            `json:"Repository"`
 	Tag        string            `json:"Tag"`
 	Names      []string          `json:"Names"`
@@ -306,7 +309,62 @@ type imageEntry struct {
 }
 
 func podmanImages(app, env string) ([]imageRelease, error) {
-	return podmanImagesForRelease(app, env, "")
+	byKey := map[string]imageRelease{}
+	var firstErr error
+	if tagged, err := podmanImagesForRelease(app, env, ""); err == nil {
+		for _, image := range tagged {
+			byKey[image.Release+"\x00"+image.EnvelopeHash] = image
+		}
+	} else {
+		firstErr = err
+	}
+	if scanned, err := podmanScannedImages(app, env); err == nil {
+		for _, image := range scanned {
+			byKey[image.Release+"\x00"+image.EnvelopeHash] = image
+		}
+	} else if len(byKey) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	out := make([]imageRelease, 0, len(byKey))
+	for _, image := range byKey {
+		out = append(out, image)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Release != out[j].Release {
+			return out[i].Release < out[j].Release
+		}
+		return out[i].EnvelopeHash < out[j].EnvelopeHash
+	})
+	return out, nil
+}
+
+func podmanImagesForEnvelopeHash(app, env, release, envelopeHash string) ([]imageRelease, error) {
+	images, err := podmanImages(app, env)
+	if err != nil {
+		return nil, err
+	}
+	var matched []imageRelease
+	for _, image := range images {
+		if image.Release == release && image.EnvelopeHash == envelopeHash {
+			matched = append(matched, image)
+		}
+	}
+	if len(matched) == 0 {
+		return nil, fmt.Errorf("release %s image with envelope %s is not available locally", release, envelopeHash)
+	}
+	return matched, nil
+}
+
+func podmanScannedImages(app, env string) ([]imageRelease, error) {
+	out, err := utils.RunChecked("podman", []string{"images", "--format", "json"}, "")
+	if err != nil {
+		return nil, fmt.Errorf("podman image scan: %v", err)
+	}
+	var entries []imageEntry
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &entries); err != nil {
+		return nil, fmt.Errorf("parse podman images json: %v", err)
+	}
+	return imageReleasesFromEntries(app, env, entries), nil
 }
 
 func podmanImagesForRelease(app, env, requested string) ([]imageRelease, error) {
@@ -370,21 +428,33 @@ func imageReleasesFromEntries(app, env string, entries []imageEntry) []imageRele
 			continue
 		}
 		release := e.Labels["ship.release"]
-		if release == "" || release == "<none>" || seen[release] {
+		if release == "" || release == "<none>" {
 			continue
 		}
 		if err := validateRelease(release); err != nil {
 			continue
 		}
-		seen[release] = true
 		envelopeValue := e.Labels[envelope.Label]
-		decoded, _ := envelope.DecodeLabel(envelopeValue)
+		decoded, decodeErr := envelope.DecodeLabel(envelopeValue)
+		envelopeHash := ""
+		if decodeErr == nil {
+			envelopeHash = envelope.HashLabel(envelopeValue)
+		}
+		key := release + "\x00" + envelopeHash
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		created := e.CreatedAt
 		if created == "" {
 			created = e.Config.Created
 		}
 		createdAt := parseImageCreatedAt(created)
-		releases = append(releases, imageRelease{Release: release, Image: identity.ImageTag(app, env, release), Envelope: decoded, CreatedAt: createdAt})
+		imageRef := identity.ImageTag(app, env, release)
+		if e.ID != "" {
+			imageRef = e.ID
+		}
+		releases = append(releases, imageRelease{Release: release, Image: imageRef, Envelope: decoded, EnvelopeHash: envelopeHash, CreatedAt: createdAt})
 	}
 	return releases
 }
@@ -441,16 +511,16 @@ func selectRollbackRelease(images []imageRelease, current, requested string) (im
 
 func availableRollbackReleasesWithImages(app, env, requested string, images []imageRelease) ([]imageRelease, error) {
 	if requested != "" && images == nil {
-		staticTarget := false
+		needsImage := true
 		if sidecar, sidecarErr := readStaticReleaseEnvelope(app, env, requested); sidecarErr == nil {
 			if ctx, cleanup, ctxErr := loadAppContextFromEnvelope(app, env, requested, sidecar, "release envelope is missing"); ctxErr == nil {
-				staticTarget = !ctx.NeedsImage
+				needsImage = ctx.NeedsImage
 				cleanup()
 			}
 		}
-		if !staticTarget {
+		if needsImage {
 			var err error
-			images, err = podmanImagesForRelease(app, env, requested)
+			images, err = podmanImages(app, env)
 			if err != nil {
 				return nil, err
 			}
@@ -471,9 +541,23 @@ func availableRollbackReleasesWithImages(app, env, requested string, images []im
 	}
 	needImages := false
 	for _, release := range releases {
-		if _, err := readStaticReleaseEnvelope(app, env, release.Release); err != nil {
+		var sidecar envelope.Envelope
+		var err error
+		if release.EnvelopeHash != "" {
+			sidecar, err = readStaticReleaseEnvelopeByHash(app, env, release.Release, release.EnvelopeHash)
+		} else {
+			sidecar, err = readStaticReleaseEnvelope(app, env, release.Release)
+		}
+		if err != nil {
 			needImages = true
-			break
+			continue
+		}
+		ctx, cleanup, ctxErr := loadAppContextFromEnvelope(app, env, release.Release, sidecar, "release envelope is missing")
+		if cleanup != nil {
+			cleanup()
+		}
+		if ctxErr != nil || (ctx != nil && ctx.NeedsImage) {
+			needImages = true
 		}
 	}
 	if needImages && images == nil {
@@ -489,20 +573,34 @@ func availableRollbackReleasesWithImages(app, env, requested string, images []im
 	var available []imageRelease
 	for _, release := range releases {
 		candidate := imageRelease{Release: release.Release, Image: identity.ImageTag(app, env, release.Release)}
-		if image, ok := imageByRelease[release.Release]; ok {
-			candidate = image
-		} else if sidecar, sidecarErr := readStaticReleaseEnvelope(app, env, release.Release); sidecarErr == nil {
-			candidate.Envelope = sidecar
-		} else {
-			continue
+		if release.EnvelopeHash != "" {
+			for _, image := range images {
+				if image.Release == release.Release && image.EnvelopeHash == release.EnvelopeHash {
+					candidate = image
+					break
+				}
+			}
 		}
-		ctx, cleanup, err := loadAppContextFromEnvelope(app, env, release.Release, candidate.Envelope, "release envelope is missing")
-		if err != nil {
-			continue
+		if candidate.Envelope.Schema == 0 {
+			if image, ok := imageByRelease[release.Release]; ok {
+				candidate = image
+			}
 		}
-		err = verifyReleaseArtifactsWithImages(app, env, release.Release, ctx, imageByRelease)
-		cleanup()
-		if err != nil {
+		if candidate.Envelope.Schema == 0 {
+			var sidecar envelope.Envelope
+			var sidecarErr error
+			if release.EnvelopeHash != "" {
+				sidecar, sidecarErr = readStaticReleaseEnvelopeByHash(app, env, release.Release, release.EnvelopeHash)
+			} else {
+				sidecar, sidecarErr = readStaticReleaseEnvelope(app, env, release.Release)
+			}
+			if sidecarErr == nil {
+				candidate.Envelope = sidecar
+			} else {
+				continue
+			}
+		}
+		if err := verifyReleaseCandidate(app, env, candidate, imageByRelease); err != nil {
 			continue
 		}
 		candidate.Release = release.Release
@@ -559,7 +657,7 @@ func releaseSnapshots(app, env string) ([]imageRelease, bool, error) {
 	}
 	out := make([]imageRelease, 0, len(history))
 	for _, record := range history {
-		out = append(out, imageRelease{Release: record.Release, Image: identity.ImageTag(app, env, record.Release)})
+		out = append(out, imageRelease{Release: record.Release, Image: identity.ImageTag(app, env, record.Release), EnvelopeHash: record.EnvelopeHash})
 	}
 	if len(history) == 0 {
 		return nil, torn, noDeployJournalError(app, env)
@@ -579,12 +677,30 @@ func verifyReleaseArtifactsWithImages(app, env, release string, ctx *config.AppC
 	return nil
 }
 
+func verifyReleaseCandidate(app, env string, candidate imageRelease, imageByRelease map[string]imageRelease) error {
+	ctx, cleanup, err := loadAppContextFromEnvelope(app, env, candidate.Release, candidate.Envelope, "release envelope is missing")
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	if ctx.NeedsImage {
+		image := imageByRelease[candidate.Release]
+		if image.EnvelopeHash != "" {
+			label, labelErr := candidate.Envelope.LabelValue()
+			if labelErr != nil || envelope.HashLabel(label) != image.EnvelopeHash {
+				return fmt.Errorf("release %s image envelope does not match candidate envelope", candidate.Release)
+			}
+		}
+	}
+	return verifyReleaseArtifactsWithImages(app, env, candidate.Release, ctx, imageByRelease)
+}
+
 func loadActiveEnvelopeContext(app, env string) (*config.AppContext, func(), error) {
 	pointer, err := readActive(app, env)
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("active pointer not found; deploy once before rollback")
 	}
-	e, err := envelopeForRelease(app, env, pointer.Release)
+	e, err := envelopeForPointer(app, env, pointer)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -595,20 +711,15 @@ func loadActiveEnvelopeContext(app, env string) (*config.AppContext, func(), err
 	return loadAppContextFromEnvelope(app, env, pointer.Release, e, "active release envelope is missing")
 }
 
-func envelopeForRelease(app, env, release string) (envelope.Envelope, error) {
-	if e, err := readStaticReleaseEnvelope(app, env, release); err == nil {
+func envelopeForPointer(app, env string, pointer activation.Pointer) (envelope.Envelope, error) {
+	if e, err := readStaticReleaseEnvelopeByHash(app, env, pointer.Release, pointer.EnvelopeHash); err == nil {
 		return e, nil
 	}
-	images, err := podmanImages(app, env)
+	images, err := podmanImagesForEnvelopeHash(app, env, pointer.Release, pointer.EnvelopeHash)
 	if err != nil {
-		return envelope.Envelope{}, err
+		return envelope.Envelope{}, fmt.Errorf("release %s envelope %s is missing; next: ship: %w", pointer.Release, pointer.EnvelopeHash, err)
 	}
-	for _, image := range images {
-		if image.Release == release && image.Envelope.Schema != 0 {
-			return image.Envelope, nil
-		}
-	}
-	return envelope.Envelope{}, fmt.Errorf("release %s envelope is missing", release)
+	return images[0].Envelope, nil
 }
 
 func loadAppContextFromEnvelope(app, env, release string, e envelope.Envelope, missingHint string) (*config.AppContext, func(), error) {

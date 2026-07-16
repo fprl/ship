@@ -29,7 +29,7 @@ func activeEnvFile(app, env string) (string, error) {
 	}
 	path := identity.ActivationEnvFile(app, env, pointer.Activation)
 	if _, err := os.Stat(path); err != nil {
-		return "", fmt.Errorf("active activation env file %s is unavailable: %v", pointer.Activation, err)
+		return "", fmt.Errorf("frozen environment for active activation %s is gone: %v; next: ship", pointer.Activation, err)
 	}
 	return path, nil
 }

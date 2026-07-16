@@ -630,15 +630,10 @@ func writeActiveEnvelopeForPreviewAliasTest(t *testing.T, app, env, body string)
 	if err := activation.Write(app, env, activation.Pointer{Version: 1, Release: release, Activation: release + "-activation", EnvelopeHash: envelope.HashLabel(label)}); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(identity.StaticDir(app, env), "releases", release, ".ship-release")
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(identity.StaticDir(app, env), "releases", release), 0755); err != nil {
 		t.Fatal(err)
 	}
-	data, err := e.JSON()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := writeStaticReleaseEnvelope(app, env, release, e); err != nil {
 		t.Fatal(err)
 	}
 }

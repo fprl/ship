@@ -111,6 +111,60 @@ func TestReadDiscardsValidJSONTornTail(t *testing.T) {
 	}
 }
 
+func TestAppendRepairsTornTailBeforeAppending(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		tail []byte
+	}{
+		{name: "json fragment", tail: []byte(`{"event":"torn"}`)[:10]},
+		{name: "utf8 fragment", tail: []byte("{\"event\":\"é")[:len([]byte("{\"event\":\"é"))-1]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "journal.jsonl")
+			if err := os.WriteFile(path, append([]byte(`{"event":"one"}`+"\n"), tc.tail...), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := Append(path, map[string]string{"event": "two"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := Append(path, map[string]string{"event": "three"}); err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			torn, err := Read(path, func(line []byte) error {
+				var entry map[string]string
+				if err := json.Unmarshal(line, &entry); err != nil {
+					return err
+				}
+				got = append(got, entry["event"])
+				return nil
+			})
+			if err != nil || torn {
+				t.Fatalf("Read() = torn %v, err %v", torn, err)
+			}
+			if !reflect.DeepEqual(got, []string{"one", "two", "three"}) {
+				t.Fatalf("events = %v", got)
+			}
+		})
+	}
+}
+
+func TestAppendToEmptyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "journal.jsonl")
+	if err := os.WriteFile(path, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Append(path, map[string]string{"event": "one"}); err != nil {
+		t.Fatal(err)
+	}
+	if torn, err := Read(path, func(line []byte) error {
+		var entry map[string]string
+		return json.Unmarshal(line, &entry)
+	}); err != nil || torn {
+		t.Fatalf("Read() = torn %v, err %v", torn, err)
+	}
+}
+
 func TestReadMalformedTerminatedLineIncludesLineNumber(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "journal.jsonl")
 	if err := os.WriteFile(path, []byte("{}\nnot-json\n"), 0644); err != nil {

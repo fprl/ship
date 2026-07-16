@@ -262,9 +262,10 @@ func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRel
 		Activation:       c.ActivationID,
 		Identity:         c.actor(),
 		Member:           currentServerMemberForJournal(),
+		EnvelopeHash:     envelope.HashLabel(c.EnvelopeLabel),
 	}, nil)
 	if err := appendSanitizedDeployJournal(c.App, c.Env, entry); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: deployed but failed to write deploy journal: %v; run ship box doctor\n", err)
+		fmt.Fprintf(os.Stderr, "warning: deployed but failed to write deploy journal %s: %v; cleanup/GC were skipped; run ship box doctor\n", identity.DeployJournalFile(c.App, c.Env), err)
 		fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, c.SHA)
 		return nil
 	}
@@ -584,14 +585,26 @@ func (c appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string,
 		return "", false, err
 	}
 	if _, err := os.Stat(releaseDir); err == nil {
-		if _, envelopeErr := readStaticReleaseEnvelope(c.App, c.Env, c.SHA); envelopeErr == nil {
+		if _, envelopeErr := readStaticReleaseEnvelopeByHash(c.App, c.Env, c.SHA, envelope.HashLabel(c.EnvelopeLabel)); envelopeErr == nil {
 			if err := verifyStaticRelease(c.App, c.Env, c.SHA, app.Routes); err != nil {
 				return "", false, err
 			}
 			return releaseDir, false, nil
 		}
 		if activeRelease == c.SHA {
-			return "", false, fmt.Errorf("active static release %s cannot be replaced during prepare", c.SHA)
+			if err := verifyStaticRelease(c.App, c.Env, c.SHA, app.Routes); err != nil {
+				return "", false, fmt.Errorf("active static release %s cannot be replaced during prepare: %v", c.SHA, err)
+			}
+			if err := writeStaticReleaseEnvelope(c.App, c.Env, c.SHA, c.Envelope); err != nil {
+				return "", false, err
+			}
+			return releaseDir, true, nil
+		}
+		if err := verifyStaticRelease(c.App, c.Env, c.SHA, app.Routes); err == nil {
+			if err := writeStaticReleaseEnvelope(c.App, c.Env, c.SHA, c.Envelope); err != nil {
+				return "", false, err
+			}
+			return releaseDir, true, nil
 		}
 		if err := os.RemoveAll(releaseDir); err != nil {
 			return "", false, err

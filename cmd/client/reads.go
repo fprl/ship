@@ -166,6 +166,11 @@ func renderWhy(entry whyJournalEntry, read readContext) string {
 	}
 	var b strings.Builder
 	switch entry.Outcome {
+	case "converged":
+		fmt.Fprintf(&b, "Convergence completed for %s %s at %s.\n", kind, branch, when)
+		fmt.Fprintf(&b, "release: %s\n", dashIfEmpty(entry.AttemptedRelease))
+		fmt.Fprintf(&b, "traffic: release %s is live.\n", dashIfEmpty(entry.AttemptedRelease))
+		b.WriteString("next: ship status\n")
 	case "deployed":
 		fmt.Fprintf(&b, "Deploy succeeded for %s %s at %s.\n", kind, branch, when)
 		fmt.Fprintf(&b, "release: %s", dashIfEmpty(entry.AttemptedRelease))

@@ -25,7 +25,7 @@ func Append(path string, entry any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("create journal directory: %w", err)
 	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
 	if err != nil {
 		return fmt.Errorf("open journal: %w", err)
 	}
@@ -45,6 +45,9 @@ func Append(path string, entry any) error {
 		}
 		return fmt.Errorf("%s: %w", operation, operationErr)
 	}
+	if err := truncateTornTail(file); err != nil {
+		return closeOnError("repair journal tail", err)
+	}
 	n, err := file.Write(data)
 	if err != nil {
 		return closeOnError("write journal", err)
@@ -56,6 +59,44 @@ func Append(path string, entry any) error {
 		return closeOnError("sync journal", err)
 	}
 	return closeFile()
+}
+
+// truncateTornTail removes the uncommitted final record before appending.
+// O_APPEND would otherwise concatenate the next record onto that tail and
+// turn a recoverable crash into a permanently malformed terminated line.
+func truncateTornTail(file *os.File) error {
+	info, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if info.Size() == 0 {
+		return nil
+	}
+	last := []byte{0}
+	if _, err := file.ReadAt(last, info.Size()-1); err != nil {
+		return err
+	}
+	if last[0] == '\n' {
+		return nil
+	}
+	const chunkSize int64 = 4096
+	for end := info.Size(); end > 0; {
+		start := end - chunkSize
+		if start < 0 {
+			start = 0
+		}
+		chunk := make([]byte, end-start)
+		if _, err := file.ReadAt(chunk, start); err != nil {
+			return err
+		}
+		for i := len(chunk) - 1; i >= 0; i-- {
+			if chunk[i] == '\n' {
+				return file.Truncate(start + int64(i) + 1)
+			}
+		}
+		end = start
+	}
+	return file.Truncate(0)
 }
 
 // Read visits every committed record in order. An unterminated final segment

@@ -1006,7 +1006,7 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	if !strings.HasPrefix(status.Release, baseShort+"-dirty-") {
 		t.Fatalf("dirty release id %q should start with %s-dirty-", status.Release, baseShort)
 	}
-	releaseEnvelope := decodeSmokeReleaseEnvelope(t, e.ssh(t, "cat "+filepath.Join(identity.StaticDir("branchapi", featEnv), "releases", status.Release, ".ship-release")))
+	releaseEnvelope := decodeSmokeReleaseEnvelope(t, e.ssh(t, "cat "+filepath.Join(identity.StaticDir("branchapi", featEnv), "releases", status.Release, ".ship-release-*")))
 	if dirty, _ := releaseEnvelope.Metadata["dirty"].(bool); !dirty {
 		t.Fatal("dirty release envelope metadata is not marked dirty")
 	}
@@ -2156,7 +2156,7 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 
 	e.ship(t, app, nil)
 	oldRelease := currentStaticReleaseFor(t, e, "site", productionEnv)
-	staticReleaseEnvelope := decodeSmokeReleaseEnvelope(t, e.ssh(t, "cat "+filepath.Join(identity.StaticDir("site", productionEnv), "releases", oldRelease, ".ship-release")))
+	staticReleaseEnvelope := decodeSmokeReleaseEnvelope(t, e.ssh(t, "cat "+filepath.Join(identity.StaticDir("site", productionEnv), "releases", oldRelease, ".ship-release-*")))
 	assertContains(t, staticReleaseEnvelope.Manifest, `static = "dist"`)
 
 	status := e.ship(t, app, nil, "status")

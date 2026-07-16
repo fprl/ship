@@ -647,11 +647,11 @@ var verbs = []Verb{
 			{Name: "--json", Purpose: "Emit the raw deploy journal entry."},
 		},
 		JSONSchema: schema(
-			`{"schema_version":1,"app":"api","env":"production","outcome":"committed_unconverged","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","activation":"def-0123abcd","failing_step":"converge","stderr_tail":"...","image_prune":"...","gc":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"member":{"fingerprint":"SHA256:...","name":"alice","role":"owner"},"probe":null}`,
+			`{"schema_version":1,"app":"api","env":"production","outcome":"converged | deployed | rolled_back | committed_unconverged | committed_degraded | failed | gc","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","activation":"def-0123abcd","envelope_hash":"sha256","failing_step":"converge","stderr_tail":"...","gc":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"member":{"fingerprint":"SHA256:...","name":"alice","role":"owner"},"probe":null}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"unknown_preview_branch", "no_deploys", "host_key_changed", "operation_failed"},
-		Notes:     []string{"JSON is the raw helper journal entry. Outcomes include successful deploy/rollback, pre-commit aborts, `committed_unconverged`, and `committed_degraded`; the latter two mean active intent was committed and prescribe `ship converge`, never automatic restore."},
+		Notes:     []string{"JSON is the raw helper journal entry. Outcomes include `converged`, successful deploy/rollback, `committed_unconverged`, `committed_degraded`, `failed`, and `gc`; committed failures mean active intent was committed and prescribe `ship converge`, never automatic restore."},
 	},
 	{
 		Verb:      "rollback",
@@ -1187,8 +1187,8 @@ Truth stores:
 
 - Manifest truth is the repo ` + "`ship.toml`" + ` at deploy time. The effective manifest and
   release metadata travel with the immutable release envelope: the image label
-  ` + "`ship.release_envelope`" + ` for image releases or the ` + "`.ship-release`" + ` sidecar for
-  static releases. They are not host-level manifest state files.
+  ` + "`ship.release_envelope`" + ` for image releases or a hash-named ` + "`.ship-release-<hash12>`" + ` sidecar for
+  static releases. The active pointer's envelope hash selects the sidecar. They are not host-level manifest state files.
 - Box truth is host state: env identity files, preview mapping metadata, active
   intent, deploy journals, members, roles, box configuration, secrets, Podman
   labels, Caddy fragments, and doctor state.
@@ -1350,10 +1350,10 @@ const outputAndDataContracts = `
 Each env has an append-only ` + "`journal.jsonl`" + `. Each line is:
 
 ` + "```json" + `
-{"schema_version":1,"app":"api","env":"production","outcome":"deployed | rolled_back | committed_unconverged | committed_degraded | aborted_build | aborted_release | aborted_probe | failed | gc","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","activation":"def456-0123abcd","failing_step":"apply | build | release | probe | converge | durability","stderr_tail":"last scrubbed stderr lines","image_prune":"post-deploy prune summary","gc":"cleanup summary","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"member":{"fingerprint":"fingerprint","name":"alice","role":"owner"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
+{"schema_version":1,"app":"api","env":"production","outcome":"converged | deployed | rolled_back | committed_unconverged | committed_degraded | failed | gc","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","activation":"def456-0123abcd","envelope_hash":"sha256","failing_step":"apply | build | release | probe | converge | durability","stderr_tail":"last scrubbed stderr lines","gc":"cleanup summary","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"member":{"fingerprint":"fingerprint","name":"alice","role":"owner"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
 ` + "```" + `
 
-` + "`activation`, `image_prune`, `gc`, and `member` are optional (" + "`omitempty`" + `); ` + "`member.fingerprint`" + ` is also optional. ` + "`probe`" + ` is present as an object or ` + "`null`" + `. ` + "`committed_unconverged`" + ` and ` + "`committed_degraded`" + ` mean ` + "`active.json`" + ` was committed but convergence or durability failed; neither path auto-restores the previous release, and both prescribe ` + "`ship converge`" + `.
+` + "`activation`, `envelope_hash`, `gc`, and `member` are optional (" + "`omitempty`" + `); ` + "`member.fingerprint`" + ` is also optional. ` + "`probe`" + ` is present as an object or ` + "`null`" + `. ` + "`committed_unconverged`" + ` and ` + "`committed_degraded`" + ` mean ` + "`active.json`" + ` was committed but convergence or durability failed; neither path auto-restores the previous release, and both prescribe ` + "`ship converge`" + `.
 
 ## Webhook payload schemas
 

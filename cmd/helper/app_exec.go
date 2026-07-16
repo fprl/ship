@@ -83,13 +83,13 @@ func resolveExecTarget(app, env string) (execTarget, error) {
 	if err != nil {
 		return execTarget{}, err
 	}
-	images, err := podmanImages(app, env)
+	images, err := podmanImagesForEnvelopeHash(app, env, pointer.Release, pointer.EnvelopeHash)
 	if err != nil {
 		return execTarget{}, err
 	}
 	var image imageRelease
 	for _, candidate := range images {
-		if candidate.Release == pointer.Release {
+		if candidate.Release == pointer.Release && candidate.EnvelopeHash == pointer.EnvelopeHash {
 			image = candidate
 			break
 		}
@@ -99,7 +99,7 @@ func resolveExecTarget(app, env string) (execTarget, error) {
 	}
 	label, err := image.Envelope.LabelValue()
 	if err != nil || envelope.HashLabel(label) != pointer.EnvelopeHash {
-		return execTarget{}, execOperationFailed(fmt.Errorf("active release envelope hash does not match active.json; next: redeploy release %s", pointer.Release))
+		return execTarget{}, execOperationFailed(fmt.Errorf("active release envelope hash does not match active.json; next: ship"))
 	}
 	ctx, cleanup, err := loadAppContextFromEnvelope(app, env, pointer.Release, image.Envelope, "active release envelope is missing")
 	if err != nil {

@@ -16,8 +16,9 @@ const (
 )
 
 type releaseDeployRecord struct {
-	Release  string
-	Sequence int
+	Release      string
+	EnvelopeHash string
+	Sequence     int
 }
 
 func releaseImageKeepLimit(env string) int {
@@ -58,7 +59,7 @@ func releaseDeployHistory(entries []deployJournalEntry, current *deployJournalEn
 			continue
 		}
 		seen[entry.AttemptedRelease] = true
-		history = append(history, releaseDeployRecord{Release: entry.AttemptedRelease, Sequence: i})
+		history = append(history, releaseDeployRecord{Release: entry.AttemptedRelease, EnvelopeHash: entry.EnvelopeHash, Sequence: i})
 	}
 	return history, nil
 }

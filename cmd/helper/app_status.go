@@ -387,7 +387,11 @@ func attachProcessReleaseMetadata(app, env string, processes []processStatus) er
 		return err
 	}
 	byRelease := map[string]imageRelease{}
+	activePointer, _ := readActive(app, env)
 	for _, image := range images {
+		if image.Release == activePointer.Release && activePointer.EnvelopeHash != "" && image.EnvelopeHash != activePointer.EnvelopeHash {
+			continue
+		}
 		byRelease[image.Release] = image
 	}
 	for i := range processes {
@@ -866,7 +870,7 @@ func activeStaticStatus(app, env string) (*staticStatus, error) {
 		}
 		return nil, err
 	}
-	e, err := readStaticReleaseEnvelope(app, env, pointer.Release)
+	e, err := readStaticReleaseEnvelopeByHash(app, env, pointer.Release, pointer.EnvelopeHash)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil

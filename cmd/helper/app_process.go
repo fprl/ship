@@ -22,15 +22,16 @@ type processStartRuntime struct {
 }
 
 type startReleaseProcessesParams struct {
-	App           string
-	Env           string
-	Release       string
-	Activation    string
-	Context       *config.AppContext
-	OnlyPortful   bool
-	BeforeStart   func(processStartRuntime) error
-	BeforeProcess func(processName string, proc config.Process) error
-	ContainerName func(processName string, proc config.Process) string
+	App                      string
+	Env                      string
+	Release                  string
+	Activation               string
+	Context                  *config.AppContext
+	OnlyPortful              bool
+	UseExistingActivationEnv bool
+	BeforeStart              func(processStartRuntime) error
+	BeforeProcess            func(processName string, proc config.Process) error
+	ContainerName            func(processName string, proc config.Process) string
 }
 
 type startReleaseProcessesResult struct {
@@ -56,22 +57,37 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 	if len(params.Context.Processes) == 0 {
 		return startReleaseProcessesResult{}, fmt.Errorf("manifest must declare at least one [processes.<name>] block")
 	}
-	resolved, err := resolveEnv(params.App, params.Env, params.Context.Vars, params.Context.SecretRefs)
-	if err != nil {
-		return startReleaseProcessesResult{}, err
-	}
-	scrubValues := collectEnvValues(resolved)
-	for key, value := range shipInjectedEnv(params.App, params.Env, params.Release, params.Context) {
-		resolved[key] = value
-	}
 	result := startReleaseProcessesResult{
 		ProcessName: map[string]string{},
-		ScrubValues: scrubValues,
 	}
-	envFile, err := writeActivationEnvFile(params.App, params.Env, params.Activation, resolved)
+	var envFile string
+	var err error
+	var scrubValues []string
+	if params.UseExistingActivationEnv {
+		pointer, pointerErr := readActive(params.App, params.Env)
+		if pointerErr == nil && pointer.Activation == params.Activation {
+			envFile, err = activeEnvFile(params.App, params.Env)
+		} else {
+			params.UseExistingActivationEnv = false
+		}
+	} else {
+		params.UseExistingActivationEnv = false
+	}
+	if !params.UseExistingActivationEnv {
+		resolved, resolveErr := resolveEnv(params.App, params.Env, params.Context.Vars, params.Context.SecretRefs)
+		if resolveErr != nil {
+			return result, resolveErr
+		}
+		scrubValues = collectEnvValues(resolved)
+		for key, value := range shipInjectedEnv(params.App, params.Env, params.Release, params.Context) {
+			resolved[key] = value
+		}
+		envFile, err = writeActivationEnvFile(params.App, params.Env, params.Activation, resolved)
+	}
 	if err != nil {
 		return result, err
 	}
+	result.ScrubValues = scrubValues
 
 	userID, groupID, err := hostUserIDs(identity.SystemUser(params.App, params.Env))
 	if err != nil {

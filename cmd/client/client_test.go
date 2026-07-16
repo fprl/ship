@@ -1649,6 +1649,26 @@ func TestRenderWhyReleaseFailure(t *testing.T) {
 	}
 }
 
+func TestRenderWhyConvergedOutcome(t *testing.T) {
+	read := readContext{
+		AppContext: &config.AppContext{ProductionBranch: "main"},
+		Address:    readAddress{ProductionBranch: true},
+	}
+	got := renderWhy(whyJournalEntry{
+		Outcome:          "converged",
+		EndedAt:          "2026-07-07T10:00:01Z",
+		AttemptedRelease: "bbb222",
+	}, read)
+	for _, want := range []string{"Convergence completed for Production main", "release: bbb222", "traffic: release bbb222 is live", "next: ship status"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("why output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Deploy failed") {
+		t.Fatalf("converged outcome fell through to failure rendering:\n%s", got)
+	}
+}
+
 func TestRenderWhyCommittedDegradedPrescribesConverge(t *testing.T) {
 	read := readContext{
 		AppContext: &config.AppContext{ProductionBranch: "main"},

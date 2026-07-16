@@ -247,6 +247,9 @@ func TestConvergeCaddySecondRunDoesNotReload(t *testing.T) {
 	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: "abcdef2", Activation: "abcdef2-a1b2", EnvelopeHash: envelope.HashLabel(label)}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := writeActivationEnvFile("api", "production", "abcdef2-a1b2", nil); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := convergeActive("api", "production"); err != nil {
 		t.Fatal(err)
 	}

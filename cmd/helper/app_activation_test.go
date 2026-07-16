@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fprl/ship/internal/activation"
 )
 
 func TestActivationEnvFilesAreImmutableAndUseNewNames(t *testing.T) {
@@ -45,6 +47,21 @@ func TestActivationEnvFilesAreImmutableAndUseNewNames(t *testing.T) {
 	}
 	if _, err := writeActivationEnvFile("api", "production", "abc1234-one", map[string]string{"TOKEN": "changed"}); err == nil || !strings.Contains(err.Error(), "immutable") {
 		t.Fatalf("immutable rewrite error = %v", err)
+	}
+}
+
+func TestActiveEnvFileRefusesToReResolveMissingFrozenActivation(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	const activationID = "abc1234-frozen"
+	if err := activation.Write("api", "production", activation.Pointer{
+		Version: 1, Release: "abc1234", Activation: activationID, EnvelopeHash: strings.Repeat("a", 64),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := activeEnvFile("api", "production")
+	if err == nil || !strings.Contains(err.Error(), "frozen environment for active activation "+activationID) || !strings.Contains(err.Error(), "next: ship") {
+		t.Fatalf("missing frozen env error = %v", err)
 	}
 }
 

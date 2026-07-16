@@ -24,8 +24,8 @@ func TestBootConvergenceContinuesAfterOneEnvironmentFails(t *testing.T) {
 	}
 	var log strings.Builder
 	bootLog = func(format string, args ...any) { log.WriteString(fmt.Sprintf(format, args...)); log.WriteByte('\n') }
-	if err := runBootConvergence(); err != nil {
-		t.Fatal(err)
+	if err := runBootConvergence(); err == nil || !strings.Contains(err.Error(), "broken envelope") {
+		t.Fatalf("boot convergence error = %v", err)
 	}
 	if len(converged) != 1 || converged[0] != "web/production" {
 		t.Fatalf("converged=%v, want remaining env; log=%s", converged, log.String())

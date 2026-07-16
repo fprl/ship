@@ -72,6 +72,7 @@ type deployJournalEntry struct {
 	PreviousRelease  string         `json:"previous_release"`
 	AttemptedRelease string         `json:"attempted_release"`
 	Activation       string         `json:"activation,omitempty"`
+	EnvelopeHash     string         `json:"envelope_hash,omitempty"`
 	FailingStep      string         `json:"failing_step"`
 	StderrTail       string         `json:"stderr_tail"`
 	GC               string         `json:"gc,omitempty"`

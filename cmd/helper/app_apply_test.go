@@ -229,7 +229,7 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 	if !strings.Contains(stdout, "Deployed api (production) at new222\n") {
 		t.Fatalf("stdout = %q", stdout)
 	}
-	if !strings.Contains(stderr, "warning: deployed but failed to write deploy journal: journal disk is read-only; run ship box doctor\n") {
+	if !strings.Contains(stderr, "warning: deployed but failed to write deploy journal ") || !strings.Contains(stderr, "cleanup/GC were skipped; run ship box doctor") {
 		t.Fatalf("stderr = %q", stderr)
 	}
 	entries, err := readDeployJournalEntries("api", "production")

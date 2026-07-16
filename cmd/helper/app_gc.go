@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
@@ -195,9 +196,10 @@ func gcEnv(app, env string) (gcSummary, error) {
 
 	artifactKeep := gcReleaseSetUnion(keep, protected)
 	keptActivations := gcKeptActivations(app, env, pointer, entries, artifactKeep)
+	keptEnvelopeHashes := gcKeptEnvelopeHashes(pointer, entries, artifactKeep)
 	gcRemoveContainers(app, env, &pointer, &summary)
 	gcRemoveImages(app, env, keep, protected, &summary)
-	gcRemoveStatic(app, env, artifactKeep, &summary)
+	gcRemoveStatic(app, env, artifactKeep, keptEnvelopeHashes, &summary)
 	gcRemoveActivations(app, env, keptActivations, &summary)
 	gcRemoveTempDirs(app, env, &summary)
 
@@ -257,31 +259,25 @@ func gcReleaseSetUnion(sets ...map[string]bool) map[string]bool {
 }
 
 func verifyGCRelease(app, env, release string) error {
-	var candidate imageRelease
-	if sidecar, err := readStaticReleaseEnvelope(app, env, release); err == nil {
-		candidate = imageRelease{Release: release, Image: identity.ImageTag(app, env, release), Envelope: sidecar}
-	} else {
-		images, err := podmanImagesForRelease(app, env, release)
-		if err != nil {
-			return err
-		}
-		for _, image := range images {
-			if image.Release == release {
-				candidate = image
-				break
-			}
-		}
-		if candidate.Envelope.Schema == 0 {
-			return fmt.Errorf("release %s image or static envelope is unavailable", release)
-		}
-	}
-	ctx, cleanup, err := loadAppContextFromEnvelope(app, env, release, candidate.Envelope, "release envelope is missing")
+	images, err := podmanImages(app, env)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
-	imageByRelease := map[string]imageRelease{release: candidate}
-	return verifyReleaseArtifactsWithImages(app, env, release, ctx, imageByRelease)
+	byRelease := map[string]imageRelease{}
+	for _, image := range images {
+		if image.Release == release && image.Envelope.Schema != 0 {
+			byRelease[release] = image
+			break
+		}
+	}
+	candidate := byRelease[release]
+	if sidecar, sidecarErr := readStaticReleaseEnvelope(app, env, release); sidecarErr == nil {
+		candidate = imageRelease{Release: release, Image: identity.ImageTag(app, env, release), Envelope: sidecar}
+	}
+	if candidate.Envelope.Schema == 0 {
+		return fmt.Errorf("release %s image or static envelope is unavailable", release)
+	}
+	return verifyReleaseCandidate(app, env, candidate, byRelease)
 }
 
 func gcKeptActivations(app, env string, pointer activation.Pointer, entries []deployJournalEntry, keep map[string]bool) map[string]bool {
@@ -293,36 +289,6 @@ func gcKeptActivations(app, env string, pointer activation.Pointer, entries []de
 			ids[entry.Activation] = true
 			seenReleases[entry.AttemptedRelease] = true
 		}
-	}
-	// Pre-stage-5 journal entries have no activation field. Preserve only the
-	// newest file for each kept rollback release; the active pointer remains
-	// exact, which also removes old pre-rotation secrets.
-	files, _ := os.ReadDir(identity.ActivationsDir(app, env))
-	for release := range keep {
-		if release == pointer.Release {
-			continue
-		}
-		if seenReleases[release] {
-			continue
-		}
-		var candidates []os.DirEntry
-		for _, file := range files {
-			if !file.IsDir() && strings.HasSuffix(file.Name(), ".env") && strings.HasPrefix(strings.TrimSuffix(file.Name(), ".env"), release+"-") {
-				candidates = append(candidates, file)
-			}
-		}
-		if len(candidates) == 0 {
-			continue
-		}
-		sort.Slice(candidates, func(i, j int) bool {
-			left, _ := os.Stat(filepath.Join(identity.ActivationsDir(app, env), candidates[i].Name()))
-			right, _ := os.Stat(filepath.Join(identity.ActivationsDir(app, env), candidates[j].Name()))
-			if left == nil && right == nil {
-				return left.ModTime().After(right.ModTime())
-			}
-			return candidates[i].Name() > candidates[j].Name()
-		})
-		ids[strings.TrimSuffix(candidates[0].Name(), ".env")] = true
 	}
 	return ids
 }
@@ -387,7 +353,18 @@ func freshImage(image imageRelease) bool {
 	return !image.CreatedAt.IsZero() && gcNow().Sub(image.CreatedAt) < gcGracePeriod
 }
 
-func gcRemoveStatic(app, env string, keep map[string]bool, summary *gcSummary) {
+func gcKeptEnvelopeHashes(pointer activation.Pointer, entries []deployJournalEntry, keep map[string]bool) map[string]bool {
+	hashes := map[string]bool{pointer.Release + "\x00" + pointer.EnvelopeHash: true}
+	for _, entry := range entries {
+		if !keep[entry.AttemptedRelease] || entry.EnvelopeHash == "" {
+			continue
+		}
+		hashes[entry.AttemptedRelease+"\x00"+entry.EnvelopeHash] = true
+	}
+	return hashes
+}
+
+func gcRemoveStatic(app, env string, keep map[string]bool, keepEnvelopeHashes map[string]bool, summary *gcSummary) {
 	root := filepath.Join(identity.StaticDir(app, env), "releases")
 	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) {
@@ -398,18 +375,50 @@ func gcRemoveStatic(app, env string, keep map[string]bool, summary *gcSummary) {
 		return
 	}
 	for _, entry := range entries {
-		if keep[entry.Name()] || freshPath(filepath.Join(root, entry.Name())) {
+		path := filepath.Join(root, entry.Name())
+		if keep[entry.Name()] {
+			gcRemoveUnreferencedStaticSidecars(app, env, entry.Name(), keepEnvelopeHashes, summary)
+			continue
+		}
+		if freshPath(path) {
 			if !keep[entry.Name()] && freshPath(filepath.Join(root, entry.Name())) {
 				summary.Skipped = append(summary.Skipped, "static "+filepath.Join(root, entry.Name()))
 			}
 			continue
 		}
-		path := filepath.Join(root, entry.Name())
 		if err := os.RemoveAll(path); err != nil {
 			summary.Failures = append(summary.Failures, "static "+path+": "+err.Error())
 			continue
 		}
 		summary.Removed = append(summary.Removed, "static "+path)
+	}
+}
+
+func gcRemoveUnreferencedStaticSidecars(app, env, release string, keep map[string]bool, summary *gcSummary) {
+	root := filepath.Join(identity.StaticDir(app, env), "releases", release)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), ".ship-release-") {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			continue
+		}
+		e, decodeErr := envelope.DecodeJSON(data)
+		if decodeErr != nil {
+			continue
+		}
+		label, labelErr := e.LabelValue()
+		if labelErr != nil || !keep[release+"\x00"+envelope.HashLabel(label)] {
+			if err := os.Remove(path); err == nil {
+				summary.Removed = append(summary.Removed, "static envelope "+path)
+			}
+		}
 	}
 }
 

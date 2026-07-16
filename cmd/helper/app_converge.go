@@ -128,9 +128,15 @@ func (c appConvergeCmd) appendJournal(startedAt time.Time, summary appConvergeSu
 		StartedAt:        startedAt.Format(time.RFC3339Nano),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
 		AttemptedRelease: summary.Release,
-		FailingStep:      "",
-		Identity:         deployActor("", ""),
-		Member:           currentServerMemberForJournal(),
+		EnvelopeHash: func() string {
+			if pointer, err := readActive(c.App, c.Env); err == nil {
+				return pointer.EnvelopeHash
+			}
+			return ""
+		}(),
+		FailingStep: "",
+		Identity:    deployActor("", ""),
+		Member:      currentServerMemberForJournal(),
 	}
 	if convergeErr != nil {
 		entry.FailingStep = "converge"
@@ -158,6 +164,9 @@ func convergeActive(app, env string) (convergeResult, error) {
 		return convergeResult{}, err
 	}
 	defer cleanup()
+	if _, err := activeEnvFile(app, env); err != nil {
+		return convergeResult{}, err
+	}
 	if err := attachPreviewProtection(app, env, ctx); err != nil {
 		return convergeResult{}, err
 	}
@@ -268,6 +277,7 @@ func startConvergedProcess(app, env, release, activationID string, ctx *config.A
 	copyCtx.Processes = map[string]config.Process{name: proc}
 	started, err := startReleaseProcesses(startReleaseProcessesParams{
 		App: app, Env: env, Release: release, Activation: activationID, Context: &copyCtx,
+		UseExistingActivationEnv: true,
 		ContainerName: func(string, config.Process) string {
 			return nextProcessContainerName(entries, app, env, name, release, "converge")
 		},
