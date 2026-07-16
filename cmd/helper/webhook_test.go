@@ -88,12 +88,9 @@ func TestWebhookPreviewReapedPayloadCarriesBranchAndEnv(t *testing.T) {
 		Env:     "feature-payments-ab12",
 		InfraID: identity.InfraID("api", "feature-payments-ab12"),
 		Preview: &identity.PreviewIdentity{
-			Branch:          "feature/payments",
-			SanitizedBranch: "feature-payments",
-			Env:             "feature-payments-ab12",
-			Suffix:          "ab12",
-			LastShipAt:      expires.Add(-previewTTL),
-			ExpiresAt:       &expires,
+			Branch:     "feature/payments",
+			LastShipAt: expires.Add(-previewTTL),
+			ExpiresAt:  &expires,
 		},
 	}
 

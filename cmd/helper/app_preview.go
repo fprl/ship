@@ -7,7 +7,6 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -25,14 +24,11 @@ const (
 	productionEnvName = names.ProductionEnvName
 	previewTTL        = 72 * time.Hour
 	previewMapLock    = "preview-map"
-	previewSuffixLen  = 4
 )
 
 var (
-	previewSanitizedBranchRe = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,26}[a-z0-9])?$|^[a-z0-9]$`)
-	previewSuffixRe          = regexp.MustCompile(`^[a-z0-9]{4}$`)
-	newPreviewSuffix         = randomPreviewSuffix
-	readCaddyFragment        = os.ReadFile
+	newPreviewSuffix  = randomPreviewSuffix
+	readCaddyFragment = os.ReadFile
 )
 
 type appPreviewCmd struct {
@@ -145,7 +141,7 @@ func validatePreviewAppBranch(app, branch string) error {
 	if !names.ValidGitBranch(branch) {
 		return fmt.Errorf("invalid preview branch mapping key: %q", branch)
 	}
-	if names.SanitizeBranchEnvName(branch) == "" {
+	if names.PreviewSanitizedBranch(branch) == "" {
 		return fmt.Errorf("branch %q does not produce a valid environment name", branch)
 	}
 	return nil
@@ -161,12 +157,20 @@ func resolveOrCreatePreview(app, branch string, now time.Time) (string, error) {
 		return file.Env, nil
 	}
 
-	base := names.SanitizeBranchEnvName(branch)
+	base := names.PreviewSanitizedBranch(branch)
 	hostLock, err := acquirePreviewHostLabelLock()
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = hostLock.Release() }()
+	if env, ok := incompletePreviewEnv(app, base); ok {
+		expires := now.Add(previewTTL)
+		preview := &identity.PreviewIdentity{Branch: branch, LastShipAt: now, ExpiresAt: &expires}
+		if err := completePreviewAllocation(app, env, preview); err != nil {
+			return "", err
+		}
+		return env, nil
+	}
 	for attempt := 0; attempt < 20; attempt++ {
 		suffix, err := newPreviewSuffix()
 		if err != nil {
@@ -188,36 +192,72 @@ func resolveOrCreatePreview(app, branch string, now time.Time) (string, error) {
 		}
 		expires := now.Add(previewTTL)
 		preview := &identity.PreviewIdentity{
-			Branch:          branch,
-			SanitizedBranch: base,
-			Env:             env,
-			Suffix:          suffix,
-			LastShipAt:      now,
-			ExpiresAt:       &expires,
-			Pinned:          false,
+			Branch:     branch,
+			LastShipAt: now,
+			ExpiresAt:  &expires,
 		}
-		lock, err := acquireAppEnvLock(app, env)
-		if err != nil {
+		if err := completePreviewAllocation(app, env, preview); err != nil {
 			return "", err
-		}
-		if err := setupEnv(app, env); err != nil {
-			_ = lock.Release()
-			return "", err
-		}
-		if err := writeEnvIdentityWithPreview(app, env, preview); err != nil {
-			_ = lock.Release()
-			return "", err
-		}
-		if _, err := ensurePreviewCapability(app, env); err != nil {
-			_ = lock.Release()
-			return "", err
-		}
-		if err := lock.Release(); err != nil {
-			return "", fmt.Errorf("release lock for %s (%s): %v", app, env, err)
 		}
 		return env, nil
 	}
 	return "", fmt.Errorf("could not allocate a unique preview suffix for branch %s", branch)
+}
+
+func incompletePreviewEnv(app, base string) (string, bool) {
+	paths := make([]string, 0)
+	for _, pattern := range []string{
+		filepath.Join(identity.AppsRoot(), app+"."+base+"-*"),
+		filepath.Join(secrets.RootDir(), app, base+"-*"),
+	} {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return "", false
+		}
+		paths = append(paths, matches...)
+	}
+	seen := make(map[string]bool)
+	for _, path := range paths {
+		env := filepath.Base(path)
+		if strings.HasPrefix(env, app+".") {
+			env = strings.TrimPrefix(env, app+".")
+		}
+		if seen[env] {
+			continue
+		}
+		seen[env] = true
+		if _, err := os.Stat(identity.IdentityFile(app, env)); err == nil {
+			continue
+		}
+		if !strings.HasPrefix(env, base+"-") {
+			continue
+		}
+		if _, ok := names.PreviewSuffix(env); ok {
+			return env, true
+		}
+	}
+	return "", false
+}
+
+func completePreviewAllocation(app, env string, preview *identity.PreviewIdentity) error {
+	lock, err := acquireAppEnvLock(app, env)
+	if err != nil {
+		return err
+	}
+	if err := setupEnv(identity.EnvIdentity{
+		Version: 1,
+		App:     app,
+		Env:     env,
+		InfraID: identity.InfraID(app, env),
+		Preview: preview,
+	}); err != nil {
+		_ = lock.Release()
+		return err
+	}
+	if err := lock.Release(); err != nil {
+		return fmt.Errorf("release lock for %s (%s): %v", app, env, err)
+	}
+	return nil
 }
 
 func synthesizedHostLabelExists(label string) (bool, error) {
@@ -463,26 +503,19 @@ func validatePreviewIdentity(file identity.EnvIdentity) error {
 	if file.Env == productionEnvName {
 		return fmt.Errorf("production cannot carry preview metadata")
 	}
-	if file.Preview.Env != file.Env {
-		return fmt.Errorf("preview env %q does not match top-level env %q", file.Preview.Env, file.Env)
-	}
 	if !names.ValidGitBranch(file.Preview.Branch) {
 		return fmt.Errorf("invalid branch %q", file.Preview.Branch)
 	}
-	if !previewSanitizedBranchRe.MatchString(file.Preview.SanitizedBranch) {
-		return fmt.Errorf("invalid sanitized branch %q", file.Preview.SanitizedBranch)
+	sanitizedBranch := names.PreviewSanitizedBranch(file.Preview.Branch)
+	if !names.ValidPreviewSanitizedBranch(sanitizedBranch) {
+		return fmt.Errorf("invalid sanitized branch %q", sanitizedBranch)
 	}
-	if file.Preview.SanitizedBranch != names.SanitizeBranchEnvName(file.Preview.Branch) {
-		return fmt.Errorf("sanitized branch %q does not match branch %q", file.Preview.SanitizedBranch, file.Preview.Branch)
+	suffix, ok := names.PreviewSuffix(file.Env)
+	if !ok {
+		return fmt.Errorf("invalid suffix derived from env %q", file.Env)
 	}
-	if !previewSuffixRe.MatchString(file.Preview.Suffix) {
-		return fmt.Errorf("invalid suffix %q", file.Preview.Suffix)
-	}
-	if file.Preview.Env != file.Preview.SanitizedBranch+"-"+file.Preview.Suffix {
-		return fmt.Errorf("preview env %q does not match sanitized branch + suffix", file.Preview.Env)
-	}
-	if file.Preview.ExpiresAt == nil && !file.Preview.Pinned {
-		return fmt.Errorf("unpinned preview has no expiry")
+	if file.Env != sanitizedBranch+"-"+suffix {
+		return fmt.Errorf("preview env %q does not match sanitized branch + suffix", file.Env)
 	}
 	return nil
 }
@@ -499,7 +532,7 @@ func refreshPreviewShip(app, env string, now time.Time) error {
 		return nil
 	}
 	file.Preview.LastShipAt = now
-	if file.Preview.Pinned {
+	if names.PreviewPinned(file.Preview.ExpiresAt) {
 		file.Preview.ExpiresAt = nil
 	} else {
 		expires := now.Add(previewTTL)
@@ -527,7 +560,6 @@ func pinPreview(app, env string, pinned bool) error {
 	if file.Preview == nil {
 		return fmt.Errorf("%s (%s) is not a preview environment", app, env)
 	}
-	file.Preview.Pinned = pinned
 	if pinned {
 		file.Preview.ExpiresAt = nil
 	} else {
@@ -539,7 +571,7 @@ func pinPreview(app, env string, pinned bool) error {
 
 func randomPreviewSuffix() (string, error) {
 	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
-	var out [previewSuffixLen]byte
+	var out [names.PreviewSuffixLen]byte
 	max := big.NewInt(int64(len(alphabet)))
 	for i := range out {
 		n, err := rand.Int(rand.Reader, max)

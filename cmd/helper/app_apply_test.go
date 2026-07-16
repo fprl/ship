@@ -50,7 +50,7 @@ func TestResolveEnvFailsOnMissingSecretBeforeAnyContainerStarts(t *testing.T) {
 func TestResolveEnvPreviewUsesSharedPreviewNotProductionSecret(t *testing.T) {
 	t.Setenv("SHIP_SECRETS_DIR", t.TempDir())
 	t.Setenv("SHIP_APPS_DIR", t.TempDir())
-	preview := &identity.PreviewIdentity{Branch: "feat/x", SanitizedBranch: "feat-x", Env: "feat-x-ab12", Suffix: "ab12", LastShipAt: time.Now(), ExpiresAt: ptrTime(time.Now().Add(time.Hour))}
+	preview := &identity.PreviewIdentity{Branch: "feat/x", LastShipAt: time.Now(), ExpiresAt: ptrTime(time.Now().Add(time.Hour))}
 	writePreviewIdentityForResolveTest(t, "api", "feat-x-ab12", preview)
 	if err := secrets.Put("api", "production", "db_url", []byte("postgres://prod")); err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestResolveEnvPreviewUsesSharedPreviewNotProductionSecret(t *testing.T) {
 func TestResolveEnvPreviewBranchSecretWinsOverSharedPreview(t *testing.T) {
 	t.Setenv("SHIP_SECRETS_DIR", t.TempDir())
 	t.Setenv("SHIP_APPS_DIR", t.TempDir())
-	preview := &identity.PreviewIdentity{Branch: "feat/x", SanitizedBranch: "feat-x", Env: "feat-x-ab12", Suffix: "ab12", LastShipAt: time.Now(), ExpiresAt: ptrTime(time.Now().Add(time.Hour))}
+	preview := &identity.PreviewIdentity{Branch: "feat/x", LastShipAt: time.Now(), ExpiresAt: ptrTime(time.Now().Add(time.Hour))}
 	writePreviewIdentityForResolveTest(t, "api", "feat-x-ab12", preview)
 	if err := secrets.Put("api", sharedPreviewSecretsEnvName, "db_url", []byte("postgres://preview")); err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestResolveEnvPreviewBranchSecretWinsOverSharedPreview(t *testing.T) {
 func TestResolveEnvPreviewMissingSecretUsesScopedRemediation(t *testing.T) {
 	t.Setenv("SHIP_SECRETS_DIR", t.TempDir())
 	t.Setenv("SHIP_APPS_DIR", t.TempDir())
-	preview := &identity.PreviewIdentity{Branch: "feat/x", SanitizedBranch: "feat-x", Env: "feat-x-ab12", Suffix: "ab12", LastShipAt: time.Now(), ExpiresAt: ptrTime(time.Now().Add(time.Hour))}
+	preview := &identity.PreviewIdentity{Branch: "feat/x", LastShipAt: time.Now(), ExpiresAt: ptrTime(time.Now().Add(time.Hour))}
 	writePreviewIdentityForResolveTest(t, "api", "feat-x-ab12", preview)
 	_, err := resolveEnv("api", "feat-x-ab12", nil, map[string]string{"DATABASE_URL": "db_url"})
 	if err == nil {

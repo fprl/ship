@@ -3,6 +3,7 @@ package names
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidGitBranch(t *testing.T) {
@@ -101,5 +102,26 @@ func TestPreviewBranchSlugStripsOnlyThePersistedSuffix(t *testing.T) {
 		if got := PreviewBranchSlug(tt.env); got != tt.want {
 			t.Fatalf("PreviewBranchSlug(%q) = %q, want %q", tt.env, got, tt.want)
 		}
+	}
+}
+
+func TestPreviewDerivations(t *testing.T) {
+	if got, want := PreviewSanitizedBranch("Feature/Login"), "feature-login"; got != want {
+		t.Fatalf("PreviewSanitizedBranch = %q, want %q", got, want)
+	}
+	if got, ok := PreviewSuffix("feature-login-a1b2"); !ok || got != "a1b2" {
+		t.Fatalf("PreviewSuffix = %q, %v, want a1b2, true", got, ok)
+	}
+	for _, env := range []string{"plain", "feature-login-A1b2", "feature-login-a12", "feature-login-a1b2c"} {
+		if got, ok := PreviewSuffix(env); ok {
+			t.Fatalf("PreviewSuffix(%q) = %q, true; want invalid", env, got)
+		}
+	}
+	if !PreviewPinned(nil) {
+		t.Fatal("nil expiry should derive pinned=true")
+	}
+	expires := time.Now()
+	if PreviewPinned(&expires) {
+		t.Fatal("present expiry should derive pinned=false")
 	}
 }

@@ -210,13 +210,9 @@ func TestAppListFromStatusesSummarizesProductionAndPreview(t *testing.T) {
 			App: "api",
 			Env: "feat-x-a1b2",
 			Preview: &identity.PreviewIdentity{
-				Branch:          "feat/x",
-				SanitizedBranch: "feat-x",
-				Env:             "feat-x-a1b2",
-				Suffix:          "a1b2",
-				LastShipAt:      now.Add(-time.Minute),
-				ExpiresAt:       &expires,
-				Pinned:          false,
+				Branch:     "feat/x",
+				LastShipAt: now.Add(-time.Minute),
+				ExpiresAt:  &expires,
 			},
 			Processes: []processStatus{
 				{Process: "web", State: "exited", Release: "def5678", CreatedAt: now.Add(-2 * time.Minute).Format(time.RFC3339Nano)},

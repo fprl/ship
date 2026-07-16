@@ -247,8 +247,6 @@ func writeDataPreviewIdentity(t *testing.T, app, env, branch string) {
 	t.Helper()
 	if err := writeEnvIdentityWithPreview(app, env, &identity.PreviewIdentity{
 		Branch: branch,
-		Env:    env,
-		Suffix: "abcd",
 	}); err != nil {
 		t.Fatal(err)
 	}

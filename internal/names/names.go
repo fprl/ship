@@ -6,6 +6,7 @@ package names
 import (
 	"regexp"
 	"strings"
+	"time"
 )
 
 const (
@@ -15,15 +16,50 @@ const (
 	SystemUserPattern = `^[a-z_][a-z0-9_-]{0,31}\$?$`
 	EnvKeyPattern     = `^[A-Za-z_][A-Za-z0-9_]*$`
 	ProductionEnvName = "production"
+	PreviewSuffixLen  = 4
 )
 
 var (
-	AppRe        = regexp.MustCompile(AppPattern)
-	EnvRe        = regexp.MustCompile(EnvPattern)
-	ProcessRe    = regexp.MustCompile(ProcessPattern)
-	SystemUserRe = regexp.MustCompile(SystemUserPattern)
-	EnvKeyRe     = regexp.MustCompile(EnvKeyPattern)
+	AppRe                    = regexp.MustCompile(AppPattern)
+	EnvRe                    = regexp.MustCompile(EnvPattern)
+	ProcessRe                = regexp.MustCompile(ProcessPattern)
+	SystemUserRe             = regexp.MustCompile(SystemUserPattern)
+	EnvKeyRe                 = regexp.MustCompile(EnvKeyPattern)
+	previewSanitizedBranchRe = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,26}[a-z0-9])?$|^[a-z0-9]$`)
+	previewSuffixRe          = regexp.MustCompile(`^[a-z0-9]{4}$`)
 )
+
+// PreviewSanitizedBranch is the canonical environment-name slug for a raw
+// Git branch. It is derived at read time; it is not identity state.
+func PreviewSanitizedBranch(branch string) string {
+	return SanitizeBranchEnvName(branch)
+}
+
+// ValidPreviewSanitizedBranch reports whether a derived branch slug is safe
+// to combine with a preview suffix in an environment name.
+func ValidPreviewSanitizedBranch(slug string) bool {
+	return previewSanitizedBranchRe.MatchString(slug)
+}
+
+// PreviewSuffix parses the random suffix from a preview environment name.
+// The suffix is valid only when it is the final four lowercase alphanumeric
+// characters after a non-empty slug.
+func PreviewSuffix(env string) (string, bool) {
+	index := strings.LastIndex(env, "-")
+	if index <= 0 || index == len(env)-1 {
+		return "", false
+	}
+	suffix := env[index+1:]
+	if len(suffix) != PreviewSuffixLen || !previewSuffixRe.MatchString(suffix) {
+		return "", false
+	}
+	return suffix, true
+}
+
+// PreviewPinned derives lifecycle pinning from the absence of an expiry.
+func PreviewPinned(expiresAt *time.Time) bool {
+	return expiresAt == nil
+}
 
 func SanitizeBranchEnvName(branch string) string {
 	branch = strings.ToLower(branch)
@@ -82,7 +118,8 @@ func SynthesizedHostLabel(app, env string) string {
 // the environment identity so clients and helpers agree after a branch rename
 // or a later manifest update.
 func PreviewBranchSlug(env string) string {
-	if index := strings.LastIndex(env, "-"); index > 0 {
+	if _, ok := PreviewSuffix(env); ok {
+		index := strings.LastIndex(env, "-")
 		return strings.Trim(env[:index], "-")
 	}
 	return strings.Trim(env, "-")

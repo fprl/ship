@@ -19,6 +19,7 @@ import (
 
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/names"
 	h "github.com/fprl/ship/tests/harness"
 )
 
@@ -1067,11 +1068,11 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "previewapi", "feature/lifecycle")
 	assertPreviewEnvName(t, previewEnv, "feature-lifecycle")
 	firstIdentity := readPreviewIdentity(t, e, "previewapi", previewEnv)
-	if firstIdentity.Preview == nil || firstIdentity.Preview.Pinned {
+	if firstIdentity.Preview == nil || firstIdentity.Preview.ExpiresAt == nil {
 		t.Fatalf("unexpected first preview identity: %+v", firstIdentity)
 	}
-	if firstIdentity.Preview.Branch != "feature/lifecycle" || firstIdentity.Preview.SanitizedBranch != "feature-lifecycle" {
-		t.Fatalf("preview mapping should store raw and sanitized branch names: %+v", firstIdentity.Preview)
+	if firstIdentity.Preview.Branch != "feature/lifecycle" || names.PreviewSanitizedBranch(firstIdentity.Preview.Branch) != names.PreviewBranchSlug(firstIdentity.Env) {
+		t.Fatalf("preview mapping has inconsistent branch/environment derivation: %+v", firstIdentity.Preview)
 	}
 	h.SetPreviewExpiry(t, func(command string) string { return e.dockerExec(t, command) }, "previewapi", previewEnv, "2000-01-01T00:00:00Z")
 	firstExpiry := parseRemoteTime(t, "2000-01-01T00:00:00Z")
@@ -1092,7 +1093,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 
 	e.ship(t, app, nil, "preview", "pin", "feature/lifecycle")
 	pinned := readPreviewIdentity(t, e, "previewapi", previewEnv)
-	if pinned.Preview == nil || !pinned.Preview.Pinned || pinned.Preview.ExpiresAt != nil {
+	if pinned.Preview == nil || pinned.Preview.ExpiresAt != nil {
 		t.Fatalf("pin should clear expiry: %+v", pinned.Preview)
 	}
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")
@@ -1100,7 +1101,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 
 	e.ship(t, app, nil, "preview", "unpin", "feature/lifecycle")
 	unpinned := readPreviewIdentity(t, e, "previewapi", previewEnv)
-	if unpinned.Preview == nil || unpinned.Preview.Pinned || unpinned.Preview.ExpiresAt == nil {
+	if unpinned.Preview == nil || unpinned.Preview.ExpiresAt == nil {
 		t.Fatalf("unpin should restore expiry: %+v", unpinned.Preview)
 	}
 	appList := appListPayloadForBox(t, e, app)
@@ -3615,13 +3616,9 @@ type previewIdentityPayload struct {
 	App     string
 	Env     string
 	Preview *struct {
-		Branch          string  `json:"branch"`
-		SanitizedBranch string  `json:"sanitized_branch"`
-		Env             string  `json:"env"`
-		Suffix          string  `json:"suffix"`
-		LastShipAt      string  `json:"last_ship_at"`
-		ExpiresAt       *string `json:"expires_at"`
-		Pinned          bool    `json:"pinned"`
+		Branch     string  `json:"branch"`
+		LastShipAt string  `json:"last_ship_at"`
+		ExpiresAt  *string `json:"expires_at"`
 	} `json:"preview"`
 }
 

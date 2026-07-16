@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/names"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -45,7 +46,7 @@ func reapExpiredPreviewsWithLock(now time.Time, destroy destroyEnvFunc, acquire 
 	}
 	reaped := 0
 	for _, file := range files {
-		if file.Env == productionEnvName || file.Preview == nil || file.Preview.Pinned || file.Preview.ExpiresAt == nil {
+		if file.Env == productionEnvName || file.Preview == nil || names.PreviewPinned(file.Preview.ExpiresAt) || file.Preview.ExpiresAt == nil {
 			continue
 		}
 		if file.Preview.ExpiresAt.After(now) {
@@ -66,7 +67,7 @@ func reapExpiredPreviewsWithLock(now time.Time, destroy destroyEnvFunc, acquire 
 			}
 			return reaped, err
 		}
-		if refreshed.Env == productionEnvName || refreshed.Preview == nil || refreshed.Preview.Pinned || refreshed.Preview.ExpiresAt == nil || refreshed.Preview.ExpiresAt.After(now) {
+		if refreshed.Env == productionEnvName || refreshed.Preview == nil || names.PreviewPinned(refreshed.Preview.ExpiresAt) || refreshed.Preview.ExpiresAt == nil || refreshed.Preview.ExpiresAt.After(now) {
 			if err := lock.Release(); err != nil {
 				return reaped, fmt.Errorf("release lock for %s (%s): %v", file.App, file.Env, err)
 			}

@@ -12,6 +12,7 @@ import (
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/names"
 	"github.com/fprl/ship/internal/secrets"
 )
 
@@ -42,17 +43,146 @@ func TestResolveOrCreatePreviewCreatesStableMapping(t *testing.T) {
 	if file.Preview == nil {
 		t.Fatal("preview metadata missing")
 	}
-	if file.Preview.Branch != "feat/x" || file.Preview.SanitizedBranch != "feat-x" || file.Preview.Env != env {
+	if file.Preview.Branch != "feat/x" || names.PreviewSanitizedBranch(file.Preview.Branch) != "feat-x" || names.PreviewBranchSlug(file.Env) != "feat-x" {
 		t.Fatalf("unexpected preview mapping: %+v", file.Preview)
 	}
-	if !regexp.MustCompile(`^[a-z0-9]{4}$`).MatchString(file.Preview.Suffix) {
-		t.Fatalf("unexpected suffix: %q", file.Preview.Suffix)
+	if suffix, ok := names.PreviewSuffix(file.Env); !ok || !regexp.MustCompile(`^[a-z0-9]{4}$`).MatchString(suffix) {
+		t.Fatalf("unexpected suffix derived from env: %q", file.Env)
 	}
 	if !file.Preview.LastShipAt.Equal(now) {
 		t.Fatalf("last ship = %s, want %s", file.Preview.LastShipAt, now)
 	}
 	if file.Preview.ExpiresAt == nil || !file.Preview.ExpiresAt.Equal(now.Add(previewTTL)) {
 		t.Fatalf("expiry = %v, want %s", file.Preview.ExpiresAt, now.Add(previewTTL))
+	}
+}
+
+func TestShipIdentityPersistsOnlyNonDerivablePreviewFields(t *testing.T) {
+	setupPreviewHostTest(t)
+	expires := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	preview := &identity.PreviewIdentity{
+		Branch:     "Feature/Login",
+		LastShipAt: expires.Add(-previewTTL),
+		ExpiresAt:  &expires,
+	}
+	if err := writeEnvIdentityWithPreview("api", "feature-login-a1b2", preview); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(identity.IdentityFile("api", "feature-login-a1b2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shape map[string]any
+	if err := json.Unmarshal(raw, &shape); err != nil {
+		t.Fatal(err)
+	}
+	previewShape, ok := shape["preview"].(map[string]any)
+	if !ok {
+		t.Fatalf("preview shape = %#v", shape["preview"])
+	}
+	for _, deleted := range []string{"sanitized_branch", "suffix", "env", "pinned"} {
+		if _, found := previewShape[deleted]; found {
+			t.Fatalf("deleted preview field %q persisted: %s", deleted, raw)
+		}
+	}
+	for _, retained := range []string{"branch", "last_ship_at", "expires_at"} {
+		if _, found := previewShape[retained]; !found {
+			t.Fatalf("retained preview field %q missing: %s", retained, raw)
+		}
+	}
+	if err := writeEnvIdentity("api", productionEnvName); err != nil {
+		t.Fatal(err)
+	}
+	productionRaw, err := os.ReadFile(identity.IdentityFile("api", productionEnvName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(productionRaw), `"preview"`) {
+		t.Fatalf("production identity unexpectedly has preview block: %s", productionRaw)
+	}
+}
+
+func TestValidatePreviewIdentityUsesDerivedFields(t *testing.T) {
+	expires := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	valid := identity.EnvIdentity{
+		Version: 1, App: "api", Env: "feature-login-a1b2", InfraID: identity.InfraID("api", "feature-login-a1b2"),
+		Preview: &identity.PreviewIdentity{Branch: "feature/login", LastShipAt: expires.Add(-previewTTL), ExpiresAt: &expires},
+	}
+	if err := validatePreviewIdentity(valid); err != nil {
+		t.Fatalf("valid derived preview rejected: %v", err)
+	}
+	for name, file := range map[string]identity.EnvIdentity{
+		"invalid branch":      invalidPreviewIdentity("feature..login", "feature-login-a1b2"),
+		"wrong sanitized env": invalidPreviewIdentity("feature/login", "other-a1b2"),
+		"invalid suffix":      invalidPreviewIdentity("feature/login", "feature-login-a12"),
+		"production preview":  invalidPreviewIdentity("feature/login", productionEnvName),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validatePreviewIdentity(file); err == nil {
+				t.Fatal("malformed preview identity was accepted")
+			}
+		})
+	}
+}
+
+func invalidPreviewIdentity(branch, env string) identity.EnvIdentity {
+	return identity.EnvIdentity{
+		Version: 1, App: "api", Env: env, InfraID: identity.InfraID("api", env),
+		Preview: &identity.PreviewIdentity{Branch: branch, LastShipAt: time.Now().UTC()},
+	}
+}
+
+func TestResolveOrCreatePreviewWritesOnlyFinalIdentity(t *testing.T) {
+	setupPreviewHostTest(t)
+	previousSuffix := newPreviewSuffix
+	newPreviewSuffix = func() (string, error) { return "a1b2", nil }
+	t.Cleanup(func() { newPreviewSuffix = previousSuffix })
+	previousWrite := atomicWriteEnvIdentity
+	var writes [][]byte
+	atomicWriteEnvIdentity = func(path string, data []byte, mode os.FileMode) error {
+		writes = append(writes, append([]byte(nil), data...))
+		return previousWrite(path, data, mode)
+	}
+	t.Cleanup(func() { atomicWriteEnvIdentity = previousWrite })
+
+	if _, err := resolveOrCreatePreview("api", "feat/write-once", time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if len(writes) != 1 {
+		t.Fatalf("preview allocation identity writes = %d, want 1", len(writes))
+	}
+	var file identity.EnvIdentity
+	if err := json.Unmarshal(writes[0], &file); err != nil {
+		t.Fatal(err)
+	}
+	if file.Preview == nil || file.Preview.Branch != "feat/write-once" {
+		t.Fatalf("identity write was not final preview identity: %+v", file)
+	}
+}
+
+func TestResolveOrCreatePreviewHealsPartialAllocationOnRetry(t *testing.T) {
+	setupPreviewHostTest(t)
+	env := "feat-retry-a1b2"
+	if err := secrets.PutPreviewCapability("api", env, []byte("inert-capability")); err != nil {
+		t.Fatal(err)
+	}
+	previousSuffix := newPreviewSuffix
+	newPreviewSuffix = func() (string, error) { return "a1b2", nil }
+	t.Cleanup(func() { newPreviewSuffix = previousSuffix })
+
+	got, err := resolveOrCreatePreview("api", "feat/retry", time.Date(2026, 7, 7, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != env {
+		t.Fatalf("retry resolved env = %q, want %q", got, env)
+	}
+	file, err := readEnvIdentity("api", env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Preview == nil || file.Preview.Branch != "feat/retry" {
+		t.Fatalf("partial allocation was not healed: %+v", file)
 	}
 }
 
@@ -87,7 +217,7 @@ func TestRefreshPreviewShipUpdatesExpiryUnlessPinned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !file.Preview.Pinned || file.Preview.ExpiresAt != nil {
+	if !names.PreviewPinned(file.Preview.ExpiresAt) || file.Preview.ExpiresAt != nil {
 		t.Fatalf("pinned refresh should keep no expiry: %+v", file.Preview)
 	}
 }
@@ -104,7 +234,7 @@ func TestPinPreviewClearsExpiryAndUnpinRestoresFromLastShip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !file.Preview.Pinned || file.Preview.ExpiresAt != nil {
+	if !names.PreviewPinned(file.Preview.ExpiresAt) || file.Preview.ExpiresAt != nil {
 		t.Fatalf("pin should clear expiry: %+v", file.Preview)
 	}
 
@@ -115,7 +245,7 @@ func TestPinPreviewClearsExpiryAndUnpinRestoresFromLastShip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if file.Preview.Pinned || file.Preview.ExpiresAt == nil || !file.Preview.ExpiresAt.Equal(lastShip.Add(previewTTL)) {
+	if names.PreviewPinned(file.Preview.ExpiresAt) || file.Preview.ExpiresAt == nil || !file.Preview.ExpiresAt.Equal(lastShip.Add(previewTTL)) {
 		t.Fatalf("unpin should restore last_ship+TTL: %+v", file.Preview)
 	}
 }
@@ -322,7 +452,7 @@ func TestReapExpiredPreviewsSkipsPreviewPinnedAfterInitialCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if file.Preview == nil || !file.Preview.Pinned {
+	if file.Preview == nil || !names.PreviewPinned(file.Preview.ExpiresAt) {
 		t.Fatalf("preview should remain pinned: %+v", file.Preview)
 	}
 }
@@ -539,13 +669,9 @@ func writePreviewIdentityForTest(t *testing.T, app, env, branch, sanitizedBranch
 		Env:     env,
 		InfraID: identity.InfraID(app, env),
 		Preview: &identity.PreviewIdentity{
-			Branch:          branch,
-			SanitizedBranch: sanitizedBranch,
-			Env:             env,
-			Suffix:          suffix,
-			LastShipAt:      lastShip,
-			ExpiresAt:       expires,
-			Pinned:          pinned,
+			Branch:     branch,
+			LastShipAt: lastShip,
+			ExpiresAt:  expires,
 		},
 	})
 	return env

@@ -166,11 +166,7 @@ type EnvIdentity struct {
 
 // PreviewIdentity stores the branch mapping for one preview environment.
 type PreviewIdentity struct {
-	Branch          string     `json:"branch"`
-	SanitizedBranch string     `json:"sanitized_branch"`
-	Env             string     `json:"env"`
-	Suffix          string     `json:"suffix"`
-	LastShipAt      time.Time  `json:"last_ship_at"`
-	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
-	Pinned          bool       `json:"pinned"`
+	Branch     string     `json:"branch"`
+	LastShipAt time.Time  `json:"last_ship_at"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 }

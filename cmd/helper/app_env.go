@@ -50,7 +50,12 @@ func (c appSetupEnvCmd) Run() error {
 }
 
 func (c appSetupEnvCmd) runLocked(printSummary bool) {
-	if err := setupEnv(c.App, c.Env); err != nil {
+	if err := setupEnv(identity.EnvIdentity{
+		Version: 1,
+		App:     c.App,
+		Env:     c.Env,
+		InfraID: identity.InfraID(c.App, c.Env),
+	}); err != nil {
 		utils.DieError(err, 1)
 	}
 	if printSummary {
@@ -58,7 +63,8 @@ func (c appSetupEnvCmd) runLocked(printSummary bool) {
 	}
 }
 
-func setupEnv(app, env string) error {
+func setupEnv(file identity.EnvIdentity) error {
+	app, env := file.App, file.Env
 	user := identity.SystemUser(app, env)
 	network := identity.Network(app, env)
 
@@ -100,16 +106,29 @@ func setupEnv(app, env string) error {
 	if err := applyEnvLayoutPerms(app, env); err != nil {
 		return err
 	}
-	if err := writeEnvIdentity(app, env); err != nil {
-		return err
-	}
-
 	// 4. Ensure the per-env Podman network exists. Containers join this
 	// for intra-app DNS in addition to the shared `ingress` network.
 	if !host.CommandSucceeds("podman", "network", "exists", network) {
 		if _, err := utils.RunChecked("podman", []string{"network", "create", network}, ""); err != nil {
 			return fmt.Errorf("podman network create %s: %v", network, err)
 		}
+	}
+
+	// The identity describes the layout and network above. Write the complete
+	// final identity only after those durable resources exist. If a previous
+	// attempt already committed it, retrying is a no-op.
+	if file.Preview != nil {
+		if _, err := ensurePreviewCapability(app, env); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Stat(identity.IdentityFile(app, env)); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat env identity: %v", err)
+	}
+	if err := writeFinalEnvIdentity(file); err != nil {
+		return err
 	}
 
 	return nil
@@ -381,6 +400,33 @@ func dirEmpty(path string) bool {
 	return err == nil && len(entries) == 0
 }
 
+func writeFinalEnvIdentity(file identity.EnvIdentity) error {
+	if file.Env != productionEnvName {
+		return writeEnvIdentityFile(file)
+	}
+
+	hostLock, err := acquirePreviewHostLabelLock()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = hostLock.Release() }()
+	if envIdentityExists(file.App, file.Env) {
+		return nil
+	}
+	label := names.SynthesizedHostLabel(file.App, file.Env)
+	if owner, found, err := synthesizedHostLabelOwner(label); err != nil {
+		return err
+	} else if found {
+		return errcat.New(errcat.CodeHostLabelConflict, errcat.Fields{
+			"app":          file.App,
+			"label":        label,
+			"existing_app": owner.App,
+			"existing_env": owner.Env,
+		})
+	}
+	return writeEnvIdentityFile(file)
+}
+
 func writeEnvIdentity(app, env string) (err error) {
 	existing, _ := readEnvIdentity(app, env)
 	if env != productionEnvName || envIdentityExists(app, env) {
@@ -417,21 +463,26 @@ func writeEnvIdentity(app, env string) (err error) {
 }
 
 func writeEnvIdentityWithPreview(app, env string, preview *identity.PreviewIdentity) error {
-	path := identity.IdentityFile(app, env)
-	file := identity.EnvIdentity{
+	return writeEnvIdentityFile(identity.EnvIdentity{
 		Version: 1,
 		App:     app,
 		Env:     env,
 		InfraID: identity.InfraID(app, env),
 		Preview: preview,
-	}
+	})
+}
+
+var atomicWriteEnvIdentity = store.AtomicWrite
+
+func writeEnvIdentityFile(file identity.EnvIdentity) error {
+	path := identity.IdentityFile(file.App, file.Env)
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
 
-	if err := store.AtomicWrite(path, data, 0644); err != nil {
+	if err := atomicWriteEnvIdentity(path, data, 0644); err != nil {
 		return fmt.Errorf("write env identity: %v", err)
 	}
 	if _, err := utils.RunChecked("chown", []string{"root:root", path}, ""); err != nil {

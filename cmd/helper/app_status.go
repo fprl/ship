@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/names"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -515,7 +516,7 @@ func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 	if item.Preview != nil {
 		class = "preview"
 		branch = item.Preview.Branch
-		pinned = item.Preview.Pinned
+		pinned = names.PreviewPinned(item.Preview.ExpiresAt)
 		if item.Preview.ExpiresAt != nil {
 			expiresAt = item.Preview.ExpiresAt.Format(time.RFC3339Nano)
 		}
