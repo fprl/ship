@@ -51,7 +51,7 @@ func TestNormalizeManifestUserAtBoxRemediation(t *testing.T) {
 	if coded.Code() != errcat.CodeManifestInvalid {
 		t.Fatalf("code = %s, want %s", coded.Code(), errcat.CodeManifestInvalid)
 	}
-	if coded.Remediation() != "ship" {
+	if coded.Remediation() != "fix ship.toml, then ship" {
 		t.Fatalf("remediation = %q", coded.Remediation())
 	}
 }

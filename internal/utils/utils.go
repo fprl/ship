@@ -168,11 +168,8 @@ func manifestNextCommand(details []string) string {
 		if manifestMissing(detail) {
 			return "ship init"
 		}
-		if strings.Contains(detail, "box must be a host, not user@host") {
-			return "ship"
-		}
 	}
-	return "ship"
+	return "fix ship.toml, then ship"
 }
 
 func dockerfileMissingDetails(details []string) bool {

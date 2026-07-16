@@ -708,6 +708,9 @@ func routedTLSCertStatuses(now time.Time) ([]tlsCertStatus, error) {
 	hosts := map[string]bool{}
 	for _, app := range apps {
 		ctx, cleanup, err := loadActiveEnvelopeContext(app.App, app.Env)
+		if errcat.Is(err, errcat.CodeNoDeploys) {
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("%s/%s active release: %v", app.App, app.Env, err)
 		}

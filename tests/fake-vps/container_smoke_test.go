@@ -957,7 +957,7 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 	if got := e.dockerExec(t, "cat "+identity.ActiveFile("caddyfail", productionEnv)); got == stableManifest {
 		t.Fatalf("failing Caddy reload did not retain the new active pointer:\n%s", got)
 	}
-	if got := e.ssh(t, "cat "+identity.CaddyFragmentFile("caddyfail", productionEnv)); got == stableFragment {
+	if got := e.ssh(t, "cat "+identity.CaddyFragmentFile("caddyfail", productionEnv)); got == stableFragment || !strings.Contains(got, "/docs-v2") {
 		t.Fatalf("failing Caddy reload did not retain the new fragment:\n%s", got)
 	}
 	status := e.ship(t, app, nil, "status")
