@@ -396,9 +396,12 @@ func TestRecordDoctorRunPersistsChecksWithoutDelta(t *testing.T) {
 }
 
 func TestHelperSudoRegexRequiresServerSubtree(t *testing.T) {
-	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server config *, /usr/local/bin/ship server webhook *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *"
+	good := "deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server config *, /usr/local/bin/ship server webhook *, /usr/local/bin/ship server gc *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *"
 	if !HelperSudoRe.MatchString(good) {
 		t.Fatal("expected server subtree sudoers grant to match")
+	}
+	if HelperSudoRe.MatchString(strings.Replace(good, "/usr/local/bin/ship server gc *, ", "", 1)) {
+		t.Fatal("a grant without the gc verb is not the current shape and must not match")
 	}
 	if HelperSudoRe.MatchString("deploy ALL=(root) NOPASSWD: /usr/local/bin/ship") {
 		t.Fatal("broad ship sudoers grant must not match")

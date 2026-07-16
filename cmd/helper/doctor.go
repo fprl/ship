@@ -56,7 +56,7 @@ const (
 
 var (
 	BroadSudoRe  = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\((?:ALL|ALL:ALL)\)\s+NOPASSWD:\s*ALL$`)
-	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/ship\s+server\s+app\s+\*,\s*/usr/local/bin/ship\s+server\s+doctor,\s*/usr/local/bin/ship\s+server\s+doctor\s+\*,\s*/usr/local/bin/ship\s+server\s+key\s+\*,\s*/usr/local/bin/ship\s+server\s+approval\s+\*,\s*/usr/local/bin/ship\s+server\s+config\s+\*,\s*/usr/local/bin/ship\s+server\s+webhook\s+\*,\s*(?:/usr/local/bin/ship\s+server\s+gc\s+\*,\s*)?/usr/local/bin/ship\s+server\s+version,\s*/usr/local/bin/ship\s+server\s+version\s+\*,\s*/usr/local/bin/ship\s+server\s+update\s+\*$`)
+	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/ship\s+server\s+app\s+\*,\s*/usr/local/bin/ship\s+server\s+doctor,\s*/usr/local/bin/ship\s+server\s+doctor\s+\*,\s*/usr/local/bin/ship\s+server\s+key\s+\*,\s*/usr/local/bin/ship\s+server\s+approval\s+\*,\s*/usr/local/bin/ship\s+server\s+config\s+\*,\s*/usr/local/bin/ship\s+server\s+webhook\s+\*,\s*/usr/local/bin/ship\s+server\s+gc\s+\*,\s*/usr/local/bin/ship\s+server\s+version,\s*/usr/local/bin/ship\s+server\s+version\s+\*,\s*/usr/local/bin/ship\s+server\s+update\s+\*$`)
 )
 
 type doctorCmd struct {
