@@ -1181,9 +1181,9 @@ paperwork.
 builds and probes beside the serving release without touching it
 (workers deliberately excluded — they hand over post-commit). Commit
 is one atomic rename of `active.json` — the only instant intent
-changes. Converge makes the runtime match the pointer; `box status`
-proves convergence exactly or reports "committed, not converged" with
-`next: ship converge`. Failure before commit: nothing changed (this
+changes. Converge makes the runtime match the pointer; `ship status`
+proves convergence exactly per env or reports "committed, not
+converged" with `next: ship converge`. Failure before commit: nothing changed (this
 attempt's debris is removed by its activation label). Failure after:
 ship rolls FORWARD on rerun — intent is never automatically reversed;
 going back is always an explicit `rollback`, which selects an older

@@ -70,7 +70,7 @@ feature creep into the current shape.
   cover recurring work inside app stacks. System cron, systemd timers,
   or external schedulers cover host-level scheduling. ship does
   not own the scheduler.
-- **Git-push deploy.** Explicit `deploy` keeps the trigger surface
+- **Git-push deploy.** Explicit `ship` keeps the trigger surface
   controlled and scriptable.
 - **Plugin system.** Extension happens through the composable
   primitive, not a sanctioned plugin API.

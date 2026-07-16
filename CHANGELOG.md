@@ -59,9 +59,9 @@ and built as five gated stages in one night.
   activation.
 - Journals share one contract: fsynced appends, and a crash-torn final
   line degrades gracefully instead of hiding history.
-- `box status` proves convergence exactly (or says "committed, not
-  converged" with the fix); `why` never shows a GC sweep instead of your
-  last deploy.
+- `ship status` proves each env's convergence exactly (or says
+  "committed, not converged" with the fix); `why` never shows a GC sweep
+  instead of your last deploy.
 
 Zero users, flag-day: the new binary reads only the new layout;
 `box setup` + one deploy heals the testing box.
