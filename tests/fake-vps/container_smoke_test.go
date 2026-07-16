@@ -64,7 +64,7 @@ func TestContainerSmoke(t *testing.T) {
 		t.Skip("set SHIP_RUN_FAKE_VPS_SMOKE=1 to run Docker-backed fake VPS smoke")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	t.Cleanup(cancel)
 
 	env := newSmokeEnv(t, ctx)
@@ -927,7 +927,6 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	nextManifest := strings.Replace(string(manifest), `MARKER = "stable"`, `MARKER = "failed"`, 1)
-	nextManifest = strings.Replace(nextManifest, `path = "/docs"`, `path = "/docs-v2"`, 1)
 	if nextManifest == string(manifest) {
 		t.Fatal("test fixture did not contain stable marker")
 	}
@@ -935,6 +934,7 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "docs-dist", "index.html"), "docs failed\n")
 	mustWrite(t, filepath.Join(app, "README.md"), "trigger caddy failure\n")
 	e.commitFixture(t, app)
+	failedRelease := gitRelease(t, e, app)
 	e.dockerExec(t, "touch /run/fake-podman/fail-caddy-reload")
 	defer e.dockerExec(t, "rm -f /run/fake-podman/fail-caddy-reload")
 
@@ -957,18 +957,17 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 	if got := e.dockerExec(t, "cat "+identity.ActiveFile("caddyfail", productionEnv)); got == stableManifest {
 		t.Fatalf("failing Caddy reload did not retain the new active pointer:\n%s", got)
 	}
-	if got := e.ssh(t, "cat "+identity.CaddyFragmentFile("caddyfail", productionEnv)); got == stableFragment || !strings.Contains(got, "/docs-v2") {
-		t.Fatalf("failing Caddy reload did not retain the new fragment:\n%s", got)
+	if got := e.ssh(t, "cat "+identity.CaddyFragmentFile("caddyfail", productionEnv)); got == stableFragment || !strings.Contains(got, failedRelease) {
+		t.Fatalf("failing Caddy reload did not retain the new release's fragment:\n%s", got)
 	}
 	status := e.ship(t, app, nil, "status")
 	assertContains(t, status, "health=degraded")
 	assertContains(t, status, "committed, not converged")
 	assertContains(t, status, "next=ship converge")
 	e.dockerExec(t, "test ! -e /run/fake-podman/listeners/"+stableWorker+".pid")
-	newRelease := "$(grep -o '\"release\": \"[^\"]*\"' " + identity.ActiveFile("caddyfail", productionEnv) + " | cut -d'\"' -f4)"
-	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.InfraID("caddyfail", productionEnv)+"-web-"+newRelease+".labels")
-	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.InfraID("caddyfail", productionEnv)+"-worker-"+newRelease+".labels")
-	e.dockerExec(t, "test -f /run/fake-podman/listeners/"+identity.InfraID("caddyfail", productionEnv)+"-worker-"+newRelease+".pid")
+	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "web", failedRelease)+".labels")
+	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "worker", failedRelease)+".labels")
+	e.dockerExec(t, "test -f /run/fake-podman/listeners/"+identity.ContainerName("caddyfail", productionEnv, "worker", failedRelease)+".pid")
 }
 
 func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {

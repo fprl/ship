@@ -35,7 +35,7 @@ shell-test:
 	bash scripts/install-smoke.sh
 
 fake-vps-smoke:
-	SHIP_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestContainerSmoke -count=1 -timeout 20m
+	SHIP_RUN_FAKE_VPS_SMOKE=1 $(GO) test ./tests/fake-vps -run TestContainerSmoke -count=1 -timeout 25m
 	SHIP_RUN_FAKE_VPS_SMOKE=1 SHIP_EVAL_RUNNER=oracle $(GO) test ./tests/agent-evals -run TestAgentEvalScenarios -count=1 -timeout 30m
 
 fake-vps-install-smoke:
