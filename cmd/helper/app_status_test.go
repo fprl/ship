@@ -27,6 +27,11 @@ func TestAttachProcessReleaseMetadataToleratesEnvelopelessRelease(t *testing.T) 
 	if processes[0].Dirty || processes[0].BaseCommit != "" || processes[0].CreatedAt != "" {
 		t.Fatalf("undecorated process = %+v", processes[0])
 	}
+
+	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nexit 1\n")
+	if err := attachProcessReleaseMetadata("probe", "production", processes); err != nil {
+		t.Fatalf("a failed image enumeration must degrade decoration, not status: %v", err)
+	}
 }
 
 func TestContainersToProcessesFiltersUnlabelledAndSorts(t *testing.T) {

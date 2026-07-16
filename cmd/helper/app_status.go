@@ -384,9 +384,12 @@ func containersToAppEnvs(entries []containerEntry) []appEnvStatus {
 }
 
 func attachProcessReleaseMetadata(app, env string, processes []processStatus) error {
+	// Decoration is best-effort end to end: a failed image enumeration leaves
+	// every process listed undecorated, the same as a single unreadable
+	// envelope — status must not die over cosmetics.
 	images, err := podmanImages(app, env)
-	if err != nil && len(processes) > 0 {
-		return err
+	if err != nil {
+		return nil
 	}
 	byRelease := map[string]imageRelease{}
 	activePointer, _ := readActive(app, env)

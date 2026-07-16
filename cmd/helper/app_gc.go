@@ -101,7 +101,11 @@ func renderGCSummary(value any) string {
 	var b strings.Builder
 	switch summary := value.(type) {
 	case gcSummary:
-		fmt.Fprintf(&b, "GC %s (%s): kept %s\n", summary.App, summary.Env, strings.Join(summary.KeptReleases, ", "))
+		if len(summary.KeptReleases) == 0 {
+			fmt.Fprintf(&b, "GC %s (%s)\n", summary.App, summary.Env)
+		} else {
+			fmt.Fprintf(&b, "GC %s (%s): kept %s\n", summary.App, summary.Env, strings.Join(summary.KeptReleases, ", "))
+		}
 		for _, item := range summary.Removed {
 			fmt.Fprintf(&b, "removed: %s\n", item)
 		}
