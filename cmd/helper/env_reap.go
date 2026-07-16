@@ -76,7 +76,7 @@ func reapExpiredPreviewsWithLock(now time.Time, destroy destroyEnvFunc, acquire 
 		file = refreshed
 		webhookURL := ""
 		release := latestSuccessfulRelease(file.App, file.Env)
-		if ctx, cleanup, err := loadAppliedAppContext(file.App, file.Env); err == nil {
+		if ctx, cleanup, err := loadActiveEnvelopeContext(file.App, file.Env); err == nil {
 			webhookURL = ctx.Webhook
 			cleanup()
 		}

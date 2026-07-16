@@ -527,7 +527,7 @@ func TestPreviewAliasOwnerCollisionMatrix(t *testing.T) {
 			name: "existing alias wins",
 			setup: func(t *testing.T) {
 				writePreviewIdentityForTest(t, "other", "feat-x-cd34", "feat/x", "feat-x", "cd34", time.Now().UTC(), false)
-				writeAppliedManifestForPreviewAliasTest(t, "other", "feat-x-cd34", `name = "other"
+				writeActiveEnvelopeForPreviewAliasTest(t, "other", "feat-x-cd34", `name = "other"
 box = "example.com"
 
 [preview]
@@ -557,7 +557,7 @@ web = { port = 3000 }
 			name: "configured route wins",
 			setup: func(t *testing.T) {
 				writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "site", Env: productionEnvName, InfraID: identity.InfraID("site", productionEnvName)})
-				writeAppliedManifestForPreviewAliasTest(t, "site", productionEnvName, `name = "site"
+				writeActiveEnvelopeForPreviewAliasTest(t, "site", productionEnvName, `name = "site"
 box = "example.com"
 
 [processes]
@@ -573,7 +573,7 @@ web = { port = 3000 }
 			name: "production synthesized host wins",
 			setup: func(t *testing.T) {
 				writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "feat-x", Env: productionEnvName, InfraID: identity.InfraID("feat-x", productionEnvName)})
-				writeAppliedManifestForPreviewAliasTest(t, "feat-x", productionEnvName, `name = "feat-x"
+				writeActiveEnvelopeForPreviewAliasTest(t, "feat-x", productionEnvName, `name = "feat-x"
 box = "example.com"
 
 [processes]
@@ -616,7 +616,7 @@ web = { port = 3000 }
 	}
 }
 
-func writeAppliedManifestForPreviewAliasTest(t *testing.T, app, env, body string) {
+func writeActiveEnvelopeForPreviewAliasTest(t *testing.T, app, env, body string) {
 	t.Helper()
 	release := "abc1234"
 	meta, err := newReleaseMetadata(release, false, release, "2026-07-14T10:00:00Z")

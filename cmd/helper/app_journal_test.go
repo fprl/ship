@@ -44,7 +44,7 @@ func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {
 	setupJournalHostTest(t)
 	secretValue := "super-secret-token"
 	entry := deployJournalEntry{
-		Outcome:          "aborted_release",
+		Outcome:          "failed",
 		StartedAt:        "2026-07-07T10:00:00Z",
 		EndedAt:          "2026-07-07T10:00:01Z",
 		PreviousRelease:  "aaa111",
@@ -83,7 +83,7 @@ func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {
 func TestLatestSuccessfulDeployJournalEntrySkipsFailures(t *testing.T) {
 	setupJournalHostTest(t)
 	failed := deployJournalEntry{
-		Outcome:          "aborted_probe",
+		Outcome:          "failed",
 		StartedAt:        "2026-07-07T10:00:00Z",
 		EndedAt:          "2026-07-07T10:00:01Z",
 		AttemptedRelease: "bad222",

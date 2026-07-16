@@ -15,7 +15,6 @@ import (
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
-	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -56,7 +55,7 @@ func (c appRollbackCmd) Run() error {
 
 func (c appRollbackCmd) runLocked() {
 	startedAt := time.Now().UTC()
-	result, err := c.rollbackRelease(nil)
+	result, err := c.rollbackRelease(nil, startedAt)
 	if err != nil {
 		if result.Committed {
 			var degraded committedDegradedError
@@ -70,7 +69,6 @@ func (c appRollbackCmd) runLocked() {
 		removePreparedCandidates(c.App, c.Env, c.ActivationID)
 		utils.DieError(fmt.Errorf("nothing changed: %w", err), 1)
 	}
-	c.recordRollbackSuccess(result, startedAt)
 }
 
 func (c appRollbackCmd) recordRollbackDegraded(result rollbackPayload, startedAt time.Time, err error) {
@@ -132,7 +130,7 @@ func (c appRollbackCmd) actor() deployIdentity {
 	return deployActor(c.SSHKeyComment, c.GitAuthor)
 }
 
-func (c *appRollbackCmd) rollbackRelease(currentApp *config.AppContext) (rollbackPayload, error) {
+func (c *appRollbackCmd) rollbackRelease(currentApp *config.AppContext, startedAt time.Time) (rollbackPayload, error) {
 	var currentCleanup func()
 	defer func() {
 		if currentCleanup != nil {
@@ -192,7 +190,7 @@ func (c *appRollbackCmd) rollbackRelease(currentApp *config.AppContext) (rollbac
 		return rollbackPayload{}, err
 	}
 	c.TargetEnvelope = target.Envelope
-	return c.rollbackToTarget(current, target.Release, app)
+	return c.rollbackToTarget(current, target.Release, app, startedAt)
 }
 
 func activeRelease(app, env string) (string, error) {
@@ -202,7 +200,7 @@ func activeRelease(app, env string) (string, error) {
 	return "", fmt.Errorf("active release pointer not found")
 }
 
-func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *config.AppContext) (payload rollbackPayload, err error) {
+func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *config.AppContext, startedAt time.Time) (payload rollbackPayload, err error) {
 	if app.HasStaticRoutes {
 		if err := verifyStaticRelease(c.App, c.Env, targetRelease, app.Routes); err != nil {
 			return rollbackPayload{}, err
@@ -253,40 +251,23 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 			return rollbackPayload{}, err
 		}
 	}
-	activeErr := writeActive(c.App, c.Env, activation.Pointer{
-		Version: 1, Release: targetRelease, Activation: c.ActivationID,
-		EnvelopeHash: envelope.HashLabel(c.TargetEnvelopeLabel()),
-	})
-	if activeErr != nil {
-		var published store.PublishedWriteError
-		if !errors.As(activeErr, &published) {
-			return rollbackPayload{}, activeErr
-		}
-		payload = rollbackPayload{App: c.App, Env: c.Env, Previous: current, Release: targetRelease, Processes: processNames(app.Processes), Committed: true}
-		converged, convergeErr := convergeActive(c.App, c.Env)
-		payload.StaleContainers = converged.StaleContainers
-		if convergeErr != nil {
-			return payload, committedDegradedError{Err: fmt.Errorf("active pointer published but durability is degraded: %v; convergence failed: %w", activeErr, convergeErr)}
-		}
-		return payload, committedDegradedError{Err: fmt.Errorf("active pointer published but durability is degraded: %w", activeErr)}
-	}
 	payload = rollbackPayload{
 		App:       c.App,
 		Env:       c.Env,
 		Previous:  current,
 		Release:   targetRelease,
 		Processes: processNames(app.Processes),
-		Committed: true,
 	}
-	converged, err := convergeActive(c.App, c.Env)
-	payload.StaleContainers = converged.StaleContainers
-	if err != nil {
-		return payload, err
-	}
-	if err := refreshPreviewShip(c.App, c.Env, time.Now().UTC()); err != nil {
-		return payload, committedDegradedError{Err: fmt.Errorf("activation converged but preview metadata refresh failed: %w", err)}
-	}
-	return payload, nil
+	payload.Committed, err = commitAndConverge(c.App, c.Env, activation.Pointer{
+		Version: 1, Release: targetRelease, Activation: c.ActivationID,
+		EnvelopeHash: envelope.HashLabel(c.TargetEnvelopeLabel()),
+	}, func(stale []string) {
+		payload.StaleContainers = uniqueContainerNames(stale)
+	}, func() error {
+		c.recordRollbackSuccess(payload, startedAt)
+		return nil
+	})
+	return payload, err
 }
 
 func (c appRollbackCmd) TargetEnvelopeLabel() string {
@@ -458,10 +439,6 @@ func selectRollbackRelease(images []imageRelease, current, requested string) (im
 	return imageRelease{}, fmt.Errorf("no previous release available locally")
 }
 
-func availableRollbackReleases(app, env, requested string) ([]imageRelease, error) {
-	return availableRollbackReleasesWithImages(app, env, requested, nil)
-}
-
 func availableRollbackReleasesWithImages(app, env, requested string, images []imageRelease) ([]imageRelease, error) {
 	if requested != "" && images == nil {
 		staticTarget := false
@@ -573,24 +550,18 @@ func releaseSnapshots(app, env string) ([]imageRelease, bool, error) {
 	if err != nil {
 		return nil, torn, err
 	}
-	seen := map[string]bool{}
-	var out []imageRelease
-	for i := len(entries) - 1; i >= 0; i-- {
-		entry := entries[i]
-		if entry.Outcome != "deployed" && entry.Outcome != "rolled_back" {
-			continue
-		}
-		release := entry.AttemptedRelease
-		if release == "" || seen[release] {
-			continue
-		}
-		if err := validateRelease(release); err != nil {
-			continue
-		}
-		seen[release] = true
-		out = append(out, imageRelease{Release: release, Image: identity.ImageTag(app, env, release)})
+	history, historyErr := releaseDeployHistory(entries, nil)
+	if historyErr != nil {
+		return nil, torn, historyErr
 	}
-	if len(out) == 0 {
+	if pointer, pointerErr := readActive(app, env); pointerErr == nil {
+		history = retainedReleaseHistory(env, pointer.Release, history)
+	}
+	out := make([]imageRelease, 0, len(history))
+	for _, record := range history {
+		out = append(out, imageRelease{Release: record.Release, Image: identity.ImageTag(app, env, record.Release)})
+	}
+	if len(history) == 0 {
 		return nil, torn, noDeployJournalError(app, env)
 	}
 	return out, torn, nil
@@ -608,7 +579,7 @@ func verifyReleaseArtifactsWithImages(app, env, release string, ctx *config.AppC
 	return nil
 }
 
-func loadAppliedAppContext(app, env string) (*config.AppContext, func(), error) {
+func loadActiveEnvelopeContext(app, env string) (*config.AppContext, func(), error) {
 	pointer, err := readActive(app, env)
 	if err != nil {
 		return nil, func() {}, fmt.Errorf("active pointer not found; deploy once before rollback")
@@ -622,17 +593,6 @@ func loadAppliedAppContext(app, env string) (*config.AppContext, func(), error) 
 		return nil, func() {}, fmt.Errorf("active release envelope hash does not match active.json")
 	}
 	return loadAppContextFromEnvelope(app, env, pointer.Release, e, "active release envelope is missing")
-}
-
-func loadReleaseAppContext(app, env, release string) (*config.AppContext, func(), error) {
-	if err := validateRelease(release); err != nil {
-		return nil, func() {}, err
-	}
-	e, err := envelopeForRelease(app, env, release)
-	if err != nil {
-		return nil, func() {}, err
-	}
-	return loadAppContextFromEnvelope(app, env, release, e, "release envelope is missing")
 }
 
 func envelopeForRelease(app, env, release string) (envelope.Envelope, error) {
@@ -682,7 +642,7 @@ func loadAppContextFromEnvelope(app, env, release string, e envelope.Envelope, m
 	}
 	if ctx.AppName != app {
 		cleanup()
-		return nil, func() {}, fmt.Errorf("applied manifest names app %s, expected %s", ctx.AppName, app)
+		return nil, func() {}, fmt.Errorf("activation envelope names app %s, expected %s", ctx.AppName, app)
 	}
 	return ctx, cleanup, nil
 }

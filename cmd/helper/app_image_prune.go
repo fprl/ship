@@ -16,9 +16,8 @@ const (
 )
 
 type releaseDeployRecord struct {
-	Release    string
-	DeployedAt time.Time
-	Sequence   int
+	Release  string
+	Sequence int
 }
 
 func releaseImageKeepLimit(env string) int {
@@ -45,56 +44,44 @@ func releaseDeployHistory(entries []deployJournalEntry, current *deployJournalEn
 	if current != nil {
 		all = append(all, *current)
 	}
-	byRelease := map[string]releaseDeployRecord{}
-	for i, entry := range all {
+	seen := map[string]bool{}
+	var history []releaseDeployRecord
+	for i := len(all) - 1; i >= 0; i-- {
+		entry := all[i]
 		if (entry.Outcome != "deployed" && entry.Outcome != "rolled_back") || entry.AttemptedRelease == "" {
 			continue
 		}
 		if err := validateRelease(entry.AttemptedRelease); err != nil {
 			return nil, err
 		}
-		at, err := journalDeployTime(entry)
-		if err != nil {
-			return nil, err
+		if seen[entry.AttemptedRelease] {
+			continue
 		}
-		record := releaseDeployRecord{Release: entry.AttemptedRelease, DeployedAt: at, Sequence: i}
-		if existing, ok := byRelease[record.Release]; !ok || deployRecordAfter(record, existing) {
-			byRelease[record.Release] = record
-		}
+		seen[entry.AttemptedRelease] = true
+		history = append(history, releaseDeployRecord{Release: entry.AttemptedRelease, Sequence: i})
 	}
-	history := make([]releaseDeployRecord, 0, len(byRelease))
-	for _, record := range byRelease {
-		history = append(history, record)
-	}
-	sort.Slice(history, func(i, j int) bool {
-		return deployRecordAfter(history[i], history[j])
-	})
 	return history, nil
 }
 
-func journalDeployTime(entry deployJournalEntry) (time.Time, error) {
-	value := entry.EndedAt
-	if value == "" {
-		value = entry.StartedAt
+func retainedReleaseHistory(env, active string, history []releaseDeployRecord) []releaseDeployRecord {
+	retained := make([]releaseDeployRecord, 0, releaseImageKeepLimit(env)+1)
+	for _, record := range history {
+		if record.Release == active {
+			retained = append(retained, record)
+		}
 	}
-	if value == "" {
-		return time.Time{}, fmt.Errorf("deploy journal entry for release %s has no timestamp", entry.AttemptedRelease)
+	kept := 0
+	for _, record := range history {
+		if record.Release == active {
+			continue
+		}
+		if kept == releaseImageKeepLimit(env) {
+			break
+		}
+		retained = append(retained, record)
+		kept++
 	}
-	at, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("deploy journal entry for release %s has invalid timestamp %q: %v", entry.AttemptedRelease, value, err)
-	}
-	return at, nil
-}
-
-func deployRecordAfter(a, b releaseDeployRecord) bool {
-	if !a.DeployedAt.Equal(b.DeployedAt) {
-		return a.DeployedAt.After(b.DeployedAt)
-	}
-	if a.Sequence != b.Sequence {
-		return a.Sequence > b.Sequence
-	}
-	return a.Release > b.Release
+	return retained
 }
 
 func pruneReleaseImages(images []imageRelease, keep map[string]bool) (int, error) {

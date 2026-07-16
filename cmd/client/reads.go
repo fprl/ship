@@ -220,13 +220,6 @@ func whyRemediation(entry whyJournalEntry) string {
 			return "fix the release command in ship.toml, then ship"
 		}
 		return "ship"
-	case "aborted_release":
-		if entry.FailingStep == "release" {
-			return "fix the release command in ship.toml, then ship"
-		}
-		return "ship"
-	case "aborted_probe":
-		return "fix the process port or probe path in ship.toml, then ship"
 	default:
 		return "ship"
 	}
@@ -239,27 +232,18 @@ func probableCause(entry whyJournalEntry) string {
 		case "build":
 			return "image build failed."
 		case "probe":
+			if entry.Probe != nil && entry.Probe.Status != 0 {
+				if entry.Probe.BodySnippet != "" {
+					return fmt.Sprintf("probe returned HTTP %d with body: %s", entry.Probe.Status, singleLineSnippet(entry.Probe.BodySnippet))
+				}
+				return fmt.Sprintf("probe returned HTTP %d.", entry.Probe.Status)
+			}
 			return "the new container did not pass its health probe."
 		case "release":
 			return "release command exited non-zero before traffic switched."
 		default:
 			return "deploy failed before traffic switched."
 		}
-	case "aborted_build":
-		return "image build failed."
-	case "aborted_probe":
-		if entry.Probe != nil && entry.Probe.Status != 0 {
-			if entry.Probe.BodySnippet != "" {
-				return fmt.Sprintf("probe returned HTTP %d with body: %s", entry.Probe.Status, singleLineSnippet(entry.Probe.BodySnippet))
-			}
-			return fmt.Sprintf("probe returned HTTP %d.", entry.Probe.Status)
-		}
-		return "the new container did not pass its health probe."
-	case "aborted_release":
-		if entry.FailingStep == "release" {
-			return "release command exited non-zero before traffic switched."
-		}
-		return "deploy failed before traffic switched."
 	default:
 		return "latest journal entry did not record a known failure pattern."
 	}
@@ -269,7 +253,7 @@ func trafficImpact(entry whyJournalEntry) string {
 	if entry.PreviousRelease == "" {
 		return "no previous release was serving, so no old traffic was available."
 	}
-	if entry.Outcome == "aborted_probe" || entry.Outcome == "failed" && entry.FailingStep == "probe" {
+	if entry.Outcome == "failed" && entry.FailingStep == "probe" {
 		return fmt.Sprintf("old release %s kept serving; failed probes never receive traffic with the current engine.", entry.PreviousRelease)
 	}
 	return fmt.Sprintf("old release %s kept serving; no traffic was switched.", entry.PreviousRelease)

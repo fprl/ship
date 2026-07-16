@@ -385,7 +385,7 @@ func (e *smokeEnv) testWebhookEvents(t *testing.T) {
 	aborted := sink.waitForEvent(t, webhookEventDeployAborted)
 	assertWebhookSmokeField(t, aborted, "_sink_path", "/app-one")
 	assertWebhookSmokeField(t, aborted, "release", failedRelease)
-	assertWebhookSmokeNested(t, aborted, "why.outcome", "aborted_release")
+	assertWebhookSmokeNested(t, aborted, "why.outcome", "failed")
 	assertContains(t, webhookSmokeNestedString(t, aborted, "why.stderr_tail"), "fake release command failed")
 	assertWebhookSmokeNested(t, aborted, "remediation.command", "ship")
 	assertWebhookSmokeNested(t, aborted, "remediation.journal.failing_step", "release")
@@ -810,7 +810,7 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	}
 
 	why := e.ship(t, app, nil, "why")
-	assertContains(t, why, "Deploy aborted for Production main")
+	assertContains(t, why, "Deploy failed for Production main")
 	assertContains(t, why, "failing step: release")
 	assertContains(t, why, "probable cause: release command exited non-zero before traffic switched.")
 	assertContains(t, why, "fake release command failed")
@@ -824,7 +824,7 @@ func (e *smokeEnv) testReleaseCommandFailure(t *testing.T) {
 	if err := json.Unmarshal([]byte(rawWhyJSON), &whyJSON); err != nil {
 		t.Fatalf("why --json output not parseable as JSON: %v\nraw:\n%s", err, rawWhyJSON)
 	}
-	if whyJSON.Outcome != "aborted_release" || whyJSON.FailingStep != "release" || whyJSON.AttemptedRelease != failedRelease {
+	if whyJSON.Outcome != "failed" || whyJSON.FailingStep != "release" || whyJSON.AttemptedRelease != failedRelease {
 		t.Fatalf("unexpected release failure journal entry: %+v", whyJSON)
 	}
 	if whyJSON.Identity.GitAuthor != "Smoke <smoke@example.com>" || whyJSON.Identity.SSHKeyComment != "fake-vps-smoke" {
@@ -879,7 +879,7 @@ func (e *smokeEnv) testProbeFailureWhy(t *testing.T) {
 	e.dockerExec(t, "test ! -e /run/fake-podman/containers/"+identity.ContainerName("probefail", productionEnv, "web", failedRelease)+".labels")
 
 	why := e.ship(t, app, nil, "why")
-	assertContains(t, why, "Deploy aborted for Production main")
+	assertContains(t, why, "Deploy failed for Production main")
 	assertContains(t, why, "failing step: probe")
 	assertContains(t, why, "probable cause: probe returned HTTP 502")
 	assertContains(t, why, "HTTP status 502: upstream ")
@@ -893,7 +893,7 @@ func (e *smokeEnv) testProbeFailureWhy(t *testing.T) {
 	if err := json.Unmarshal([]byte(rawWhyJSON), &whyJSON); err != nil {
 		t.Fatalf("why --json output not parseable as JSON: %v\nraw:\n%s", err, rawWhyJSON)
 	}
-	if whyJSON.Outcome != "aborted_probe" || whyJSON.FailingStep != "probe" || whyJSON.AttemptedRelease != failedRelease {
+	if whyJSON.Outcome != "failed" || whyJSON.FailingStep != "probe" || whyJSON.AttemptedRelease != failedRelease {
 		t.Fatalf("unexpected probe failure journal entry: %+v", whyJSON)
 	}
 	if whyJSON.Probe == nil || whyJSON.Probe.Status != 502 {

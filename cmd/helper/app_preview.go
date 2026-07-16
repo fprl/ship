@@ -288,7 +288,7 @@ func (o previewHostOwner) String() string {
 	return fmt.Sprintf("%s (%s) %s", o.App, o.Env, o.Kind)
 }
 
-// previewAliasForContext derives alias state from the applied manifest and
+// previewAliasForContext derives alias state from the active release envelope and
 // identity instead of persisting a second copy of it. The canonical host in
 // the route overlay supplies the sslip fallback base when [preview].base is
 // omitted.
@@ -329,7 +329,7 @@ func previewAliasOwner(host, currentApp, currentEnv string, incoming map[string]
 		if item.App == currentApp && item.Env == currentEnv {
 			continue
 		}
-		manifest, cleanup, err := loadAppliedAppContext(item.App, item.Env)
+		ctx, cleanup, err := loadActiveEnvelopeContext(item.App, item.Env)
 		if os.IsNotExist(err) {
 			continue
 		}
@@ -337,7 +337,7 @@ func previewAliasOwner(host, currentApp, currentEnv string, incoming map[string]
 			return previewHostOwner{}, false, fmt.Errorf("read active release for %s (%s): %w", item.App, item.Env, err)
 		}
 		defer cleanup()
-		for _, route := range manifest.Routes {
+		for _, route := range ctx.Routes {
 			if route.Host == host {
 				return previewHostOwner{App: item.App, Env: item.Env, Kind: "route"}, true, nil
 			}

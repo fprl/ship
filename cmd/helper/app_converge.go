@@ -16,9 +16,13 @@ const convergenceNextStep = "ship converge"
 
 type convergeResult struct {
 	StaleContainers []string
-	Degraded        bool
 	Changed         bool
 }
+
+type activePointerReadError struct{ Err error }
+
+func (e *activePointerReadError) Error() string { return e.Err.Error() }
+func (e *activePointerReadError) Unwrap() error { return e.Err }
 
 type convergeError struct {
 	Step string
@@ -70,6 +74,10 @@ func (c appConvergeCmd) Run() error {
 		if errcat.Is(runErr, errcat.CodeNoDeploys) {
 			utils.DieError(runErr, 1)
 		}
+		var pointerErr *activePointerReadError
+		if errors.As(runErr, &pointerErr) {
+			utils.DieError(runErr, 1)
+		}
 		utils.DieError(fmt.Errorf("committed but not converged; %s: %w", convergenceNextStep, runErr), 1)
 	}
 	return nil
@@ -81,15 +89,16 @@ func (c appConvergeCmd) runLocked() (appConvergeSummary, error) {
 	if pointer, err := readActive(c.App, c.Env); err == nil {
 		summary.Release = pointer.Release
 	} else {
-		summary.Error = err.Error()
 		if os.IsNotExist(err) {
 			err = fmt.Errorf("nothing deployed yet: %w", noDeployJournalError(c.App, c.Env))
 			summary.Error = err.Error()
 			summary.Outcome = "no_deploys"
 			return summary, err
 		}
-		summary.Outcome = "failed"
-		return summary, errors.Join(err, c.appendJournal(startedAt, summary, err))
+		err = &activePointerReadError{Err: fmt.Errorf("cannot determine committed state: read active.json: %w", err)}
+		summary.Error = err.Error()
+		summary.Outcome = "active_pointer_unreadable"
+		return summary, err
 	}
 	result, err := convergeActiveForCommand(c.App, c.Env)
 	summary.StaleContainers = result.StaleContainers
@@ -144,7 +153,7 @@ func convergeActive(app, env string) (convergeResult, error) {
 	if err != nil {
 		return convergeResult{}, err
 	}
-	ctx, cleanup, err := loadAppliedAppContext(app, env)
+	ctx, cleanup, err := loadActiveEnvelopeContext(app, env)
 	if err != nil {
 		return convergeResult{}, err
 	}
@@ -284,18 +293,6 @@ func containsName(names []string, wanted string) bool {
 	return false
 }
 
-func runningProcessContainer(entries []containerEntry, process, release string) string {
-	for _, entry := range entries {
-		if entry.Labels["ship.process"] != process || entry.Labels["ship.release"] != release || entry.State != "running" {
-			continue
-		}
-		if len(entry.Names) > 0 {
-			return entry.Names[0]
-		}
-	}
-	return ""
-}
-
 func runningExactProcessContainers(entries []containerEntry, process, release, activationID string) []string {
 	var names []string
 	for _, entry := range entries {
@@ -304,10 +301,6 @@ func runningExactProcessContainers(entries []containerEntry, process, release, a
 		}
 	}
 	return uniqueContainerNames(names)
-}
-
-func runningProcessContainers(entries []containerEntry, process, release string) []string {
-	return runningProcessContainersForActivation(entries, process, release, "")
 }
 
 func runningProcessContainersForActivation(entries []containerEntry, process, release, activationID string) []string {

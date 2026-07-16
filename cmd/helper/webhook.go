@@ -187,7 +187,7 @@ func webhookApprovalRequested(request store.ApprovalRequest, now time.Time) {
 	env := strings.TrimSpace(request.Target.Env)
 	var ctx *config.AppContext
 	if app != "" && env != "" {
-		loaded, cleanup, err := loadAppliedAppContext(app, env)
+		loaded, cleanup, err := loadActiveEnvelopeContext(app, env)
 		if err == nil {
 			ctx = loaded
 			defer cleanup()
@@ -261,8 +261,8 @@ func latestSuccessfulRelease(app, env string) string {
 	return entry.AttemptedRelease
 }
 
-func isAbortedJournalOutcome(outcome string) bool {
-	return outcome == "failed" || strings.HasPrefix(outcome, "aborted_")
+func isFailedJournalOutcome(outcome string) bool {
+	return outcome == "failed"
 }
 
 func postWebhook(url string, payload webhookPayload) {

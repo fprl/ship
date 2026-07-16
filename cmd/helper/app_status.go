@@ -576,7 +576,7 @@ func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 	}
 	url := ""
 	capabilityURL := ""
-	if ctx, cleanup, err := loadAppliedAppContext(item.App, item.Env); err == nil {
+	if ctx, cleanup, err := loadActiveEnvelopeContext(item.App, item.Env); err == nil {
 		defer cleanup()
 		url = execDeploymentURL(ctx)
 		if class == "preview" && url != "" {
@@ -714,7 +714,7 @@ func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 const committedNotConvergedState = "committed, not converged"
 
 func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, processes []processStatus, static *staticStatus) bool {
-	ctx, cleanup, err := loadAppliedAppContext(app, env)
+	ctx, cleanup, err := loadActiveEnvelopeContext(app, env)
 	if err != nil {
 		return false
 	}

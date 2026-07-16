@@ -32,7 +32,7 @@ func attachPreviewProtection(appName, env string, app *config.AppContext) error 
 }
 
 func rerenderPreviewCapabilityLocked(appName, env string) error {
-	app, cleanup, err := loadAppliedAppContext(appName, env)
+	app, cleanup, err := loadActiveEnvelopeContext(appName, env)
 	if err != nil {
 		return err
 	}

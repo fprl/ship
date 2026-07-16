@@ -122,7 +122,7 @@ func ptrTime(t time.Time) *time.Time {
 	return &t
 }
 
-func TestCaddyStageActionErrorReportsReloadRestoreFailure(t *testing.T) {
+func TestCaddyStageActionErrorReportsCommittedFragmentAndRetry(t *testing.T) {
 	path := "/etc/caddy/conf.d/api.production.caddy"
 	for _, action := range []string{"deploy", "after rollback", "after restore", "after destroy"} {
 		t.Run(action, func(t *testing.T) {
@@ -145,8 +145,10 @@ func TestCaddyStageActionErrorReportsReloadRestoreFailure(t *testing.T) {
 			if !strings.Contains(restored.Error(), "invalid config") {
 				t.Fatalf("validate restore success error = %q", restored)
 			}
-			if !strings.Contains(restored.Error(), "restored previous") {
-				t.Fatalf("validate restore success error = %q, want restored previous wording", restored)
+			for _, want := range []string{"kept committed fragment", "converge will retry the reload"} {
+				if !strings.Contains(restored.Error(), want) {
+					t.Fatalf("validate error = %q, want %q", restored, want)
+				}
 			}
 
 			failed := caddyStageActionError(caddyReloadStageError{Stage: "validate", Err: errors.New("invalid config"), RestoreErr: errors.New("restore failed")}, action, path)
@@ -196,7 +198,7 @@ func TestRecordDeployFailureKeepsProbeErrorWhenJournalAppendFails(t *testing.T) 
 func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *testing.T) {
 	setupJournalHostTest(t)
 	previous := deployJournalEntry{
-		Outcome:          "aborted_probe",
+		Outcome:          "failed",
 		StartedAt:        "2026-07-14T09:59:00Z",
 		EndedAt:          "2026-07-14T09:59:01Z",
 		AttemptedRelease: "old111",
@@ -234,7 +236,7 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Outcome != "aborted_probe" {
+	if len(entries) != 1 || entries[0].Outcome != "failed" {
 		t.Fatalf("journal entries = %+v, want only prior failure", entries)
 	}
 	if len(sink.bodies) != 0 {

@@ -2,14 +2,9 @@ package helper
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fprl/ship/internal/config"
-	"github.com/fprl/ship/internal/identity"
 )
 
 func TestCurrentReleaseRejectsEmptyOrMixedProcesses(t *testing.T) {
@@ -49,48 +44,34 @@ func TestSelectRollbackReleaseErrors(t *testing.T) {
 	}
 }
 
-func TestRollbackHistoryTearRefusesAutomaticSelectionButAllowsExplicitEnvelope(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0755); err != nil {
-		t.Fatal(err)
+func TestGCKeepSetCoversRollbackCandidatesInJournalOrder(t *testing.T) {
+	entries := []deployJournalEntry{
+		{Outcome: "deployed", AttemptedRelease: "aaa1111", EndedAt: "2099-01-03T00:00:00Z"},
+		{Outcome: "deployed", AttemptedRelease: "ccc3333", EndedAt: "2000-01-01T00:00:00Z"},
+		{Outcome: "rolled_back", AttemptedRelease: "bbb2222", EndedAt: "2000-01-02T00:00:00Z"},
 	}
-	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	release := "abc1234"
-	manifest := []byte("name = \"api\"\nbox = \"example.com\"\n\n[routes]\n\"example.com\" = { static = \"dist\" }\n")
-	meta, err := newReleaseMetadata(release, false, release, "2026-07-14T10:00:00Z")
+	history, err := releaseDeployHistory(entries, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, _, err := releaseEnvelope(manifest, meta)
-	if err != nil {
-		t.Fatal(err)
+	if got := history[0].Release; got != "bbb2222" {
+		t.Fatalf("journal order = %q, want newest journal release", got)
 	}
-	releaseDir := filepath.Join(identity.StaticDir("api", "production"), "releases", release)
-	if err := os.MkdirAll(filepath.Join(releaseDir, config.RouteStorageName("example.com")), 0755); err != nil {
-		t.Fatal(err)
+	candidates := retainedReleaseHistory("preview", "ccc3333", history)
+	keep := map[string]bool{"ccc3333": true}
+	for _, record := range history {
+		if record.Release == "ccc3333" {
+			continue
+		}
+		if len(keep) == releaseImageKeepLimit("preview")+1 {
+			break
+		}
+		keep[record.Release] = true
 	}
-	if err := writeStaticReleaseEnvelope("api", "production", release, e); err != nil {
-		t.Fatal(err)
-	}
-	if err := appendDeployJournalEntry("api", "production", deployJournalEntry{Outcome: "deployed", AttemptedRelease: release}, nil); err != nil {
-		t.Fatal(err)
-	}
-	journalPath := identity.DeployJournalFile("api", "production")
-	file, err := os.OpenFile(journalPath, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = file.WriteString(`{"outcome":"deployed"}`)
-	_ = file.Close()
-	if _, err := availableRollbackReleases("api", "production", ""); err == nil || err.Error() != "history incomplete; pass an explicit release" {
-		t.Fatalf("automatic rollback error = %v", err)
-	}
-	got, err := availableRollbackReleases("api", "production", release)
-	if err != nil || len(got) != 1 || got[0].Release != release {
-		t.Fatalf("explicit candidates = %+v, err=%v", got, err)
+	for _, candidate := range candidates {
+		if !keep[candidate.Release] {
+			t.Fatalf("rollback candidate %q is absent from GC keep-set: keep=%v candidates=%v", candidate.Release, keep, candidates)
+		}
 	}
 }
 

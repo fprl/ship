@@ -74,7 +74,6 @@ type deployJournalEntry struct {
 	Activation       string         `json:"activation,omitempty"`
 	FailingStep      string         `json:"failing_step"`
 	StderrTail       string         `json:"stderr_tail"`
-	ImagePrune       string         `json:"image_prune,omitempty"`
 	GC               string         `json:"gc,omitempty"`
 	Identity         deployIdentity `json:"identity"`
 	Member           *journalMember `json:"member,omitempty"`
@@ -248,7 +247,7 @@ func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease strin
 		SchemaVersion:    deployJournalSchemaVersion,
 		App:              app,
 		Env:              env,
-		Outcome:          outcomeForFailingStep(step),
+		Outcome:          "failed",
 		StartedAt:        startedAt.Format(time.RFC3339Nano),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
 		PreviousRelease:  previousRelease,
@@ -259,10 +258,6 @@ func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease strin
 		Member:           currentServerMemberForJournal(),
 		Probe:            probe,
 	}, scrubValues
-}
-
-func outcomeForFailingStep(step string) string {
-	return "failed"
 }
 
 func commandErrorTail(err error) string {

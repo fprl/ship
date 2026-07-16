@@ -162,41 +162,6 @@ exit 0
 	}
 }
 
-func TestGCSkipsEnvOnHistoryParseError(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	t.Setenv("SHIP_LOCK_DIR", filepath.Join(root, "locks"))
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0755); err != nil {
-		t.Fatal(err)
-	}
-	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: "abcdef1", Activation: "abcdef1-a1b2", EnvelopeHash: strings.Repeat("a", 64)}); err != nil {
-		t.Fatal(err)
-	}
-	oldDir := filepath.Join(identity.StaticDir("api", "production"), "releases", "bad1111")
-	if err := os.MkdirAll(oldDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := appendDeployJournalEntry("api", "production", deployJournalEntry{
-		Outcome: "deployed", StartedAt: "2026-07-16T10:00:00Z", EndedAt: "not-a-time", AttemptedRelease: "bad1111",
-	}, nil); err != nil {
-		t.Fatal(err)
-	}
-	summary, err := gcEnv("api", "production")
-	if err == nil || len(summary.Failures) == 0 || len(summary.Removed) != 0 {
-		t.Fatalf("history parse GC summary=%+v err=%v", summary, err)
-	}
-	if _, statErr := os.Stat(oldDir); statErr != nil {
-		t.Fatalf("history uncertainty removed static release: %v", statErr)
-	}
-	entries, readErr := readDeployJournalEntries("api", "production")
-	if readErr != nil || len(entries) != 1 {
-		t.Fatalf("history parse should not append GC journal: entries=%+v err=%v", entries, readErr)
-	}
-}
-
 func TestGCSkipsEnvOnTornJournal(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))

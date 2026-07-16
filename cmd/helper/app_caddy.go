@@ -418,7 +418,7 @@ func caddyStageActionError(err error, action string, caddyPath string) error {
 	if caddyErr.RestoreErr != nil {
 		return fmt.Errorf("caddy %s (%s) failed AND fragment restore failed (manual fix required at %s): %v (restore: %v)", caddyErr.Stage, action, caddyPath, caddyErr.Err, caddyErr.RestoreErr)
 	}
-	return fmt.Errorf("caddy %s (%s) failed, restored previous fragment: %v", caddyErr.Stage, action, caddyErr.Err)
+	return fmt.Errorf("caddy %s (%s) failed, kept committed fragment; converge will retry the reload: %v", caddyErr.Stage, action, caddyErr.Err)
 }
 
 // reloadCaddyOrRestore serializes on a box-wide lock: validate and

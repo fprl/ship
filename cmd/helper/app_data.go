@@ -518,7 +518,7 @@ func sweepDataSnapshotStaging(app, env string) error {
 }
 
 func currentDataRelease(app, env string) (string, error) {
-	ctx, cleanup, err := loadAppliedAppContext(app, env)
+	ctx, cleanup, err := loadActiveEnvelopeContext(app, env)
 	if err != nil {
 		return "", err
 	}

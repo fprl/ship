@@ -20,7 +20,7 @@ func TestWebhookDeployAbortedPayloadCarriesScrubbedJournalAndRemediation(t *test
 	sink := newWebhookTestSink(t)
 	now := time.Date(2026, 7, 7, 10, 1, 2, 0, time.UTC)
 	entry := sanitizeDeployJournalEntry("api", productionEnvName, deployJournalEntry{
-		Outcome:          "aborted_release",
+		Outcome:          "failed",
 		StartedAt:        "2026-07-07T10:00:00Z",
 		EndedAt:          "2026-07-07T10:00:01Z",
 		PreviousRelease:  "aaa111bbb222",
@@ -38,7 +38,7 @@ func TestWebhookDeployAbortedPayloadCarriesScrubbedJournalAndRemediation(t *test
 	assertWebhookField(t, payload, "release", "ccc333ddd444")
 	assertWebhookNestedField(t, payload, "why", "stderr_tail", "release failed with [redacted]")
 	assertWebhookNestedField(t, payload, "remediation", "command", "ship")
-	assertWebhookNestedField(t, payload, "remediation", "journal.outcome", "aborted_release")
+	assertWebhookNestedField(t, payload, "remediation", "journal.outcome", "failed")
 	assertWebhookDoesNotContain(t, payload, "webhook-secret-token")
 	t.Logf("deploy_aborted payload:\n%s", prettyWebhookJSON(t, payload))
 }
@@ -49,7 +49,7 @@ func TestWebhookDeployRecoveredPayloadCarriesPreviousFailure(t *testing.T) {
 	sink := newWebhookTestSink(t)
 	now := time.Date(2026, 7, 7, 10, 2, 3, 0, time.UTC)
 	previous := sanitizeDeployJournalEntry("api", productionEnvName, deployJournalEntry{
-		Outcome:          "aborted_probe",
+		Outcome:          "failed",
 		StartedAt:        "2026-07-07T10:00:00Z",
 		EndedAt:          "2026-07-07T10:00:01Z",
 		PreviousRelease:  "aaa111bbb222",
@@ -71,7 +71,7 @@ func TestWebhookDeployRecoveredPayloadCarriesPreviousFailure(t *testing.T) {
 
 	payload := sink.singlePayload(t)
 	assertWebhookField(t, payload, "event", webhookEventDeployRecovered)
-	assertWebhookNestedField(t, payload, "why", "previous_failure.outcome", "aborted_probe")
+	assertWebhookNestedField(t, payload, "why", "previous_failure.outcome", "failed")
 	assertWebhookNestedField(t, payload, "why", "current.outcome", "deployed")
 	assertWebhookNestedField(t, payload, "remediation", "command", "ship status")
 	assertWebhookNestedField(t, payload, "remediation", "previous_failure.attempted_release", "bad333bad333")

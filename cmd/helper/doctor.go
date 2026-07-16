@@ -48,8 +48,8 @@ const (
 	doctorCheckBoxUpdate      = "box_update"
 	doctorCheckHardeningDrift = "hardening_drift"
 
-	reaperTimerUnit = "ship-preview-reaper.timer"
-	doctorTimerUnit = "ship-doctor.timer"
+	reaperTimerUnit  = "ship-preview-reaper.timer"
+	doctorTimerUnit  = "ship-doctor.timer"
 	bootConvergeUnit = "ship-boot-converge.service"
 	gcTimerUnitName  = "ship-gc.timer"
 )
@@ -707,12 +707,12 @@ func routedTLSCertStatuses(now time.Time) ([]tlsCertStatus, error) {
 	}
 	hosts := map[string]bool{}
 	for _, app := range apps {
-		manifest, cleanup, err := loadAppliedAppContext(app.App, app.Env)
+		ctx, cleanup, err := loadActiveEnvelopeContext(app.App, app.Env)
 		if err != nil {
 			return nil, fmt.Errorf("%s/%s active release: %v", app.App, app.Env, err)
 		}
 		defer cleanup()
-		for _, route := range manifest.Routes {
+		for _, route := range ctx.Routes {
 			if route.Host == "" || normalizeTLS(route.TLS) == "internal" || deployedRouteUsesInternalTLS(app.App, app.Env, route.Host) {
 				continue
 			}

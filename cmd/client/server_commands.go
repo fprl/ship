@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/fprl/ship/internal/utils"
-	"github.com/fprl/ship/internal/version"
 )
 
 func serverCommand(args ...string) string {
@@ -72,7 +71,6 @@ func serverAppApplyCommand(appName string, envName string, tarballPath string, m
 		args = append(args, "--dirty")
 	}
 	args = append(args,
-		"--client-version", version.Version,
 		"--tarball", tarballPath,
 		"--manifest", manifestPath,
 		"--sha", plan.Release,

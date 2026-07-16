@@ -15,7 +15,6 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
-	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -42,7 +41,6 @@ type appApplyCmd struct {
 	PreviewAlias  string            `name:"preview-alias" hidden:"" help:"Preview branch alias host derived by the client."`
 	SSHKeyComment string            `name:"ssh-key-comment" help:"SSH public key comment for the deploying key."`
 	GitAuthor     string            `name:"git-author" help:"Git author configured by the deploying client."`
-	ClientVersion string            `name:"client-version" hidden:"" help:"Client version contacting the helper."`
 	ActivationID  string            `kong:"-"`
 	Envelope      envelope.Envelope `kong:"-"`
 	EnvelopeLabel string            `kong:"-"`
@@ -101,7 +99,7 @@ func (c appApplyCmd) recordDeployFailure(app *config.AppContext, previousRelease
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
 	}
-	if app != nil && isAbortedJournalOutcome(entry.Outcome) {
+	if app != nil && isFailedJournalOutcome(entry.Outcome) {
 		webhookDeployAborted(app.Webhook, app, entry, time.Now().UTC())
 	}
 	return err
@@ -205,33 +203,15 @@ func (c appApplyCmd) runLockedE() (err error) {
 	if err := c.prepareCaddy(app, result); err != nil {
 		return err
 	}
-	activeErr := writeActive(c.App, c.Env, activation.Pointer{
+	committed, err = commitAndConverge(c.App, c.Env, activation.Pointer{
 		Version: 1, Release: c.SHA, Activation: c.ActivationID,
 		EnvelopeHash: envelope.HashLabel(c.EnvelopeLabel),
+	}, func(stale []string) {
+		result.containersToRemove = uniqueContainerNames(append(result.containersToRemove, stale...))
+	}, func() error {
+		return c.completeCommittedDeploy(app, previousRelease, startedAt, result)
 	})
-	if activeErr != nil {
-		var published store.PublishedWriteError
-		if !errors.As(activeErr, &published) {
-			return activeErr
-		}
-		committed = true
-		converged, convergeErr := convergeActive(c.App, c.Env)
-		result.containersToRemove = uniqueContainerNames(append(result.containersToRemove, converged.StaleContainers...))
-		if convergeErr != nil {
-			return committedDegradedError{Err: fmt.Errorf("active pointer published but durability is degraded: %v; convergence failed: %w", activeErr, convergeErr)}
-		}
-		return committedDegradedError{Err: fmt.Errorf("active pointer published but durability is degraded: %w", activeErr)}
-	}
-	committed = true
-	converged, err := convergeActive(c.App, c.Env)
-	result.containersToRemove = uniqueContainerNames(append(result.containersToRemove, converged.StaleContainers...))
-	if err != nil {
-		return err
-	}
-	if err := refreshPreviewShip(c.App, c.Env, time.Now().UTC()); err != nil {
-		return committedDegradedError{Err: fmt.Errorf("activation converged but preview metadata refresh failed: %w", err)}
-	}
-	return c.completeCommittedDeploy(app, previousRelease, startedAt, result)
+	return err
 }
 
 type committedDegradedError struct{ Err error }
@@ -290,7 +270,7 @@ func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRel
 	}
 	removeContainers(result.containersToRemove)
 	bestEffortGCAfterLifecycle(c.App, c.Env)
-	if previousJournalErr == nil && isAbortedJournalOutcome(previousJournal.Outcome) {
+	if previousJournalErr == nil && isFailedJournalOutcome(previousJournal.Outcome) {
 		webhookDeployRecovered(app.Webhook, app, previousJournal, entry, time.Now().UTC())
 	}
 

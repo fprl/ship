@@ -372,6 +372,32 @@ func TestAppConvergeWithoutActiveReportsNoDeploys(t *testing.T) {
 	}
 }
 
+func TestAppConvergeActivePointerReadFailureIsNotJournaled(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	path := identity.ActiveFile("api", "production")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	oldAppend := appendConvergeJournal
+	t.Cleanup(func() { appendConvergeJournal = oldAppend })
+	var journaled int
+	appendConvergeJournal = func(string, string, deployJournalEntry, []string) error {
+		journaled++
+		return nil
+	}
+	summary, err := (appConvergeCmd{App: "api", Env: "production"}).runLocked()
+	if err == nil || !strings.Contains(err.Error(), "cannot determine committed state") {
+		t.Fatalf("pointer read error = %v", err)
+	}
+	if summary.Outcome != "active_pointer_unreadable" || journaled != 0 {
+		t.Fatalf("pointer read summary=%+v journaled=%d", summary, journaled)
+	}
+}
+
 func TestStatusUsesCommittedNotConvergedWording(t *testing.T) {
 	out := renderStatusText("api", "production", nil, true, &statusRelease{Release: "new222", State: committedNotConvergedState, Next: convergenceNextStep}, nil)
 	for _, want := range []string{committedNotConvergedState, "next: " + convergenceNextStep} {
