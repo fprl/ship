@@ -22,4 +22,3 @@ func TestDoctorChecksStage5UnitEnablement(t *testing.T) {
 		t.Fatalf("missing GC check=%+v", got)
 	}
 }
-
