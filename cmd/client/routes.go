@@ -115,7 +115,7 @@ func synthesizedRouteProcess(processes map[string]config.Process) (string, error
 	}
 	return "", errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
 		"details": "manifest must declare a routed process when [routes] is empty",
-		"command": "ship",
+		"command": "add a [routes] entry or a web process to ship.toml, then ship",
 	})
 }
 
@@ -124,7 +124,7 @@ func previewCollapsedRoutes(ctx *config.AppContext, envName, base string) (map[s
 	defaultHost := defaultRouteHost(routes)
 	if defaultHost == "" {
 		synthHost := synthesizedHost(ctx.AppName, envName, base)
-		return nil, manifestInvalidError(fmt.Sprintf("preview routes cannot be collapsed because [routes] has no non-redirect default host; add a process or static route for %s", synthHost), "ship")
+		return nil, manifestInvalidError(fmt.Sprintf("preview routes cannot be collapsed because [routes] has no non-redirect default host; add a process or static route for %s", synthHost), "fix the [routes] default host in ship.toml, then ship")
 	}
 	previewHost := synthesizedHost(ctx.AppName, envName, base)
 	out := map[string]config.Route{}
@@ -138,7 +138,7 @@ func previewCollapsedRoutes(ctx *config.AppContext, envName, base string) (map[s
 		out[key] = route
 	}
 	if len(out) == 0 {
-		return nil, manifestInvalidError(fmt.Sprintf("preview routes cannot be collapsed because default host %s has only redirects", defaultHost), "ship")
+		return nil, manifestInvalidError(fmt.Sprintf("preview routes cannot be collapsed because default host %s has only redirects", defaultHost), "fix the [routes] default host in ship.toml, then ship")
 	}
 	return out, nil
 }

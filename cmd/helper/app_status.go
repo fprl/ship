@@ -737,6 +737,12 @@ func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, 
 			return false
 		}
 		ctx.PreviewCapabilityToken = string(token)
+		// The exact predicate reproduces the converge-time render, including
+		// the ownership-checked alias attach — a fragment carrying an alias
+		// this env no longer owns must read as not converged.
+		if err := addConfiguredPreviewAlias(app, env, ctx); err != nil {
+			return false
+		}
 	}
 	desiredNames := map[string]string{}
 	if ctx.NeedsImage {
@@ -778,26 +784,10 @@ func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, 
 		return false
 	}
 	expected, err := renderAppCaddyfileWithProcessNames(app, env, ctx, pointer.Release, desiredNames)
-	if err != nil {
+	if err != nil || string(fragment) != expected || !caddyReloadReceiptMatches(caddyfilePath(app, env), []byte(expected)) {
 		return false
 	}
-	// Converge renders the fragment either with or without preview alias
-	// routes (the alias is skipped when another env owns the host), so both
-	// shapes are legitimate converged states.
-	candidates := []string{expected}
-	if alias, ok := previewAliasForContext(app, env, ctx); ok {
-		if err := addPreviewAliasRoutes(app, env, alias, ctx); err == nil {
-			if aliased, err := renderAppCaddyfileWithProcessNames(app, env, ctx, pointer.Release, desiredNames); err == nil {
-				candidates = append(candidates, aliased)
-			}
-		}
-	}
-	for _, expected := range candidates {
-		if string(fragment) == expected && caddyReloadReceiptMatches(caddyfilePath(app, env), []byte(expected)) {
-			return true
-		}
-	}
-	return false
+	return true
 }
 
 func renderStatusReleaseText(release *statusRelease) string {

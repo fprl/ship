@@ -518,9 +518,11 @@ URL), `SHIP_BRANCH`, `SHIP_ENV` (`production` | `preview`),
 ## 7. Failure UX: `why` and `webhook`
 
 - The helper records a structured deploy journal per env (extend existing
-  release metadata): outcome (`deployed | aborted_build | aborted_release |
-  aborted_probe | rolled_back`), failing step (`apply | build | release |
-  probe`), captured stderr tail (last ~40 lines),
+  release metadata): outcome (`deployed | failed | committed_unconverged |
+  committed_degraded | rolled_back | converged | gc` — a pre-commit failure
+  is `failed`; after the commit ship rolls forward, never restores), failing
+  step (`apply | build | release | probe | converge | caddy`), captured
+  stderr tail (last ~40 lines),
   timestamps, release ids involved, and the deploying identity (SSH key
   comment + git author) — `ship status` and `why` show who shipped what.
 - `ship why` renders the latest entry as plain prose: what happened, the

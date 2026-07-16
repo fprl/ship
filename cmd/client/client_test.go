@@ -632,6 +632,50 @@ func TestPrepareDeployRoutesRejectsMultipleProcessesWithoutWeb(t *testing.T) {
 	if !errcat.Is(err, errcat.CodeMultiProcessNoWebRoute) {
 		t.Fatalf("expected multi-process/no-web error, got %v", err)
 	}
+	coded, ok := errcat.As(err)
+	if !ok {
+		t.Fatalf("expected coded error, got %v", err)
+	}
+	if got, want := coded.Remediation(), "name one process web, or add a [routes] host for a process, then ship"; got != want {
+		t.Fatalf("multi-process/no-web remediation = %q, want %q", got, want)
+	}
+}
+
+func TestPrepareDeployRoutesEmptyProcessesNeedsManifestEdit(t *testing.T) {
+	ctx := &config.AppContext{AppName: "api", EnvName: "production"}
+	_, err := prepareDeployRoutes(ctx, "production", deployRouteOptions{BoxIP: "203.0.113.7"})
+	if !errcat.Is(err, errcat.CodeManifestInvalid) {
+		t.Fatalf("expected manifest-invalid error, got %v", err)
+	}
+	coded, ok := errcat.As(err)
+	if !ok {
+		t.Fatalf("expected coded error, got %v", err)
+	}
+	if got, want := coded.Remediation(), "add a [routes] entry or a web process to ship.toml, then ship"; got != want {
+		t.Fatalf("empty-process remediation = %q, want %q", got, want)
+	}
+}
+
+func TestPrepareDeployRoutesPreviewWithoutDefaultHostNeedsManifestEdit(t *testing.T) {
+	ctx := &config.AppContext{
+		AppName:   "api",
+		EnvName:   "feat-x-ab12",
+		Processes: map[string]config.Process{"web": {}},
+		Routes: map[string]config.Route{
+			"old.example.com": {Host: "old.example.com", Redirect: "https://api.example.com"},
+		},
+	}
+	_, err := prepareDeployRoutes(ctx, "feat-x-ab12", deployRouteOptions{Preview: true, BoxIP: "203.0.113.7"})
+	if !errcat.Is(err, errcat.CodeManifestInvalid) {
+		t.Fatalf("expected manifest-invalid error, got %v", err)
+	}
+	coded, ok := errcat.As(err)
+	if !ok {
+		t.Fatalf("expected coded error, got %v", err)
+	}
+	if got, want := coded.Remediation(), "fix the [routes] default host in ship.toml, then ship"; got != want {
+		t.Fatalf("preview route remediation = %q, want %q", got, want)
+	}
 }
 
 func TestPrepareDeployRoutesCollapsesPreviewToSSLIPHost(t *testing.T) {
@@ -1173,6 +1217,20 @@ func TestDeployDiagnosticsDockerfileMissingNamesBothPaths(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error missing %q:\n%s", want, err)
 		}
+	}
+}
+
+func TestDeployDiagnosticsManifestValidationNeedsManifestEdit(t *testing.T) {
+	err := deployDiagnosticsError(diagnostics{{Kind: diagnosticKindManifest, Level: diagnosticError, Message: "invalid process"}})
+	if !errcat.Is(err, errcat.CodeManifestInvalid) {
+		t.Fatalf("error = %v, want %s", err, errcat.CodeManifestInvalid)
+	}
+	coded, ok := errcat.As(err)
+	if !ok {
+		t.Fatalf("expected coded error, got %v", err)
+	}
+	if got, want := coded.Remediation(), "fix ship.toml, then ship"; got != want {
+		t.Fatalf("manifest remediation = %q, want %q", got, want)
 	}
 }
 

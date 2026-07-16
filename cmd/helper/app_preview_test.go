@@ -317,7 +317,7 @@ func TestWriteEnvIdentityRefusesProductionHostLabelCollisionWithPreview(t *testi
 	if got, want := coded.Cause(), "app api-foo-ab12 (production) generates host label api-foo-ab12, already used by api (foo-ab12)"; got != want {
 		t.Fatalf("collision cause = %q, want %q", got, want)
 	}
-	if got, want := coded.Remediation(), "rename app api-foo-ab12 and deploy again"; got != want {
+	if got, want := coded.Remediation(), "change the top-level name in ship.toml, then ship"; got != want {
 		t.Fatalf("collision remediation = %q, want %q", got, want)
 	}
 	if envIdentityExists("api-foo-ab12", productionEnvName) {

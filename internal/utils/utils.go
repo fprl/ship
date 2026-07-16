@@ -169,7 +169,7 @@ func manifestNextCommand(details []string) string {
 			return "ship init"
 		}
 	}
-	return "fix ship.toml, then ship"
+	return "edit ship.toml to fix the validation error above, then ship"
 }
 
 func dockerfileMissingDetails(details []string) bool {

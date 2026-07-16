@@ -109,7 +109,7 @@ Secret scoping:
 - All progress, warnings, timings, and next steps go to stderr.
 - `ship --json` writes the mutation object to stdout instead of the URL.
 - During deploy, stderr has phase lines such as `preflight 0.4s`, `build 6.2s`, `release 1.1s`, `probe ok`, and `live`.
-- Human errors are exactly: what failed, cause, then `next: <command>`.
+- Human errors are exactly: what failed, cause, then `next: <action>`. `next:` is the next action: a runnable command when one can make progress, or edit guidance when the fix is a file edit.
 - JSON errors are `{"error":{"code":"...","message":"...","cause":"...","remediation":"..."}}`.
 - Exit codes are `0` success, `1` operation failed, `2` usage or manifest error, except `ship exec` passes through the remote command exit status after setup.
 - User-facing language is `Production <branch>` or `Preview <branch>`. Internal env slugs appear only in URLs and JSON fields.
@@ -609,14 +609,14 @@ aliases = true
 - `host_install_unsupported_os`: host OS is unsupported; cause: host install requires Ubuntu/Debian apt tooling; missing {tool}; remediation: `ship box setup <ubuntu-24.04-ssh-target>`.
 - `host_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `host_key_changed`: box host key changed; cause: SSH host key for {box} is unknown or changed; if the box was rebuilt, re-establish the pin (ship box forget {box} clears it); if not, investigate before trusting this host; remediation: `ship box setup <ssh-target>`.
-- `host_label_conflict`: production hostname collision; cause: app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env}); remediation: `rename app {app} and deploy again`.
+- `host_label_conflict`: production hostname collision; cause: app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env}); remediation: `change the top-level name in ship.toml, then ship`.
 - `host_not_installed`: host preflight failed; cause: host is not installed; remediation: `ship box setup <ssh-target>`.
 - `ingress_invalid`: ingress preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `invalid_box_target`: box target is invalid; cause: box target must be a host like 203.0.113.7; remove any user@ prefix; remediation: `{command}`; defaults: `command="ship box app ls 203.0.113.7"`.
 - `invalid_secret_key`: secret key is invalid; cause: secret key {key} must match ^[A-Za-z_][A-Za-z0-9_]*$; remediation: `ship secret set KEY`.
 - `keys_url_unavailable`: remote SSH key lookup failed; cause: no public SSH keys found at {source}; remediation: `ship box member add {source} {box} --name {name}`; defaults: `box="<box>", name="<name>", source="<https-url>"`.
 - `logs_follow_json_conflict`: logs command is invalid; cause: logs --json cannot be combined with --follow; remediation: `ship logs`.
-- `manifest_invalid`: ship.toml validation failed; cause: {details}; remediation: `{command}`; defaults: `command="fix ship.toml, then ship"`.
+- `manifest_invalid`: ship.toml validation failed; cause: {details}; remediation: `{command}`; defaults: `command="edit ship.toml to fix the validation error above, then ship"`.
 - `member_key_ambiguous`: member key selector is ambiguous; cause: key selector {selector} matches multiple keys: {matches}; remediation: `ship box member rm {name} --key <full-fingerprint> {box}`; defaults: `box="<box>", name="<name>"`.
 - `member_key_not_found`: member key selector failed; cause: no such key for member {name}; remediation: `ship box member ls {box}`; defaults: `box="<box>", name="<name>"`.
 - `member_last_owner`: member mutation refused; cause: the mutation would leave no effective owner key; at least one effective owner key (an owner record with a matching authorized_keys line) must remain; remediation: `ship box member add <https-url|key|path> {box} --name <new-owner> --role owner`; defaults: `box="<box>"`.
@@ -624,7 +624,7 @@ aliases = true
 - `member_not_found`: member rm failed; cause: no authorized keys found for member {name}; current members: {members}; remediation: `ship box member ls {box}`; defaults: `box="<box>"`.
 - `member_unknown`: member identity is not authorized; cause: fingerprint {fingerprint} is not in authorized_keys; remediation: `ship box member add <https-url|key|path> {box} --name <name>`; defaults: `box="<box>"`.
 - `missing_tool`: host preflight failed; cause: missing host tool: {tool}; remediation: `ship box setup <ssh-target>`.
-- `multi_process_no_web_route`: route synthesis failed; cause: manifest declares multiple processes but no [routes] host and no process named "web"; remediation: `fix ship.toml`.
+- `multi_process_no_web_route`: route synthesis failed; cause: manifest declares multiple processes but no [routes] host and no process named "web"; remediation: `name one process web, or add a [routes] host for a process, then ship`.
 - `no_deploys`: deploy journal lookup failed; cause: no deploys recorded for {app} ({env}); remediation: `ship`.
 - `no_preview_env`: preview environment lookup failed; cause: no Preview environment exists for branch {branch}; remediation: `ship`.
 - `not_a_git_repo`: git worktree required; cause: current directory is not inside a Git worktree; remediation: `git init && git add . && git commit -m "initial ship app"`.

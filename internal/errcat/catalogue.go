@@ -118,7 +118,7 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "ship.toml validation failed",
 		CauseTemplate:       "{details}",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "fix ship.toml, then ship"},
+		Defaults:            Fields{"command": "edit ship.toml to fix the validation error above, then ship"},
 	},
 	CodeDockerfileMissing: {
 		Code:                CodeDockerfileMissing,
@@ -205,7 +205,7 @@ var catalogue = map[Code]Entry{
 		Code:                CodeMultiProcessNoWebRoute,
 		MessageTemplate:     "route synthesis failed",
 		CauseTemplate:       "manifest declares multiple processes but no [routes] host and no process named \"web\"",
-		RemediationTemplate: "fix ship.toml",
+		RemediationTemplate: "name one process web, or add a [routes] host for a process, then ship",
 	},
 	CodeSecretMissing: {
 		Code:                CodeSecretMissing,
@@ -620,7 +620,7 @@ var catalogue = map[Code]Entry{
 		Code:                CodeHostLabelConflict,
 		MessageTemplate:     "production hostname collision",
 		CauseTemplate:       "app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env})",
-		RemediationTemplate: "rename app {app} and deploy again",
+		RemediationTemplate: "change the top-level name in ship.toml, then ship",
 	},
 }
 

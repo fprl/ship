@@ -258,7 +258,7 @@ If `webhook` is set in `ship.toml`, ship posts failure and recovery events:
     "schema_version": 1,
     "app": "taskflow",
     "env": "production",
-    "outcome": "aborted_probe",
+    "outcome": "failed",
     "started_at": "2026-07-07T10:00:00Z",
     "ended_at": "2026-07-07T10:00:10Z",
     "previous_release": "abc123",

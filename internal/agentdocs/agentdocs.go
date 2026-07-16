@@ -1324,7 +1324,7 @@ const outputAndDataContracts = `
 - All progress, warnings, timings, and next steps go to stderr.
 - ` + "`ship --json`" + ` writes the mutation object to stdout instead of the URL.
 - During deploy, stderr has phase lines such as ` + "`preflight 0.4s`" + `, ` + "`build 6.2s`" + `, ` + "`release 1.1s`" + `, ` + "`probe ok`" + `, and ` + "`live`" + `.
-- Human errors are exactly: what failed, cause, then ` + "`next: <command>`" + `.
+- Human errors are exactly: what failed, cause, then ` + "`next: <action>`" + `. ` + "`next:`" + ` is the next action: a runnable command when one can make progress, or edit guidance when the fix is a file edit.
 - JSON errors are ` + "`{\"error\":{\"code\":\"...\",\"message\":\"...\",\"cause\":\"...\",\"remediation\":\"...\"}}`" + `.
 - Exit codes are ` + "`0`" + ` success, ` + "`1`" + ` operation failed, ` + "`2`" + ` usage or manifest error, except ` + "`ship exec`" + ` passes through the remote command exit status after setup.
 - User-facing language is ` + "`Production <branch>`" + ` or ` + "`Preview <branch>`" + `. Internal env slugs appear only in URLs and JSON fields.

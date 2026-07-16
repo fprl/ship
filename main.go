@@ -19,7 +19,8 @@ import (
 
 // Public CLI surface. The post-cutover lifecycle is minimal on
 // purpose; host mutation goes through the privileged helper and runtime
-// truth comes from manifest snapshots, identity files, and Podman labels.
+// truth comes from the activation pointer, release envelopes, identity
+// files, and Podman labels.
 type cli struct {
 	Ship       shipCmd          `cmd:"" default:"withargs" hidden:"" group:"project" help:"Deploy the current branch."`
 	Init       initCmd          `cmd:"" group:"project" help:"Create a ship.toml manifest."`

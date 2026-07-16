@@ -181,7 +181,7 @@ func (c *appRollbackCmd) rollbackRelease(currentApp *config.AppContext, startedA
 	// The image lookup above is scoped to the active pointer for envelope
 	// verification; candidate discovery needs the full local image set and
 	// scans on its own.
-	releases, err := availableRollbackReleasesWithImages(c.App, c.Env, c.Release, nil)
+	releases, err := availableRollbackReleasesWithImages(c.App, c.Env, c.Release)
 	if err != nil {
 		return rollbackPayload{}, err
 	}
@@ -520,8 +520,9 @@ func selectRollbackRelease(images []imageRelease, current, requested string) (im
 	return imageRelease{}, fmt.Errorf("no previous release available locally")
 }
 
-func availableRollbackReleasesWithImages(app, env, requested string, images []imageRelease) ([]imageRelease, error) {
-	if requested != "" && images == nil {
+func availableRollbackReleasesWithImages(app, env, requested string) ([]imageRelease, error) {
+	var images []imageRelease
+	if requested != "" {
 		needsImage := true
 		if sidecar, sidecarErr := readStaticReleaseEnvelope(app, env, requested); sidecarErr == nil {
 			if ctx, cleanup, ctxErr := loadAppContextFromEnvelope(app, env, requested, sidecar, "release envelope is missing"); ctxErr == nil {
@@ -659,7 +660,7 @@ func releaseSnapshots(app, env string) ([]imageRelease, bool, error) {
 	if err != nil {
 		return nil, torn, err
 	}
-	history, historyErr := releaseDeployHistory(entries, nil)
+	history, historyErr := releaseDeployHistory(entries)
 	if historyErr != nil {
 		return nil, torn, historyErr
 	}

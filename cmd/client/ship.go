@@ -308,7 +308,7 @@ func deployDiagnosticsError(diags diagnostics) error {
 	}
 	return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
 		"details": manifestDetailsForError(messages),
-		"command": "ship",
+		"command": "fix ship.toml, then ship",
 	})
 }
 

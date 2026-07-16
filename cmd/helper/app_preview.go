@@ -311,9 +311,9 @@ func previewAliasForContext(app, env string, ctx *config.AppContext) (string, bo
 }
 
 // previewAliasOwner is the box-global host authority. It sees configured
-// routes and generated canonical hosts in each applied route overlay, plus
-// aliases that are actually rendered in Caddy fragments. The caller holds the
-// existing preview host-label lock while checking and rendering.
+// routes and generated canonical hosts in each env's active release envelope,
+// plus aliases that are actually rendered in Caddy fragments. The caller holds
+// the existing preview host-label lock while checking and rendering.
 func previewAliasOwner(host, currentApp, currentEnv string, incoming map[string]config.Route) (previewHostOwner, bool, error) {
 	for _, route := range incoming {
 		if route.Host == host {

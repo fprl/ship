@@ -52,7 +52,7 @@ func TestGCKeepSetCoversRollbackCandidatesInJournalOrder(t *testing.T) {
 		{Outcome: "deployed", AttemptedRelease: "ccc3333", EndedAt: "2000-01-01T00:00:00Z"},
 		{Outcome: "rolled_back", AttemptedRelease: "bbb2222", EndedAt: "2000-01-02T00:00:00Z"},
 	}
-	history, err := releaseDeployHistory(entries, nil)
+	history, err := releaseDeployHistory(entries)
 	if err != nil {
 		t.Fatal(err)
 	}

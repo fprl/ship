@@ -200,7 +200,11 @@ func gcEnv(app, env string) (gcSummary, error) {
 	sort.Strings(summary.KeptReleases[1:])
 
 	artifactKeep := gcReleaseSetUnion(keep, protected)
-	keptActivations := gcKeptActivations(app, env, pointer, entries, artifactKeep)
+	// Only the active activation's frozen env is ever read; rollback mints a
+	// fresh activation and re-resolves secrets, so older activation env files
+	// are unread copies of old secret values. Fresh prepare debris survives
+	// via the grace period in gcRemoveActivations.
+	keptActivations := map[string]bool{pointer.Activation: true}
 	keptEnvelopeHashes := gcKeptEnvelopeHashes(pointer, entries, artifactKeep)
 	gcRemoveContainers(app, env, &pointer, &summary)
 	gcRemoveImages(app, env, keep, protected, &summary)
@@ -231,7 +235,7 @@ func gcEnv(app, env string) (gcSummary, error) {
 func gcKeepReleases(app, env, active string, entries []deployJournalEntry) (map[string]bool, map[string]bool, error) {
 	keep := map[string]bool{active: true}
 	protected := map[string]bool{}
-	history, err := releaseDeployHistory(entries, nil)
+	history, err := releaseDeployHistory(entries)
 	if err != nil {
 		return keep, protected, err
 	}
@@ -283,19 +287,6 @@ func verifyGCRelease(app, env, release string) error {
 		return fmt.Errorf("release %s image or static envelope is unavailable", release)
 	}
 	return verifyReleaseCandidate(app, env, candidate, byRelease)
-}
-
-func gcKeptActivations(app, env string, pointer activation.Pointer, entries []deployJournalEntry, keep map[string]bool) map[string]bool {
-	ids := map[string]bool{pointer.Activation: true}
-	seenReleases := map[string]bool{}
-	for i := len(entries) - 1; i >= 0; i-- {
-		entry := entries[i]
-		if keep[entry.AttemptedRelease] && entry.Activation != "" && !seenReleases[entry.AttemptedRelease] {
-			ids[entry.Activation] = true
-			seenReleases[entry.AttemptedRelease] = true
-		}
-	}
-	return ids
 }
 
 func gcRemoveContainers(app, env string, pointer *activation.Pointer, summary *gcSummary) {

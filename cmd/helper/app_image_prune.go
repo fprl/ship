@@ -18,7 +18,6 @@ const (
 type releaseDeployRecord struct {
 	Release      string
 	EnvelopeHash string
-	Sequence     int
 }
 
 func releaseImageKeepLimit(env string) int {
@@ -40,11 +39,8 @@ func purgeReleaseImagesForEnv(app, env string) (int, error) {
 	return removed, pruneErr
 }
 
-func releaseDeployHistory(entries []deployJournalEntry, current *deployJournalEntry) ([]releaseDeployRecord, error) {
+func releaseDeployHistory(entries []deployJournalEntry) ([]releaseDeployRecord, error) {
 	all := append([]deployJournalEntry(nil), entries...)
-	if current != nil {
-		all = append(all, *current)
-	}
 	seen := map[string]bool{}
 	var history []releaseDeployRecord
 	for i := len(all) - 1; i >= 0; i-- {
@@ -59,7 +55,7 @@ func releaseDeployHistory(entries []deployJournalEntry, current *deployJournalEn
 			continue
 		}
 		seen[entry.AttemptedRelease] = true
-		history = append(history, releaseDeployRecord{Release: entry.AttemptedRelease, EnvelopeHash: entry.EnvelopeHash, Sequence: i})
+		history = append(history, releaseDeployRecord{Release: entry.AttemptedRelease, EnvelopeHash: entry.EnvelopeHash})
 	}
 	return history, nil
 }
