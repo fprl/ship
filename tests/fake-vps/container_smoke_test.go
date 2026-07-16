@@ -300,7 +300,10 @@ func (e *smokeEnv) assertShipSudoersMatchesRealHelperShape(t *testing.T) {
 func (e *smokeEnv) ensureSmokeHostSeed(t *testing.T) {
 	t.Helper()
 	e.dockerExec(t, "mkdir -p /etc/ship /var/lib/ship /run/ship /etc/caddy/conf.d /var/lib/caddy /etc/systemd/system")
-	e.dockerExec(t, "printf '%s\\n' '{\"version\":1,\"members\":{}}' > /etc/ship/members.json")
+	// The owner registry is written once by newSmokeEnvWithImage with the
+	// real deploy fingerprint; re-seeding it here would erase that record and
+	// leave the deploy user unrecognized. Only the non-identity box config is
+	// refreshed between subtests.
 	e.dockerExec(t, "printf '%s\\n' '{\"version\":1,\"values\":{\"box.address\":\"fake-vps\"}}' > /etc/ship/box-config.json")
 	e.dockerExec(t, "mkdir -p /etc/ship/secrets && chmod 0700 /etc/ship/secrets && chown root:root /etc/ship/secrets")
 	e.dockerExec(t, "mkdir -p /tmp/ship-deploy && chmod 1777 /tmp/ship-deploy")
