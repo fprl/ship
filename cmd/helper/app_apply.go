@@ -45,6 +45,7 @@ type appApplyCmd struct {
 	ActivationID  string            `kong:"-"`
 	Envelope      envelope.Envelope `kong:"-"`
 	EnvelopeLabel string            `kong:"-"`
+	SkipBuild     bool              `kong:"-"`
 }
 
 type applyReleaseResult struct {
@@ -198,6 +199,11 @@ func (c appApplyCmd) runLockedE() (err error) {
 	c.Envelope, c.EnvelopeLabel, err = releaseEnvelope(manifestData, meta)
 	if err != nil {
 		return err
+	}
+	if app.NeedsImage {
+		if err := c.planContainerBuild(); err != nil {
+			return err
+		}
 	}
 	resolved, err := resolveEnv(c.App, c.Env, app.Vars, app.SecretRefs)
 	if err != nil {
@@ -463,10 +469,6 @@ type containerApplyResult struct {
 }
 
 func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, existing []containerEntry) (containerApplyResult, error) {
-	skipBuild, err := c.containerBuildPlan()
-	if err != nil {
-		return containerApplyResult{}, err
-	}
 	var containersToRemove []string
 	startedAt := time.Now().UTC().Format("20060102t150405000000000z")
 	started, err := startReleaseProcesses(startReleaseProcessesParams{
@@ -477,7 +479,7 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		Context:     app,
 		OnlyPortful: true,
 		BeforeStart: func(runtime processStartRuntime) error {
-			if !skipBuild {
+			if !c.SkipBuild {
 				buildArgs := podmanBuildArgsWithEnvelope(c.App, c.Env, runtime.ImageTag, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild, c.EnvelopeLabel)
 				if _, err := utils.RunChecked("podman", buildArgs, ""); err != nil {
 					return newJournalStepError("build", fmt.Errorf("podman build: %w", err), runtime.ScrubValues, nil)
@@ -521,34 +523,52 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 	}, nil
 }
 
-// containerBuildPlan decides whether the deploy may build. A committed image
-// (active or in a committed journal entry) is immutable: an exact
-// envelope-hash match under the release tag is reused instead of rebuilt —
-// this keeps same-release redeploys (secret rotation, retries) working —
-// while --rebuild or a changed envelope on a committed release refuses
-// rather than replace committed bytes under the same tag. Debris from a
-// never-committed prepare may be rebuilt freely.
-func (c appApplyCmd) containerBuildPlan() (bool, error) {
+// planContainerBuild decides whether the deploy may build. A committed image
+// (active or in a committed journal entry) is immutable: when an image under
+// the release tag carries the same configuration — manifest, release, dirty
+// marker, and base commit; the envelope's created_at timestamp is not
+// configuration — the deploy reuses it and adopts its envelope identity, so
+// the committed pointer hash keeps matching the image label. This keeps
+// same-release redeploys (secret rotation, retries) working. --rebuild or a
+// changed configuration on a committed release refuses rather than replace
+// committed bytes under the same tag; debris from a never-committed prepare
+// may be rebuilt freely.
+func (c *appApplyCmd) planContainerBuild() error {
+	c.SkipBuild = false
 	images, err := podmanImagesForRelease(c.App, c.Env, c.SHA)
 	if err != nil || len(images) == 0 {
 		// Only confirmed tag absence may build: a transient inspect failure
 		// over a committed tag must not open a rebuild window.
 		if imageTagConfirmedAbsent(c.App, c.Env, c.SHA) {
-			return false, nil
+			return nil
 		}
 		if releaseArtifactsCommitted(c.App, c.Env, c.SHA) {
-			return false, errcat.New(errcat.CodeReleaseImmutable, errcat.Fields{
+			return errcat.New(errcat.CodeReleaseImmutable, errcat.Fields{
 				"detail": fmt.Sprintf("release %s has committed artifacts but its image cannot be verified right now; deploying could replace committed bytes", c.SHA),
 			})
 		}
-		return false, nil
+		return nil
 	}
-	envelopeHash := envelope.HashLabel(c.EnvelopeLabel)
 	if !c.Rebuild {
+		incomingMeta, err := releaseMetadataFromEnvelope(c.Envelope, c.SHA)
+		if err != nil {
+			return err
+		}
 		for _, image := range images {
-			if image.Release == c.SHA && image.EnvelopeHash == envelopeHash {
-				return true, nil
+			if image.Release != c.SHA || image.Envelope.Schema == 0 || image.Envelope.Manifest != c.Envelope.Manifest {
+				continue
 			}
+			imageMeta, metaErr := releaseMetadataFromEnvelope(image.Envelope, c.SHA)
+			if metaErr != nil || imageMeta.Dirty != incomingMeta.Dirty || imageMeta.BaseCommit != incomingMeta.BaseCommit {
+				continue
+			}
+			label, labelErr := image.Envelope.LabelValue()
+			if labelErr != nil {
+				continue
+			}
+			c.Envelope, c.EnvelopeLabel = image.Envelope, label
+			c.SkipBuild = true
+			return nil
 		}
 	}
 	if releaseArtifactsCommitted(c.App, c.Env, c.SHA) {
@@ -556,9 +576,9 @@ func (c appApplyCmd) containerBuildPlan() (bool, error) {
 		if c.Rebuild {
 			detail = fmt.Sprintf("release %s already has a committed image; --rebuild would replace it", c.SHA)
 		}
-		return false, errcat.New(errcat.CodeReleaseImmutable, errcat.Fields{"detail": detail})
+		return errcat.New(errcat.CodeReleaseImmutable, errcat.Fields{"detail": detail})
 	}
-	return false, nil
+	return nil
 }
 
 // imageTagConfirmedAbsent reports that the release tag definitively does not

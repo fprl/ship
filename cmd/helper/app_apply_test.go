@@ -137,12 +137,23 @@ func TestContainerBuildPlanProtectsCommittedImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	manifest := []byte("name = \"api\"\nbox = \"example.com\"\n\n[processes]\nweb = { port = 3000 }\n\n[routes]\n\"api.example.com\" = \"web\"\n")
-	_, label, err := releaseEnvelope(manifest, meta)
+	committedEnvelope, label, err := releaseEnvelope(manifest, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
+	laterMeta, err := newReleaseMetadata(release, false, release, "2026-07-16T13:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	laterEnvelope, laterLabel, err := releaseEnvelope(manifest, laterMeta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if laterLabel == label {
+		t.Fatal("fixture needs distinct envelope labels for the same configuration")
+	}
 	otherManifest := []byte("name = \"api\"\nbox = \"example.com\"\n\n[processes]\nweb = { port = 3001 }\n\n[routes]\n\"api.example.com\" = \"web\"\n")
-	_, otherLabel, err := releaseEnvelope(otherManifest, meta)
+	otherEnvelope, otherLabel, err := releaseEnvelope(otherManifest, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,39 +183,42 @@ func TestContainerBuildPlanProtectsCommittedImages(t *testing.T) {
 		}
 	}
 
-	t.Run("exact envelope match reuses the image", func(t *testing.T) {
+	t.Run("same configuration reuses the image and adopts its envelope", func(t *testing.T) {
 		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
 		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
 		commit(t)
-		skip, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: label}).containerBuildPlan()
-		if err != nil || !skip {
-			t.Fatalf("skip=%v err=%v, want reuse", skip, err)
+		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: laterEnvelope, EnvelopeLabel: laterLabel}
+		if err := cmd.planContainerBuild(); err != nil || !cmd.SkipBuild {
+			t.Fatalf("skip=%v err=%v, want reuse", cmd.SkipBuild, err)
+		}
+		if cmd.EnvelopeLabel != label {
+			t.Fatalf("envelope not adopted from the committed image: %q", cmd.EnvelopeLabel[:24])
 		}
 	})
 	t.Run("rebuild of a committed release refuses", func(t *testing.T) {
 		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
 		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
 		commit(t)
-		_, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: label, Rebuild: true}).containerBuildPlan()
-		if !errcat.Is(err, errcat.CodeReleaseImmutable) {
+		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: committedEnvelope, EnvelopeLabel: label, Rebuild: true}
+		if err := cmd.planContainerBuild(); !errcat.Is(err, errcat.CodeReleaseImmutable) {
 			t.Fatalf("err=%v, want release_immutable", err)
 		}
 	})
-	t.Run("changed envelope on a committed release refuses", func(t *testing.T) {
+	t.Run("changed configuration on a committed release refuses", func(t *testing.T) {
 		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
 		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
 		commit(t)
-		_, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: otherLabel}).containerBuildPlan()
-		if !errcat.Is(err, errcat.CodeReleaseImmutable) {
+		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: otherEnvelope, EnvelopeLabel: otherLabel}
+		if err := cmd.planContainerBuild(); !errcat.Is(err, errcat.CodeReleaseImmutable) {
 			t.Fatalf("err=%v, want release_immutable", err)
 		}
 	})
 	t.Run("never-committed debris may be rebuilt", func(t *testing.T) {
 		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
 		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
-		skip, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: otherLabel, Rebuild: true}).containerBuildPlan()
-		if err != nil || skip {
-			t.Fatalf("skip=%v err=%v, want fresh build over debris", skip, err)
+		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: otherEnvelope, EnvelopeLabel: otherLabel, Rebuild: true}
+		if err := cmd.planContainerBuild(); err != nil || cmd.SkipBuild {
+			t.Fatalf("skip=%v err=%v, want fresh build over debris", cmd.SkipBuild, err)
 		}
 	})
 	t.Run("torn journal with a conflicting image refuses", func(t *testing.T) {
@@ -225,8 +239,8 @@ func TestContainerBuildPlanProtectsCommittedImages(t *testing.T) {
 		if err := file.Close(); err != nil {
 			t.Fatal(err)
 		}
-		_, planErr := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: otherLabel}).containerBuildPlan()
-		if !errcat.Is(planErr, errcat.CodeReleaseImmutable) {
+		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: otherEnvelope, EnvelopeLabel: otherLabel}
+		if planErr := cmd.planContainerBuild(); !errcat.Is(planErr, errcat.CodeReleaseImmutable) {
 			t.Fatalf("err=%v, want fail-closed release_immutable", planErr)
 		}
 	})
@@ -235,9 +249,9 @@ func TestContainerBuildPlanProtectsCommittedImages(t *testing.T) {
 		t.Setenv("SHIP_TEST_IMAGE_JSON", filepath.Join(root, "missing.json"))
 		t.Setenv("SHIP_TEST_EXISTS_CODE", "1")
 		commit(t)
-		skip, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: otherLabel}).containerBuildPlan()
-		if err != nil || skip {
-			t.Fatalf("skip=%v err=%v, want build", skip, err)
+		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: otherEnvelope, EnvelopeLabel: otherLabel}
+		if err := cmd.planContainerBuild(); err != nil || cmd.SkipBuild {
+			t.Fatalf("skip=%v err=%v, want build", cmd.SkipBuild, err)
 		}
 	})
 	t.Run("unverifiable committed image fails closed", func(t *testing.T) {
@@ -245,8 +259,8 @@ func TestContainerBuildPlanProtectsCommittedImages(t *testing.T) {
 		t.Setenv("SHIP_TEST_IMAGE_JSON", filepath.Join(root, "missing.json"))
 		t.Setenv("SHIP_TEST_EXISTS_CODE", "0")
 		commit(t)
-		_, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: otherLabel}).containerBuildPlan()
-		if !errcat.Is(err, errcat.CodeReleaseImmutable) {
+		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: otherEnvelope, EnvelopeLabel: otherLabel}
+		if err := cmd.planContainerBuild(); !errcat.Is(err, errcat.CodeReleaseImmutable) {
 			t.Fatalf("err=%v, want fail-closed release_immutable", err)
 		}
 	})
