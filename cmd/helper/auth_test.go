@@ -330,7 +330,7 @@ func TestExpiredApprovedRequestFailsConsumptionWithFreshRetryRemediation(t *test
 		t.Fatalf("expired retry err = %v, want approval_expired", err)
 	}
 	expired, _ := errcat.As(err)
-	if expired.Remediation() != "retry the command to mint a fresh request" {
+	if expired.Remediation() != "ship box approval ls 203.0.113.7" {
 		t.Fatalf("expired remediation = %q", expired.Remediation())
 	}
 }

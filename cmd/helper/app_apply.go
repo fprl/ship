@@ -113,7 +113,7 @@ func (c appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previous
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
 	}
-	return fmt.Errorf("committed but not converged; %s: %w", convergenceNextStep, err)
+	return newDeployCommittedUnconvergedError(err)
 }
 
 func (c appApplyCmd) recordCommittedDegraded(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
@@ -124,7 +124,21 @@ func (c appApplyCmd) recordCommittedDegraded(app *config.AppContext, previousRel
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
 	}
-	return fmt.Errorf("committed but degraded; %s: %w", convergenceNextStep, err)
+	return newDeployCommittedDegradedError(err)
+}
+
+func newDeployCommittedUnconvergedError(err error) error {
+	if errcat.Is(err, errcat.CodeDeployCommittedUnconverged) {
+		return err
+	}
+	return errcat.New(errcat.CodeDeployCommittedUnconverged, errcat.Fields{"detail": err.Error()})
+}
+
+func newDeployCommittedDegradedError(err error) error {
+	if errcat.Is(err, errcat.CodeDeployCommittedDegraded) {
+		return err
+	}
+	return errcat.New(errcat.CodeDeployCommittedDegraded, errcat.Fields{"detail": err.Error()})
 }
 
 func (c appApplyCmd) runLockedE() (err error) {

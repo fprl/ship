@@ -169,10 +169,10 @@ func manifestNextCommand(details []string) string {
 			return "ship init"
 		}
 		if strings.Contains(detail, "box must be a host, not user@host") {
-			return "remove the user part from ship.toml box"
+			return "ship"
 		}
 	}
-	return "fix ship.toml"
+	return "ship"
 }
 
 func dockerfileMissingDetails(details []string) bool {

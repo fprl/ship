@@ -731,7 +731,7 @@ var verbs = []Verb{
 		Usage:     "ship data restore <id|path> [--confirm <app>] [--config <path>]",
 		Flags:     []Flag{configFlag, {Name: "id|path", Purpose: "Snapshot filename stem or local path."}, {Name: "--confirm", Value: "<app>", Purpose: "Required app-name confirmation when restoring Production."}},
 		ExitCodes: normalExit,
-		Errors:    []string{"rm_confirmation_required", "approval_required", "data_snapshot_invalid", "host_key_changed", "operation_failed"},
+		Errors:    []string{"data_restore_confirmation_required", "approval_required", "data_snapshot_invalid", "host_key_changed", "operation_failed"},
 		Notes: []string{
 			"The client uploads to /tmp/ship-deploy; the helper validates gzip/tar, metadata, app identity, and data/ before it stops containers or swaps /data. Snapshot env may differ from the target env.",
 			"Production restore requires --confirm <app> and an owner role. Shippers may restore preview data; agents receive approval_required.",

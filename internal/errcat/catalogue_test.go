@@ -105,6 +105,29 @@ func TestBoxGrammarRemediations(t *testing.T) {
 	}
 }
 
+func TestOutputContractRemediationsAreCommands(t *testing.T) {
+	tests := []struct {
+		name   string
+		code   Code
+		fields Fields
+		want   string
+	}{
+		{name: "manifest", code: CodeManifestInvalid, fields: Fields{"details": "invalid"}, want: "ship"},
+		{name: "dockerfile", code: CodeDockerfileMissing, want: "ship"},
+		{name: "approval expired", code: CodeApprovalExpired, fields: Fields{"id": "abc123xy", "summary": "ship app=api", "box": "203.0.113.7"}, want: "ship box approval ls 203.0.113.7"},
+		{name: "dotenv", code: CodeDotenvRejected, fields: Fields{"files": ".env.production", "file": ".env.production"}, want: "ship secret set --from .env.production"},
+		{name: "host label", code: CodeHostLabelConflict, fields: Fields{"app": "api", "label": "api", "existing_app": "other", "existing_env": "production"}, want: "ship"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := New(tt.code, tt.fields).Remediation(); got != tt.want {
+				t.Fatalf("remediation = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseJSONUnknownCodeDegradesToOperationFailed(t *testing.T) {
 	input := `{"error":{"code":"helper_new_failure","message":"new helper failure","cause":"new cause","remediation":"ship retry"}}`
 	err, ok := ParseJSON(input)

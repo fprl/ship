@@ -308,7 +308,7 @@ func deployDiagnosticsError(diags diagnostics) error {
 	}
 	return errcat.New(errcat.CodeManifestInvalid, errcat.Fields{
 		"details": manifestDetailsForError(messages),
-		"command": "fix ship.toml",
+		"command": "ship",
 	})
 }
 
@@ -678,7 +678,10 @@ func dotenvError(dotenvs []string) error {
 	}
 	dotenvs = uniqueStrings(dotenvs)
 	sort.Strings(dotenvs)
-	return errcat.New(errcat.CodeDotenvRejected, errcat.Fields{"files": strings.Join(dotenvs, ", ")})
+	return errcat.New(errcat.CodeDotenvRejected, errcat.Fields{
+		"files": strings.Join(dotenvs, ", "),
+		"file":  dotenvs[0],
+	})
 }
 
 func uniqueStrings(values []string) []string {

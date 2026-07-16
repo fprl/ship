@@ -195,6 +195,43 @@ func TestRecordDeployFailureKeepsProbeErrorWhenJournalAppendFails(t *testing.T) 
 	}
 }
 
+func TestCommittedDeployErrorsCarryStableCodesAndConvergeNextStep(t *testing.T) {
+	cmd := appApplyCmd{App: "api", Env: "production", SHA: "new222"}
+	for _, tt := range []struct {
+		name string
+		code errcat.Code
+		call func(error) error
+		want string
+	}{
+		{
+			name: "unconverged",
+			code: errcat.CodeDeployCommittedUnconverged,
+			call: func(err error) error { return cmd.recordCommittedUnconverged(nil, "old111", time.Now().UTC(), err) },
+			want: "committed but not converged",
+		},
+		{
+			name: "degraded",
+			code: errcat.CodeDeployCommittedDegraded,
+			call: func(err error) error { return cmd.recordCommittedDegraded(nil, "old111", time.Now().UTC(), err) },
+			want: "committed but degraded",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			oldAppend := appendSanitizedDeployJournal
+			appendSanitizedDeployJournal = func(string, string, deployJournalEntry) error { return nil }
+			t.Cleanup(func() { appendSanitizedDeployJournal = oldAppend })
+
+			err := tt.call(errors.New("caddy unavailable"))
+			if !errcat.Is(err, tt.code) {
+				t.Fatalf("error = %v, want %s", err, tt.code)
+			}
+			if !strings.Contains(err.Error(), tt.want) || !strings.Contains(err.Error(), "next: ship converge") {
+				t.Fatalf("error = %q, want human wording and converge next step", err)
+			}
+		})
+	}
+}
+
 func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *testing.T) {
 	setupJournalHostTest(t)
 	previous := deployJournalEntry{

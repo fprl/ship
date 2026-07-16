@@ -38,6 +38,8 @@ const (
 	CodeRemotePreflightFailed             Code = "remote_preflight_failed"
 	CodeRemotePreflightAfterPrepareFailed Code = "remote_preflight_after_prepare_failed"
 	CodeDeployBlockedLocalChecks          Code = "deploy_blocked_local_checks"
+	CodeDeployCommittedUnconverged        Code = "deploy_committed_unconverged"
+	CodeDeployCommittedDegraded           Code = "deploy_committed_degraded"
 	CodeReleaseCommandFailed              Code = "release_command_failed"
 	CodeProbeFailed                       Code = "probe_failed"
 	CodeInvalidSecretKey                  Code = "invalid_secret_key"
@@ -116,13 +118,13 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "ship.toml validation failed",
 		CauseTemplate:       "{details}",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "fix ship.toml"},
+		Defaults:            Fields{"command": "ship"},
 	},
 	CodeDockerfileMissing: {
 		Code:                CodeDockerfileMissing,
 		MessageTemplate:     "Dockerfile is missing",
-		CauseTemplate:       "the declared processes need a Dockerfile to build",
-		RemediationTemplate: "write a Dockerfile, or declare a [routes] static route in ship.toml",
+		CauseTemplate:       "the declared processes need a Dockerfile to build; write one or declare a [routes] static route in ship.toml",
+		RemediationTemplate: "ship",
 	},
 	CodeOperationFailed: {
 		Code:                CodeOperationFailed,
@@ -267,6 +269,18 @@ var catalogue = map[Code]Entry{
 		RemediationTemplate: "{command}",
 		Defaults:            Fields{"command": "fix local checks", "detail": "local checks reported errors; see stderr above"},
 	},
+	CodeDeployCommittedUnconverged: {
+		Code:                CodeDeployCommittedUnconverged,
+		MessageTemplate:     "committed but not converged",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "ship converge",
+	},
+	CodeDeployCommittedDegraded: {
+		Code:                CodeDeployCommittedDegraded,
+		MessageTemplate:     "committed but degraded",
+		CauseTemplate:       "{detail}",
+		RemediationTemplate: "ship converge",
+	},
 	CodeReleaseCommandFailed: {
 		Code:                CodeReleaseCommandFailed,
 		MessageTemplate:     "release command failed",
@@ -398,13 +412,15 @@ var catalogue = map[Code]Entry{
 		Code:                CodeApprovalExpired,
 		MessageTemplate:     "approval expired",
 		CauseTemplate:       "approval {id} expired for {summary}",
-		RemediationTemplate: "retry the command to mint a fresh request",
+		RemediationTemplate: "ship box approval ls {box}",
+		Defaults:            Fields{"box": "<box>"},
 	},
 	CodeDotenvRejected: {
 		Code:                CodeDotenvRejected,
 		MessageTemplate:     "deploy artifact contains dotenv files",
-		CauseTemplate:       "refusing to deploy dotenv file: {files}",
-		RemediationTemplate: "run ship secret set --from .env, then remove the file (allowed names: .env.example, .env.sample, .env.defaults)",
+		CauseTemplate:       "refusing to deploy dotenv file: {files}; import it with ship secret set --from {file}, then remove it; allowed names: .env.example, .env.sample, .env.defaults",
+		RemediationTemplate: "ship secret set --from {file}",
+		Defaults:            Fields{"file": ".env"},
 	},
 	CodeDotenvMalformed: {
 		Code:                CodeDotenvMalformed,
@@ -603,8 +619,8 @@ var catalogue = map[Code]Entry{
 	CodeHostLabelConflict: {
 		Code:                CodeHostLabelConflict,
 		MessageTemplate:     "production hostname collision",
-		CauseTemplate:       "app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env})",
-		RemediationTemplate: "rename app {app} and deploy again",
+		CauseTemplate:       "app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env}); rename app {app} to avoid the collision, then retry ship",
+		RemediationTemplate: "ship",
 	},
 }
 

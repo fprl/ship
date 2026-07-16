@@ -61,14 +61,22 @@ func (c appRollbackCmd) runLocked() {
 			var degraded committedDegradedError
 			if errors.As(err, &degraded) {
 				c.recordRollbackDegraded(result, startedAt, degraded.Err)
-				utils.DieError(fmt.Errorf("committed but degraded; %s: %w", convergenceNextStep, degraded.Err), 1)
+				utils.DieError(rollbackCommittedError(err), 1)
 			}
 			c.recordRollbackFailure(result, startedAt, err)
-			utils.DieError(fmt.Errorf("committed but not converged; %s: %w", convergenceNextStep, err), 1)
+			utils.DieError(rollbackCommittedError(err), 1)
 		}
 		removePreparedCandidates(c.App, c.Env, c.ActivationID)
 		utils.DieError(fmt.Errorf("nothing changed: %w", err), 1)
 	}
+}
+
+func rollbackCommittedError(err error) error {
+	var degraded committedDegradedError
+	if errors.As(err, &degraded) {
+		return newDeployCommittedDegradedError(degraded.Err)
+	}
+	return newDeployCommittedUnconvergedError(err)
 }
 
 func (c appRollbackCmd) recordRollbackDegraded(result rollbackPayload, startedAt time.Time, err error) {

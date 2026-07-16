@@ -427,6 +427,7 @@ func consumeApprovedRequest(member serverMember, verb helperVerb, target authTar
 			return false, errcat.New(errcat.CodeApprovalExpired, errcat.Fields{
 				"id":      request.ID,
 				"summary": request.Target.Summary,
+				"box":     boxClientAddress(),
 			})
 		}
 		file.Requests = append(file.Requests[:i], file.Requests[i+1:]...)
@@ -469,6 +470,7 @@ func approveRequest(id string, approver serverMember) (store.ApprovalRequest, er
 			return store.ApprovalRequest{}, errcat.New(errcat.CodeApprovalExpired, errcat.Fields{
 				"id":      request.ID,
 				"summary": request.Target.Summary,
+				"box":     boxClientAddress(),
 			})
 		}
 		if request.Status == store.ApprovalStatusApproved {

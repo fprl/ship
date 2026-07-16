@@ -22,18 +22,18 @@ func commitAndConverge(app, env string, pointer activation.Pointer, addStale fun
 		converged, convergeErr := convergeActive(app, env)
 		addStale(converged.StaleContainers)
 		if convergeErr != nil {
-			return true, committedDegradedError{Err: fmt.Errorf("active pointer published but durability is degraded: %v; convergence failed: %w", activeErr, convergeErr)}
+			return true, committedDegradedError{Err: newDeployCommittedDegradedError(fmt.Errorf("active pointer published but durability is degraded: %v; convergence failed: %w", activeErr, convergeErr))}
 		}
-		return true, committedDegradedError{Err: fmt.Errorf("active pointer published but durability is degraded: %v", activeErr)}
+		return true, committedDegradedError{Err: newDeployCommittedDegradedError(fmt.Errorf("active pointer published but durability is degraded: %v", activeErr))}
 	}
 
 	converged, err := convergeActive(app, env)
 	addStale(converged.StaleContainers)
 	if err != nil {
-		return true, err
+		return true, newDeployCommittedUnconvergedError(err)
 	}
 	if err := refreshPreviewShip(app, env, time.Now().UTC()); err != nil {
-		return true, committedDegradedError{Err: fmt.Errorf("activation converged but preview metadata refresh failed: %w", err)}
+		return true, committedDegradedError{Err: newDeployCommittedDegradedError(fmt.Errorf("activation converged but preview metadata refresh failed: %w", err))}
 	}
 	return true, complete()
 }

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fprl/ship/internal/errcat"
 )
 
 func TestCurrentReleaseRejectsEmptyOrMixedProcesses(t *testing.T) {
@@ -110,5 +112,27 @@ func TestRollbackJournalFailureWarnsAfterRollbackSuccess(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Rolled back api (production) from 3333333 to 2222222") {
 		t.Fatalf("rollback summary = %q", stdout)
+	}
+}
+
+func TestCommittedRollbackErrorsCarryStableCodesAndConvergeNextStep(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		code errcat.Code
+		err  error
+		want string
+	}{
+		{name: "unconverged", code: errcat.CodeDeployCommittedUnconverged, err: errors.New("caddy unavailable"), want: "committed but not converged"},
+		{name: "degraded", code: errcat.CodeDeployCommittedDegraded, err: committedDegradedError{Err: errors.New("durability degraded")}, want: "committed but degraded"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := rollbackCommittedError(tt.err)
+			if !errcat.Is(got, tt.code) {
+				t.Fatalf("error = %v, want %s", got, tt.code)
+			}
+			if !strings.Contains(got.Error(), tt.want) || !strings.Contains(got.Error(), "next: ship converge") {
+				t.Fatalf("error = %q, want human wording and converge next step", got)
+			}
+		})
 	}
 }

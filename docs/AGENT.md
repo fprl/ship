@@ -327,7 +327,7 @@ aliases = true
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `id|path`: Snapshot filename stem or local path; `--confirm <app>`: Required app-name confirmation when restoring Production.
 - Notes: The client uploads to /tmp/ship-deploy; the helper validates gzip/tar, metadata, app identity, and data/ before it stops containers or swaps /data. Snapshot env may differ from the target env. Production restore requires --confirm <app> and an owner role. Shippers may restore preview data; agents receive approval_required.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
-- Common error codes: `rm_confirmation_required`, `approval_required`, `data_snapshot_invalid`, `host_key_changed`, `operation_failed`
+- Common error codes: `data_restore_confirmation_required`, `approval_required`, `data_snapshot_invalid`, `host_key_changed`, `operation_failed`
 
 ### `data ls`
 - Purpose: List local data snapshots for this app.
@@ -570,7 +570,7 @@ aliases = true
 ## Error-code catalogue
 
 <!-- BEGIN GENERATED ERRCAT -->
-- `approval_expired`: approval expired; cause: approval {id} expired for {summary}; remediation: `retry the command to mint a fresh request`.
+- `approval_expired`: approval expired; cause: approval {id} expired for {summary}; remediation: `ship box approval ls {box}`; defaults: `box="<box>"`.
 - `approval_required`: approval required for {summary}; cause: {member} ({role}) requested {summary}; approval id {id}; remediation: `ship box approval grant {id} {box}`; defaults: `box="<box>"`.
 - `behind_production`: Production ship failed; cause: deployed commit {deployed} {detail}; remediation: `git pull`.
 - `box_app_rm_confirmation_required`: box app rm confirmation failed; cause: box app rm requires --confirm {app}; remediation: `ship box app rm {app} {box} --confirm {app}`; defaults: `box="<box>"`.
@@ -587,14 +587,16 @@ aliases = true
 - `data_restore_confirmation_required`: Production restore confirmation failed; cause: Production restore requires --confirm {app}; remediation: `ship data restore {id_or_path} --confirm {app}`.
 - `data_snapshot_invalid`: data snapshot is invalid; cause: {detail}; remediation: `ship data ls`; defaults: `detail="snapshot metadata or data payload is invalid"`.
 - `deploy_blocked_local_checks`: deploy blocked by local checks; cause: {detail}; remediation: `{command}`; defaults: `command="fix local checks", detail="local checks reported errors; see stderr above"`.
+- `deploy_committed_degraded`: committed but degraded; cause: {detail}; remediation: `ship converge`.
+- `deploy_committed_unconverged`: committed but not converged; cause: {detail}; remediation: `ship converge`.
 - `deploy_key_missing`: bootstrap SSH key is missing; cause: {detail}; remediation: `{command}`; defaults: `command="ssh-copy-id -i ~/.ssh/ship.pub root@<ip>", detail="provider gave a password; this installs your ship key using it once; hardening then disables password login permanently"`.
 - `deploy_tmp_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `deploy_tmp_missing`: host preflight failed; cause: deploy tmp dir is missing: {path}; remediation: `ship box setup <ssh-target>`.
 - `detached_head_requires_branch`: branch resolution failed; cause: HEAD is detached; pass --branch <name> so ship can resolve the environment; remediation: `{command}`.
 - `dirty_worktree`: Production ship failed; cause: production branch {branch} has uncommitted changes; remediation: `git add . && git commit -m "<message>"`.
-- `dockerfile_missing`: Dockerfile is missing; cause: the declared processes need a Dockerfile to build; remediation: `write a Dockerfile, or declare a [routes] static route in ship.toml`.
+- `dockerfile_missing`: Dockerfile is missing; cause: the declared processes need a Dockerfile to build; write one or declare a [routes] static route in ship.toml; remediation: `ship`.
 - `dotenv_malformed`: dotenv import failed; cause: {detail}; remediation: `{command}`; defaults: `command="ship secret set --from path/to/.env"`.
-- `dotenv_rejected`: deploy artifact contains dotenv files; cause: refusing to deploy dotenv file: {files}; remediation: `run ship secret set --from .env, then remove the file (allowed names: .env.example, .env.sample, .env.defaults)`.
+- `dotenv_rejected`: deploy artifact contains dotenv files; cause: refusing to deploy dotenv file: {files}; import it with ship secret set --from {file}, then remove it; allowed names: .env.example, .env.sample, .env.defaults; remediation: `ship secret set --from {file}`; defaults: `file=".env"`.
 - `env_invalid`: app environment preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `env_missing`: app environment preflight failed; cause: {detail}; remediation: `ship`.
 - `host_helper_download_failed`: host install helper download failed; cause: {detail}; remediation: `{command}`; defaults: `command="SHIP_REPO_ROOT=<path-to-ship-checkout> ship box setup <ssh-target>"`.
@@ -607,14 +609,14 @@ aliases = true
 - `host_install_unsupported_os`: host OS is unsupported; cause: host install requires Ubuntu/Debian apt tooling; missing {tool}; remediation: `ship box setup <ubuntu-24.04-ssh-target>`.
 - `host_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `host_key_changed`: box host key changed; cause: SSH host key for {box} is unknown or changed; if the box was rebuilt, re-establish the pin (ship box forget {box} clears it); if not, investigate before trusting this host; remediation: `ship box setup <ssh-target>`.
-- `host_label_conflict`: production hostname collision; cause: app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env}); remediation: `rename app {app} and deploy again`.
+- `host_label_conflict`: production hostname collision; cause: app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env}); rename app {app} to avoid the collision, then retry ship; remediation: `ship`.
 - `host_not_installed`: host preflight failed; cause: host is not installed; remediation: `ship box setup <ssh-target>`.
 - `ingress_invalid`: ingress preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `invalid_box_target`: box target is invalid; cause: box target must be a host like 203.0.113.7; remove any user@ prefix; remediation: `{command}`; defaults: `command="ship box app ls 203.0.113.7"`.
 - `invalid_secret_key`: secret key is invalid; cause: secret key {key} must match ^[A-Za-z_][A-Za-z0-9_]*$; remediation: `ship secret set KEY`.
 - `keys_url_unavailable`: remote SSH key lookup failed; cause: no public SSH keys found at {source}; remediation: `ship box member add {source} {box} --name {name}`; defaults: `box="<box>", name="<name>", source="<https-url>"`.
 - `logs_follow_json_conflict`: logs command is invalid; cause: logs --json cannot be combined with --follow; remediation: `ship logs`.
-- `manifest_invalid`: ship.toml validation failed; cause: {details}; remediation: `{command}`; defaults: `command="fix ship.toml"`.
+- `manifest_invalid`: ship.toml validation failed; cause: {details}; remediation: `{command}`; defaults: `command="ship"`.
 - `member_key_ambiguous`: member key selector is ambiguous; cause: key selector {selector} matches multiple keys: {matches}; remediation: `ship box member rm {name} --key <full-fingerprint> {box}`; defaults: `box="<box>", name="<name>"`.
 - `member_key_not_found`: member key selector failed; cause: no such key for member {name}; remediation: `ship box member ls {box}`; defaults: `box="<box>", name="<name>"`.
 - `member_last_owner`: member mutation refused; cause: the mutation would leave no effective owner key; at least one effective owner key (an owner record with a matching authorized_keys line) must remain; remediation: `ship box member add <https-url|key|path> {box} --name <new-owner> --role owner`; defaults: `box="<box>"`.
