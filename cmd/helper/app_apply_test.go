@@ -162,7 +162,7 @@ func TestContainerBuildPlanProtectsCommittedImages(t *testing.T) {
 	if err := os.WriteFile(imagePath, imageJSON, 0644); err != nil {
 		t.Fatal(err)
 	}
-	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then cat \"$SHIP_TEST_IMAGE_JSON\"; exit 0; fi\nexit 1\n")
+	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then cat \"$SHIP_TEST_IMAGE_JSON\"; exit 0; fi\nif [ \"$1\" = image ] && [ \"$2\" = exists ]; then exit \"${SHIP_TEST_EXISTS_CODE:-1}\"; fi\nexit 1\n")
 	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
 
 	commit := func(t *testing.T) {
@@ -230,13 +230,24 @@ func TestContainerBuildPlanProtectsCommittedImages(t *testing.T) {
 			t.Fatalf("err=%v, want fail-closed release_immutable", planErr)
 		}
 	})
-	t.Run("missing tag builds freely", func(t *testing.T) {
+	t.Run("confirmed-absent tag builds freely", func(t *testing.T) {
 		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
 		t.Setenv("SHIP_TEST_IMAGE_JSON", filepath.Join(root, "missing.json"))
+		t.Setenv("SHIP_TEST_EXISTS_CODE", "1")
 		commit(t)
 		skip, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: otherLabel}).containerBuildPlan()
 		if err != nil || skip {
 			t.Fatalf("skip=%v err=%v, want build", skip, err)
+		}
+	})
+	t.Run("unverifiable committed image fails closed", func(t *testing.T) {
+		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
+		t.Setenv("SHIP_TEST_IMAGE_JSON", filepath.Join(root, "missing.json"))
+		t.Setenv("SHIP_TEST_EXISTS_CODE", "0")
+		commit(t)
+		_, err := (appApplyCmd{App: "api", Env: "production", SHA: release, EnvelopeLabel: otherLabel}).containerBuildPlan()
+		if !errcat.Is(err, errcat.CodeReleaseImmutable) {
+			t.Fatalf("err=%v, want fail-closed release_immutable", err)
 		}
 	})
 }

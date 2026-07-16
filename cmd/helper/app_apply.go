@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -530,6 +531,16 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 func (c appApplyCmd) containerBuildPlan() (bool, error) {
 	images, err := podmanImagesForRelease(c.App, c.Env, c.SHA)
 	if err != nil || len(images) == 0 {
+		// Only confirmed tag absence may build: a transient inspect failure
+		// over a committed tag must not open a rebuild window.
+		if imageTagConfirmedAbsent(c.App, c.Env, c.SHA) {
+			return false, nil
+		}
+		if releaseArtifactsCommitted(c.App, c.Env, c.SHA) {
+			return false, errcat.New(errcat.CodeReleaseImmutable, errcat.Fields{
+				"detail": fmt.Sprintf("release %s has committed artifacts but its image cannot be verified right now; deploying could replace committed bytes", c.SHA),
+			})
+		}
 		return false, nil
 	}
 	envelopeHash := envelope.HashLabel(c.EnvelopeLabel)
@@ -548,6 +559,24 @@ func (c appApplyCmd) containerBuildPlan() (bool, error) {
 		return false, errcat.New(errcat.CodeReleaseImmutable, errcat.Fields{"detail": detail})
 	}
 	return false, nil
+}
+
+// imageTagConfirmedAbsent reports that the release tag definitively does not
+// exist (podman image exists, exit status 1). Any other outcome — including a
+// daemon error — is not absence.
+func imageTagConfirmedAbsent(app, env, release string) bool {
+	_, err := utils.RunChecked("podman", []string{"image", "exists", identity.ImageTag(app, env, release)}, "")
+	if err == nil {
+		return false
+	}
+	var cmdErr *utils.CommandError
+	if errors.As(err, &cmdErr) {
+		var exitErr *exec.ExitError
+		if errors.As(cmdErr.Err, &exitErr) && exitErr.ExitCode() == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 // releaseArtifactsCommitted reports whether a release's artifacts are part of

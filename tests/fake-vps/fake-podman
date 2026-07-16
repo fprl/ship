@@ -246,6 +246,14 @@ PY
     sub="${1:-}"
     shift || true
     case "$sub" in
+      exists)
+        ref="${1:-}"
+        safe=$(printf '%s' "$ref" | tr '/:' '__')
+        if [[ -f "$state_dir/images/$safe" ]]; then
+          exit 0
+        fi
+        exit 1
+        ;;
       inspect)
         fmt=""
         declare -a refs=()
