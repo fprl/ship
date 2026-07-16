@@ -41,6 +41,8 @@ const (
 	doctorCheckTLSCerts       = "tls_certs"
 	doctorCheckReaperTimer    = "reaper_timer"
 	doctorCheckDoctorTimer    = "doctor_timer"
+	doctorCheckBootConverge   = "boot_converge"
+	doctorCheckGCTimer        = "gc_timer"
 	doctorCheckDeployJournals = "deploy_journals"
 	doctorCheckHelperVersion  = "helper_version"
 	doctorCheckBoxUpdate      = "box_update"
@@ -48,11 +50,13 @@ const (
 
 	reaperTimerUnit = "ship-preview-reaper.timer"
 	doctorTimerUnit = "ship-doctor.timer"
+	bootConvergeUnit = "ship-boot-converge.service"
+	gcTimerUnitName  = "ship-gc.timer"
 )
 
 var (
 	BroadSudoRe  = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\((?:ALL|ALL:ALL)\)\s+NOPASSWD:\s*ALL$`)
-	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/ship\s+server\s+app\s+\*,\s*/usr/local/bin/ship\s+server\s+doctor,\s*/usr/local/bin/ship\s+server\s+doctor\s+\*,\s*/usr/local/bin/ship\s+server\s+key\s+\*,\s*/usr/local/bin/ship\s+server\s+approval\s+\*,\s*/usr/local/bin/ship\s+server\s+config\s+\*,\s*/usr/local/bin/ship\s+server\s+webhook\s+\*,\s*/usr/local/bin/ship\s+server\s+version,\s*/usr/local/bin/ship\s+server\s+version\s+\*,\s*/usr/local/bin/ship\s+server\s+update\s+\*$`)
+	HelperSudoRe = regexp.MustCompile(`^([a-z_][a-z0-9_-]{0,31}\$?)\s+ALL=\(root\)\s+NOPASSWD:\s*/usr/local/bin/ship\s+server\s+app\s+\*,\s*/usr/local/bin/ship\s+server\s+doctor,\s*/usr/local/bin/ship\s+server\s+doctor\s+\*,\s*/usr/local/bin/ship\s+server\s+key\s+\*,\s*/usr/local/bin/ship\s+server\s+approval\s+\*,\s*/usr/local/bin/ship\s+server\s+config\s+\*,\s*/usr/local/bin/ship\s+server\s+webhook\s+\*,\s*(?:/usr/local/bin/ship\s+server\s+gc\s+\*,\s*)?/usr/local/bin/ship\s+server\s+version,\s*/usr/local/bin/ship\s+server\s+version\s+\*,\s*/usr/local/bin/ship\s+server\s+update\s+\*$`)
 )
 
 type doctorCmd struct {
@@ -328,6 +332,8 @@ func doctorChecksFor(opts doctorOptions) []store.DoctorCheck {
 		doctorTLSCertsCheck(opts.TLSStatuses, opts.Now(), opts.BoxTarget),
 		doctorReaperTimerCheck(opts.Timer, opts.BoxTarget),
 		doctorDoctorTimerCheck(opts.Timer, opts.BoxTarget),
+		doctorBootConvergeCheck(opts.Timer, opts.BoxTarget),
+		doctorGCTimerCheck(opts.Timer, opts.BoxTarget),
 		doctorDeployJournalsCheck(opts.AppEnvs, opts.BoxTarget),
 		doctorHelperVersionCheck(opts.StateStore, opts.BoxTarget),
 		doctorBoxUpdateCheck(opts.StateStore, opts.BoxTarget),
@@ -841,6 +847,30 @@ func doctorDoctorTimerCheck(timerState func(string) systemdUnitState, boxTarget 
 		return doctorCheck(doctorCheckDoctorTimer, doctorStatusDegraded, fmt.Sprintf("%s present, active=%s, enabled=%s%s", state.Name, state.Active, state.Enabled, selfCheckNote), remediation)
 	}
 	return doctorCheck(doctorCheckDoctorTimer, doctorStatusOK, fmt.Sprintf("%s present, active, enabled%s", state.Name, selfCheckNote), doctorRerunCommand(boxTarget))
+}
+
+func doctorBootConvergeCheck(timerState func(string) systemdUnitState, boxTarget string) store.DoctorCheck {
+	state := timerState(bootConvergeUnit)
+	remediation := doctorTimerStartCommand(boxTarget, bootConvergeUnit)
+	if !state.Present {
+		return doctorCheck(doctorCheckBootConverge, doctorStatusFailed, fmt.Sprintf("%s missing at %s", state.Name, state.Path), remediation)
+	}
+	if state.Enabled != "enabled" {
+		return doctorCheck(doctorCheckBootConverge, doctorStatusDegraded, fmt.Sprintf("%s present, enabled=%s", state.Name, state.Enabled), remediation)
+	}
+	return doctorCheck(doctorCheckBootConverge, doctorStatusOK, fmt.Sprintf("%s present, enabled", state.Name), doctorRerunCommand(boxTarget))
+}
+
+func doctorGCTimerCheck(timerState func(string) systemdUnitState, boxTarget string) store.DoctorCheck {
+	state := timerState(gcTimerUnitName)
+	remediation := doctorTimerStartCommand(boxTarget, gcTimerUnitName)
+	if !state.Present {
+		return doctorCheck(doctorCheckGCTimer, doctorStatusFailed, fmt.Sprintf("%s missing at %s", state.Name, state.Path), remediation)
+	}
+	if state.Active != "active" || state.Enabled != "enabled" {
+		return doctorCheck(doctorCheckGCTimer, doctorStatusDegraded, fmt.Sprintf("%s present, active=%s, enabled=%s", state.Name, state.Active, state.Enabled), remediation)
+	}
+	return doctorCheck(doctorCheckGCTimer, doctorStatusOK, fmt.Sprintf("%s present, active, enabled", state.Name), doctorRerunCommand(boxTarget))
 }
 
 func systemdTimerState(name string) systemdUnitState {

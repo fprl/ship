@@ -1649,6 +1649,29 @@ func TestRenderWhyReleaseFailure(t *testing.T) {
 	}
 }
 
+func TestRenderWhyCommittedDegradedPrescribesConverge(t *testing.T) {
+	read := readContext{
+		AppContext: &config.AppContext{ProductionBranch: "main"},
+		Address:    readAddress{ProductionBranch: true},
+	}
+	got := renderWhy(whyJournalEntry{
+		Outcome:          "committed_degraded",
+		EndedAt:          "2026-07-07T10:00:01Z",
+		AttemptedRelease: "bbb222",
+	}, read)
+	for _, want := range []string{
+		"Deploy committed but degraded",
+		"next: ship converge\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("why output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "next: ship\n") {
+		t.Fatalf("degraded output fell through to generic remediation:\n%s", got)
+	}
+}
+
 func TestRenderWhyApplyFailureDoesNotPrescribeReleaseCommand(t *testing.T) {
 	read := readContext{
 		AppContext: &config.AppContext{ProductionBranch: "main"},

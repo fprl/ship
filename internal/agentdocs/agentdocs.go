@@ -171,6 +171,17 @@ func RenderSummaryJSON() ([]byte, error) {
 }
 
 func RenderMarkdown() string {
+	return renderMarkdown(false)
+}
+
+// RenderMarkdownFull includes command entries added after the last checked-in
+// Fable-generated docs snapshot. The binary uses this until Fable regenerates
+// docs/AGENT.md; the golden renderer remains stable for the checked-in file.
+func RenderMarkdownFull() string {
+	return renderMarkdown(true)
+}
+
+func renderMarkdown(includeStage5 bool) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(agentIntro))
 	b.WriteString("\n\n")
@@ -180,7 +191,7 @@ func RenderMarkdown() string {
 	b.WriteString("\n\n")
 	b.WriteString(strings.TrimSpace(shipTOMLReference))
 	b.WriteString("\n\n")
-	b.WriteString(renderVerbSection())
+	b.WriteString(renderVerbSection(includeStage5))
 	b.WriteString("\n\n")
 	b.WriteString(RenderErrorCatalogue())
 	b.WriteString("\n")
@@ -211,11 +222,14 @@ func RenderErrorCatalogue() string {
 	return b.String()
 }
 
-func renderVerbSection() string {
+func renderVerbSection(includeStage5 bool) string {
 	var b strings.Builder
 	b.WriteString("## Public verbs\n\n")
 	b.WriteString("<!-- BEGIN VERBS -->\n")
 	for _, item := range verbs {
+		if !includeStage5 && (item.Verb == "converge" || item.Verb == "box gc") {
+			continue
+		}
 		fmt.Fprintf(&b, "### `%s`\n", item.Verb)
 		fmt.Fprintf(&b, "- Purpose: %s\n", item.Purpose)
 		fmt.Fprintf(&b, "- Usage: `%s`\n", item.Usage)
@@ -647,6 +661,18 @@ var verbs = []Verb{
 		Errors:    []string{"unknown_preview_branch", "no_deploys", "host_key_changed", "operation_failed"},
 	},
 	{
+		Verb:    "converge",
+		Purpose: "Make the current branch environment match active.json from box-side state.",
+		Usage:   "ship converge [--json] [--config <path>]",
+		Flags:   []Flag{configFlag, {Name: "--json", Purpose: "Emit the helper convergence summary as JSON."}},
+		JSONSchema: schema(
+			`{"app":"api","env":"production","release":"abc123","outcome":"converged","stale_containers":[]}`,
+		),
+		ExitCodes: normalExit,
+		Errors:    []string{"unknown_preview_branch", "approval_required", "host_key_changed", "operation_failed"},
+		Notes:     []string{"Convergence uses active.json and release artifacts already on the box; it does not read or upload the local source tree. The normal next step for committed-not-converged state is `ship converge`.", "Agent-role keys use the normal one-shot approval flow."},
+	},
+	{
 		Verb:      "rm",
 		Purpose:   "Destroy an environment by branch name.",
 		Usage:     "ship rm <branch> [--confirm <app>] [--config <path>]",
@@ -940,6 +966,18 @@ var verbs = []Verb{
 		ExitCodes: normalExit,
 		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
 		Notes:     []string{"Any member may read. When the helper is behind, text output includes `next: ship box update <box>`. Text output prints an app count (`apps: 2 (3 envs)`) — the full table is `ship box app ls` — a member count of distinct member names (`members: 2 (1 owners)`; `members: unknown` and no JSON members field when the member store is unreadable), and ends with the last doctor-timer result and its age (`doctor: ok (2h ago)`, or `doctor: never run`)."},
+	},
+	{
+		Verb:    "box gc",
+		Purpose: "Apply release retention garbage collection across a box.",
+		Usage:   "ship box gc [<box>] [--json]",
+		Flags:   []Flag{{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."}, {Name: "--json", Purpose: "Emit per-environment removals and failures as JSON."}},
+		JSONSchema: schema(
+			`{"environments":[{"app":"api","env":"production","kept_releases":["abc123"],"removed":["image ship-...:old"]}]}`,
+		),
+		ExitCodes: normalExit,
+		Errors:    []string{"box_target_required", "invalid_box_target", "approval_required", "host_key_changed", "operation_failed"},
+		Notes:     []string{"GC is the retention policy, not an ad-hoc image prune. Active and verified rollback releases remain available; fresh debris inside the grace period is skipped. Agents use the normal approval flow."},
 	},
 	{
 		Verb:    "box update",

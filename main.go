@@ -28,6 +28,7 @@ type cli struct {
 	Exec       execCmd          `cmd:"" group:"project" help:"Run a one-off command in the current branch environment."`
 	Why        whyCmd           `cmd:"" group:"project" help:"Explain the latest deploy outcome for the current branch environment."`
 	Rollback   rollbackCmd      `cmd:"" group:"project" help:"Roll back the current branch environment."`
+	Converge   convergeCmd      `cmd:"" group:"project" help:"Make the current branch environment match active.json."`
 	Rm         rmCmd            `cmd:"rm" group:"project" help:"Remove an environment by branch name."`
 	Data       dataCmd          `cmd:"" group:"project" help:"Manage app data."`
 	Preview    previewCmd       `cmd:"" group:"project" help:"Manage the current Preview."`
@@ -276,6 +277,20 @@ type rollbackCmd struct {
 	Release string `arg:"" optional:"" help:"Release to run. Omitted = previous local release."`
 }
 
+type convergeCmd struct {
+	projectArgs
+	JSON bool `name:"json" help:"Emit the helper convergence summary as JSON."`
+}
+
+func (c convergeCmd) Run() error {
+	root, err := c.projectRoot()
+	if err != nil {
+		return err
+	}
+	client.CmdConverge(root, c.JSON)
+	return nil
+}
+
 func (c rollbackCmd) Run() error {
 	root, err := c.projectRoot()
 	if err != nil {
@@ -456,10 +471,26 @@ type boxCmd struct {
 	Ls       boxLsCmd           `cmd:"" hidden:""`
 	Status   boxStatusCmd       `cmd:"" help:"Show helper version, disk, apps, members, approvals, and the last doctor result for one box."`
 	Update   boxUpdateCmd       `cmd:"" help:"Update a box helper and version-owned artifacts."`
+	GC       boxGCCmd           `cmd:"gc" help:"Apply release retention garbage collection on a box."`
 	Forget   boxForgetCmd       `cmd:"" hidden:"" help:"Drop a box host-key pin."`
 	Config   boxConfigClientCmd `cmd:"" help:"Read or change box configuration."`
 	Member   boxMemberCmd       `cmd:"" help:"Manage deploy SSH members."`
 	Approval boxApprovalCmd     `cmd:"" help:"Manage pending role approvals."`
+}
+
+type boxGCCmd struct {
+	Config string `name:"config" type:"path" default:"ship.toml" hidden:"" help:"Path to ship.toml."`
+	Target string `arg:"" optional:"" name:"box" help:"Box host. Defaults to ship.toml box when run in an app dir."`
+	JSON   bool   `name:"json" help:"Emit structured GC JSON."`
+}
+
+func (c boxGCCmd) Run() error {
+	target, err := boxTargetFor(c.Config, c.Target, "ship box gc <box>")
+	if err != nil {
+		return err
+	}
+	client.CmdBoxGC(target, c.JSON)
+	return nil
 }
 
 type boxStatusCmd struct {

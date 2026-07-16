@@ -12,7 +12,7 @@ import (
 	"github.com/fprl/ship/internal/utils"
 )
 
-const convergenceNextStep = "rerun ship"
+const convergenceNextStep = "ship converge"
 
 type appListJSON struct {
 	Apps []appListAppJSON `json:"apps"`
@@ -186,6 +186,11 @@ func renderWhy(entry whyJournalEntry, read readContext) string {
 		fmt.Fprintf(&b, "Deploy committed but not converged for %s %s at %s.\n", kind, branch, when)
 		fmt.Fprintf(&b, "release: %s\n", dashIfEmpty(entry.AttemptedRelease))
 		b.WriteString("traffic: intent is committed; runtime may still be on the previous release.\n")
+		fmt.Fprintf(&b, "next: %s\n", convergenceNextStep)
+	case "committed_degraded":
+		fmt.Fprintf(&b, "Deploy committed but degraded for %s %s at %s.\n", kind, branch, when)
+		fmt.Fprintf(&b, "release: %s\n", dashIfEmpty(entry.AttemptedRelease))
+		b.WriteString("traffic: the active release may be live, but runtime durability needs repair.\n")
 		fmt.Fprintf(&b, "next: %s\n", convergenceNextStep)
 	default:
 		fmt.Fprintf(&b, "Deploy failed for %s %s at %s.\n", kind, branch, when)

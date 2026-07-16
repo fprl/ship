@@ -207,16 +207,11 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 	}
 	sink := newWebhookTestSink(t)
 	oldAppend := appendSanitizedDeployJournal
-	oldPrune := bestEffortPruneAfterDeploy
 	appendSanitizedDeployJournal = func(string, string, deployJournalEntry) error {
 		return errors.New("journal disk is read-only")
 	}
-	bestEffortPruneAfterDeploy = func(string, string, string, deployJournalEntry) string {
-		return "pruned 0 old images"
-	}
 	t.Cleanup(func() {
 		appendSanitizedDeployJournal = oldAppend
-		bestEffortPruneAfterDeploy = oldPrune
 	})
 
 	cmd := appApplyCmd{App: "api", Env: "production", SHA: "new222"}
@@ -260,10 +255,8 @@ func TestCommittedJournalFailureSkipsCleanup(t *testing.T) {
 	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nprintf '%s\\n' \"$*\" >> \"$PODMAN_LOG\"\nexit 0\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	oldAppend := appendSanitizedDeployJournal
-	oldPrune := bestEffortPruneAfterDeploy
 	appendSanitizedDeployJournal = func(string, string, deployJournalEntry) error { return errors.New("journal disk is read-only") }
-	bestEffortPruneAfterDeploy = func(string, string, string, deployJournalEntry) string { return "pruned 0 old images" }
-	t.Cleanup(func() { appendSanitizedDeployJournal = oldAppend; bestEffortPruneAfterDeploy = oldPrune })
+	t.Cleanup(func() { appendSanitizedDeployJournal = oldAppend })
 	cmd := appApplyCmd{App: "api", Env: "production", SHA: "new222"}
 	if err := cmd.completeCommittedDeploy(&config.AppContext{}, "old111", time.Now().UTC(), applyReleaseResult{containersToRemove: []string{"old-container"}}); err != nil {
 		t.Fatal(err)

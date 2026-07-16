@@ -4,15 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
-
-const activationEnvLimit = 32
 
 func readActive(app, env string) (activation.Pointer, error) { return activation.Read(app, env) }
 
@@ -57,19 +54,6 @@ func writeActivationEnvFile(app, env, activationID string, values map[string]str
 		return path, nil
 	} else if !os.IsNotExist(err) {
 		return "", err
-	}
-	entries, err := os.ReadDir(identity.ActivationsDir(app, env))
-	if err != nil && !os.IsNotExist(err) {
-		return "", err
-	}
-	count := 0
-	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".env" {
-			count++
-		}
-	}
-	if count >= activationEnvLimit {
-		return "", fmt.Errorf("activation env file limit reached (%d); next: redeploy after cleanup", activationEnvLimit)
 	}
 	if err := store.AtomicWrite(path, data, 0600); err != nil {
 		return "", err

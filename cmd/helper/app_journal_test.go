@@ -3,6 +3,7 @@ package helper
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,9 +27,9 @@ func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
 		step    string
 		outcome string
 	}{
-			{step: "build", outcome: "failed"},
-			{step: "probe", outcome: "failed"},
-			{step: "release", outcome: "failed"},
+		{step: "build", outcome: "failed"},
+		{step: "probe", outcome: "failed"},
+		{step: "release", outcome: "failed"},
 	} {
 		t.Run(tt.step, func(t *testing.T) {
 			entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", deployIdentity{}, startedAt, newJournalStepError(tt.step, errors.New(tt.step+" failed"), nil, nil))
@@ -112,6 +113,28 @@ func TestLatestSuccessfulDeployJournalEntrySkipsFailures(t *testing.T) {
 	}
 }
 
+func TestLatestDeployJournalEntrySkipsGC(t *testing.T) {
+	setupJournalHostTest(t)
+	deployed := deployJournalEntry{
+		Outcome:          "deployed",
+		StartedAt:        "2026-07-07T10:00:00Z",
+		EndedAt:          "2026-07-07T10:00:01Z",
+		AttemptedRelease: "good333",
+	}
+	if err := appendDeployJournalEntry("api", "production", deployed, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendDeployJournalEntry("api", "production", deployJournalEntry{
+		Outcome: "gc", StartedAt: "2026-07-07T11:00:00Z", EndedAt: "2026-07-07T11:00:01Z", GC: "none",
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readLatestDeployJournalEntry("api", "production")
+	if err != nil || got.Outcome != "deployed" || got.AttemptedRelease != "good333" {
+		t.Fatalf("latest after GC = %+v, err=%v", got, err)
+	}
+}
+
 func TestLatestDeployJournalEntryNoDeploysError(t *testing.T) {
 	setupJournalHostTest(t)
 	_, err := readLatestDeployJournalEntry("api", "production")
@@ -187,4 +210,27 @@ func setupJournalHostTest(t *testing.T) {
 	}
 	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	defer func() { os.Stderr = old }()
+	fn()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
 }

@@ -118,6 +118,22 @@ func CmdBoxStatus(server string, jsonFlag bool) {
 	fmt.Print(renderBoxStatus(payload, server, time.Now()))
 }
 
+func CmdBoxGC(server string, jsonFlag bool) {
+	if !config.ValidateBoxHost(server) {
+		utils.DieError(invalidBoxTargetError(server, "ship box gc"), 2)
+	}
+	runner, err := NewCommandRunner()
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer runner.Close()
+	out, err := runSSHDetail(runner, server, serverGCCommand(jsonFlag), "ship box gc "+server)
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	fmt.Print(out)
+}
+
 func renderBoxStatus(payload boxStatusPayload, server string, now time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "helper: %s\nclient: %s\n", payload.HelperVersion, payload.ClientVersion)

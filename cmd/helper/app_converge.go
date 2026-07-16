@@ -1,23 +1,136 @@
 package helper
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/utils"
 )
 
-// convergenceNextStep is intentionally deploy-shaped until the public
-// converge verb lands in stage 5.
-const convergenceNextStep = "rerun ship"
+const convergenceNextStep = "ship converge"
 
 type convergeResult struct {
 	StaleContainers []string
 	Degraded        bool
+	Changed         bool
 }
 
 type convergeError struct {
 	Step string
 	Err  error
+}
+
+type appConvergeCmd struct {
+	App  string `arg:"" help:"App name."`
+	Env  string `arg:"" help:"Env name."`
+	JSON bool   `name:"json" help:"Emit a structured convergence summary."`
+}
+
+type appConvergeSummary struct {
+	App             string   `json:"app"`
+	Env             string   `json:"env"`
+	Release         string   `json:"release,omitempty"`
+	Outcome         string   `json:"outcome"`
+	StaleContainers []string `json:"stale_containers,omitempty"`
+	Error           string   `json:"error,omitempty"`
+}
+
+var appendConvergeJournal = appendDeployJournalEntry
+var convergeActiveForCommand = convergeActive
+
+func (c appConvergeCmd) Run() error {
+	if err := validateAppEnv(c.App, c.Env); err != nil {
+		utils.DieError(err, 1)
+	}
+	authorizeOrDie(helperVerbShip, authTargetForAppEnv(c.App, c.Env, "converge"))
+	var summary appConvergeSummary
+	var runErr error
+	withAppEnvLock(c.App, c.Env, func() {
+		summary, runErr = c.runLocked()
+	})
+	if c.JSON {
+		buf, err := json.MarshalIndent(summary, "", "  ")
+		if err != nil {
+			utils.DieError(err, 1)
+		}
+		fmt.Println(string(buf))
+	} else if runErr == nil {
+		if summary.Release == "" {
+			fmt.Printf("Converged %s (%s)\n", c.App, c.Env)
+		} else {
+			fmt.Printf("Converged %s (%s) at %s\n", c.App, c.Env, summary.Release)
+		}
+	}
+	if runErr != nil {
+		if errcat.Is(runErr, errcat.CodeNoDeploys) {
+			utils.DieError(runErr, 1)
+		}
+		utils.DieError(fmt.Errorf("committed but not converged; %s: %w", convergenceNextStep, runErr), 1)
+	}
+	return nil
+}
+
+func (c appConvergeCmd) runLocked() (appConvergeSummary, error) {
+	startedAt := time.Now().UTC()
+	summary := appConvergeSummary{App: c.App, Env: c.Env}
+	if pointer, err := readActive(c.App, c.Env); err == nil {
+		summary.Release = pointer.Release
+	} else {
+		summary.Error = err.Error()
+		if os.IsNotExist(err) {
+			err = fmt.Errorf("nothing deployed yet: %w", noDeployJournalError(c.App, c.Env))
+			summary.Error = err.Error()
+			summary.Outcome = "no_deploys"
+			return summary, err
+		}
+		summary.Outcome = "failed"
+		return summary, errors.Join(err, c.appendJournal(startedAt, summary, err))
+	}
+	result, err := convergeActiveForCommand(c.App, c.Env)
+	summary.StaleContainers = result.StaleContainers
+	if err != nil {
+		summary.Outcome = "committed_unconverged"
+		summary.Error = err.Error()
+		journalErr := c.appendJournal(startedAt, summary, err)
+		return summary, errors.Join(err, journalErr)
+	}
+	summary.Outcome = "converged"
+	if !result.Changed && len(result.StaleContainers) == 0 {
+		return summary, nil
+	}
+	if journalErr := c.appendJournal(startedAt, summary, nil); journalErr != nil {
+		return summary, journalErr
+	}
+	removeContainers(result.StaleContainers)
+	return summary, nil
+}
+
+func (c appConvergeCmd) appendJournal(startedAt time.Time, summary appConvergeSummary, convergeErr error) error {
+	entry := deployJournalEntry{
+		SchemaVersion:    deployJournalSchemaVersion,
+		App:              c.App,
+		Env:              c.Env,
+		Outcome:          summary.Outcome,
+		StartedAt:        startedAt.Format(time.RFC3339Nano),
+		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
+		AttemptedRelease: summary.Release,
+		FailingStep:      "",
+		Identity:         deployActor("", ""),
+		Member:           currentServerMemberForJournal(),
+	}
+	if convergeErr != nil {
+		entry.FailingStep = "converge"
+		if stepErr, ok := convergeErr.(*convergeError); ok {
+			entry.FailingStep = stepErr.Step
+		}
+		entry.StderrTail = convergeErr.Error()
+	}
+	return appendConvergeJournal(c.App, c.Env, entry, nil)
 }
 
 func (e *convergeError) Error() string { return e.Err.Error() }
@@ -65,6 +178,9 @@ func convergeActive(app, env string) (convergeResult, error) {
 	}
 
 	path := caddyfilePath(app, env)
+	if len(stale) == 0 && caddyAlreadyConverged(path, app, env, ctx, pointer.Release, processNames) {
+		return convergeResult{}, nil
+	}
 	if err := renderAndReloadAppCaddy(path, app, env, ctx, pointer.Release, processNames); err != nil {
 		return convergeResult{}, &convergeError{Step: "caddy", Err: caddyStageActionError(err, "converge", path)}
 	}
@@ -77,7 +193,16 @@ func convergeActive(app, env string) (convergeResult, error) {
 			return convergeResult{StaleContainers: uniqueContainerNames(stale)}, &convergeError{Step: "containers", Err: err}
 		}
 	}
-	return convergeResult{StaleContainers: uniqueContainerNames(stale)}, nil
+	return convergeResult{StaleContainers: uniqueContainerNames(stale), Changed: true}, nil
+}
+
+func caddyAlreadyConverged(path, app, env string, ctx *config.AppContext, release string, processNames map[string]string) bool {
+	content, err := renderAppCaddyfileWithProcessNames(app, env, ctx, release, processNames)
+	if err != nil {
+		return false
+	}
+	fragment, err := os.ReadFile(path)
+	return err == nil && string(fragment) == content && caddyReloadReceiptMatches(path, []byte(content))
 }
 
 func convergeProcesses(app, env, release, activationID string, ctx *config.AppContext, entries []containerEntry) (map[string]string, []string, error) {

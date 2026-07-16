@@ -116,12 +116,14 @@ func (c appRollbackCmd) recordRollbackSuccess(result rollbackPayload, startedAt 
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
 		PreviousRelease:  result.Previous,
 		AttemptedRelease: result.Release,
+		Activation:       c.ActivationID,
 		Identity:         c.actor(),
 		Member:           currentServerMemberForJournal(),
 	}, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: rollback succeeded but failed to write deploy journal: %v; run ship box doctor\n", err)
 	} else {
 		removeContainers(result.StaleContainers)
+		bestEffortGCAfterLifecycle(c.App, c.Env)
 	}
 	fmt.Print(renderRollbackText(result))
 }
@@ -303,9 +305,10 @@ type rollbackPayload struct {
 }
 
 type imageRelease struct {
-	Release  string
-	Image    string
-	Envelope envelope.Envelope
+	Release   string
+	Image     string
+	Envelope  envelope.Envelope
+	CreatedAt time.Time
 }
 
 type imageEntry struct {
@@ -314,8 +317,10 @@ type imageEntry struct {
 	Names      []string          `json:"Names"`
 	Labels     map[string]string `json:"Labels"`
 	RepoTags   []string          `json:"RepoTags"`
+	CreatedAt  string            `json:"CreatedAt"`
 	Config     struct {
-		Labels map[string]string `json:"Labels"`
+		Labels  map[string]string `json:"Labels"`
+		Created string            `json:"Created"`
 	} `json:"Config"`
 }
 
@@ -393,9 +398,28 @@ func imageReleasesFromEntries(app, env string, entries []imageEntry) []imageRele
 		seen[release] = true
 		envelopeValue := e.Labels[envelope.Label]
 		decoded, _ := envelope.DecodeLabel(envelopeValue)
-		releases = append(releases, imageRelease{Release: release, Image: identity.ImageTag(app, env, release), Envelope: decoded})
+		created := e.CreatedAt
+		if created == "" {
+			created = e.Config.Created
+		}
+		createdAt := parseImageCreatedAt(created)
+		releases = append(releases, imageRelease{Release: release, Image: identity.ImageTag(app, env, release), Envelope: decoded, CreatedAt: createdAt})
 	}
 	return releases
+}
+
+func parseImageCreatedAt(value string) time.Time {
+	value = strings.TrimSpace(value)
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05 -0700",
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
 }
 
 func currentRelease(processes []processStatus) (string, error) {

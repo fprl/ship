@@ -71,9 +71,11 @@ type deployJournalEntry struct {
 	EndedAt          string         `json:"ended_at"`
 	PreviousRelease  string         `json:"previous_release"`
 	AttemptedRelease string         `json:"attempted_release"`
+	Activation       string         `json:"activation,omitempty"`
 	FailingStep      string         `json:"failing_step"`
 	StderrTail       string         `json:"stderr_tail"`
 	ImagePrune       string         `json:"image_prune,omitempty"`
+	GC               string         `json:"gc,omitempty"`
 	Identity         deployIdentity `json:"identity"`
 	Member           *journalMember `json:"member,omitempty"`
 	Probe            *journalProbe  `json:"probe"`
@@ -152,10 +154,13 @@ func readLatestDeployJournalEntryWithStatus(app, env string) (deployJournalEntry
 	if err != nil {
 		return deployJournalEntry{}, torn, err
 	}
-	if len(entries) == 0 {
-		return deployJournalEntry{}, torn, noDeployJournalError(app, env)
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Outcome == "gc" {
+			continue
+		}
+		return entries[i], torn, nil
 	}
-	return entries[len(entries)-1], torn, nil
+	return deployJournalEntry{}, torn, noDeployJournalError(app, env)
 }
 
 func readLatestSuccessfulDeployJournalEntry(app, env string) (deployJournalEntry, error) {

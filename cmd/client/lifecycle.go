@@ -23,6 +23,23 @@ func CmdRollback(root string, release string) {
 	fmt.Print(rewriteRollbackSummary(out, read))
 }
 
+func CmdConverge(root string, jsonFlag bool) {
+	read, err := currentReadContext(root, "converge")
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	defer read.Runner.Close()
+	out, err := runSSHDetail(read.Runner, read.AppContext.Server, serverAppConvergeCommand(read.AppContext.AppName, read.EnvName, jsonFlag), "ship converge")
+	if err != nil {
+		utils.DieError(err, 1)
+	}
+	if jsonFlag {
+		fmt.Print(out)
+		return
+	}
+	fmt.Print(rewriteEnvSummary(out, read, "Converged"))
+}
+
 func rewriteRollbackSummary(out string, read readContext) string {
 	return rewriteEnvSummary(out, read, "Rolled back")
 }

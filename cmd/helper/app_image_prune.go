@@ -3,14 +3,10 @@ package helper
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/fprl/ship/internal/errcat"
-	"github.com/fprl/ship/internal/identity"
 )
 
 const (
@@ -32,47 +28,6 @@ func releaseImageKeepLimit(env string) int {
 	return previewReleaseImageKeep
 }
 
-func bestEffortPruneReleaseImagesAfterDeploy(app, env, liveFallback string, current deployJournalEntry) string {
-	summary, err := pruneReleaseImagesAfterDeploy(app, env, liveFallback, current)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "image prune failed for %s (%s): %s\n", app, env, singleLine(err.Error()))
-	}
-	return summary
-}
-
-func pruneReleaseImagesAfterDeploy(app, env, liveFallback string, current deployJournalEntry) (string, error) {
-	images, err := podmanImages(app, env)
-	if err != nil {
-		return "", err
-	}
-	entries, torn, err := readDeployJournalEntriesWithStatus(app, env)
-	if err != nil {
-		if !errcat.Is(err, errcat.CodeNoDeploys) {
-			return "", err
-		}
-		entries = nil
-	}
-	if torn {
-		warnTornDeployJournal(identity.DeployJournalFile(app, env))
-	}
-	liveRelease := currentActiveReleaseBestEffort(app, env)
-	if liveRelease == "" {
-		liveRelease = liveFallback
-	}
-	if liveRelease == "" && len(images) > 0 {
-		return "", fmt.Errorf("cannot determine live release")
-	}
-	keep, err := releaseImageKeepSet(entries, &current, liveRelease, releaseImageKeepLimit(env))
-	if err != nil {
-		return "", err
-	}
-	removed, pruneErr := pruneReleaseImages(images, keep)
-	if danglingErr := pruneDanglingImages(); danglingErr != nil && pruneErr == nil {
-		pruneErr = danglingErr
-	}
-	return imagePruneSummary(removed), pruneErr
-}
-
 func purgeReleaseImagesForEnv(app, env string) (int, error) {
 	images, err := podmanImages(app, env)
 	if err != nil {
@@ -85,27 +40,6 @@ func purgeReleaseImagesForEnv(app, env string) (int, error) {
 	return removed, pruneErr
 }
 
-func releaseImageKeepSet(entries []deployJournalEntry, current *deployJournalEntry, liveRelease string, limit int) (map[string]bool, error) {
-	history, err := releaseDeployHistory(entries, current)
-	if err != nil {
-		return nil, err
-	}
-	keep := map[string]bool{}
-	for i, record := range history {
-		if i >= limit {
-			break
-		}
-		keep[record.Release] = true
-	}
-	if liveRelease != "" {
-		if err := validateRelease(liveRelease); err != nil {
-			return nil, err
-		}
-		keep[liveRelease] = true
-	}
-	return keep, nil
-}
-
 func releaseDeployHistory(entries []deployJournalEntry, current *deployJournalEntry) ([]releaseDeployRecord, error) {
 	all := append([]deployJournalEntry(nil), entries...)
 	if current != nil {
@@ -113,7 +47,7 @@ func releaseDeployHistory(entries []deployJournalEntry, current *deployJournalEn
 	}
 	byRelease := map[string]releaseDeployRecord{}
 	for i, entry := range all {
-		if entry.Outcome != "deployed" || entry.AttemptedRelease == "" {
+		if (entry.Outcome != "deployed" && entry.Outcome != "rolled_back") || entry.AttemptedRelease == "" {
 			continue
 		}
 		if err := validateRelease(entry.AttemptedRelease); err != nil {
@@ -202,15 +136,4 @@ func runPodmanImagePruneCommand(args ...string) error {
 		return fmt.Errorf("podman %s: %v", strings.Join(args, " "), err)
 	}
 	return nil
-}
-
-func imagePruneSummary(removed int) string {
-	switch removed {
-	case 0:
-		return "pruned 0 old images"
-	case 1:
-		return "pruned 1 old image"
-	default:
-		return fmt.Sprintf("pruned %d old images", removed)
-	}
 }

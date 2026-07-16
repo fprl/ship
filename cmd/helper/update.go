@@ -53,7 +53,7 @@ func (c updateHelperCmd) Run() error {
 	name := "ship-linux-" + runtime.GOARCH
 	data, err := release.DownloadVerifiedAsset(environmentMap(), c.Version, name)
 	if err != nil {
-		return fmt.Errorf("download verified release helper %s: %w; restore outbound HTTPS access to release artifacts, then rerun ship box update", c.Version, err)
+		return fmt.Errorf("download verified release helper %s: %w; restore outbound HTTPS access to release artifacts, then run `ship box update <box>`", c.Version, err)
 	}
 	return runVerifiedUpdate(c.Version, func() error {
 		binary, cleanup, err := writeVerifiedUpdateBinary(data)
@@ -67,7 +67,7 @@ func (c updateHelperCmd) Run() error {
 
 func validateUpdateTarget(installed, target string) error {
 	if !release.IsVersion(target) {
-		return fmt.Errorf("box update requires a released version, got %q; rerun ship box setup for a development build", target)
+		return fmt.Errorf("box update requires a released version, got %q; run `ship box setup <box>` for a development build", target)
 	}
 	cmp, ok := version.Compare(installed, target)
 	if !ok || cmp >= 0 {

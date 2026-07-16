@@ -55,7 +55,6 @@ type applyReleaseResult struct {
 
 var (
 	appendSanitizedDeployJournal = appendSanitizedDeployJournalEntry
-	bestEffortPruneAfterDeploy   = bestEffortPruneReleaseImagesAfterDeploy
 )
 
 func (c appApplyCmd) Run() error {
@@ -280,6 +279,7 @@ func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRel
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
 		PreviousRelease:  previousRelease,
 		AttemptedRelease: c.SHA,
+		Activation:       c.ActivationID,
 		Identity:         c.actor(),
 		Member:           currentServerMemberForJournal(),
 	}, nil)
@@ -289,7 +289,7 @@ func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRel
 		return nil
 	}
 	removeContainers(result.containersToRemove)
-	_ = bestEffortPruneAfterDeploy(c.App, c.Env, c.SHA, entry)
+	bestEffortGCAfterLifecycle(c.App, c.Env)
 	if previousJournalErr == nil && isAbortedJournalOutcome(previousJournal.Outcome) {
 		webhookDeployRecovered(app.Webhook, app, previousJournal, entry, time.Now().UTC())
 	}

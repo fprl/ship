@@ -48,7 +48,7 @@ func TestActivationEnvFilesAreImmutableAndUseNewNames(t *testing.T) {
 	}
 }
 
-func TestActivationEnvFileCapProvidesCleanupNextStep(t *testing.T) {
+func TestActivationEnvFileRetentionReplacesTheOldCap(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
 	bin := filepath.Join(root, "bin")
@@ -57,13 +57,13 @@ func TestActivationEnvFileCapProvidesCleanupNextStep(t *testing.T) {
 	}
 	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	for i := 0; i < activationEnvLimit; i++ {
+	for i := 0; i < 33; i++ {
 		if _, err := writeActivationEnvFile("api", "production", "abc1234-"+strings.Repeat("x", i+1), map[string]string{"N": "1"}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := writeActivationEnvFile("api", "production", "abc1234-overflow", nil); err == nil || !strings.Contains(err.Error(), "next: redeploy after cleanup") {
-		t.Fatalf("cap error = %v", err)
+	if _, err := writeActivationEnvFile("api", "production", "abc1234-overflow", nil); err != nil {
+		t.Fatalf("retention should permit a new activation before GC: %v", err)
 	}
 }
 

@@ -67,6 +67,8 @@ func RunVersionConverge(ctx context.Context, runner host.Runner, opts VersionCon
 	addDeployMembersStore(&ops, stateStore, defaultDeployUser, &summary, "", true, false)
 	addPreviewReaper(&ops)
 	addDoctorTimer(&ops)
+	addBootConverge(&ops)
+	addGCTimer(&ops)
 
 	for _, op := range ops {
 		changed, err := op.run(apply)
@@ -187,6 +189,8 @@ func installOperations(opts InstallOptions, stateStore store.Store, summary *Ins
 	addHelper(&ops, opts)
 	addPreviewReaper(&ops)
 	addDoctorTimer(&ops)
+	addBootConverge(&ops)
+	addGCTimer(&ops)
 	addPodman(&ops)
 	addPodmanHostBaseline(&ops)
 	addDeployTmpDir(&ops)
@@ -514,6 +518,82 @@ func addDoctorTimer(ops *[]operation) {
 	*ops = append(*ops, operation{name: "doctor record timer enabled", run: func(apply host.Apply) (bool, error) {
 		return ensureSystemdUnitEnabled(apply, "ship-doctor.timer")
 	}})
+}
+
+func addBootConverge(ops *[]operation) {
+	*ops = append(*ops, operation{name: "boot convergence service", run: func(apply host.Apply) (bool, error) {
+		return host.EnsureSystemdUnit(apply, host.SystemdUnit{
+			Name:    "ship-boot-converge.service",
+			Content: []byte(bootConvergeServiceUnit()),
+		})
+	}})
+	*ops = append(*ops, operation{name: "boot convergence service enabled", run: func(apply host.Apply) (bool, error) {
+		return ensureSystemdUnitEnabled(apply, "ship-boot-converge.service")
+	}})
+}
+
+func bootConvergeServiceUnit() string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=Converge ship app environments at boot",
+		"Wants=network-online.target",
+		"After=network-online.target podman.socket podman.service",
+		"",
+		"[Service]",
+		"Type=oneshot",
+		"ExecStart=/usr/local/bin/ship server converge-boot",
+		"",
+		"[Install]",
+		"WantedBy=multi-user.target",
+		"",
+	}, "\n")
+}
+
+func addGCTimer(ops *[]operation) {
+	*ops = append(*ops, operation{name: "GC service", run: func(apply host.Apply) (bool, error) {
+		return host.EnsureSystemdUnit(apply, host.SystemdUnit{
+			Name:    "ship-gc.service",
+			Content: []byte(gcServiceUnit()),
+		})
+	}})
+	*ops = append(*ops, operation{name: "GC timer", run: func(apply host.Apply) (bool, error) {
+		return host.EnsureSystemdUnit(apply, host.SystemdUnit{
+			Name:    "ship-gc.timer",
+			Content: []byte(gcTimerUnit()),
+			Action:  host.Started,
+		})
+	}})
+	*ops = append(*ops, operation{name: "GC timer enabled", run: func(apply host.Apply) (bool, error) {
+		return ensureSystemdUnitEnabled(apply, "ship-gc.timer")
+	}})
+}
+
+func gcServiceUnit() string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=Apply ship release retention policy",
+		"",
+		"[Service]",
+		"Type=oneshot",
+		"ExecStart=/usr/local/bin/ship server gc",
+		"",
+	}, "\n")
+}
+
+func gcTimerUnit() string {
+	return strings.Join([]string{
+		"[Unit]",
+		"Description=Run ship release retention GC",
+		"",
+		"[Timer]",
+		"OnBootSec=1h",
+		"OnUnitActiveSec=6h",
+		"Persistent=true",
+		"",
+		"[Install]",
+		"WantedBy=timers.target",
+		"",
+	}, "\n")
 }
 
 func doctorServiceUnit() string {

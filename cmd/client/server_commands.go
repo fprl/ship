@@ -89,6 +89,22 @@ func serverAppStatusCommand(appName, envName string) string {
 	return serverCommand("app", "status", "--json", appName, envName)
 }
 
+func serverAppConvergeCommand(appName, envName string, jsonFlag bool) string {
+	args := []string{"app", "converge"}
+	if jsonFlag {
+		args = append(args, "--json")
+	}
+	return serverCommand(append(args, appName, envName)...)
+}
+
+func serverGCCommand(jsonFlag bool) string {
+	args := []string{"gc"}
+	if jsonFlag {
+		args = append(args, "--json")
+	}
+	return serverCommand(args...)
+}
+
 func serverAppLsCommand(jsonFlag bool) string {
 	if jsonFlag {
 		return serverCommand("app", "ls", "--json")

@@ -15,6 +15,8 @@ var requireRoot = func() error {
 type ServerCmd struct {
 	AgentShell  agentShellCmd    `cmd:"agent-shell" hidden:"" help:"Forced-command SSH gate for agent members."`
 	Doctor      doctorCmd        `cmd:"" help:"Run host diagnostics."`
+	ConvergeBoot convergeBootCmd `cmd:"converge-boot" hidden:"" help:"Converge every app environment at boot."`
+	GC          gcCmd            `cmd:"gc" help:"Apply release retention garbage collection."`
 	App         appCmd           `cmd:"" help:"Manage app users, files, and processes."`
 	Env         envCmd           `cmd:"" help:"Manage host environments."`
 	Key         keyCmd           `cmd:"" help:"Manage deploy SSH keys."`
