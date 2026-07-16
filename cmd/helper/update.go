@@ -2,6 +2,7 @@ package helper
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -160,4 +161,22 @@ func appendUpdateJournal(entry updateJournalEntry) error {
 	entry.At = time.Now().UTC().Format(time.RFC3339Nano)
 	path := store.Default().UpdatesJournalPath()
 	return journal.Append(path, entry)
+}
+
+func lastCompletedUpdateVersion(path string) (string, error) {
+	last := ""
+	_, err := journal.Read(path, func(line []byte) error {
+		var entry updateJournalEntry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			return err
+		}
+		if entry.Event == "completed" {
+			last = strings.TrimSpace(entry.Version)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return last, nil
 }

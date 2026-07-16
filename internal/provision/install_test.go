@@ -28,7 +28,14 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runner := &installFakeRunner{files: map[string]host.FileState{}}
+	runner := &installFakeRunner{
+		files: map[string]host.FileState{},
+		commandResults: map[string]host.CommandResult{
+			"systemctl is-enabled --quiet caddy.service":             {ExitCode: 1},
+			"systemctl is-enabled --quiet ship-preview-reaper.timer": {ExitCode: 1},
+			"systemctl is-enabled --quiet ship-doctor.timer":         {ExitCode: 1},
+		},
+	}
 	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
 	summary, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
@@ -52,21 +59,15 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 		t.Fatalf("deploy enrollment results = %+v, want one added owner key", summary.DeployKeyResults)
 	}
 
-	loaded, err := (store.Store{Root: root}).ReadHost()
+	boxConfig, err := (store.Store{Root: root}).ReadBoxConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Meta.LastApply == nil {
-		t.Fatal("expected last_apply metadata")
+	if boxConfig.Values["box.address"] != "203.0.113.7" {
+		t.Fatalf("box.address = %q, want 203.0.113.7", boxConfig.Values["box.address"])
 	}
-	if loaded.Meta.LastApply.OperationsChanged != summary.OperationsChanged {
-		t.Fatalf("metadata count %d did not match summary count %d", loaded.Meta.LastApply.OperationsChanged, summary.OperationsChanged)
-	}
-	if loaded.Meta.LastApply.Status != "ok" {
-		t.Fatalf("unexpected apply status: %s", loaded.Meta.LastApply.Status)
-	}
-	if loaded.Meta.ClientAddress != "203.0.113.7" {
-		t.Fatalf("client address = %q, want 203.0.113.7", loaded.Meta.ClientAddress)
+	if _, err := os.Stat(filepath.Join(root, "host"+".json")); !os.IsNotExist(err) {
+		t.Fatalf("legacy host state exists: %v", err)
 	}
 	if _, ok := runner.files["/etc/systemd/system/ssh.service"]; ok {
 		t.Fatal("install must not overwrite the packaged ssh.service unit")
@@ -211,7 +212,14 @@ func TestRunInstallRebuildsCorruptMembersStoreWithWarning(t *testing.T) {
 	if err := os.WriteFile(stateStore.MembersPath(), []byte("not json\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	runner := &installFakeRunner{files: map[string]host.FileState{}}
+	runner := &installFakeRunner{
+		files: map[string]host.FileState{},
+		commandResults: map[string]host.CommandResult{
+			"systemctl is-enabled --quiet caddy.service":             {ExitCode: 1},
+			"systemctl is-enabled --quiet ship-preview-reaper.timer": {ExitCode: 1},
+			"systemctl is-enabled --quiet ship-doctor.timer":         {ExitCode: 1},
+		},
+	}
 
 	stderr := captureProvisionStderr(t, func() {
 		if _, err := RunInstall(context.Background(), runner, InstallOptions{
@@ -245,16 +253,6 @@ func TestRunVersionConvergeStillRejectsCorruptMembersStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateStore := store.Store{Root: root}
-	if err := stateStore.WriteHostDesired(store.HostDesired{
-		Users:    store.HostUsers{Operator: "operator", Deploy: "deploy"},
-		Ingress:  store.HostIngressDesired{Expose: store.ExposePublic},
-		Packages: map[string]store.DesiredPackage{},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := stateStore.WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{}); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(stateStore.MembersPath(), []byte("not json\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -288,16 +286,6 @@ func TestRunVersionConvergeRendersAuthorizedKeysFromMembersStore(t *testing.T) {
 	}
 	deployFingerprint := deployKeys[0].Fingerprint
 	stateStore := store.Store{Root: root}
-	if err := stateStore.WriteHostDesired(store.HostDesired{
-		Users:    store.HostUsers{Operator: "operator", Deploy: "deploy"},
-		Ingress:  store.HostIngressDesired{Expose: store.ExposePublic},
-		Packages: map[string]store.DesiredPackage{},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := stateStore.WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{}); err != nil {
-		t.Fatal(err)
-	}
 	if err := stateStore.WriteMembers(store.MembersFile{
 		Version: store.CurrentVersion,
 		Members: map[string]store.MemberRecord{
@@ -459,23 +447,6 @@ func TestRunInstallInstallsPodmanFromUbuntuUniverse(t *testing.T) {
 		t.Fatalf("expected sqlite3 to be installed via apt-get, commands: %+v", runner.commands)
 	}
 
-	loaded, err := (store.Store{Root: root}).ReadHost()
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, ok := loaded.Desired.Packages["podman"]
-	if !ok {
-		t.Fatalf("expected podman in desired packages, got %+v", loaded.Desired.Packages)
-	}
-	if got.Source != "ubuntu" {
-		t.Fatalf("expected podman source=ubuntu, got %+v", got)
-	}
-	if got, ok := loaded.Desired.Packages["sqlite3"]; !ok || got.Source != "ubuntu" {
-		t.Fatalf("expected sqlite3 in desired packages, got %+v", loaded.Desired.Packages)
-	}
-	if _, ok := loaded.Desired.Packages["caddy"]; ok {
-		t.Fatalf("caddy is a podman service, not a desired package: %+v", loaded.Desired.Packages)
-	}
 }
 
 func TestRunInstallCreatesIngressNetworkWhenAbsent(t *testing.T) {
@@ -537,7 +508,14 @@ func TestRunInstallWritesCaddyContainerSystemdUnit(t *testing.T) {
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	runner := &installFakeRunner{files: map[string]host.FileState{}}
+	runner := &installFakeRunner{
+		files: map[string]host.FileState{},
+		commandResults: map[string]host.CommandResult{
+			"systemctl is-enabled --quiet caddy.service":             {ExitCode: 1},
+			"systemctl is-enabled --quiet ship-preview-reaper.timer": {ExitCode: 1},
+			"systemctl is-enabled --quiet ship-doctor.timer":         {ExitCode: 1},
+		},
+	}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
@@ -555,6 +533,9 @@ func TestRunInstallWritesCaddyContainerSystemdUnit(t *testing.T) {
 	}
 	if !runner.ranCommand("install", "-d -o root -g root -m 755 /var/apps") {
 		t.Fatal("expected /var/apps to be created before caddy.service starts")
+	}
+	if !runner.ranCommand("systemctl", "enable caddy.service") {
+		t.Fatalf("expected caddy.service to be enabled, commands: %+v", runner.commands)
 	}
 	content := string(unit.Content)
 	for _, want := range []string{
@@ -577,7 +558,14 @@ func TestRunInstallWritesPreviewReaperAndDoctorTimers(t *testing.T) {
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	runner := &installFakeRunner{files: map[string]host.FileState{}}
+	runner := &installFakeRunner{
+		files: map[string]host.FileState{},
+		commandResults: map[string]host.CommandResult{
+			"systemctl is-enabled --quiet caddy.service":             {ExitCode: 1},
+			"systemctl is-enabled --quiet ship-preview-reaper.timer": {ExitCode: 1},
+			"systemctl is-enabled --quiet ship-doctor.timer":         {ExitCode: 1},
+		},
+	}
 
 	_, err := RunInstall(context.Background(), runner, InstallOptions{
 		OperatorSSHPublicKeys: []string{operatorTestPublicKey},
@@ -624,6 +612,11 @@ func TestRunInstallWritesPreviewReaperAndDoctorTimers(t *testing.T) {
 			t.Fatalf("doctor timer missing %q:\n%s", want, doctorTimerContent)
 		}
 	}
+	for _, unit := range []string{"ship-preview-reaper.timer", "ship-doctor.timer"} {
+		if !runner.ranCommand("systemctl", "enable "+unit) {
+			t.Fatalf("expected %s to be enabled, commands: %+v", unit, runner.commands)
+		}
+	}
 }
 
 const ubuntuBeforeRules = `#
@@ -667,6 +660,22 @@ func TestEnsureSystemdUnitEnabledRunsEnableWhenDisabled(t *testing.T) {
 	}
 	if !runner.ranCommand("systemctl", "enable ship-preview-reaper.timer") {
 		t.Fatalf("expected systemctl enable, commands: %+v", runner.commands)
+	}
+}
+
+func TestEnsureSystemdUnitEnabledCheckModeReportsPendingWithoutEnable(t *testing.T) {
+	runner := &installFakeRunner{
+		files: map[string]host.FileState{},
+		commandResults: map[string]host.CommandResult{
+			"systemctl is-enabled --quiet caddy.service": {ExitCode: 1},
+		},
+	}
+	changed, err := ensureSystemdUnitEnabled(host.Apply{Context: context.Background(), Runner: runner, CheckMode: true}, "caddy.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || runner.ranCommand("systemctl", "enable caddy.service") {
+		t.Fatalf("check mode changed=%v commands=%+v, want pending without enable", changed, runner.commands)
 	}
 }
 

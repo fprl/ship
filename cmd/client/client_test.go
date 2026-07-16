@@ -2379,7 +2379,7 @@ func TestReadBoxVersionMapsPreUpdateBoxesToSetupRequired(t *testing.T) {
 func TestReadBoxStatusDecodesFullVersionSummary(t *testing.T) {
 	command := serverBoxStatusCommand()
 	runner := &fakeSSHRunner{responses: map[string]string{
-		command: `{"version":"v0.4.1","disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"members":{"total":3,"owners":1},"pending_approvals":1,"doctor":{"status":"degraded","recorded_at":"2026-07-14T08:00:00Z"}}`,
+		command: `{"version":"v0.4.1","ship_version":"v0.4.0","disk":{"status":"ok","evidence":"/: used=10.0%"},"apps":[{"app":"api","env_count":2}],"members":{"total":3,"owners":1},"pending_approvals":1,"doctor":{"status":"degraded","recorded_at":"2026-07-14T08:00:00Z"}}`,
 	}}
 
 	payload, err := readBoxStatus(runner, "203.0.113.7")
@@ -2388,6 +2388,9 @@ func TestReadBoxStatusDecodesFullVersionSummary(t *testing.T) {
 	}
 	if payload.Disk.Evidence != "/: used=10.0%" || len(payload.Apps) != 1 || payload.Apps[0] != (boxStatusApp{App: "api", EnvCount: 2}) || payload.Members == nil || *payload.Members != (boxStatusMembers{Total: 3, Owners: 1}) || payload.PendingApprovals != 1 || payload.Doctor == nil || payload.Doctor.Status != "degraded" || payload.Doctor.RecordedAt != "2026-07-14T08:00:00Z" {
 		t.Fatalf("summary = %+v", payload)
+	}
+	if payload.ShipVersion != "v0.4.0" {
+		t.Fatalf("ship version = %q", payload.ShipVersion)
 	}
 	if len(runner.commands) != 1 || runner.commands[0] != command {
 		t.Fatalf("box status commands = %v, want only %q", runner.commands, command)
@@ -2410,6 +2413,13 @@ func TestRenderBoxStatusIncludesDoctorAge(t *testing.T) {
 	out := renderBoxStatus(payload, "203.0.113.7", now)
 	if !strings.Contains(out, "doctor: ok (2h ago)\n") {
 		t.Fatalf("doctor status = %q", out)
+	}
+}
+
+func TestRenderBoxStatusShowsLastCompletedUpdate(t *testing.T) {
+	out := renderBoxStatus(boxStatusPayload{ShipVersion: "v0.4.0"}, "203.0.113.7", time.Now())
+	if !strings.Contains(out, "ship: v0.4.0\n") || strings.Contains(out, "last client") {
+		t.Fatalf("version lines = %q", out)
 	}
 }
 

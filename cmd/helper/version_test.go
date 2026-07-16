@@ -12,7 +12,7 @@ import (
 
 func TestReadBoxStatusSummaryUsesIdentityLayoutAndDoctorRecord(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("SHIP_STATE_DIR", filepath.Join(root, "state"))
+	setTestStateRoot(t, filepath.Join(root, "state"))
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
 	t.Setenv("SHIP_LOCK_DIR", filepath.Join(root, "locks"))
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
@@ -90,7 +90,7 @@ func TestReadBoxStatusSummaryUsesIdentityLayoutAndDoctorRecord(t *testing.T) {
 
 func TestReadBoxStatusSummaryIgnoresUnreadableMembers(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("SHIP_STATE_DIR", filepath.Join(root, "state"))
+	setTestStateRoot(t, filepath.Join(root, "state"))
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
 	t.Setenv("SHIP_LOCK_DIR", filepath.Join(root, "locks"))
 
@@ -124,7 +124,7 @@ func TestReadBoxStatusSummaryIgnoresUnreadableMembers(t *testing.T) {
 
 func TestReadBoxStatusSummaryOmitsDoctorBeforeFirstRecord(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("SHIP_STATE_DIR", filepath.Join(root, "state"))
+	setTestStateRoot(t, filepath.Join(root, "state"))
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
 	t.Setenv("SHIP_LOCK_DIR", filepath.Join(root, "locks"))
 
@@ -149,7 +149,7 @@ func TestReadBoxStatusSummaryOmitsDoctorBeforeFirstRecord(t *testing.T) {
 	if string(payload["apps"]) != "[]" {
 		t.Fatalf("apps JSON = %s, want empty array", data)
 	}
-	if _, ok := payload["members"]; ok {
-		t.Fatalf("members JSON = %s, want members omitted", data)
+	if got := string(payload["members"]); got != `{"total":0,"owners":0}` {
+		t.Fatalf("members JSON = %s, want empty member summary", data)
 	}
 }

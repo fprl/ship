@@ -221,6 +221,7 @@ type doctorOptions struct {
 	BoxTarget   string
 	Now         func() time.Time
 	Service     func(string) string
+	Enabled     func(string) string
 	Timer       func(string) systemdUnitState
 	Disk        func(string) (diskUsage, error)
 	TLSStatuses func(time.Time) ([]tlsCertStatus, error)
@@ -240,6 +241,9 @@ func normalizeDoctorOptions(opts doctorOptions) doctorOptions {
 	}
 	if opts.Service == nil {
 		opts.Service = host.SystemServiceStatus
+	}
+	if opts.Enabled == nil {
+		opts.Enabled = systemdEnabledStatus
 	}
 	if opts.Timer == nil {
 		opts.Timer = systemdTimerState
@@ -295,7 +299,6 @@ func recordDoctorRun(opts doctorOptions) (store.DoctorFile, error) {
 		Version:    store.CurrentVersion,
 		RecordedAt: now.Format(time.RFC3339Nano),
 		Checks:     checks,
-		Delta:      delta,
 	}
 	if err := opts.StateStore.WriteDoctor(file); err != nil {
 		return store.DoctorFile{}, err
@@ -308,7 +311,7 @@ func doctorChecksFor(opts doctorOptions) []store.DoctorCheck {
 	opts = normalizeDoctorOptions(opts)
 	return []store.DoctorCheck{
 		doctorHostStateCheck(opts.StateStore, opts.BoxTarget),
-		doctorServiceHealthCheck(opts.StateStore, opts.Service, opts.BoxTarget),
+		doctorServiceHealthCheck(opts.StateStore, opts.Service, opts.Enabled, opts.BoxTarget),
 		doctorSudoersIdentityCheck(opts.BoxTarget),
 		doctorHostToolsCheck(opts.BoxTarget),
 		doctorDiskSpaceCheck(opts.Disk, opts.BoxTarget),
@@ -361,33 +364,32 @@ func doctorBoxUpdateCheck(stateStore store.Store, boxTarget string) store.Doctor
 }
 
 func doctorBoxUpdateVersionCheck(stateStore store.Store, boxTarget string) store.DoctorCheck {
-	hostFile, err := stateStore.ReadHost()
-	if err != nil || strings.TrimSpace(hostFile.Meta.ShipVersion) == "" {
+	completed, err := lastCompletedUpdateVersion(stateStore.UpdatesJournalPath())
+	if os.IsNotExist(err) || strings.TrimSpace(completed) == "" {
 		return doctorCheck(doctorCheckBoxUpdate, doctorStatusOK, "no incomplete update recorded", doctorRerunCommand(boxTarget))
 	}
-	if hostFile.Meta.ShipVersion != version.Version {
-		return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "helper="+version.Version+" artifacts="+hostFile.Meta.ShipVersion, doctorBoxUpdateCommand(boxTarget))
+	if err != nil {
+		return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "cannot read update journal: "+singleLine(err.Error()), doctorBoxUpdateCommand(boxTarget))
 	}
-	return doctorCheck(doctorCheckBoxUpdate, doctorStatusOK, "helper and version-owned artifacts="+version.Version, doctorRerunCommand(boxTarget))
+	if completed != version.Version {
+		return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "helper="+version.Version+" last_completed="+completed, doctorBoxUpdateCommand(boxTarget))
+	}
+	return doctorCheck(doctorCheckBoxUpdate, doctorStatusOK, "helper and last completed update="+version.Version, doctorRerunCommand(boxTarget))
 }
 
 func doctorHelperVersionCheck(stateStore store.Store, boxTarget string) store.DoctorCheck {
-	hostFile, err := stateStore.ReadHost()
+	seen, err := lastCompletedUpdateVersion(stateStore.UpdatesJournalPath())
+	if os.IsNotExist(err) || strings.TrimSpace(seen) == "" {
+		return doctorCheck(doctorCheckHelperVersion, doctorStatusOK, "last completed update unavailable", doctorRerunCommand(boxTarget))
+	}
 	if err != nil {
-		return doctorCheck(doctorCheckHelperVersion, doctorStatusOK, "last client version unavailable", doctorRerunCommand(boxTarget))
-	}
-	seen := strings.TrimSpace(hostFile.Meta.LastClientVersion)
-	if seen == "" {
-		seen = strings.TrimSpace(hostFile.Meta.ShipVersion)
-	}
-	if seen == "" {
-		return doctorCheck(doctorCheckHelperVersion, doctorStatusOK, "last client version unavailable", doctorRerunCommand(boxTarget))
+		return doctorCheck(doctorCheckHelperVersion, doctorStatusDegraded, "cannot read update journal: "+singleLine(err.Error()), doctorBoxUpdateCommand(boxTarget))
 	}
 	cmp, ok := version.Compare(version.Version, seen)
 	if !ok || cmp >= 0 {
-		return doctorCheck(doctorCheckHelperVersion, doctorStatusOK, "helper="+version.Version+" last_client="+seen, doctorRerunCommand(boxTarget))
+		return doctorCheck(doctorCheckHelperVersion, doctorStatusOK, "helper="+version.Version+" last_completed="+seen, doctorRerunCommand(boxTarget))
 	}
-	return doctorCheck(doctorCheckHelperVersion, doctorStatusDegraded, "helper="+version.Version+" last_client="+seen, doctorBoxUpdateCommand(boxTarget))
+	return doctorCheck(doctorCheckHelperVersion, doctorStatusDegraded, "helper="+version.Version+" last_completed="+seen, doctorBoxUpdateCommand(boxTarget))
 }
 
 func doctorChecksOK(checks []store.DoctorCheck) bool {
@@ -415,15 +417,11 @@ func renderDoctorText(checks []store.DoctorCheck) string {
 
 func doctorHostStateCheck(stateStore store.Store, boxTarget string) store.DoctorCheck {
 	remediation := doctorBoxSetupCommand(boxTarget)
-	installed, err := stateStore.HostInstalled()
-	if err != nil {
-		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("cannot read host install state: %v", err), remediation)
+	if _, err := stateStore.ReadMembers(); err != nil {
+		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("members state invalid: %v", err), remediation)
 	}
-	if !installed {
-		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("host is not installed (missing %s)", stateStore.HostPath()), remediation)
-	}
-	if _, err := stateStore.ReadHost(); err != nil {
-		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("host state invalid: %v", err), remediation)
+	if _, err := stateStore.ReadBoxConfig(); err != nil {
+		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("box config invalid: %v", err), remediation)
 	}
 	if info, err := os.Stat(secrets.RootDir()); err != nil {
 		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("secrets root unavailable: %v", err), remediation)
@@ -432,20 +430,22 @@ func doctorHostStateCheck(stateStore store.Store, boxTarget string) store.Doctor
 	} else if mode := info.Mode().Perm(); mode != 0700 {
 		return doctorCheck(doctorCheckHostState, doctorStatusFailed, fmt.Sprintf("secrets root %s mode %03o, want 700", secrets.RootDir(), mode), remediation)
 	}
-	return doctorCheck(doctorCheckHostState, doctorStatusOK, fmt.Sprintf("host state readable (%s)", stateStore.HostPath()), doctorRerunCommand(boxTarget))
+	return doctorCheck(doctorCheckHostState, doctorStatusOK, fmt.Sprintf("box intent readable (%s, %s)", stateStore.MembersPath(), stateStore.BoxConfigPath()), doctorRerunCommand(boxTarget))
 }
 
-func doctorServiceHealthCheck(stateStore store.Store, serviceStatus func(string) string, boxTarget string) store.DoctorCheck {
-	installed, err := stateStore.HostInstalled()
-	if err != nil || !installed {
-		return doctorCheck(doctorCheckServiceHealth, doctorStatusDegraded, "host state unavailable; required services cannot be determined", doctorBoxSetupCommand(boxTarget))
-	}
-	if _, err := stateStore.ReadHost(); err != nil {
-		return doctorCheck(doctorCheckServiceHealth, doctorStatusDegraded, "host state invalid; required services cannot be determined", doctorBoxSetupCommand(boxTarget))
-	}
-	findings := doctorServiceFindingsFor(serviceStatus)
+func doctorServiceHealthCheck(_ store.Store, serviceStatus func(string) string, enabledStatus func(string) string, boxTarget string) store.DoctorCheck {
+	findings := doctorServiceFindingsFor(serviceStatus, enabledStatus)
 	if len(findings) > 0 {
-		return doctorCheck(doctorCheckServiceHealth, doctorStatusFailed, strings.Join(findings, "; "), doctorRestartServicesCommand(boxTarget))
+		remediation := doctorRestartServicesCommand(boxTarget)
+		status := doctorStatusFailed
+		for _, finding := range findings {
+			if strings.Contains(finding, "expected enabled") {
+				remediation = doctorBoxSetupCommand(boxTarget)
+				status = doctorStatusDegraded
+				break
+			}
+		}
+		return doctorCheck(doctorCheckServiceHealth, status, strings.Join(findings, "; "), remediation)
 	}
 	required := requiredServicesFor()
 	return doctorCheck(doctorCheckServiceHealth, doctorStatusOK, fmt.Sprintf("%s active", strings.Join(required, ", ")), doctorRerunCommand(boxTarget))
@@ -776,12 +776,20 @@ func doctorDeployJournalsCheck(appEnvs func() ([]appEnvStatus, error), boxTarget
 	return doctorCheck(doctorCheckDeployJournals, doctorStatusOK, strings.Join(readable, "; "), doctorRerunCommand(boxTarget))
 }
 
-func doctorServiceFindingsFor(serviceStatus func(string) string) []string {
+func doctorServiceFindingsFor(serviceStatus func(string) string, enabledStatuses ...func(string) string) []string {
+	enabledStatus := func(string) string { return "enabled" }
+	if len(enabledStatuses) > 0 && enabledStatuses[0] != nil {
+		enabledStatus = enabledStatuses[0]
+	}
 	var findings []string
 	for _, service := range requiredServicesFor() {
 		status := serviceStatus(service)
 		if status != "active" {
 			findings = append(findings, fmt.Sprintf("%s service is %s (expected active)", service, status))
+			continue
+		}
+		if enabled := enabledStatus(service); enabled != "enabled" {
+			findings = append(findings, fmt.Sprintf("%s service is active but %s (expected enabled)", service, enabled))
 		}
 	}
 	return findings

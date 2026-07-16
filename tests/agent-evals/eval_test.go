@@ -237,8 +237,9 @@ func (e *evalCase) waitForSSH(t *testing.T) {
 
 func (e *evalCase) ensureSmokeHostSeed(t *testing.T) {
 	t.Helper()
-	e.dockerExec(t, "cat > /etc/ship/host.json <<'EOF'\n"+h.SeedHostJSON()+"EOF")
-	e.dockerExec(t, "mkdir -p /etc/caddy/conf.d /var/lib/caddy /etc/systemd/system")
+	e.dockerExec(t, "mkdir -p /etc/ship /var/lib/ship /run/ship /etc/caddy/conf.d /var/lib/caddy /etc/systemd/system")
+	e.dockerExec(t, "printf '%s\\n' '{\"version\":1,\"members\":{}}' > /etc/ship/members.json")
+	e.dockerExec(t, "printf '%s\\n' '{\"version\":1,\"values\":{\"box.address\":\"fake-vps\"}}' > /etc/ship/box-config.json")
 	e.dockerExec(t, "mkdir -p /tmp/ship-deploy && chmod 1777 /tmp/ship-deploy")
 	e.dockerExec(t, `cat > /etc/caddy/Caddyfile <<'EOF'
 import conf.d/*.caddy

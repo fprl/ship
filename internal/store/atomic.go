@@ -1,12 +1,10 @@
 package store
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 )
 
 const jsonIndent = "  "
@@ -28,60 +26,6 @@ func writeJSON(path string, value any, mode os.FileMode) error {
 		return err
 	}
 	return AtomicWrite(path, append(data, '\n'), mode)
-}
-
-func writeHostFile(path string, file HostFile) error {
-	file.Version = CurrentVersion
-	normalizeHostFile(&file)
-	if err := validateHostDesired(file.Desired); err != nil {
-		return fmt.Errorf("invalid host desired: %w", err)
-	}
-	return writeJSON(path, file, 0644)
-}
-
-// writeHostState preserves desired as raw JSON so apply cannot rewrite intent
-// while recording observed host state and apply metadata.
-func writeHostState(path string, desired json.RawMessage, observed HostObserved, meta HostMeta) error {
-	observedData, err := marshalHostStateField(observed)
-	if err != nil {
-		return err
-	}
-	metaData, err := marshalHostStateField(meta)
-	if err != nil {
-		return err
-	}
-
-	var out bytes.Buffer
-	out.WriteString("{\n")
-	writeHostStateField(&out, "version", []byte(strconv.Itoa(CurrentVersion)), true)
-	writeHostStateField(&out, "desired", bytes.TrimSpace(desired), true)
-	writeHostStateField(&out, "observed", observedData, true)
-	writeHostStateField(&out, "meta", metaData, false)
-	out.WriteString("}\n")
-	return AtomicWrite(path, out.Bytes(), 0644)
-}
-
-func marshalHostStateField(value any) ([]byte, error) {
-	return json.MarshalIndent(value, jsonIndent, jsonIndent)
-}
-
-func writeHostStateField(out *bytes.Buffer, name string, value []byte, comma bool) {
-	out.WriteString(jsonIndent)
-	out.Write(mustMarshalJSONString(name))
-	out.WriteString(": ")
-	out.Write(value)
-	if comma {
-		out.WriteByte(',')
-	}
-	out.WriteByte('\n')
-}
-
-func mustMarshalJSONString(value string) []byte {
-	data, err := json.Marshal(value)
-	if err != nil {
-		panic(fmt.Sprintf("marshal JSON object key: %v", err))
-	}
-	return data
 }
 
 func AtomicWrite(path string, content []byte, mode os.FileMode) error {

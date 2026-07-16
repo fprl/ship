@@ -110,9 +110,9 @@ func TestWebhookPreviewReapedPayloadCarriesBranchAndEnv(t *testing.T) {
 
 func TestWebhookDoctorDegradedPayloadCarriesEvidenceAndRunnableRemediation(t *testing.T) {
 	setupPreviewHostTest(t)
-	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	setTestStateRoot(t, t.TempDir())
 	sink := newWebhookTestSink(t)
-	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"webhook.url": sink.URL}}); err != nil {
+	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"webhook.url": sink.URL, "box.address": "203.0.113.7"}}); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 7, 7, 10, 4, 5, 0, time.UTC)
@@ -134,14 +134,11 @@ func TestWebhookDoctorDegradedPayloadCarriesEvidenceAndRunnableRemediation(t *te
 
 func TestWebhookApprovalRequestedPayloadCarriesLiteralApproveCommand(t *testing.T) {
 	setupPreviewHostTest(t)
-	t.Setenv("SHIP_STATE_DIR", t.TempDir())
-	writeValidHost(t, store.Default().HostPath())
-	if err := store.Default().WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{ClientAddress: "203.0.113.7"}); err != nil {
-		t.Fatal(err)
-	}
+	setTestStateRoot(t, t.TempDir())
+	setHelperBoxClientAddress(t, "203.0.113.7")
 	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName, InfraID: identity.InfraID("api", productionEnvName)})
 	sink := newWebhookTestSink(t)
-	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"webhook.url": sink.URL}}); err != nil {
+	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"webhook.url": sink.URL, "box.address": "203.0.113.7"}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := appendDeployJournalEntry("api", productionEnvName, deployJournalEntry{
@@ -184,13 +181,10 @@ func TestWebhookApprovalRequestedPayloadCarriesLiteralApproveCommand(t *testing.
 
 func TestWebhookApprovalRequestedForBoxTargetUsesBoxWebhook(t *testing.T) {
 	setupPreviewHostTest(t)
-	t.Setenv("SHIP_STATE_DIR", t.TempDir())
-	writeValidHost(t, store.Default().HostPath())
-	if err := store.Default().WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{ClientAddress: "203.0.113.7"}); err != nil {
-		t.Fatal(err)
-	}
+	setTestStateRoot(t, t.TempDir())
+	setHelperBoxClientAddress(t, "203.0.113.7")
 	sink := newWebhookTestSink(t)
-	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"webhook.url": sink.URL}}); err != nil {
+	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"webhook.url": sink.URL, "box.address": "203.0.113.7"}}); err != nil {
 		t.Fatal(err)
 	}
 

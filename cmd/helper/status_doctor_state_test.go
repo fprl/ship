@@ -16,8 +16,12 @@ import (
 
 func TestDoctorRecordRefusesMemberClaimsWithoutChangingState(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("SHIP_STATE_DIR", root)
-	before := []byte(`{"version":1,"recorded_at":"2026-07-12T10:00:00Z","checks":[],"delta":[]}`)
+	setTestStateRoot(t, root)
+	t.Setenv("SHIP_VAR_DIR", filepath.Join(root, "var"))
+	if err := os.MkdirAll(filepath.Join(root, "var"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	before := []byte(`{"version":1,"recorded_at":"2026-07-12T10:00:00Z","checks":[]}`)
 	if err := os.WriteFile(store.Default().DoctorPath(), before, 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +40,7 @@ func TestDoctorRecordRefusesMemberClaimsWithoutChangingState(t *testing.T) {
 }
 
 func TestDoctorRecordWithoutMemberClaimsPersistsState(t *testing.T) {
-	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	setTestStateRoot(t, t.TempDir())
 	if err := (doctorCmd{Action: "record"}).Run(); err != nil {
 		t.Fatal(err)
 	}
@@ -45,14 +49,16 @@ func TestDoctorRecordWithoutMemberClaimsPersistsState(t *testing.T) {
 	}
 }
 
-func TestDoctorHostStateCheckReportsMissingHostWithoutRawError(t *testing.T) {
+func TestDoctorHostStateCheckReportsInvalidIntentWithoutRawError(t *testing.T) {
 	root := t.TempDir()
-	secretsRoot := prepareDoctorSecretsRoot(t, 0700)
+	prepareDoctorSecretsRoot(t, 0700)
 	stateStore := store.Store{Root: root}
-	_ = secretsRoot
+	if err := os.WriteFile(stateStore.BoxConfigPath(), []byte(`{"version":1,"values":{"box.address":123}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	check := doctorHostStateCheck(stateStore, "fake-vps")
-	if check.Status != doctorStatusFailed || !strings.Contains(check.Evidence, "host is not installed") {
+	if check.Status != doctorStatusFailed || !strings.Contains(check.Evidence, "box config invalid") {
 		t.Fatalf("unexpected missing host check: %+v", check)
 	}
 	if strings.Contains(check.Evidence, "open ") {
@@ -63,11 +69,11 @@ func TestDoctorHostStateCheckReportsMissingHostWithoutRawError(t *testing.T) {
 	}
 }
 
-func TestDoctorHostStateCheckClearsAfterValidHost(t *testing.T) {
+func TestDoctorHostStateCheckClearsAfterValidIntent(t *testing.T) {
 	root := t.TempDir()
 	prepareDoctorSecretsRoot(t, 0700)
 	stateStore := store.Store{Root: root}
-	writeValidHost(t, stateStore.HostPath())
+	writeDoctorIntent(t, stateStore)
 
 	check := doctorHostStateCheck(stateStore, "fake-vps")
 	if check.Status != doctorStatusOK {
@@ -75,54 +81,33 @@ func TestDoctorHostStateCheckClearsAfterValidHost(t *testing.T) {
 	}
 }
 
-func TestAppApplyClientVersionRecordsForwardAndDoctorDetectsSkew(t *testing.T) {
+func TestDoctorUsesLastCompletedUpdateForVersionChecks(t *testing.T) {
 	root := t.TempDir()
-	t.Setenv("SHIP_STATE_DIR", root)
-	stateStore := store.Default()
-	writeValidHost(t, stateStore.HostPath())
-	if err := stateStore.WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{ShipVersion: "v0.4.0"}); err != nil {
+	setTestStateRoot(t, root)
+	t.Setenv("SHIP_VAR_DIR", filepath.Join(root, "var"))
+	stateStore := store.Store{Root: root, VarRoot: filepath.Join(root, "var"), RunRoot: filepath.Join(root, "run")}
+	if err := appendUpdateJournalForStore(stateStore, updateJournalEntry{Event: "completed", Version: "v0.4.1"}); err != nil {
 		t.Fatal(err)
-	}
-
-	if err := (appApplyCmd{ClientVersion: "v0.4.1"}).recordClientVersion(); err != nil {
-		t.Fatal(err)
-	}
-	hostFile, err := stateStore.ReadHost()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hostFile.Meta.ShipVersion != "v0.4.0" || hostFile.Meta.LastClientVersion != "v0.4.1" {
-		t.Fatalf("unexpected version metadata: %+v", hostFile.Meta)
 	}
 
 	previous := version.Version
 	version.Version = "v0.4.0"
 	t.Cleanup(func() { version.Version = previous })
 	check := doctorHelperVersionCheck(stateStore, "fake-vps")
-	if check.Status != doctorStatusDegraded || check.Evidence != "helper=v0.4.0 last_client=v0.4.1" {
+	if check.Status != doctorStatusDegraded || check.Evidence != "helper=v0.4.0 last_completed=v0.4.1" {
 		t.Fatalf("unexpected helper version check: %+v", check)
 	}
 	if check.Remediation != "ship box update fake-vps" {
 		t.Fatalf("unexpected remediation: %q", check.Remediation)
 	}
 
-	if err := (appApplyCmd{ClientVersion: "v0.3.9"}).recordClientVersion(); err != nil {
-		t.Fatal(err)
-	}
-	hostFile, err = stateStore.ReadHost()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hostFile.Meta.LastClientVersion != "v0.4.1" {
-		t.Fatalf("older client moved version backward: %+v", hostFile.Meta)
-	}
 }
 
 func TestDoctorHostStateCheckReportsWrongSecretsRootMode(t *testing.T) {
 	root := t.TempDir()
 	secretsRoot := prepareDoctorSecretsRoot(t, 0755)
 	stateStore := store.Store{Root: root}
-	writeValidHost(t, stateStore.HostPath())
+	writeDoctorIntent(t, stateStore)
 
 	check := doctorHostStateCheck(stateStore, "fake-vps")
 	if check.Status != doctorStatusFailed || !strings.Contains(check.Evidence, "mode 755, want 700") || !strings.Contains(check.Evidence, secretsRoot) {
@@ -183,6 +168,16 @@ func TestDoctorServiceFindingsAllowInactiveOptionalServices(t *testing.T) {
 
 	if len(findings) != 0 {
 		t.Fatalf("expected inactive optional services to pass, got: %+v", findings)
+	}
+}
+
+func TestDoctorServiceHealthDegradesActiveDisabledServiceToSetup(t *testing.T) {
+	check := doctorServiceHealthCheck(store.Store{}, func(string) string { return "active" }, func(string) string { return "disabled" }, "fake-vps")
+	if check.Status != doctorStatusDegraded || !strings.Contains(check.Evidence, "active but disabled") {
+		t.Fatalf("unexpected active-disabled check: %+v", check)
+	}
+	if check.Remediation != "ship box setup fake-vps" {
+		t.Fatalf("remediation = %q, want setup", check.Remediation)
 	}
 }
 
@@ -348,9 +343,9 @@ func TestDoctorDeltaTracksSeverityIncreasesOnly(t *testing.T) {
 	}
 }
 
-func TestRecordDoctorRunPersistsChecksAndDelta(t *testing.T) {
-	stateStore := store.Store{Root: t.TempDir()}
-	writeValidHost(t, stateStore.HostPath())
+func TestRecordDoctorRunPersistsChecksWithoutDelta(t *testing.T) {
+	stateStore := store.Store{Root: t.TempDir(), VarRoot: t.TempDir()}
+	writeDoctorIntent(t, stateStore)
 	prepareDoctorSecretsRoot(t, 0700)
 	setupDoctorSudoers(t)
 	now := time.Date(2026, 7, 7, 10, 0, 0, 0, time.UTC)
@@ -379,24 +374,24 @@ func TestRecordDoctorRunPersistsChecksAndDelta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Checks) == 0 || len(first.Delta) != 1 || first.Delta[0].ID != doctorCheckReaperTimer {
+	if len(first.Checks) == 0 {
 		t.Fatalf("unexpected first recorded doctor state: %+v", first)
 	}
 
-	second, err := recordDoctorRun(opts)
+	_, err = recordDoctorRun(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Delta) != 0 {
-		t.Fatalf("second unchanged run should have empty delta: %+v", second.Delta)
-	}
-
 	loaded, err := stateStore.ReadDoctor()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.RecordedAt != now.Format(time.RFC3339Nano) || len(loaded.Delta) != 0 {
+	if loaded.RecordedAt != now.Format(time.RFC3339Nano) {
 		t.Fatalf("unexpected persisted doctor state: %+v", loaded)
+	}
+	raw, err := os.ReadFile(stateStore.DoctorPath())
+	if err != nil || strings.Contains(string(raw), "delta") {
+		t.Fatalf("persisted doctor state contains delta: %s (%v)", raw, err)
 	}
 }
 
@@ -427,34 +422,12 @@ func setupDoctorSudoers(t *testing.T) {
 	}
 }
 
-func writeValidHost(t *testing.T, path string) {
+func writeDoctorIntent(t *testing.T, state store.Store) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := state.WriteMembers(store.MembersFile{Version: store.CurrentVersion, Members: map[string]store.MemberRecord{}}); err != nil {
 		t.Fatal(err)
 	}
-	raw := `{
-  "version": 1,
-  "desired": {
-    "users": {"operator": "operator", "deploy": "deploy"},
-    "ingress": {"expose": "private"},
-    "features": {"docker": false},
-    "packages": {}
-  },
-  "observed": {"packages": {}, "ingress": {}},
-  "meta": {}
-}`
-	if err := os.WriteFile(path, []byte(raw), 0644); err != nil {
+	if err := state.WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"box.address": "fake-vps"}}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func validDoctorHostDesired() store.HostDesired {
-	return store.HostDesired{
-		Users: store.HostUsers{Operator: "operator", Deploy: "deploy"},
-		Ingress: store.HostIngressDesired{
-			Expose: store.ExposePublic,
-		},
-		Features: store.HostFeatures{},
-		Packages: map[string]store.DesiredPackage{},
 	}
 }

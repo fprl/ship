@@ -1,6 +1,12 @@
 package store
 
-import "github.com/fprl/ship/internal/config"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/fprl/ship/internal/config"
+)
 
 const CurrentVersion = 1
 
@@ -10,68 +16,6 @@ const (
 	ExposePublic  ExposeMode = "public"
 	ExposePrivate ExposeMode = "private"
 )
-
-type HostFile struct {
-	Version  int          `json:"version"`
-	Desired  HostDesired  `json:"desired"`
-	Observed HostObserved `json:"observed"`
-	Meta     HostMeta     `json:"meta"`
-}
-
-type HostDesired struct {
-	Users    HostUsers                 `json:"users"`
-	Ingress  HostIngressDesired        `json:"ingress"`
-	Features HostFeatures              `json:"features"`
-	Packages map[string]DesiredPackage `json:"packages"`
-}
-
-type HostUsers struct {
-	Operator string `json:"operator"`
-	Deploy   string `json:"deploy"`
-}
-
-type HostIngressDesired struct {
-	Expose ExposeMode `json:"expose"`
-}
-
-type HostFeatures struct {
-	Docker bool `json:"docker"`
-}
-
-type DesiredPackage struct {
-	Source  string `json:"source"`
-	Track   string `json:"track,omitempty"`
-	Version string `json:"version,omitempty"`
-}
-
-type HostObserved struct {
-	Packages map[string]ObservedPackage `json:"packages"`
-	Ingress  HostIngressObserved        `json:"ingress"`
-}
-
-type ObservedPackage struct {
-	Version string `json:"version"`
-}
-
-type HostIngressObserved struct {
-	UFW80443Allowed bool `json:"ufw_80_443_allowed"`
-}
-
-type HostMeta struct {
-	InstalledAt       string     `json:"installed_at,omitempty"`
-	ShipVersion       string     `json:"ship_version,omitempty"`
-	LastClientVersion string     `json:"last_client_version,omitempty"`
-	ClientAddress     string     `json:"client_address,omitempty"`
-	LastApply         *ApplyMeta `json:"last_apply,omitempty"`
-}
-
-type ApplyMeta struct {
-	ID                string `json:"id"`
-	StartedAt         string `json:"started_at"`
-	FinishedAt        string `json:"finished_at"`
-	Status            string `json:"status"`
-	OperationsChanged int    `json:"operations_changed"`
-}
 
 type DoctorCheck struct {
 	ID          string `json:"id"`
@@ -84,7 +28,6 @@ type DoctorFile struct {
 	Version    int           `json:"version"`
 	RecordedAt string        `json:"recorded_at"`
 	Checks     []DoctorCheck `json:"checks"`
-	Delta      []DoctorCheck `json:"delta"`
 }
 
 type MemberRole string
@@ -109,6 +52,7 @@ type BoxConfigValueType string
 
 const (
 	BoxConfigValueTypeURLOrEmpty BoxConfigValueType = "url_or_empty"
+	BoxConfigValueTypeAddress    BoxConfigValueType = "host_or_host_port"
 )
 
 type BoxConfigKey struct {
@@ -125,6 +69,13 @@ var BoxConfigSchema = []BoxConfigKey{
 	{
 		Name:                   "webhook.url",
 		Type:                   BoxConfigValueTypeURLOrEmpty,
+		Default:                "",
+		WriteRole:              MemberRoleOwner,
+		OutOfRoleNeedsApproval: true,
+	},
+	{
+		Name:                   "box.address",
+		Type:                   BoxConfigValueTypeAddress,
 		Default:                "",
 		WriteRole:              MemberRoleOwner,
 		OutOfRoleNeedsApproval: true,
@@ -175,8 +126,33 @@ func ValidateBoxConfigValue(key, value string) error {
 				return &BoxConfigValueError{Key: key, Detail: err.Error()}
 			}
 		}
+	case BoxConfigValueTypeAddress:
+		if err := validateBoxAddress(value); err != nil {
+			return &BoxConfigValueError{Key: key, Detail: err.Error()}
+		}
 	default:
 		return &BoxConfigValueError{Key: key, Detail: "unsupported value type"}
+	}
+	return nil
+}
+
+func validateBoxAddress(value string) error {
+	if value == "" || value != strings.TrimSpace(value) {
+		return fmt.Errorf("must be a host or host:port")
+	}
+	host := value
+	if strings.Count(value, ":") == 1 {
+		var port string
+		host, port, _ = strings.Cut(value, ":")
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("port must be between 1 and 65535")
+		}
+	} else if strings.Contains(value, ":") {
+		return fmt.Errorf("must be a host or host:port")
+	}
+	if !config.ValidateHost(host) {
+		return fmt.Errorf("host is invalid")
 	}
 	return nil
 }

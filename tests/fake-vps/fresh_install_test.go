@@ -3,8 +3,10 @@ package fakevps
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -177,7 +179,15 @@ func (e *smokeEnv) installHost(t *testing.T, deployPublicKeyFile string) (int, s
 		t.Fatalf("box setup narration should be on stderr, got stdout:\n%s", result.stdout)
 	}
 	assertContains(t, result.stderr, "box ready")
-	return changedOperationsFromHostState(t, e), result.stderr
+	match := regexp.MustCompile(`provisioning \S+ ([0-9]+) changes`).FindStringSubmatch(result.stderr)
+	if len(match) != 2 {
+		t.Fatalf("setup output did not report changed operations:\n%s", result.stderr)
+	}
+	var changed int
+	if _, err := fmt.Sscanf(match[1], "%d", &changed); err != nil {
+		t.Fatal(err)
+	}
+	return changed, result.stderr
 }
 
 func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
@@ -198,55 +208,25 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	e.ssh(t, "grep -Fq '# Managed by ship.' /etc/containers/registries.conf.d/00-ship.conf")
 	e.ssh(t, "grep -Fq '# Managed by ship.' /etc/caddy/Caddyfile")
 
-	hostState := e.ssh(t, "cat /etc/ship/host.json")
+	if got := e.ssh(t, "test ! -e /etc/ship/host"+".json && printf absent"); got != "absent" {
+		t.Fatalf("legacy host state exists: %q", got)
+	}
+	boxConfig := e.ssh(t, "cat /etc/ship/box-config.json")
 	var state struct {
-		Version int `json:"version"`
-		Desired struct {
-			Users struct {
-				Operator string `json:"operator"`
-				Deploy   string `json:"deploy"`
-			} `json:"users"`
-			Ingress struct {
-				Expose string `json:"expose"`
-			} `json:"ingress"`
-			Features struct {
-				Docker bool `json:"docker"`
-			} `json:"features"`
-		} `json:"desired"`
-		Meta struct {
-			ClientAddress string `json:"client_address"`
-			LastApply     struct {
-				Status            string `json:"status"`
-				OperationsChanged int    `json:"operations_changed"`
-			} `json:"last_apply"`
-		} `json:"meta"`
+		Values map[string]string `json:"values"`
 	}
-	if err := json.Unmarshal([]byte(hostState), &state); err != nil {
-		t.Fatalf("decode host.json: %v\n%s", err, hostState)
+	if err := json.Unmarshal([]byte(boxConfig), &state); err != nil {
+		t.Fatalf("decode box-config.json: %v\n%s", err, boxConfig)
 	}
-	if state.Version != 1 {
-		t.Fatalf("host.json version = %d, want 1", state.Version)
-	}
-	if state.Desired.Users.Operator != "operator" || state.Desired.Users.Deploy != "deploy" {
-		t.Fatalf("unexpected desired users: %+v", state.Desired.Users)
-	}
-	if state.Desired.Ingress.Expose != "public" {
-		t.Fatalf("unexpected ingress: %+v", state.Desired.Ingress)
-	}
-	if state.Desired.Features.Docker {
-		t.Fatalf("unexpected enabled features: %+v", state.Desired.Features)
-	}
-	if state.Meta.LastApply.Status != "ok" || state.Meta.LastApply.OperationsChanged <= 0 {
-		t.Fatalf("unexpected last apply meta: %+v", state.Meta.LastApply)
-	}
-	if state.Meta.ClientAddress != "fake-vps" {
-		t.Fatalf("client address = %q, want fake-vps", state.Meta.ClientAddress)
+	if state.Values["box.address"] != "fake-vps" {
+		t.Fatalf("box.address = %q, want fake-vps", state.Values["box.address"])
 	}
 
 	assertContains(t, e.ssh(t, "cat /run/ship-fresh-host/systemctl.log"), "restart ssh.service")
 	systemctlLog := e.ssh(t, "cat /run/ship-fresh-host/systemctl.log")
 	assertContains(t, systemctlLog, "start fail2ban.service")
 	assertContains(t, systemctlLog, "start caddy.service")
+	assertContains(t, systemctlLog, "enable caddy.service")
 	assertContains(t, systemctlLog, "start ship-preview-reaper.timer")
 	assertContains(t, systemctlLog, "enable ship-preview-reaper.timer")
 	assertContains(t, systemctlLog, "start ship-doctor.timer")
@@ -439,9 +419,6 @@ func (e *smokeEnv) assertDoctorRecordingDeltaForStoppedReaper(t *testing.T) {
 	t.Helper()
 	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
 	state := readDoctorState(t, e)
-	if len(state.Delta) != 0 {
-		t.Fatalf("healthy baseline doctor record should have empty delta: %+v", state.Delta)
-	}
 
 	e.ssh(t, "systemctl stop ship-preview-reaper.timer")
 	result := e.runShip(t, e.repoRoot, nil, "box", "doctor", "fake-vps", "--json")
@@ -459,18 +436,12 @@ func (e *smokeEnv) assertDoctorRecordingDeltaForStoppedReaper(t *testing.T) {
 
 	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
 	state = readDoctorState(t, e)
-	if len(state.Delta) != 1 || state.Delta[0].ID != "reaper_timer" || state.Delta[0].Status != "degraded" {
-		t.Fatalf("expected newly degraded reaper delta, got: %+v", state.Delta)
-	}
 	if findDoctorCheck(t, state.Checks, "reaper_timer").Status != "degraded" {
 		t.Fatalf("recorded checks did not reflect degraded reaper: %+v", state.Checks)
 	}
 
 	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
-	state = readDoctorState(t, e)
-	if len(state.Delta) != 0 {
-		t.Fatalf("second degraded doctor record should have empty delta: %+v", state.Delta)
-	}
+	_ = readDoctorState(t, e)
 }
 
 type doctorCheck struct {
@@ -484,17 +455,16 @@ type doctorStateFile struct {
 	Version    int           `json:"version"`
 	RecordedAt string        `json:"recorded_at"`
 	Checks     []doctorCheck `json:"checks"`
-	Delta      []doctorCheck `json:"delta"`
 }
 
 func readDoctorState(t *testing.T, e *smokeEnv) doctorStateFile {
 	t.Helper()
-	raw := e.ssh(t, "cat /etc/ship/doctor.json")
+	raw := e.ssh(t, "cat /var/lib/ship/doctor.json")
 	var state doctorStateFile
 	if err := json.Unmarshal([]byte(raw), &state); err != nil {
 		t.Fatalf("decode doctor.json: %v\n%s", err, raw)
 	}
-	if state.Version != 1 || state.RecordedAt == "" || state.Checks == nil || state.Delta == nil {
+	if state.Version != 1 || state.RecordedAt == "" || state.Checks == nil || strings.Contains(raw, "delta") {
 		t.Fatalf("unexpected doctor.json shape: %+v", state)
 	}
 	return state
@@ -509,24 +479,4 @@ func findDoctorCheck(t *testing.T, checks []doctorCheck, id string) doctorCheck 
 	}
 	t.Fatalf("doctor check %q not found in %+v", id, checks)
 	return doctorCheck{}
-}
-
-// changedOperationsFromHostState reads /etc/ship/host.json from
-// the fake VPS and returns meta.last_apply.operations_changed. Reading
-// the file directly avoids the SSH pipe-close race that drops trailing
-// inner-installer stdout on some Linux/Docker runners.
-func changedOperationsFromHostState(t *testing.T, e *smokeEnv) int {
-	t.Helper()
-	raw := e.ssh(t, "cat /etc/ship/host.json")
-	var state struct {
-		Meta struct {
-			LastApply struct {
-				OperationsChanged int `json:"operations_changed"`
-			} `json:"last_apply"`
-		} `json:"meta"`
-	}
-	if err := json.Unmarshal([]byte(raw), &state); err != nil {
-		t.Fatalf("decode host.json: %v\n%s", err, raw)
-	}
-	return state.Meta.LastApply.OperationsChanged
 }

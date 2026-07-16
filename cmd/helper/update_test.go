@@ -2,6 +2,7 @@ package helper
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func TestValidateUpdateTargetRefusesEqualDowngradeAndDevelopmentBuilds(t *testin
 }
 
 func TestRunVerifiedUpdateJournalsStartedBeforeMutation(t *testing.T) {
-	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	setTestStateRoot(t, t.TempDir())
 	previous := runVerifiedUpdateLocal
 	runVerifiedUpdateLocal = func(binary string) error {
 		data, err := os.ReadFile(store.Default().UpdatesJournalPath())
@@ -53,7 +54,7 @@ func TestRunVerifiedUpdateJournalsStartedBeforeMutation(t *testing.T) {
 
 func TestDoctorFlagsStartedUpdateWithoutCompletion(t *testing.T) {
 	root := t.TempDir()
-	stateStore := store.Store{Root: root}
+	stateStore := store.Store{Root: root, VarRoot: filepath.Join(root, "var"), RunRoot: filepath.Join(root, "run")}
 	if err := appendUpdateJournalForStore(stateStore, updateJournalEntry{Event: "started", Version: "v0.4.1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -91,10 +92,22 @@ func TestDoctorPreservesIncompleteUpdateDetectionWithTornTail(t *testing.T) {
 }
 
 func appendUpdateJournalForStore(stateStore store.Store, entry updateJournalEntry) error {
-	previous := os.Getenv("SHIP_STATE_DIR")
+	previousState := os.Getenv("SHIP_STATE_DIR")
+	previousVar := os.Getenv("SHIP_VAR_DIR")
+	previousRun := os.Getenv("SHIP_RUN_DIR")
 	if err := os.Setenv("SHIP_STATE_DIR", stateStore.Root); err != nil {
 		return err
 	}
-	defer os.Setenv("SHIP_STATE_DIR", previous)
+	if err := os.Setenv("SHIP_VAR_DIR", stateStore.VarRoot); err != nil {
+		return err
+	}
+	if err := os.Setenv("SHIP_RUN_DIR", stateStore.RunRoot); err != nil {
+		return err
+	}
+	defer func() {
+		_ = os.Setenv("SHIP_STATE_DIR", previousState)
+		_ = os.Setenv("SHIP_VAR_DIR", previousVar)
+		_ = os.Setenv("SHIP_RUN_DIR", previousRun)
+	}()
 	return appendUpdateJournal(entry)
 }

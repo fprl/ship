@@ -33,6 +33,7 @@ func TestRunDataSaveKeepsExplicitPath(t *testing.T) {
 
 func TestRunDataSaveDefaultNameUsesArchiveMetadata(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
 	now := time.Date(2026, time.July, 14, 12, 30, 45, 0, time.UTC)
 	runner := &fakeDataSaveRunner{metadata: dataSnapshotMetadata{App: "api", Env: "preview-after-deploy", Release: "archive-release"}}
 	got, err := runDataSave(dataSaveContext{
@@ -53,6 +54,7 @@ func TestRunDataSaveDefaultNameUsesArchiveMetadata(t *testing.T) {
 
 func TestDefaultDataSnapshotPathUsesProductionEnvName(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
 	now := time.Date(2026, time.July, 14, 12, 30, 45, 0, time.UTC)
 	path, err := defaultDataSnapshotPath("api", productionEnvName, "abc1234", now)
 	if err != nil {
@@ -122,6 +124,7 @@ func TestClaimDataSnapshotPathKeepsExplicitSuffixedName(t *testing.T) {
 
 func TestListDataSnapshotsReturnsEmptyJSONArrayForExistingEmptyDirectory(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
 	dir, err := dataSnapshotDir("api")
 	if err != nil {
 		t.Fatal(err)

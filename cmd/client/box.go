@@ -47,14 +47,13 @@ func CmdBoxAppLs(server string, jsonFlag bool) {
 }
 
 type boxVersionPayload struct {
-	Version           string `json:"version"`
-	LastClientVersion string `json:"last_client_version"`
+	Version string `json:"version"`
 }
 
 type boxStatusSummaryPayload struct {
-	Version           string `json:"version"`
-	LastClientVersion string `json:"last_client_version"`
-	Disk              struct {
+	Version     string `json:"version"`
+	ShipVersion string `json:"ship_version"`
+	Disk        struct {
 		Status   string `json:"status"`
 		Evidence string `json:"evidence"`
 	} `json:"disk"`
@@ -65,12 +64,12 @@ type boxStatusSummaryPayload struct {
 }
 
 type boxStatusPayload struct {
-	HelperVersion     string `json:"helper_version"`
-	ClientVersion     string `json:"client_version"`
-	LastClientVersion string `json:"last_client_version"`
-	UpdateAvailable   bool   `json:"update_available"`
-	HelperAhead       bool   `json:"helper_ahead"`
-	Disk              struct {
+	HelperVersion   string `json:"helper_version"`
+	ClientVersion   string `json:"client_version"`
+	ShipVersion     string `json:"ship_version"`
+	UpdateAvailable bool   `json:"update_available"`
+	HelperAhead     bool   `json:"helper_ahead"`
+	Disk            struct {
 		Status   string `json:"status"`
 		Evidence string `json:"evidence"`
 	} `json:"disk"`
@@ -122,8 +121,8 @@ func CmdBoxStatus(server string, jsonFlag bool) {
 func renderBoxStatus(payload boxStatusPayload, server string, now time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "helper: %s\nclient: %s\n", payload.HelperVersion, payload.ClientVersion)
-	if payload.LastClientVersion != "" {
-		fmt.Fprintf(&b, "last client: %s\n", payload.LastClientVersion)
+	if payload.ShipVersion != "" {
+		fmt.Fprintf(&b, "ship: %s\n", payload.ShipVersion)
 	}
 	if payload.UpdateAvailable {
 		fmt.Fprintf(&b, "helper is behind\nnext: ship box update %s\n", server)
@@ -175,7 +174,7 @@ func readBoxStatus(runner sshRunner, server string) (boxStatusPayload, error) {
 	}
 	payload.HelperVersion = summary.Version
 	payload.ClientVersion = version.Version
-	payload.LastClientVersion = summary.LastClientVersion
+	payload.ShipVersion = summary.ShipVersion
 	cmp, ok := version.Compare(summary.Version, version.Version)
 	payload.UpdateAvailable = ok && cmp < 0
 	payload.HelperAhead = (ok && cmp > 0) || ((!ok || cmp == 0) && summary.Version != version.Version)

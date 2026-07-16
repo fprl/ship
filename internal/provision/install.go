@@ -2,7 +2,6 @@ package provision
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,7 +15,6 @@ import (
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/provision/host"
 	"github.com/fprl/ship/internal/store"
-	"github.com/fprl/ship/internal/version"
 )
 
 const (
@@ -60,10 +58,6 @@ func RunVersionConverge(ctx context.Context, runner host.Runner, opts VersionCon
 		opts.Now = time.Now
 	}
 	stateStore := store.Store{Root: opts.StateRoot}
-	hostFile, err := stateStore.ReadHost()
-	if err != nil {
-		return InstallSummary{}, err
-	}
 	apply := host.Apply{Context: ctx, Runner: runner, State: &host.RunState{}}
 	startedAt := opts.Now().UTC()
 	summary := InstallSummary{ApplyID: startedAt.Format("20060102T150405Z")}
@@ -82,18 +76,6 @@ func RunVersionConverge(ctx context.Context, runner host.Runner, opts VersionCon
 		if changed {
 			summary.OperationsChanged++
 		}
-	}
-	meta := hostFile.Meta
-	meta.ShipVersion = version.Version
-	meta.LastApply = &store.ApplyMeta{
-		ID:                summary.ApplyID,
-		StartedAt:         startedAt.Format(time.RFC3339),
-		FinishedAt:        opts.Now().UTC().Format(time.RFC3339),
-		Status:            "ok",
-		OperationsChanged: summary.OperationsChanged,
-	}
-	if err := stateStore.WriteHostState(hostFile.Observed, meta); err != nil {
-		return summary, err
 	}
 	return summary, nil
 }
@@ -124,9 +106,6 @@ func RunInstall(ctx context.Context, runner host.Runner, opts InstallOptions) (I
 	for _, op := range ops {
 		changed, err := op.run(apply)
 		if err != nil {
-			if !opts.CheckMode {
-				_ = writeApplyState(stateStore, opts, applyID, startedAt, opts.Now().UTC(), "failed", changedCount)
-			}
 			summary.OperationsChanged = changedCount
 			return summary, fmt.Errorf("%s: %w", op.name, err)
 		}
@@ -135,12 +114,6 @@ func RunInstall(ctx context.Context, runner host.Runner, opts InstallOptions) (I
 		}
 	}
 
-	if !opts.CheckMode {
-		if err := writeApplyState(stateStore, opts, applyID, startedAt, opts.Now().UTC(), "ok", changedCount); err != nil {
-			summary.OperationsChanged = changedCount
-			return summary, err
-		}
-	}
 	summary.OperationsChanged = changedCount
 	return summary, nil
 }
@@ -151,19 +124,22 @@ func installOperations(opts InstallOptions, stateStore store.Store, summary *Ins
 		ops = append(ops, operation{name: name, run: run})
 	}
 
-	add("write host desired state", func(apply host.Apply) (bool, error) {
-		desired := desiredHost()
-		changed, err := hostDesiredChanged(stateStore, desired)
-		if err != nil {
-			return false, err
-		}
-		if changed && !opts.CheckMode {
-			if err := stateStore.WriteHostDesired(desired); err != nil {
+	if address := strings.TrimSpace(opts.ClientAddress); address != "" {
+		add("write box address", func(apply host.Apply) (bool, error) {
+			file, err := stateStore.ReadBoxConfig()
+			if err != nil {
 				return false, err
 			}
-		}
-		return changed, nil
-	})
+			if file.Values["box.address"] == address {
+				return false, nil
+			}
+			if apply.CheckMode {
+				return true, nil
+			}
+			file.Values["box.address"] = address
+			return true, stateStore.WriteBoxConfig(*file)
+		})
+	}
 
 	for _, dir := range []host.Directory{
 		{Path: "/etc/ship", Owner: "root", Group: "root", Mode: 0755},
@@ -878,6 +854,9 @@ func addCaddy(ops *[]operation) {
 			Action:  host.Started,
 		})
 	}})
+	*ops = append(*ops, operation{name: "caddy service enabled", run: func(apply host.Apply) (bool, error) {
+		return ensureSystemdUnitEnabled(apply, "caddy.service")
+	}})
 }
 
 // caddyMainFile is the bootstrap /etc/caddy/Caddyfile. It only imports
@@ -918,62 +897,6 @@ func caddyUnit() string {
 		"WantedBy=multi-user.target",
 		"",
 	}, "\n")
-}
-
-func desiredHost() store.HostDesired {
-	packages := map[string]store.DesiredPackage{
-		"podman":  {Source: "ubuntu", Track: "noble"},
-		"sqlite3": {Source: "ubuntu", Track: "noble"},
-	}
-	return store.HostDesired{
-		Users:   store.HostUsers{Operator: defaultOperatorUser, Deploy: defaultDeployUser},
-		Ingress: store.HostIngressDesired{Expose: store.ExposePublic},
-		Features: store.HostFeatures{
-			Docker: false,
-		},
-		Packages: packages,
-	}
-}
-
-func hostDesiredChanged(stateStore store.Store, desired store.HostDesired) (bool, error) {
-	current, err := stateStore.ReadHost()
-	if err != nil {
-		if os.IsNotExist(err) {
-			return true, nil
-		}
-		return false, err
-	}
-	currentData, err := json.Marshal(current.Desired)
-	if err != nil {
-		return false, err
-	}
-	nextData, err := json.Marshal(desired)
-	if err != nil {
-		return false, err
-	}
-	return string(currentData) != string(nextData), nil
-}
-
-func writeApplyState(stateStore store.Store, opts InstallOptions, applyID string, startedAt time.Time, finishedAt time.Time, status string, changed int) error {
-	meta := store.HostMeta{}
-	if hostFile, err := stateStore.ReadHost(); err == nil {
-		meta = hostFile.Meta
-	}
-	meta.ShipVersion = version.Version
-	if address := strings.TrimSpace(opts.ClientAddress); address != "" {
-		meta.ClientAddress = address
-	}
-	meta.LastApply = &store.ApplyMeta{
-		ID:                applyID,
-		StartedAt:         startedAt.Format(time.RFC3339),
-		FinishedAt:        finishedAt.Format(time.RFC3339),
-		Status:            status,
-		OperationsChanged: changed,
-	}
-	return stateStore.WriteHostState(store.HostObserved{
-		Packages: map[string]store.ObservedPackage{},
-		Ingress:  store.HostIngressObserved{},
-	}, meta)
 }
 
 func normalizeOptions(opts InstallOptions) InstallOptions {

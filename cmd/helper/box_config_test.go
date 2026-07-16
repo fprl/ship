@@ -11,7 +11,7 @@ import (
 )
 
 func TestBoxConfigSetUnsetAndJournal(t *testing.T) {
-	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	setTestStateRoot(t, t.TempDir())
 	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
 	setServerMemberFingerprint("")
 
@@ -59,7 +59,7 @@ func TestBoxConfigSetUnsetAndJournal(t *testing.T) {
 }
 
 func TestBoxConfigValidationErrorsAreCoded(t *testing.T) {
-	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	setTestStateRoot(t, t.TempDir())
 	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
 	setServerMemberFingerprint("")
 	setHelperBoxClientAddress(t, "203.0.113.7")
@@ -80,7 +80,7 @@ func TestBoxConfigValidationErrorsAreCoded(t *testing.T) {
 
 func TestBoxConfigWriteFailureDoesNotJournal(t *testing.T) {
 	stateDir := t.TempDir()
-	t.Setenv("SHIP_STATE_DIR", stateDir)
+	setTestStateRoot(t, stateDir)
 	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
 	setServerMemberFingerprint("")
 	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"webhook.url": "https://ntfy.example/old"}}); err != nil {
@@ -104,7 +104,7 @@ func TestBoxConfigWriteFailureDoesNotJournal(t *testing.T) {
 }
 
 func TestBoxConfigSuccessfulWriteAppendsExactlyOneJournalEntry(t *testing.T) {
-	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	setTestStateRoot(t, t.TempDir())
 	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
 	setServerMemberFingerprint("")
 	if err := setBoxConfig("webhook.url", "https://ntfy.example/ship", "set box config webhook.url"); err != nil {
@@ -129,7 +129,7 @@ func TestBoxConfigSuccessfulWriteAppendsExactlyOneJournalEntry(t *testing.T) {
 }
 
 func TestBoxConfigJournalFailureDoesNotFailSuccessfulWrite(t *testing.T) {
-	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	setTestStateRoot(t, t.TempDir())
 	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
 	setServerMemberFingerprint("")
 	if err := os.MkdirAll(store.Default().UpdatesJournalPath(), 0755); err != nil {

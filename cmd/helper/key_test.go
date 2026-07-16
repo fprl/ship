@@ -105,7 +105,7 @@ func TestAppendDeployAuthorizedKeysRejectsConflictingRoleForExistingMember(t *te
 	root := t.TempDir()
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
 	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
-	t.Setenv("SHIP_STATE_DIR", root)
+	setTestStateRoot(t, root)
 	setHelperBoxClientAddress(t, "203.0.113.7")
 	if err := os.WriteFile(authorizedKeysPath, []byte(alicePublicKey+"\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -132,7 +132,7 @@ func TestAppendDeployAuthorizedKeysHealsHalfEnrollment(t *testing.T) {
 	root := t.TempDir()
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
 	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
-	t.Setenv("SHIP_STATE_DIR", root)
+	setTestStateRoot(t, root)
 	setHelperBoxClientAddress(t, "203.0.113.7")
 	bin := filepath.Join(root, "bin")
 	if err := os.MkdirAll(bin, 0755); err != nil {
@@ -177,7 +177,7 @@ func TestAppendDeployAuthorizedKeysWritesMembersBeforeAuthorizedKeys(t *testing.
 	root := t.TempDir()
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
 	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
-	t.Setenv("SHIP_STATE_DIR", root)
+	setTestStateRoot(t, root)
 	setHelperBoxClientAddress(t, "203.0.113.7")
 	bin := filepath.Join(root, "bin")
 	if err := os.MkdirAll(bin, 0755); err != nil {
@@ -275,7 +275,7 @@ func TestMemberMutationWriteOrderingFailsClosedOnWriteFailures(t *testing.T) {
 				t.Fatal(err)
 			}
 			keysPath := filepath.Join(keysDir, "authorized_keys")
-			t.Setenv("SHIP_STATE_DIR", root)
+			setTestStateRoot(t, root)
 			t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", keysPath)
 			bin := filepath.Join(root, "bin")
 			if err := os.MkdirAll(bin, 0755); err != nil {
@@ -334,7 +334,7 @@ func TestAppendDeployAuthorizedKeysDropsStrayButKeepsRecordedOwner(t *testing.T)
 	root := t.TempDir()
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
 	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
-	t.Setenv("SHIP_STATE_DIR", root)
+	setTestStateRoot(t, root)
 	setHelperBoxClientAddress(t, "203.0.113.7")
 	bin := filepath.Join(root, "bin")
 	if err := os.MkdirAll(bin, 0755); err != nil {
@@ -381,7 +381,7 @@ func TestRemoveDeployAuthorizedKeysRemovesUnrecordedStray(t *testing.T) {
 	root := t.TempDir()
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
 	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
-	t.Setenv("SHIP_STATE_DIR", root)
+	setTestStateRoot(t, root)
 	setHelperBoxClientAddress(t, "203.0.113.7")
 	bin := filepath.Join(root, "bin")
 	if err := os.MkdirAll(bin, 0755); err != nil {
@@ -421,7 +421,7 @@ func TestAppendDeployAuthorizedKeysKeepsOneNameAcrossMultipleKeysAndRejectsReass
 	root := t.TempDir()
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
 	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
-	t.Setenv("SHIP_STATE_DIR", root)
+	setTestStateRoot(t, root)
 	setHelperBoxClientAddress(t, "203.0.113.7")
 	if err := os.WriteFile(authorizedKeysPath, []byte(alicePublicKey+"\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -478,7 +478,7 @@ func TestMemberRemediationsUseRecordedBoxAddress(t *testing.T) {
 	root := t.TempDir()
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
 	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
-	t.Setenv("SHIP_STATE_DIR", root)
+	setTestStateRoot(t, root)
 	setHelperBoxClientAddress(t, "203.0.113.7")
 	if err := os.WriteFile(authorizedKeysPath, []byte(alicePublicKey+"\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -516,7 +516,7 @@ func TestMemberRemediationsUseRecordedBoxAddress(t *testing.T) {
 }
 
 func TestNormalizeAuthorizedKeysUsesRecordedBoxAddress(t *testing.T) {
-	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	setTestStateRoot(t, t.TempDir())
 	setHelperBoxClientAddress(t, "203.0.113.7")
 	_, err := normalizeAuthorizedKeys("not an SSH key", "alice")
 	if !errcat.Is(err, errcat.CodeSSHPublicKeyInvalid) {
@@ -561,8 +561,7 @@ func TestMemberListPayloadIsNested(t *testing.T) {
 func setHelperBoxClientAddress(t *testing.T, address string) {
 	t.Helper()
 	stateStore := store.Default()
-	writeValidHost(t, stateStore.HostPath())
-	if err := stateStore.WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{ClientAddress: address}); err != nil {
+	if err := stateStore.WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"box.address": address}}); err != nil {
 		t.Fatal(err)
 	}
 }

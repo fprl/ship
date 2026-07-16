@@ -12,7 +12,7 @@ func TestEnsureFileWritesOnlyWhenContentOrMetadataDiffers(t *testing.T) {
 	runner := newFakeRunner()
 	apply := Apply{Context: context.Background(), Runner: runner}
 	file := File{
-		Path:    "/etc/ship/host.json",
+		Path:    "/etc/ship/members.json",
 		Content: []byte("one\n"),
 		Owner:   "root",
 		Group:   "root",
@@ -55,7 +55,7 @@ func TestEnsureFileCheckModeReportsDriftWithoutWriting(t *testing.T) {
 	apply := Apply{Context: context.Background(), Runner: runner, CheckMode: true}
 
 	changed, err := EnsureFile(apply, File{
-		Path:    "/etc/ship/host.json",
+		Path:    "/etc/ship/members.json",
 		Content: []byte("{}\n"),
 		Owner:   "root",
 		Group:   "root",
@@ -77,7 +77,7 @@ func TestEnsureFileRejectsMissingMode(t *testing.T) {
 	apply := Apply{Context: context.Background(), Runner: runner}
 
 	changed, err := EnsureFile(apply, File{
-		Path:    "/etc/ship/host.json",
+		Path:    "/etc/ship/members.json",
 		Content: []byte("{}\n"),
 		Owner:   "root",
 		Group:   "root",

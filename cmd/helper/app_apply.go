@@ -15,7 +15,6 @@ import (
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
-	"github.com/fprl/ship/internal/version"
 )
 
 // appApplyCmd is the per-env deploy primitive. Given a
@@ -70,32 +69,10 @@ func (c appApplyCmd) Run() error {
 		utils.DieError(err, 1)
 	}
 	authorizeOrDie(helperVerbShip, authTargetForAppEnv(c.App, c.Env, "ship", "release="+c.SHA))
-	if err := c.recordClientVersion(); err != nil {
-		utils.DieError(err, 1)
-	}
 	withAppEnvLock(c.App, c.Env, func() {
 		c.runLocked()
 	})
 	return nil
-}
-
-func (c appApplyCmd) recordClientVersion() error {
-	clientVersion := strings.TrimSpace(c.ClientVersion)
-	if clientVersion == "" {
-		return nil
-	}
-	stateStore := store.Default()
-	hostFile, err := stateStore.ReadHost()
-	if err != nil {
-		return err
-	}
-	seen := strings.TrimSpace(hostFile.Meta.LastClientVersion)
-	cmp, ok := version.Compare(clientVersion, seen)
-	if seen != "" && (!ok || cmp <= 0) {
-		return nil
-	}
-	hostFile.Meta.LastClientVersion = clientVersion
-	return stateStore.WriteHostState(hostFile.Observed, hostFile.Meta)
 }
 
 func (c appApplyCmd) runLocked() {

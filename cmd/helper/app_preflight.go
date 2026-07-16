@@ -12,7 +12,6 @@ import (
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/secrets"
-	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -84,14 +83,6 @@ func appPreflightIssues(app, env string, requiredSecrets []string) []appPrefligh
 	issues := []appPreflightIssue{}
 	addIssue := func(code, message string) {
 		issues = append(issues, appPreflightIssue{Code: code, Message: message})
-	}
-	stateStore := store.Default()
-	if installed, err := stateStore.HostInstalled(); err != nil {
-		addIssue(appPreflightHostInvalid, fmt.Sprintf("cannot read host install state: %v", err))
-	} else if !installed {
-		addIssue(appPreflightHostNotInstalled, "host is not installed; run `ship box setup <ssh-target>`")
-	} else if _, err := stateStore.ReadHost(); err != nil {
-		addIssue(appPreflightHostInvalid, fmt.Sprintf("host install state is invalid: %v", err))
 	}
 	for _, tool := range []string{"podman", "rsync", "sqlite3"} {
 		if _, err := exec.LookPath(tool); err != nil {

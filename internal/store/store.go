@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,13 +8,9 @@ import (
 )
 
 type Store struct {
-	Root string
-}
-type hostFileRaw struct {
-	Version  int             `json:"version"`
-	Desired  json.RawMessage `json:"desired"`
-	Observed HostObserved    `json:"observed"`
-	Meta     HostMeta        `json:"meta"`
+	Root    string
+	VarRoot string
+	RunRoot string
 }
 
 func DefaultRoot() string {
@@ -36,12 +31,36 @@ func (s Store) root() string {
 	return DefaultRoot()
 }
 
-func (s Store) HostPath() string {
-	return filepath.Join(s.root(), "host.json")
+func (s Store) varRoot() string {
+	if s.VarRoot != "" {
+		return s.VarRoot
+	}
+	if root := os.Getenv("SHIP_VAR_DIR"); root != "" {
+		return root
+	}
+	return "/var/lib/ship"
+}
+
+func (s Store) runRoot() string {
+	if s.RunRoot != "" {
+		return s.RunRoot
+	}
+	if root := os.Getenv("SHIP_RUN_DIR"); root != "" {
+		return root
+	}
+	return "/run/ship"
+}
+
+func (s Store) VarPath(name string) string {
+	return filepath.Join(s.varRoot(), name)
+}
+
+func (s Store) RunPath(name string) string {
+	return filepath.Join(s.runRoot(), name)
 }
 
 func (s Store) DoctorPath() string {
-	return filepath.Join(s.root(), "doctor.json")
+	return s.VarPath("doctor.json")
 }
 
 func (s Store) MembersPath() string {
@@ -53,78 +72,15 @@ func (s Store) BoxConfigPath() string {
 }
 
 func (s Store) ApprovalsPath() string {
-	return filepath.Join(s.root(), "approvals.json")
+	return s.RunPath("approvals.json")
 }
 
 func (s Store) ApprovalsJournalPath() string {
-	return filepath.Join(s.root(), "approvals-journal.jsonl")
+	return s.VarPath("approvals-journal.jsonl")
 }
 
 func (s Store) UpdatesJournalPath() string {
-	return filepath.Join(s.root(), "updates-journal.jsonl")
-}
-
-func (s Store) HostInstalled() (bool, error) {
-	if _, err := os.Stat(s.HostPath()); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
-}
-
-// ReadHost returns os.IsNotExist(err) when host.json has not been created yet.
-func (s Store) ReadHost() (*HostFile, error) {
-	var file HostFile
-	if err := readJSON(s.HostPath(), &file); err != nil {
-		return nil, err
-	}
-	if err := validateVersion("host.json", file.Version); err != nil {
-		return nil, err
-	}
-	normalizeHostFile(&file)
-	if err := validateHostDesired(file.Desired); err != nil {
-		return nil, fmt.Errorf("invalid host.json desired: %w", err)
-	}
-	return &file, nil
-}
-
-func (s Store) WriteHostDesired(desired HostDesired) error {
-	normalizeHostDesired(&desired)
-	if err := validateHostDesired(desired); err != nil {
-		return fmt.Errorf("invalid host desired: %w", err)
-	}
-
-	file, err := s.readHostForDesiredWrite()
-	if err != nil {
-		return err
-	}
-	file.Desired = desired
-	normalizeHostFile(&file)
-	return writeHostFile(s.HostPath(), file)
-}
-
-func (s Store) WriteHostState(observed HostObserved, meta HostMeta) error {
-	file, err := s.readHostRaw()
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("host.json is required before writing host state")
-		}
-		return err
-	}
-
-	var desired HostDesired
-	if err := json.Unmarshal(file.Desired, &desired); err != nil {
-		return fmt.Errorf("invalid host.json desired: %w", err)
-	}
-	normalizeHostDesired(&desired)
-	if err := validateHostDesired(desired); err != nil {
-		return fmt.Errorf("invalid host.json desired: %w", err)
-	}
-
-	normalizeHostObserved(&observed)
-	return writeHostState(s.HostPath(), file.Desired, observed, meta)
+	return s.VarPath("updates-journal.jsonl")
 }
 
 func (s Store) ReadDoctor() (*DoctorFile, error) {
@@ -145,6 +101,9 @@ func (s Store) WriteDoctor(file DoctorFile) error {
 	}
 	file.Version = CurrentVersion
 	normalizeDoctorFile(&file)
+	if err := ensureDir(s.varRoot(), 0755); err != nil {
+		return err
+	}
 	return writeJSON(s.DoctorPath(), file, 0644)
 }
 
@@ -254,35 +213,15 @@ func (s Store) WriteApprovals(file ApprovalsFile) error {
 	if err := validateApprovalsFile(file); err != nil {
 		return fmt.Errorf("invalid approvals.json: %w", err)
 	}
-	return writeJSON(s.ApprovalsPath(), file, 0644)
+	if err := ensureDir(s.runRoot(), 0700); err != nil {
+		return err
+	}
+	return writeJSON(s.ApprovalsPath(), file, 0600)
 }
 
-func (s Store) readHostForDesiredWrite() (HostFile, error) {
-	var file HostFile
-	if err := readJSON(s.HostPath(), &file); err != nil {
-		if os.IsNotExist(err) {
-			file = *newHostFile()
-			return file, nil
-		}
-		return HostFile{}, err
+func ensureDir(path string, mode os.FileMode) error {
+	if err := os.MkdirAll(path, mode); err != nil {
+		return err
 	}
-	if err := validateVersion("host.json", file.Version); err != nil {
-		return HostFile{}, err
-	}
-	normalizeHostFile(&file)
-	return file, nil
-}
-
-func (s Store) readHostRaw() (hostFileRaw, error) {
-	var file hostFileRaw
-	if err := readJSON(s.HostPath(), &file); err != nil {
-		return hostFileRaw{}, err
-	}
-	if err := validateVersion("host.json", file.Version); err != nil {
-		return hostFileRaw{}, err
-	}
-	if len(bytes.TrimSpace(file.Desired)) == 0 {
-		return hostFileRaw{}, fmt.Errorf("host.json desired is required")
-	}
-	return file, nil
+	return os.Chmod(path, mode)
 }

@@ -226,11 +226,11 @@ func boxWebhookURL() string {
 }
 
 func boxClientAddress() string {
-	hostFile, err := store.Default().ReadHost()
-	if err != nil || strings.TrimSpace(hostFile.Meta.ClientAddress) == "" {
+	address, err := boxConfigValueFor("box.address")
+	if err != nil || strings.TrimSpace(address) == "" {
 		return "<box>"
 	}
-	return strings.TrimSpace(hostFile.Meta.ClientAddress)
+	return strings.TrimSpace(address)
 }
 
 func webhookEnvLabel(app, env string, ctx *config.AppContext) string {

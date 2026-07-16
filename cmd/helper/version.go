@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strings"
 
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
@@ -59,15 +58,15 @@ func (c versionHelperCmd) Run() error {
 		fmt.Println(version.Version)
 		return nil
 	}
-	lastClient := ""
-	if hostFile, err := store.Default().ReadHost(); err == nil {
-		lastClient = strings.TrimSpace(hostFile.Meta.LastClientVersion)
+	lastUpdate, err := lastCompletedUpdateVersion(store.Default().UpdatesJournalPath())
+	if err != nil && !os.IsNotExist(err) {
+		utils.DieError(err, 1)
 	}
 	payload := struct {
-		Version           string `json:"version"`
-		LastClientVersion string `json:"last_client_version"`
-		Architecture      string `json:"architecture"`
-	}{Version: version.Version, LastClientVersion: lastClient, Architecture: runtime.GOARCH}
+		Version      string `json:"version"`
+		ShipVersion  string `json:"ship_version"`
+		Architecture string `json:"architecture"`
+	}{Version: version.Version, ShipVersion: lastUpdate, Architecture: runtime.GOARCH}
 	if !c.Summary {
 		return json.NewEncoder(os.Stdout).Encode(payload)
 	}
@@ -76,10 +75,10 @@ func (c versionHelperCmd) Run() error {
 		utils.DieError(err, 1)
 	}
 	return json.NewEncoder(os.Stdout).Encode(struct {
-		Version           string `json:"version"`
-		LastClientVersion string `json:"last_client_version"`
-		Architecture      string `json:"architecture"`
-		Disk              struct {
+		Version      string `json:"version"`
+		ShipVersion  string `json:"ship_version"`
+		Architecture string `json:"architecture"`
+		Disk         struct {
 			Status   string `json:"status"`
 			Evidence string `json:"evidence"`
 		} `json:"disk"`
@@ -87,7 +86,7 @@ func (c versionHelperCmd) Run() error {
 		Members          *boxStatusMembersSummary `json:"members,omitempty"`
 		PendingApprovals int                      `json:"pending_approvals"`
 		Doctor           *boxStatusDoctorSummary  `json:"doctor,omitempty"`
-	}{Version: payload.Version, LastClientVersion: payload.LastClientVersion, Architecture: payload.Architecture, Disk: summary.Disk, Apps: summary.Apps, Members: summary.Members, PendingApprovals: summary.PendingApprovals, Doctor: summary.Doctor})
+	}{Version: payload.Version, ShipVersion: payload.ShipVersion, Architecture: payload.Architecture, Disk: summary.Disk, Apps: summary.Apps, Members: summary.Members, PendingApprovals: summary.PendingApprovals, Doctor: summary.Doctor})
 }
 
 func readBoxStatusSummary() (boxStatusSummary, error) {

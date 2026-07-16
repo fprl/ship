@@ -17,37 +17,10 @@ var (
 	SystemUserRe = names.SystemUserRe
 )
 
-func newHostFile() *HostFile {
-	file := HostFile{Version: CurrentVersion}
-	normalizeHostFile(&file)
-	return &file
-}
-
-func normalizeHostFile(file *HostFile) {
-	file.Version = CurrentVersion
-	normalizeHostDesired(&file.Desired)
-	normalizeHostObserved(&file.Observed)
-}
-
-func normalizeHostDesired(desired *HostDesired) {
-	if desired.Packages == nil {
-		desired.Packages = map[string]DesiredPackage{}
-	}
-}
-
-func normalizeHostObserved(observed *HostObserved) {
-	if observed.Packages == nil {
-		observed.Packages = map[string]ObservedPackage{}
-	}
-}
-
 func normalizeDoctorFile(file *DoctorFile) {
 	file.Version = CurrentVersion
 	if file.Checks == nil {
 		file.Checks = []DoctorCheck{}
-	}
-	if file.Delta == nil {
-		file.Delta = []DoctorCheck{}
 	}
 }
 
@@ -72,29 +45,6 @@ func ValidMemberRole(role MemberRole) bool {
 	default:
 		return false
 	}
-}
-
-func validateHostDesired(desired HostDesired) error {
-	if strings.TrimSpace(desired.Users.Operator) == "" {
-		return errors.New("users.operator is required")
-	}
-	if strings.TrimSpace(desired.Users.Deploy) == "" {
-		return errors.New("users.deploy is required")
-	}
-	switch desired.Ingress.Expose {
-	case ExposePublic, ExposePrivate:
-	default:
-		return errors.New("ingress.expose must be public or private")
-	}
-	for name, pkg := range desired.Packages {
-		if strings.TrimSpace(name) == "" {
-			return errors.New("packages cannot contain empty names")
-		}
-		if strings.TrimSpace(pkg.Source) == "" {
-			return fmt.Errorf("packages.%s.source is required", name)
-		}
-	}
-	return nil
 }
 
 func validateVersion(scope string, version int) error {

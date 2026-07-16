@@ -23,7 +23,7 @@ func TestValidateBoxWebhookURL(t *testing.T) {
 }
 
 func TestValidateBoxWebhookURLEmptyRefusesSet(t *testing.T) {
-	t.Setenv("SHIP_STATE_DIR", t.TempDir())
+	setTestStateRoot(t, t.TempDir())
 	setHelperBoxClientAddress(t, "203.0.113.7")
 	_, err := validateBoxWebhookURL("")
 	if err == nil {

@@ -477,11 +477,8 @@ func TestApprovalListHumanTable(t *testing.T) {
 }
 
 func TestApprovalRequiredHumanErrorShape(t *testing.T) {
-	t.Setenv("SHIP_STATE_DIR", t.TempDir())
-	writeValidHost(t, store.Default().HostPath())
-	if err := store.Default().WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{ClientAddress: "203.0.113.7"}); err != nil {
-		t.Fatal(err)
-	}
+	setTestStateRoot(t, t.TempDir())
+	setHelperBoxClientAddress(t, "203.0.113.7")
 	request := store.ApprovalRequest{
 		ID: "abc123xy",
 		Member: store.ApprovalMember{
@@ -504,16 +501,12 @@ func TestApprovalRequiredHumanErrorShape(t *testing.T) {
 func setupAuthTest(t *testing.T, members map[string]store.MemberRecord) string {
 	t.Helper()
 	root := t.TempDir()
-	t.Setenv("SHIP_STATE_DIR", root)
+	setTestStateRoot(t, root)
 	t.Setenv("SHIP_LOCK_DIR", filepath.Join(root, "locks"))
 	authorizedKeysPath := filepath.Join(root, "authorized_keys")
 	t.Setenv("SHIP_AUTHORIZED_KEYS_FILE", authorizedKeysPath)
 	t.Setenv("SUDO_USER", "")
-	stateStore := store.Default()
-	writeValidHost(t, stateStore.HostPath())
-	if err := stateStore.WriteHostState(store.HostObserved{Packages: map[string]store.ObservedPackage{}}, store.HostMeta{ClientAddress: "203.0.113.7"}); err != nil {
-		t.Fatal(err)
-	}
+	setHelperBoxClientAddress(t, "203.0.113.7")
 	t.Cleanup(func() {
 		setServerMemberFingerprint("")
 		serverAuthorizedMember = nil

@@ -3,7 +3,6 @@ package harness
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/identity"
-	"github.com/fprl/ship/internal/store"
 )
 
 type CommandResult struct {
@@ -265,29 +263,4 @@ func URLServes200(runShell func(command string) CommandResult, rawURL string) er
 
 func ShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
-}
-
-func SeedHostJSON() string {
-	data, err := json.Marshal(store.HostFile{
-		Version: store.CurrentVersion,
-		Desired: store.HostDesired{
-			Users:    store.HostUsers{Operator: "operator", Deploy: "deploy"},
-			Ingress:  store.HostIngressDesired{Expose: store.ExposePublic},
-			Features: store.HostFeatures{},
-			Packages: map[string]store.DesiredPackage{
-				"podman": {Source: "apt"},
-				"rsync":  {Source: "apt"},
-				"caddy":  {Source: "container"},
-			},
-		},
-		Observed: store.HostObserved{
-			Packages: map[string]store.ObservedPackage{},
-			Ingress:  store.HostIngressObserved{},
-		},
-		Meta: store.HostMeta{ClientAddress: "fake-vps"},
-	})
-	if err != nil {
-		panic(err)
-	}
-	return string(data) + "\n"
 }
