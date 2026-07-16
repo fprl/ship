@@ -1,5 +1,71 @@
 # Changelog
 
+## v0.8.0
+
+The box takes care of itself. A reboot no longer silences your apps, an
+interrupted deploy heals itself forward, and old releases are cleaned up
+by policy instead of by hand — the state-diet and activation-model arc
+(RFD-0009, ADR-0022), designed in a five-round architecture convergence
+and built as five gated stages in one night.
+
+### Fixed
+
+- **A reboot no longer takes the box down.** The July 16 probe found a
+  full outage after a clean reboot: ship wrote systemd units but never
+  enabled them, and app containers were not covered by podman's restart
+  service. Setup now enables every unit it writes, and a boot-time
+  convergence unit brings every env back deliberately — apps return
+  because the box brings them back.
+- **An interrupted deploy can no longer strand a half-changed box.**
+  Deploys and rollbacks are crash-only: everything is prepared beside
+  the serving release, one atomic pointer write (`active.json`) commits
+  the change, and convergence makes the runtime match. Kill it anywhere
+  before the commit and nothing changed; kill it after and the next run
+  finishes the job — ship never silently un-deploys.
+- Rollback can reproduce TLS-overlay deploys (the envelope records the
+  effective manifest), `exec` survives a journal torn by a crash, a
+  crashed preview creation no longer leaks an env its branch can't find,
+  approval audit failures are loud instead of silent, and a stale
+  applied manifest can no longer squat a preview alias host.
+
+### Added
+
+- **`ship converge`** — heal "committed, not converged" with one command
+  (no local source needed; safe no-op on a healthy env). Every
+  interrupted-deploy remediation prints it.
+- **`ship box gc`** — sweep old releases on demand; the same retention
+  runs automatically after every deploy and on a timer (keep the active
+  release + newest verified rollback candidates, 5 prod / 2 preview).
+  Deletion needs positive proof: unverifiable releases and uncertain
+  history are kept, never guessed away.
+- Production `ship data save` is approval-gated for shippers (July 14
+  review M2); doctor gains a `hardening_drift` check comparing live
+  SSH/firewall/sudoers state against what setup renders (M3, detection
+  only) and flags active-but-disabled units.
+- Native fuzz coverage for the member key-line, exec passthrough, and
+  manifest parsers (90s each: zero findings).
+
+### Changed
+
+- **State lives where a Linux operator expects it**: `/etc/ship` holds
+  intent only (members, box config, secrets), `/var/lib/ship` holds
+  doctor state and journals, `/run/ship` holds pending approvals — a
+  reboot clearing them is the designed fail-closed behavior. `host.json`
+  is gone (live probes replaced it; the box address became the guarded
+  `box.address` config key). Release manifests travel inside the release
+  itself as a hash-verified envelope; the applied-manifest copy,
+  per-release manifest files, `static/current`, and the mutable runtime
+  env file are deleted. Runtime env is now an immutable file per
+  activation.
+- Journals share one contract: fsynced appends, and a crash-torn final
+  line degrades gracefully instead of hiding history.
+- `box status` proves convergence exactly (or says "committed, not
+  converged" with the fix); `why` never shows a GC sweep instead of your
+  last deploy.
+
+Zero users, flag-day: the new binary reads only the new layout;
+`box setup` + one deploy heals the testing box.
+
 ## v0.7.0
 
 A leaner ship that says the right thing when it fails. A whole-repo

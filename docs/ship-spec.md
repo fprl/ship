@@ -233,7 +233,16 @@ ship exec -- <cmd...>     run a one-off command inside the current
                           without ssh+podman guessing)
 ship why [--json]              explain the last failed/aborted deploy (§7)
 ship rollback [release]        previous release of the current branch's env;
-                          release = commit short-sha (from ship status)
+                          release = commit short-sha (from ship status);
+                          selects intent into active.json and converges
+                          (§20) — candidates are committed journal
+                          entries whose artifacts still verify
+ship converge [--json]    make this branch's env match its committed
+                          release (§20) — heals "committed, not
+                          converged" after an interrupted deploy; needs
+                          no local source; no-op on a converged env;
+                          every committed_unconverged remediation
+                          prints this verb
 ship rm <branch> [--confirm <name>]   destroy an environment
 ship preview share [--rotate]   print (or rotate) this preview's
                           capability URL (§15)
@@ -428,6 +437,12 @@ ship box status [<box>] [--json]   one-box summary: helper version vs
                           pending approvals, last doctor result (§16)
 ship box update [<box>]   converge helper + version-owned artifacts
                           to this client's version (§16)
+ship box gc [<box>] [--json]   sweep debris now (§20): keeps the active
+                          release + newest verified rollback candidates
+                          (5 prod / 2 preview) with their images, static
+                          trees, and activation env files; prints what
+                          was removed; the same policy runs automatically
+                          after every deploy and on a timer
 ship box webhook <box> [<url>|--rm]  read/set/clear the box webhook
                           for box-scoped events (§17); sugar over the
                           box config key webhook.url (§19)
@@ -1141,3 +1156,46 @@ succeeds once; unknown key → error listing valid keys; wrong type →
 error; `unset` restores default; `box webhook <box> <url>` and
 `box config set webhook.url <url>` are observably the same operation
 (one storage, one journal shape). AGENT.md regenerated.
+
+## 20. The activation model (RFD-0009 arc, July 16, 2026)
+
+Authoritative detail lives in RFD-0009 and ADR-0022; this section
+records the contract.
+
+**State has four kinds, each on its matching primitive.** Intent =
+small atomic files (`/etc/ship`: members, box config incl. the guarded
+`box.address` key, secrets; per env: `ship.json` + `active.json`).
+History = fsynced, torn-tail-safe jsonl journals (`/var/lib/ship` +
+the per-env deploy journal). Derived artifacts = rendered from intent,
+never read back as truth (Caddy fragments, authorized_keys, units).
+Ephemera = `/run/ship` (pending approvals — a reboot clearing them is
+designed fail-closed behavior). `host.json`, the applied `ship.toml`
+copy, per-release manifest/metadata files, `static/current`, and the
+singleton `runtime/.env` no longer exist; manifests travel INSIDE the
+release as a hash-verified envelope (image label, or `.ship-release`
+sidecar for static releases), so pruning an image can never orphan its
+paperwork.
+
+**Deploys are crash-only: prepare → commit → converge.** Prepare
+builds and probes beside the serving release without touching it
+(workers deliberately excluded — they hand over post-commit). Commit
+is one atomic rename of `active.json` — the only instant intent
+changes. Converge makes the runtime match the pointer; `box status`
+proves convergence exactly or reports "committed, not converged" with
+`next: ship converge`. Failure before commit: nothing changed (this
+attempt's debris is removed by its activation label). Failure after:
+ship rolls FORWARD on rerun — intent is never automatically reversed;
+going back is always an explicit `rollback`, which selects an older
+release into the same pointer and converges through the same path.
+The one surviving compensation: a worker whose replacement fails to
+start gets its old instance restarted (degraded, reported). Release
+commands run at least once and must be idempotent.
+
+**The box repairs itself.** A boot-enabled unit converges every env at
+startup (apps return after reboot because the box brings them back);
+retention GC runs after every deploy and on a timer (keep the active
+release + newest verified rollback candidates, 5 prod / 2 preview;
+deletion needs positive proof — unverifiable releases and uncertain
+journals are kept/skipped). `ship converge` and `ship box gc` are the
+agent-facing escape hatches; the product promise is that nobody needs
+to type them.
