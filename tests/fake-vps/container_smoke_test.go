@@ -947,6 +947,17 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 	if failedStatus.Health != "degraded" {
 		t.Fatalf("failed Caddy deploy status = %+v, want degraded", failedStatus)
 	}
+	var failedPointer struct {
+		Release string `json:"release"`
+	}
+	if err := json.Unmarshal([]byte(e.dockerExec(t, "cat "+identity.ActiveFile("caddyfail", productionEnv))), &failedPointer); err != nil {
+		t.Fatalf("active pointer not parseable after failed reload: %v", err)
+	}
+	// The full release id carries an -s<hash> static-tree suffix; gitRelease
+	// only knows the commit part.
+	if !strings.HasPrefix(failedPointer.Release, failedRelease) {
+		t.Fatalf("failed deploy release = %s, want commit prefix %s", failedPointer.Release, failedRelease)
+	}
 
 	// Caddy reload happens during convergence, after active.json has been
 	// committed. Crash-only semantics therefore roll forward: the new
@@ -957,7 +968,7 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 	if got := e.dockerExec(t, "cat "+identity.ActiveFile("caddyfail", productionEnv)); got == stableManifest {
 		t.Fatalf("failing Caddy reload did not retain the new active pointer:\n%s", got)
 	}
-	if got := e.ssh(t, "cat "+identity.CaddyFragmentFile("caddyfail", productionEnv)); got == stableFragment || !strings.Contains(got, failedRelease) {
+	if got := e.ssh(t, "cat "+identity.CaddyFragmentFile("caddyfail", productionEnv)); got == stableFragment || !strings.Contains(got, failedPointer.Release) {
 		t.Fatalf("failing Caddy reload did not retain the new release's fragment:\n%s", got)
 	}
 	status := e.ship(t, app, nil, "status")
@@ -965,9 +976,9 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 	assertContains(t, status, "committed, not converged")
 	assertContains(t, status, "next=ship converge")
 	e.dockerExec(t, "test ! -e /run/fake-podman/listeners/"+stableWorker+".pid")
-	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "web", failedRelease)+".labels")
-	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "worker", failedRelease)+".labels")
-	e.dockerExec(t, "test -f /run/fake-podman/listeners/"+identity.ContainerName("caddyfail", productionEnv, "worker", failedRelease)+".pid")
+	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "web", failedPointer.Release)+".labels")
+	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "worker", failedPointer.Release)+".labels")
+	e.dockerExec(t, "test -f /run/fake-podman/listeners/"+identity.ContainerName("caddyfail", productionEnv, "worker", failedPointer.Release)+".pid")
 }
 
 func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
