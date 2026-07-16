@@ -623,12 +623,15 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 		"podman rm -f "+webContainer,
 	)
 
-	// 9. Explicit rebuild refreshes mutable base images and bypasses
-	// Podman's build cache.
-	e.ship(t, app, nil, "--rebuild")
-	commandsLog = e.ssh(t, "cat /run/fake-podman/commands.log")
-	assertContains(t, commandsLog, "podman build --no-cache --pull=always")
-
+	// 9. A committed release's image is immutable: --rebuild refuses instead
+	// of replacing committed bytes under the same tag. Rebuilding is for
+	// debris from a never-committed prepare.
+	rebuild := e.runShip(t, app, nil, "--rebuild")
+	if rebuild.err == nil {
+		t.Fatal("ship --rebuild on a committed release should refuse")
+	}
+	assertContains(t, rebuild.stdout+rebuild.stderr, "release artifacts are immutable")
+	assertContains(t, rebuild.stdout+rebuild.stderr, "next: create a new commit, then ship")
 }
 
 func (e *smokeEnv) testDailyVerbHostKeyTOFU(t *testing.T) {
