@@ -160,6 +160,11 @@ func gcEnv(app, env string) (gcSummary, error) {
 		return gcSummary{}, err
 	}
 	pointer, err := readActive(app, env)
+	if errcat.Is(err, errcat.CodeNoDeploys) {
+		summary := gcSummary{App: app, Env: env}
+		summary.Skipped = append(summary.Skipped, "no committed release; nothing to collect")
+		return summary, nil
+	}
 	if err != nil {
 		return gcSummary{App: app, Env: env}, fmt.Errorf("read active.json: %w", err)
 	}

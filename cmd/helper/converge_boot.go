@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/fprl/ship/internal/errcat"
 )
 
 type convergeBootCmd struct{}
@@ -38,6 +40,10 @@ func runBootConvergence() error {
 		}
 		result, convergeErr := bootConverge(item.App, item.Env)
 		_ = lock.Release()
+		if errcat.Is(convergeErr, errcat.CodeNoDeploys) {
+			bootLog("boot convergence skipped for %s (%s): nothing deployed", item.App, item.Env)
+			continue
+		}
 		if convergeErr != nil {
 			bootLog("boot convergence failed for %s (%s): %v", item.App, item.Env, convergeErr)
 			failures = append(failures, fmt.Errorf("%s (%s): %w", item.App, item.Env, convergeErr))

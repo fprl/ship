@@ -162,6 +162,18 @@ exit 0
 	}
 }
 
+func TestGCSkipsNeverDeployedEnv(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	summary, err := gcEnv("api", "production")
+	if err != nil {
+		t.Fatalf("a never-deployed env must not fail GC: %v", err)
+	}
+	if len(summary.Skipped) != 1 || len(summary.Failures) != 0 || len(summary.Removed) != 0 {
+		t.Fatalf("never-deployed env GC summary=%+v", summary)
+	}
+}
+
 func TestGCSkipsEnvOnTornJournal(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))

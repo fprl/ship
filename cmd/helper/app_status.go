@@ -399,15 +399,21 @@ func attachProcessReleaseMetadata(app, env string, processes []processStatus) er
 	for i := range processes {
 		release := processes[i].Release
 		if release == "" {
-			return fmt.Errorf("process %s for %s (%s) has no release label", processes[i].Process, app, env)
+			continue
 		}
 		candidate := byRelease[release]
 		if candidate.Envelope.Schema == 0 {
 			candidate.Envelope, err = readStaticReleaseEnvelope(app, env, release)
+			if err != nil {
+				continue
+			}
 		}
+		// Metadata is decoration (dirty marker, base commit, created-at). A
+		// release without a readable envelope — pre-envelope residue or
+		// debris — stays listed undecorated; status must not die on it.
 		meta, err := releaseMetadataFromEnvelope(candidate.Envelope, release)
 		if err != nil {
-			return fmt.Errorf("process %s for %s (%s) release %s: %v", processes[i].Process, app, env, release, err)
+			continue
 		}
 		processes[i].Dirty = meta.Dirty
 		processes[i].BaseCommit = meta.BaseCommit

@@ -2,12 +2,32 @@ package helper
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/fprl/ship/internal/identity"
 )
+
+func TestAttachProcessReleaseMetadataToleratesEnvelopelessRelease(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nprintf '[]\\n'\nexit 0\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	processes := []processStatus{{Process: "web", State: "running", Release: "92eb1d95075f"}}
+	if err := attachProcessReleaseMetadata("probe", "production", processes); err != nil {
+		t.Fatalf("a release without a readable envelope must stay listed undecorated: %v", err)
+	}
+	if processes[0].Dirty || processes[0].BaseCommit != "" || processes[0].CreatedAt != "" {
+		t.Fatalf("undecorated process = %+v", processes[0])
+	}
+}
 
 func TestContainersToProcessesFiltersUnlabelledAndSorts(t *testing.T) {
 	// The fake `podman ps` filter accepts containers we don't own.
