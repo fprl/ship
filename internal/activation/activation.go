@@ -63,12 +63,16 @@ func Write(app, env string, pointer Pointer) error {
 // WritePrepared publishes active.json only after prepare has completed on
 // the fully written, final-mode temporary inode.
 func WritePrepared(app, env string, pointer Pointer, prepare func(string) error) error {
+	return WritePreparedResult(app, env, pointer, prepare).Err
+}
+
+func WritePreparedResult(app, env string, pointer Pointer, prepare func(string) error) store.WriteResult {
 	if err := Validate(pointer); err != nil {
-		return err
+		return store.WriteResult{Err: err}
 	}
 	data, err := json.MarshalIndent(pointer, "", "  ")
 	if err != nil {
-		return err
+		return store.WriteResult{Err: err}
 	}
-	return store.AtomicWritePrepared(identity.ActiveFile(app, env), append(data, '\n'), 0644, prepare)
+	return store.AtomicWritePreparedResult(identity.ActiveFile(app, env), append(data, '\n'), 0644, prepare)
 }

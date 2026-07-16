@@ -15,6 +15,7 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -49,11 +50,7 @@ type appApplyCmd struct {
 
 type applyReleaseResult struct {
 	containersToRemove []string
-	startedContainers  []string
-	stoppedContainers  []string
 	processNames       map[string]string
-	staticReleaseDir   string
-	staticReleaseNew   bool
 }
 
 var (
@@ -111,15 +108,48 @@ func (c appApplyCmd) recordDeployFailure(app *config.AppContext, previousRelease
 	return err
 }
 
+func (c appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
+	stepErr := newJournalStepError("converge", err, nil, nil)
+	entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, stepErr)
+	entry.Outcome = "committed_unconverged"
+	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
+	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
+	}
+	return fmt.Errorf("committed but not converged; %s: %w", convergenceNextStep, err)
+}
+
+func (c appApplyCmd) recordCommittedDegraded(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
+	stepErr := newJournalStepError("durability", err, nil, nil)
+	entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, stepErr)
+	entry.Outcome = "committed_degraded"
+	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
+	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
+	}
+	return fmt.Errorf("committed but degraded; %s: %w", convergenceNextStep, err)
+}
+
 func (c appApplyCmd) runLockedE() (err error) {
 	startedAt := time.Now().UTC()
 	previousRelease := currentActiveReleaseBestEffort(c.App, c.Env)
 	var app *config.AppContext
+	committed := false
 	defer func() {
 		if err == nil {
 			return
 		}
-		err = c.recordDeployFailure(app, previousRelease, startedAt, err)
+		if committed {
+			var degraded committedDegradedError
+			if errors.As(err, &degraded) {
+				err = c.recordCommittedDegraded(app, previousRelease, startedAt, degraded.Err)
+				return
+			}
+			err = c.recordCommittedUnconverged(app, previousRelease, startedAt, err)
+			return
+		}
+		removePreparedCandidates(c.App, c.Env, c.ActivationID)
+		err = c.recordDeployFailure(app, previousRelease, startedAt, fmt.Errorf("nothing changed: %w", err))
 	}()
 
 	ctxDir, err := c.prepareApplyContext()
@@ -173,25 +203,70 @@ func (c appApplyCmd) runLockedE() (err error) {
 		return err
 	}
 
-	if err := refreshPreviewShip(c.App, c.Env, time.Now().UTC()); err != nil {
-		result.cleanupFailed(c.App, c.Env)
+	if err := c.prepareCaddy(app, result); err != nil {
 		return err
 	}
-	if err := c.switchTraffic(app, result); err != nil {
-		result.cleanupFailed(c.App, c.Env)
-		return err
-	}
-	if err := writeActive(c.App, c.Env, activation.Pointer{
+	activeErr := writeActive(c.App, c.Env, activation.Pointer{
 		Version: 1, Release: c.SHA, Activation: c.ActivationID,
 		EnvelopeHash: envelope.HashLabel(c.EnvelopeLabel),
-	}); err != nil {
+	})
+	if activeErr != nil {
+		var published store.PublishedWriteError
+		if !errors.As(activeErr, &published) {
+			return activeErr
+		}
+		committed = true
+		converged, convergeErr := convergeActive(c.App, c.Env)
+		result.containersToRemove = uniqueContainerNames(append(result.containersToRemove, converged.StaleContainers...))
+		if convergeErr != nil {
+			return committedDegradedError{Err: fmt.Errorf("active pointer published but durability is degraded: %v; convergence failed: %w", activeErr, convergeErr)}
+		}
+		return committedDegradedError{Err: fmt.Errorf("active pointer published but durability is degraded: %w", activeErr)}
+	}
+	committed = true
+	converged, err := convergeActive(c.App, c.Env)
+	result.containersToRemove = uniqueContainerNames(append(result.containersToRemove, converged.StaleContainers...))
+	if err != nil {
 		return err
+	}
+	if err := refreshPreviewShip(c.App, c.Env, time.Now().UTC()); err != nil {
+		return committedDegradedError{Err: fmt.Errorf("activation converged but preview metadata refresh failed: %w", err)}
 	}
 	return c.completeCommittedDeploy(app, previousRelease, startedAt, result)
 }
 
+type committedDegradedError struct{ Err error }
+
+func (e committedDegradedError) Error() string { return e.Err.Error() }
+func (e committedDegradedError) Unwrap() error { return e.Err }
+
+func (c appApplyCmd) prepareCaddy(app *config.AppContext, result applyReleaseResult) error {
+	if c.PreviewAlias != "" {
+		if c.Env == productionEnvName {
+			return fmt.Errorf("production deploys cannot set a preview alias")
+		}
+		if !app.Preview.Aliases {
+			return fmt.Errorf("preview alias was supplied but [preview].aliases is false")
+		}
+		expected, ok := previewAliasForContext(c.App, c.Env, app)
+		if !ok {
+			return fmt.Errorf("preview alias was supplied but no canonical preview host was rendered")
+		}
+		if c.PreviewAlias != expected {
+			return fmt.Errorf("preview alias %q does not match derived alias %q", c.PreviewAlias, expected)
+		}
+		if err := addConfiguredPreviewAlias(c.App, c.Env, app); err != nil {
+			return err
+		}
+	}
+	path := caddyfilePath(c.App, c.Env)
+	if err := validateAppCaddy(path, c.App, c.Env, app, c.SHA, result.processNames); err != nil {
+		return caddyStageActionError(err, "deploy", path)
+	}
+	return nil
+}
+
 func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRelease string, startedAt time.Time, result applyReleaseResult) error {
-	removeContainers(result.containersToRemove)
 	previousJournal, previousJournalTorn, previousJournalErr := readLatestDeployJournalEntryWithStatus(c.App, c.Env)
 	if previousJournalTorn {
 		warnTornDeployJournal(identity.DeployJournalFile(c.App, c.Env))
@@ -208,10 +283,13 @@ func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRel
 		Identity:         c.actor(),
 		Member:           currentServerMemberForJournal(),
 	}, nil)
-	entry.ImagePrune = bestEffortPruneAfterDeploy(c.App, c.Env, c.SHA, entry)
 	if err := appendSanitizedDeployJournal(c.App, c.Env, entry); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: deployed but failed to write deploy journal: %v; run ship box doctor\n", err)
+		fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, c.SHA)
+		return nil
 	}
+	removeContainers(result.containersToRemove)
+	_ = bestEffortPruneAfterDeploy(c.App, c.Env, c.SHA, entry)
 	if previousJournalErr == nil && isAbortedJournalOutcome(previousJournal.Outcome) {
 		webhookDeployRecovered(app.Webhook, app, previousJournal, entry, time.Now().UTC())
 	}
@@ -298,17 +376,9 @@ func (c appApplyCmd) loadApplyContext(ctxDir string) (*config.AppContext, error)
 
 func (c appApplyCmd) applyRelease(ctxDir string, app *config.AppContext) (applyReleaseResult, error) {
 	var result applyReleaseResult
-	success := false
-	defer func() {
-		if !success {
-			result.cleanupFailed(c.App, c.Env)
-		}
-	}()
 
 	if app.HasStaticRoutes {
-		releaseDir, isNew, err := c.applyStatic(ctxDir, app)
-		result.staticReleaseDir = releaseDir
-		result.staticReleaseNew = isNew
+		_, _, err := c.applyStatic(ctxDir, app)
 		if err != nil {
 			return applyReleaseResult{}, err
 		}
@@ -324,58 +394,38 @@ func (c appApplyCmd) applyRelease(ctxDir string, app *config.AppContext) (applyR
 			return applyReleaseResult{}, err
 		}
 		result.containersToRemove = containerResult.containersToRemove
-		result.startedContainers = containerResult.startedContainers
-		result.stoppedContainers = containerResult.stoppedContainers
 		result.processNames = containerResult.processNames
 	} else {
-		result.containersToRemove = appContainerNames(existing)
+		// Static-only targets have no prepared runtime shape. Convergence
+		// computes every stale non-ephemeral container from the pointer.
 	}
 
-	success = true
 	return result, nil
-}
-
-func (c appApplyCmd) switchTraffic(app *config.AppContext, result applyReleaseResult) error {
-	if c.PreviewAlias != "" {
-		if c.Env == productionEnvName {
-			return fmt.Errorf("production deploys cannot set a preview alias")
-		}
-		if !app.Preview.Aliases {
-			return fmt.Errorf("preview alias was supplied but [preview].aliases is false")
-		}
-		expected, ok := previewAliasForContext(c.App, c.Env, app)
-		if !ok {
-			return fmt.Errorf("preview alias was supplied but no canonical preview host was rendered")
-		}
-		if c.PreviewAlias != expected {
-			return fmt.Errorf("preview alias %q does not match derived alias %q", c.PreviewAlias, expected)
-		}
-		if err := addConfiguredPreviewAlias(c.App, c.Env, app); err != nil {
-			return err
-		}
-	}
-
-	// 6. Write the per-app Caddyfile fragment (`reverse_proxy
-	// http://<container>:<process-port>`), validate the full Caddyfile
-	// inside the Caddy container, then reload Caddy in place. The
-	// fragment lives under `/etc/caddy/conf.d/` which the main Caddyfile
-	// imports; we never `caddy reload --config <fragment>` because that
-	// would *replace* the active config with just this app.
-	//
-	// Snapshot the previous fragment first: if validate rejects the new
-	// one we restore the old. A previously-healthy app would otherwise
-	// lose its route on the next reload from anywhere.
-	caddyPath := caddyfilePath(c.App, c.Env)
-	if err := renderAndReloadAppCaddy(caddyPath, c.App, c.Env, app, c.SHA, result.processNames); err != nil {
-		return caddyStageActionError(err, "deploy", caddyPath)
-	}
-	return nil
 }
 
 func removeContainers(names []string) {
 	for _, name := range names {
 		_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
 	}
+}
+
+func removePreparedCandidates(app, env, activationID string) {
+	if activationID == "" {
+		return
+	}
+	entries, err := podmanPSContainers(app, env)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to remove pre-commit candidates for activation %s: %v; run ship box doctor\n", activationID, err)
+		return
+	}
+	var candidates []string
+	for _, entry := range entries {
+		if entry.Labels["ship.activation"] != activationID || len(entry.Names) == 0 {
+			continue
+		}
+		candidates = append(candidates, entry.Names[0])
+	}
+	removeContainers(uniqueContainerNames(candidates))
 }
 
 func stopContainers(names []string) ([]string, error) {
@@ -411,55 +461,31 @@ func warnOnRestartFailure(stopped []string) {
 	}
 }
 
-func (r applyReleaseResult) cleanupFailed(app, env string) {
-	removeContainers(r.startedContainers)
-	warnOnRestartFailure(r.stoppedContainers)
-	if r.staticReleaseNew && r.staticReleaseDir != "" {
-		_ = os.RemoveAll(r.staticReleaseDir)
-	}
-}
-
 type containerApplyResult struct {
 	containersToRemove []string
-	startedContainers  []string
-	stoppedContainers  []string
 	processNames       map[string]string
 }
 
 func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, existing []containerEntry) (containerApplyResult, error) {
-	var stopped []string
-	containersToRemove := containersForRemovedProcesses(existing, app.Processes)
+	var containersToRemove []string
 	startedAt := time.Now().UTC().Format("20060102t150405000000000z")
 	started, err := startReleaseProcesses(startReleaseProcessesParams{
-		App:        c.App,
-		Env:        c.Env,
-		Release:    c.SHA,
-		Activation: c.ActivationID,
-		Context:    app,
+		App:         c.App,
+		Env:         c.Env,
+		Release:     c.SHA,
+		Activation:  c.ActivationID,
+		Context:     app,
+		OnlyPortful: true,
 		BeforeStart: func(runtime processStartRuntime) error {
 			buildArgs := podmanBuildArgsWithEnvelope(c.App, c.Env, runtime.ImageTag, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild, c.EnvelopeLabel)
 			if _, err := utils.RunChecked("podman", buildArgs, ""); err != nil {
 				return newJournalStepError("build", fmt.Errorf("podman build: %w", err), runtime.ScrubValues, nil)
 			}
 			if app.Release != "" {
-				if err := runReleaseCommand(c.App, c.Env, app.Release, runtime.ImageTag, runtime.UserID, runtime.GroupID, c.SHA, runtime.EnvFile); err != nil {
+				if err := runReleaseCommandWithActivation(c.App, c.Env, app.Release, runtime.ImageTag, runtime.UserID, runtime.GroupID, c.SHA, c.ActivationID, runtime.EnvFile); err != nil {
 					return newJournalStepError("release", err, runtime.ScrubValues, nil)
 				}
 			}
-			return nil
-		},
-		BeforeProcess: func(processName string, proc config.Process) error {
-			if proc.Port != nil {
-				return nil
-			}
-			old := processContainers(existing, processName, "")
-			stoppedNow, err := stopContainers(old)
-			if err != nil {
-				warnOnRestartFailure(uniqueContainerNames(append(stopped, stoppedNow...)))
-				return err
-			}
-			stopped = append(stopped, stoppedNow...)
-			containersToRemove = append(containersToRemove, old...)
 			return nil
 		},
 		ContainerName: func(processName string, proc config.Process) string {
@@ -473,7 +499,6 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		}
 		var startErr processStartError
 		if errors.As(err, &startErr) {
-			warnOnRestartFailure(stopped)
 			step := "apply"
 			var probe *journalProbe
 			var probeErr *probeFailureError
@@ -488,15 +513,8 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		}
 		return containerApplyResult{}, err
 	}
-	for _, processName := range sortedKeys(app.Processes) {
-		if app.Processes[processName].Port != nil {
-			containersToRemove = append(containersToRemove, processContainers(existing, processName, "")...)
-		}
-	}
 	return containerApplyResult{
 		containersToRemove: uniqueContainerNames(containersToRemove),
-		startedContainers:  uniqueContainerNames(started.Started),
-		stoppedContainers:  uniqueContainerNames(stopped),
 		processNames:       started.ProcessName,
 	}, nil
 }
@@ -581,6 +599,7 @@ func (c appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string,
 	}
 	staticDir := identity.StaticDir(c.App, c.Env)
 	releaseDir := filepath.Join(identity.StaticDir(c.App, c.Env), "releases", c.SHA)
+	activeRelease := currentActiveReleaseBestEffort(c.App, c.Env)
 	if err := os.MkdirAll(filepath.Dir(releaseDir), 0755); err != nil {
 		return "", false, err
 	}
@@ -590,6 +609,9 @@ func (c appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string,
 				return "", false, err
 			}
 			return releaseDir, false, nil
+		}
+		if activeRelease == c.SHA {
+			return "", false, fmt.Errorf("active static release %s cannot be replaced during prepare", c.SHA)
 		}
 		if err := os.RemoveAll(releaseDir); err != nil {
 			return "", false, err

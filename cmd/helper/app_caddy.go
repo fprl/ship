@@ -2,6 +2,7 @@ package helper
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +18,9 @@ import (
 )
 
 func caddyfilePath(app, env string) string {
+	if dir := os.Getenv("SHIP_CADDY_DIR"); dir != "" {
+		return filepath.Join(dir, filepath.Base(identity.CaddyFragmentFile(app, env)))
+	}
 	return identity.CaddyFragmentFile(app, env)
 }
 
@@ -217,6 +221,9 @@ func renderAndReloadAppCaddy(path, app, env string, ctx *config.AppContext, rele
 	if err != nil {
 		return err
 	}
+	if existed && bytes.Equal(previous, []byte(content)) && caddyReloadReceiptMatches(path, []byte(content)) {
+		return nil
+	}
 	validationDir, err := prepareCaddyValidationTree(path, content)
 	if err != nil {
 		return err
@@ -232,8 +239,51 @@ func renderAndReloadAppCaddy(path, app, env string, ctx *config.AppContext, rele
 		return err
 	}
 	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
-		restoreErr := restoreCaddyFragment(path, previous, existed)
-		return caddyReloadStageError{Stage: "reload", Err: err, RestoreErr: restoreErr}
+		// The fragment is derived state. Once the active pointer has been
+		// committed, keep the intended fragment even when Caddy refuses the
+		// reload; the next convergence reruns the reload and never restores
+		// an older intent.
+		return caddyReloadStageError{Stage: "reload", Err: err}
+	}
+	if err := writeCaddyReloadReceipt(path, []byte(content)); err != nil {
+		return caddyReloadStageError{Stage: "receipt", Err: err}
+	}
+	return nil
+}
+
+func caddyReloadReceiptPath(path string) string { return path + ".loaded" }
+
+func caddyReloadReceiptMatches(path string, content []byte) bool {
+	receipt, err := os.ReadFile(caddyReloadReceiptPath(path))
+	return err == nil && bytes.Equal(bytes.TrimSpace(receipt), []byte(fmt.Sprintf("%x", sha256.Sum256(content))))
+}
+
+func writeCaddyReloadReceipt(path string, content []byte) error {
+	digest := sha256.Sum256(content)
+	return store.AtomicWrite(caddyReloadReceiptPath(path), []byte(fmt.Sprintf("%x\n", digest)), 0644)
+}
+
+// validateAppCaddy renders the candidate fragment and validates the complete
+// assembled Caddy configuration without touching the serving fragment. It is
+// the prepare-phase seam used before active.json is committed.
+func validateAppCaddy(path, app, env string, ctx *config.AppContext, release string, processNames map[string]string) error {
+	reloadLock, err := acquireLockFile(filepath.Join(appEnvLockDir(), "caddy-reload.lock"))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = reloadLock.Release() }()
+	content, err := renderAppCaddyfileWithProcessNames(app, env, ctx, release, processNames)
+	if err != nil {
+		return err
+	}
+	validationDir, err := prepareCaddyValidationTree(path, content)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(validationDir) }()
+	validationConfig := filepath.Join(validationDir, "Caddyfile")
+	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", validationConfig, "--adapter", "caddyfile"}, ""); err != nil {
+		return caddyReloadStageError{Stage: "validate", Err: err}
 	}
 	return nil
 }
@@ -306,8 +356,9 @@ func caddyFragmentMode(content []byte) os.FileMode {
 	return 0644
 }
 
-// snapshotCaddyFragment reads the existing fragment so a failed deploy
-// can restore it. Returns (contents, true, nil) when a fragment exists,
+// snapshotCaddyFragment reads the existing fragment for idempotency and
+// for destructive non-deploy operations that still need a safe restore.
+// Returns (contents, true, nil) when a fragment exists,
 // (nil, false, nil) when nothing is there, or an error for anything
 // other than ENOENT.
 func snapshotCaddyFragment(path string) ([]byte, bool, error) {

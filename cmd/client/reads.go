@@ -12,6 +12,8 @@ import (
 	"github.com/fprl/ship/internal/utils"
 )
 
+const convergenceNextStep = "rerun ship"
+
 type appListJSON struct {
 	Apps []appListAppJSON `json:"apps"`
 }
@@ -36,6 +38,8 @@ type appListEnvJSON struct {
 	ShippedBy      *deployIdentityJSON `json:"shipped_by,omitempty"`
 	Processes      []processJSON       `json:"processes"`
 	Static         *staticJSON         `json:"static,omitempty"`
+	State          string              `json:"state,omitempty"`
+	Next           string              `json:"next,omitempty"`
 }
 
 type processJSON struct {
@@ -77,6 +81,8 @@ type statusEnvJSON struct {
 	Dirty         bool                `json:"dirty,omitempty"`
 	ShippedBy     *deployIdentityJSON `json:"shipped_by,omitempty"`
 	Processes     []processJSON       `json:"processes"`
+	State         string              `json:"state,omitempty"`
+	Next          string              `json:"next,omitempty"`
 }
 
 func CmdStatus(root string, jsonFlag bool) {
@@ -176,8 +182,13 @@ func renderWhy(entry whyJournalEntry, read readContext) string {
 		fmt.Fprintf(&b, "traffic: release %s is live.\n", dashIfEmpty(entry.AttemptedRelease))
 		fmt.Fprintf(&b, "shipped by: %s (ssh key: %s)\n", entry.Identity.GitAuthor, entry.Identity.SSHKeyComment)
 		b.WriteString("next: ship status\n")
+	case "committed_unconverged":
+		fmt.Fprintf(&b, "Deploy committed but not converged for %s %s at %s.\n", kind, branch, when)
+		fmt.Fprintf(&b, "release: %s\n", dashIfEmpty(entry.AttemptedRelease))
+		b.WriteString("traffic: intent is committed; runtime may still be on the previous release.\n")
+		fmt.Fprintf(&b, "next: %s\n", convergenceNextStep)
 	default:
-		fmt.Fprintf(&b, "Deploy aborted for %s %s at %s.\n", kind, branch, when)
+		fmt.Fprintf(&b, "Deploy failed for %s %s at %s.\n", kind, branch, when)
 		fmt.Fprintf(&b, "attempted release: %s\n", dashIfEmpty(entry.AttemptedRelease))
 		fmt.Fprintf(&b, "previous release: %s\n", dashIfEmpty(entry.PreviousRelease))
 		fmt.Fprintf(&b, "failing step: %s\n", dashIfEmpty(entry.FailingStep))
@@ -196,6 +207,14 @@ func renderWhy(entry whyJournalEntry, read readContext) string {
 
 func whyRemediation(entry whyJournalEntry) string {
 	switch entry.Outcome {
+	case "failed":
+		if entry.FailingStep == "probe" {
+			return "fix the process port or probe path in ship.toml, then ship"
+		}
+		if entry.FailingStep == "release" {
+			return "fix the release command in ship.toml, then ship"
+		}
+		return "ship"
 	case "aborted_release":
 		if entry.FailingStep == "release" {
 			return "fix the release command in ship.toml, then ship"
@@ -210,6 +229,17 @@ func whyRemediation(entry whyJournalEntry) string {
 
 func probableCause(entry whyJournalEntry) string {
 	switch entry.Outcome {
+	case "failed":
+		switch entry.FailingStep {
+		case "build":
+			return "image build failed."
+		case "probe":
+			return "the new container did not pass its health probe."
+		case "release":
+			return "release command exited non-zero before traffic switched."
+		default:
+			return "deploy failed before traffic switched."
+		}
 	case "aborted_build":
 		return "image build failed."
 	case "aborted_probe":
@@ -234,7 +264,7 @@ func trafficImpact(entry whyJournalEntry) string {
 	if entry.PreviousRelease == "" {
 		return "no previous release was serving, so no old traffic was available."
 	}
-	if entry.Outcome == "aborted_probe" {
+	if entry.Outcome == "aborted_probe" || entry.Outcome == "failed" && entry.FailingStep == "probe" {
 		return fmt.Sprintf("old release %s kept serving; failed probes never receive traffic with the current engine.", entry.PreviousRelease)
 	}
 	return fmt.Sprintf("old release %s kept serving; no traffic was switched.", entry.PreviousRelease)
@@ -296,6 +326,8 @@ func statusEnvFromAppListItem(ctx *config.AppContext, item appListEnvJSON) statu
 		Dirty:         item.Dirty,
 		ShippedBy:     item.ShippedBy,
 		Processes:     item.Processes,
+		State:         item.State,
+		Next:          item.Next,
 	}
 }
 
@@ -324,6 +356,9 @@ func renderStatusSummary(payload statusPayload) string {
 			shippedBy = fmt.Sprintf("  shipped_by=%q ssh_key=%q", env.ShippedBy.GitAuthor, env.ShippedBy.SSHKeyComment)
 		}
 		fmt.Fprintf(&b, "%s %s  %s  release=%s  health=%s%s%s\n", statusClassLabel(env.Class), env.Branch, env.URL, release, env.Health, lifecycle, shippedBy)
+		if env.State != "" {
+			fmt.Fprintf(&b, "  state=%s  next=%s\n", env.State, env.Next)
+		}
 	}
 	return b.String()
 }

@@ -24,10 +24,11 @@ type appExecCmd struct {
 }
 
 type execTarget struct {
-	Release string
-	Image   string
-	Context *config.AppContext
-	Cleanup func()
+	Release    string
+	Activation string
+	Image      string
+	Context    *config.AppContext
+	Cleanup    func()
 }
 
 func (c appExecCmd) Run() error {
@@ -73,7 +74,7 @@ func (c appExecCmd) run() error {
 	}
 
 	name := identity.ContainerInstanceName(c.App, c.Env, "exec", target.Release, time.Now().UTC().Format("20060102t150405000000000z"))
-	args := buildPodmanExecRunArgsWithEnvFile(c.App, c.Env, name, target.Image, userID, groupID, target.Release, command, execInjectedEnv(c.App, c.Env, target.Release, target.Context), envFileExists, previewEnv, c.TTY, envFile)
+	args := buildPodmanExecRunArgsWithActivation(c.App, c.Env, name, target.Image, userID, groupID, target.Release, target.Activation, command, execInjectedEnv(c.App, c.Env, target.Release, target.Context), envFileExists, previewEnv, c.TTY, envFile)
 	return runPodmanExecContainer(args)
 }
 
@@ -109,10 +110,11 @@ func resolveExecTarget(app, env string) (execTarget, error) {
 		return execTarget{}, execOperationFailed(fmt.Errorf("release %s has no container image", pointer.Release))
 	}
 	return execTarget{
-		Release: pointer.Release,
-		Image:   image.Image,
-		Context: ctx,
-		Cleanup: cleanup,
+		Release:    pointer.Release,
+		Activation: pointer.Activation,
+		Image:      image.Image,
+		Context:    ctx,
+		Cleanup:    cleanup,
 	}, nil
 }
 
@@ -170,10 +172,14 @@ func execDeploymentURL(ctx *config.AppContext) string {
 
 func buildPodmanExecRunArgs(app, env, containerName, imageTag, userID, groupID, release string, command []string, injected map[string]string, envFileExists, previewEnv, tty bool) []string {
 	envFile, _ := activeEnvFile(app, env)
-	return buildPodmanExecRunArgsWithEnvFile(app, env, containerName, imageTag, userID, groupID, release, command, injected, envFileExists, previewEnv, tty, envFile)
+	return buildPodmanExecRunArgsWithActivation(app, env, containerName, imageTag, userID, groupID, release, "", command, injected, envFileExists, previewEnv, tty, envFile)
 }
 
 func buildPodmanExecRunArgsWithEnvFile(app, env, containerName, imageTag, userID, groupID, release string, command []string, injected map[string]string, envFileExists, previewEnv, tty bool, envFile string) []string {
+	return buildPodmanExecRunArgsWithActivation(app, env, containerName, imageTag, userID, groupID, release, "", command, injected, envFileExists, previewEnv, tty, envFile)
+}
+
+func buildPodmanExecRunArgsWithActivation(app, env, containerName, imageTag, userID, groupID, release, activation string, command []string, injected map[string]string, envFileExists, previewEnv, tty bool, envFile string) []string {
 	resources := effectiveProcessResources(config.Process{}, previewEnv)
 	args := []string{
 		"run", "--rm", "-i",
@@ -190,6 +196,7 @@ func buildPodmanExecRunArgsWithEnvFile(app, env, containerName, imageTag, userID
 		UserID:      userID,
 		GroupID:     groupID,
 		Release:     release,
+		Activation:  activation,
 		Networks:    []string{identity.Network(app, env)},
 	})...)
 	args = appendReadOnlyRuntimeArgs(args)

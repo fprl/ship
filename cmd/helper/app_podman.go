@@ -26,6 +26,7 @@ type podmanBaseRunOptions struct {
 	UserID      string
 	GroupID     string
 	Release     string
+	Activation  string
 	Networks    []string
 }
 
@@ -90,6 +91,9 @@ func podmanBaseRunArgs(opts podmanBaseRunOptions) []string {
 		"--label", "ship.infra_id="+identity.InfraID(opts.App, opts.Env),
 		"--label", "ship.release="+opts.Release,
 	)
+	if opts.Activation != "" {
+		args = append(args, "--label", "ship.activation="+opts.Activation)
+	}
 	return args
 }
 
@@ -126,10 +130,14 @@ func appendResourceArgs(args []string, resources config.Resources) []string {
 // render to the closed set of runtime flags.
 func buildPodmanRunArgs(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, envFileExists bool, previewEnv bool) []string {
 	envFile, _ := activeEnvFile(app, env)
-	return buildPodmanRunArgsWithEnvFile(app, env, processName, proc, imageTag, userID, groupID, release, containerName, envFileExists, previewEnv, envFile)
+	return buildPodmanRunArgsWithActivation(app, env, processName, proc, imageTag, userID, groupID, release, "", containerName, envFileExists, previewEnv, envFile)
 }
 
 func buildPodmanRunArgsWithEnvFile(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, envFileExists bool, previewEnv bool, envFile string) []string {
+	return buildPodmanRunArgsWithActivation(app, env, processName, proc, imageTag, userID, groupID, release, "", containerName, envFileExists, previewEnv, envFile)
+}
+
+func buildPodmanRunArgsWithActivation(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, activation, containerName string, envFileExists bool, previewEnv bool, envFile string) []string {
 	appNet := identity.Network(app, env)
 	resources := effectiveProcessResources(proc, previewEnv)
 
@@ -148,6 +156,7 @@ func buildPodmanRunArgsWithEnvFile(app, env, processName string, proc config.Pro
 		UserID:      userID,
 		GroupID:     groupID,
 		Release:     release,
+		Activation:  activation,
 		// App processes join ingress so Caddy can reach them by
 		// container DNS. Release and exec commands stay off ingress.
 		Networks: []string{appNet, "ingress"},
@@ -189,6 +198,10 @@ func effectiveProcessResources(proc config.Process, previewEnv bool) config.Reso
 }
 
 func startProcess(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, probe string, previewEnv bool, scrubValues []string, envFile string) error {
+	return startProcessWithActivation(app, env, processName, proc, imageTag, userID, groupID, release, "", containerName, probe, previewEnv, scrubValues, envFile)
+}
+
+func startProcessWithActivation(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, activation, containerName string, probe string, previewEnv bool, scrubValues []string, envFile string) error {
 
 	_, _ = utils.RunChecked("podman", []string{"rm", "-f", containerName}, "")
 
@@ -196,7 +209,7 @@ func startProcess(app, env, processName string, proc config.Process, imageTag, u
 	if _, err := os.Stat(envFile); err == nil {
 		envFileExists = true
 	}
-	args := buildPodmanRunArgsWithEnvFile(app, env, processName, proc, imageTag, userID, groupID, release, containerName, envFileExists, previewEnv, envFile)
+	args := buildPodmanRunArgsWithActivation(app, env, processName, proc, imageTag, userID, groupID, release, activation, containerName, envFileExists, previewEnv, envFile)
 
 	if _, err := utils.RunChecked("podman", args, ""); err != nil {
 		return fmt.Errorf("podman run %s: %v", containerName, err)
@@ -269,6 +282,10 @@ func probeStatusFromDetail(detail string) int {
 const releaseCommandTimeout = 10 * time.Minute
 
 func runReleaseCommand(app, env, command, imageTag, userID, groupID, release, envFile string) error {
+	return runReleaseCommandWithActivation(app, env, command, imageTag, userID, groupID, release, "", envFile)
+}
+
+func runReleaseCommandWithActivation(app, env, command, imageTag, userID, groupID, release, activation, envFile string) error {
 	name := identity.ContainerName(app, env, "release", release)
 	_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
 	args := []string{
@@ -285,6 +302,7 @@ func runReleaseCommand(app, env, command, imageTag, userID, groupID, release, en
 		UserID:      userID,
 		GroupID:     groupID,
 		Release:     release,
+		Activation:  activation,
 		Networks:    []string{identity.Network(app, env)},
 	})...)
 	if envFile != "" {

@@ -1634,7 +1634,7 @@ func TestRenderWhyReleaseFailure(t *testing.T) {
 		Identity:         testDeployIdentity(),
 	}
 	got := renderWhy(entry, read)
-	want := "Deploy aborted for Production main at 2026-07-07T10:00:01Z.\n" +
+	want := "Deploy failed for Production main at 2026-07-07T10:00:01Z.\n" +
 		"attempted release: bbb222\n" +
 		"previous release: aaa111\n" +
 		"failing step: release\n" +
@@ -1690,7 +1690,7 @@ func TestRenderWhyProbeFailure(t *testing.T) {
 		Probe:            &whyJournalProbe{Status: 502, BodySnippet: "upstream web listens on 3000, probed 3999"},
 	}
 	got := renderWhy(entry, read)
-	want := "Deploy aborted for Production main at 2026-07-07T10:02:01Z.\n" +
+	want := "Deploy failed for Production main at 2026-07-07T10:02:01Z.\n" +
 		"attempted release: ccc333\n" +
 		"previous release: aaa111\n" +
 		"failing step: probe\n" +

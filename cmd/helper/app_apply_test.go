@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
@@ -241,8 +242,72 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 	if len(entries) != 1 || entries[0].Outcome != "aborted_probe" {
 		t.Fatalf("journal entries = %+v, want only prior failure", entries)
 	}
-	payload := sink.singlePayload(t)
-	assertWebhookField(t, payload, "event", webhookEventDeployRecovered)
+	if len(sink.bodies) != 0 {
+		t.Fatalf("journal failure emitted a recovery webhook")
+	}
+}
+
+func TestCommittedJournalFailureSkipsCleanup(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	logPath := filepath.Join(root, "podman.log")
+	t.Setenv("PODMAN_LOG", logPath)
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
+	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nprintf '%s\\n' \"$*\" >> \"$PODMAN_LOG\"\nexit 0\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	oldAppend := appendSanitizedDeployJournal
+	oldPrune := bestEffortPruneAfterDeploy
+	appendSanitizedDeployJournal = func(string, string, deployJournalEntry) error { return errors.New("journal disk is read-only") }
+	bestEffortPruneAfterDeploy = func(string, string, string, deployJournalEntry) string { return "pruned 0 old images" }
+	t.Cleanup(func() { appendSanitizedDeployJournal = oldAppend; bestEffortPruneAfterDeploy = oldPrune })
+	cmd := appApplyCmd{App: "api", Env: "production", SHA: "new222"}
+	if err := cmd.completeCommittedDeploy(&config.AppContext{}, "old111", time.Now().UTC(), applyReleaseResult{containersToRemove: []string{"old-container"}}); err != nil {
+		t.Fatal(err)
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(log), "rm -f old-container") {
+		t.Fatalf("cleanup ran after journal failure: %s", log)
+	}
+}
+
+func TestPreCommitCleanupRemovesOnlyAttemptCandidates(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	logPath := filepath.Join(root, "podman.log")
+	t.Setenv("PODMAN_LOG", logPath)
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCommand(t, bin, "podman", `#!/usr/bin/env sh
+printf '%s\n' "$*" >> "$PODMAN_LOG"
+if [ "$1" = "ps" ]; then
+  printf '%s\n' '[{"Names":["candidate"],"State":"running","Labels":{"ship.activation":"attempt-a1","ship.process":"web"}},{"Names":["serving"],"State":"running","Labels":{"ship.activation":"serving-a1","ship.process":"web"}}]'
+fi
+exit 0
+`)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	removePreparedCandidates("api", "production", "attempt-a1")
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := string(data)
+	if !strings.Contains(log, "rm -f candidate") {
+		t.Fatalf("pre-commit cleanup did not remove candidate: %s", log)
+	}
+	if strings.Contains(log, "rm -f serving") {
+		t.Fatalf("pre-commit cleanup touched serving release: %s", log)
+	}
 }
 
 func captureApplyStdout(t *testing.T, fn func()) string {
@@ -265,60 +330,6 @@ func captureApplyStdout(t *testing.T, fn func()) string {
 		t.Fatal(err)
 	}
 	return string(data)
-}
-
-func TestApplyContainerRestartsContainersStoppedBeforeStopFailure(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0755); err != nil {
-		t.Fatal(err)
-	}
-	logPath := filepath.Join(root, "podman.log")
-	t.Setenv("PODMAN_LOG", logPath)
-	writeFakeCommand(t, bin, "id", `#!/usr/bin/env sh
-if [ "$1" = "-u" ] || [ "$1" = "-g" ]; then
-  printf '1000\n'
-  exit 0
-fi
-exit 1
-`)
-	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
-	writeFakeCommand(t, bin, "podman", `#!/usr/bin/env sh
-printf '%s %s\n' "$1" "$2" >> "$PODMAN_LOG"
-case "$1" in
-  build|start) exit 0 ;;
-  stop)
-    if [ "$2" = "worker-b" ]; then
-      echo "forced stop failure" >&2
-      exit 1
-    fi
-    exit 0
-    ;;
-esac
-exit 0
-`)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	cmd := appApplyCmd{App: "api", Env: "production", SHA: "abc1234"}
-	_, err := cmd.applyContainer(t.TempDir(), &config.AppContext{
-		Processes: map[string]config.Process{"worker": {Command: "run worker"}},
-	}, []containerEntry{
-		{Names: []string{"worker-a"}, Labels: map[string]string{"ship.process": "worker"}},
-		{Names: []string{"worker-b"}, Labels: map[string]string{"ship.process": "worker"}},
-	})
-	if err == nil || !strings.Contains(err.Error(), "stop worker-b") {
-		t.Fatalf("apply container error = %v", err)
-	}
-	log, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"stop worker-a", "stop worker-b", "start worker-a"} {
-		if !strings.Contains(string(log), want) {
-			t.Fatalf("podman calls missing %q:\n%s", want, log)
-		}
-	}
 }
 
 func writePreviewIdentityForResolveTest(t *testing.T, app, env string, preview *identity.PreviewIdentity) {
@@ -457,6 +468,31 @@ func TestContainersForRemovedProcesses(t *testing.T) {
 	}
 }
 
+func TestApplyStaticDoesNotDeleteActiveReleaseDuringPrepare(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	releaseDir := filepath.Join(identity.StaticDir("api", "production"), "releases", "abc1234")
+	if err := os.MkdirAll(releaseDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(releaseDir, "still-active")
+	if err := os.WriteFile(sentinel, []byte("serving"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: "abc1234", Activation: "abc1234-a1b2", EnvelopeHash: strings.Repeat("a", 64)}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := (appApplyCmd{App: "api", Env: "production", SHA: "abc1234"}).applyStatic(t.TempDir(), &config.AppContext{
+		Routes: map[string]config.Route{"site": {Serve: "dist"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot be replaced") {
+		t.Fatalf("applyStatic error = %v, want active-release refusal", err)
+	}
+	if data, readErr := os.ReadFile(sentinel); readErr != nil || string(data) != "serving" {
+		t.Fatalf("active release changed after failed prepare: %q, %v", data, readErr)
+	}
+}
+
 func TestNextProcessContainerNameUsesInstanceWhenDefaultExists(t *testing.T) {
 	base := identity.ContainerName("api", "production", "web", "abc123")
 	got := nextProcessContainerName([]containerEntry{
@@ -517,6 +553,14 @@ func TestBuildPodmanRunArgsEmitsHardeningDataMountResourcesAndLabels(t *testing.
 	}
 	if !strings.Contains(joined, identity.ImageTag("api", "production", "abc123")+" /bin/sh -c") {
 		t.Fatalf("image should precede command override:\n%s", joined)
+	}
+}
+
+func TestBuildPodmanRunArgsMatchesActivationShape(t *testing.T) {
+	args := buildPodmanRunArgsWithActivation("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", "abc123-a1b2", "web-new", false, false, "")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "--label ship.release=abc123") || !strings.Contains(joined, "--label ship.activation=abc123-a1b2") {
+		t.Fatalf("runtime args do not carry exact release/activation identity: %s", joined)
 	}
 }
 

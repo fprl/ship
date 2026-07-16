@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/names"
@@ -35,6 +36,11 @@ func (c appStatusCmd) Run() error {
 		utils.DieError(err, 1)
 	}
 	authorizeOrDie(helperVerbRead, authTargetForAppEnv(c.App, c.Env, "status"))
+	withAppEnvLock(c.App, c.Env, func() { c.runLocked() })
+	return nil
+}
+
+func (c appStatusCmd) runLocked() {
 	out, err := podmanPSContainers(c.App, c.Env)
 	if err != nil {
 		utils.DieError(err, 1)
@@ -65,6 +71,10 @@ func (c appStatusCmd) Run() error {
 		if static != nil && static.Release == pointer.Release {
 			copyStaticReleaseMetadata(static, intended)
 		}
+		if !activePointerRuntimeConverged(c.App, c.Env, pointer, processes, static) {
+			intended.State = committedNotConvergedState
+			intended.Next = convergenceNextStep
+		}
 		release = intended
 	}
 	if c.JSON {
@@ -77,10 +87,9 @@ func (c appStatusCmd) Run() error {
 			utils.DieError(err, 1)
 		}
 		fmt.Println(string(buf))
-		return nil
+		return
 	}
 	fmt.Print(renderStatusText(c.App, c.Env, processes, envKnown, release, static))
-	return nil
 }
 
 // appLsCmd merges durable env identity anchors with live process labels.
@@ -230,6 +239,8 @@ type appListEnvStatus struct {
 	ShippedBy      *deployIdentity `json:"shipped_by,omitempty"`
 	Processes      []processStatus `json:"processes"`
 	Static         *staticStatus   `json:"static,omitempty"`
+	State          string          `json:"state,omitempty"`
+	Next           string          `json:"next,omitempty"`
 }
 
 type appEnvStatus struct {
@@ -239,6 +250,8 @@ type appEnvStatus struct {
 	ShippedBy *deployIdentity           `json:"shipped_by,omitempty"`
 	Processes []processStatus           `json:"processes"`
 	Static    *staticStatus             `json:"static,omitempty"`
+	State     string                    `json:"state,omitempty"`
+	Next      string                    `json:"next,omitempty"`
 }
 
 type processStatus struct {
@@ -247,6 +260,7 @@ type processStatus struct {
 	State      string `json:"state"`
 	Image      string `json:"image,omitempty"`
 	Release    string `json:"release,omitempty"`
+	Activation string `json:"activation,omitempty"`
 	Dirty      bool   `json:"dirty,omitempty"`
 	BaseCommit string `json:"base_commit,omitempty"`
 	CreatedAt  string `json:"created_at,omitempty"`
@@ -269,6 +283,8 @@ type statusRelease struct {
 	Mixed          bool   `json:"mixed,omitempty"`
 	ProcessRelease string `json:"process_release,omitempty"`
 	StaticRelease  string `json:"static_release,omitempty"`
+	State          string `json:"state,omitempty"`
+	Next           string `json:"next,omitempty"`
 }
 
 // containerEntry is the slice of `podman ps --format json` we care
@@ -299,12 +315,13 @@ func containersToProcesses(entries []containerEntry) []processStatus {
 		}
 		release := e.Labels["ship.release"]
 		status := processStatus{
-			Process:   proc,
-			Container: name,
-			State:     e.State,
-			Image:     e.Image,
-			Release:   release,
-			Status:    e.Status,
+			Process:    proc,
+			Container:  name,
+			State:      e.State,
+			Image:      e.Image,
+			Release:    release,
+			Activation: e.Labels["ship.activation"],
+			Status:     e.Status,
 		}
 		out = append(out, status)
 	}
@@ -432,6 +449,10 @@ func renderStatusText(app, env string, processes []processStatus, envKnown bool,
 	fmt.Fprintf(&b, "%s (%s)\n", app, env)
 	if release != nil {
 		fmt.Fprintf(&b, "  release: %s\n", renderStatusReleaseText(release))
+		if release.State != "" {
+			fmt.Fprintf(&b, "  state: %s\n", release.State)
+			fmt.Fprintf(&b, "  next: %s\n", release.Next)
+		}
 	}
 	if len(processes) == 0 && static == nil {
 		if envKnown {
@@ -609,10 +630,15 @@ func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 		ShippedBy:      item.ShippedBy,
 		Processes:      processes,
 		Static:         item.Static,
+		State:          item.State,
+		Next:           item.Next,
 	}
 }
 
 func appListHealth(item appEnvStatus) string {
+	if item.State != "" {
+		return "degraded"
+	}
 	if len(item.Processes) == 0 {
 		if item.Static != nil {
 			return "healthy"
@@ -667,6 +693,10 @@ func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 			return err
 		}
 		apps[i].Static = static
+		if pointer, pointerErr := readActive(apps[i].App, apps[i].Env); pointerErr == nil && !activePointerRuntimeConverged(apps[i].App, apps[i].Env, pointer, apps[i].Processes, static) {
+			apps[i].State = committedNotConvergedState
+			apps[i].Next = convergenceNextStep
+		}
 		if entry, torn, err := readLatestSuccessfulDeployJournalEntryWithStatus(apps[i].App, apps[i].Env); torn {
 			warnTornDeployJournal(identity.DeployJournalFile(apps[i].App, apps[i].Env))
 			if err == nil {
@@ -679,6 +709,60 @@ func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 		}
 	}
 	return nil
+}
+
+const committedNotConvergedState = "committed, not converged"
+
+func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, processes []processStatus, static *staticStatus) bool {
+	ctx, cleanup, err := loadAppliedAppContext(app, env)
+	if err != nil {
+		return false
+	}
+	defer cleanup()
+	desiredNames := map[string]string{}
+	if ctx.NeedsImage {
+		for name := range ctx.Processes {
+			count := 0
+			for _, process := range processes {
+				if process.Process == name && process.State == "running" && process.Release == pointer.Release && process.Activation == pointer.Activation {
+					count++
+					if process.Container != "" {
+						desiredNames[name] = process.Container
+					}
+				}
+			}
+			if count != 1 {
+				return false
+			}
+		}
+	}
+	for _, process := range processes {
+		if process.State == "running" {
+			if !ctx.NeedsImage || process.Release != pointer.Release || process.Activation != pointer.Activation {
+				return false
+			}
+			if _, ok := ctx.Processes[process.Process]; !ok {
+				return false
+			}
+		}
+	}
+	if ctx.HasStaticRoutes && (static == nil || static.Release != pointer.Release) {
+		return false
+	}
+	if ctx.HasStaticRoutes {
+		if err := verifyStaticRelease(app, env, pointer.Release, ctx.Routes); err != nil {
+			return false
+		}
+	}
+	fragment, err := os.ReadFile(caddyfilePath(app, env))
+	if err != nil {
+		return false
+	}
+	expected, err := renderAppCaddyfileWithProcessNames(app, env, ctx, pointer.Release, desiredNames)
+	if err != nil || string(fragment) != expected || !caddyReloadReceiptMatches(caddyfilePath(app, env), []byte(expected)) {
+		return false
+	}
+	return true
 }
 
 func renderStatusReleaseText(release *statusRelease) string {
@@ -800,6 +884,9 @@ func activeStaticStatus(app, env string) (*staticStatus, error) {
 	defer cleanup()
 	if !ctx.HasStaticRoutes {
 		return nil, nil
+	}
+	if err := verifyStaticRelease(app, env, pointer.Release, ctx.Routes); err != nil {
+		return nil, fmt.Errorf("static release %s integrity error: %v", pointer.Release, err)
 	}
 	routes := make([]string, 0, len(ctx.Routes))
 	for name, route := range ctx.Routes {

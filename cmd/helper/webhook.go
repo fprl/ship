@@ -262,7 +262,7 @@ func latestSuccessfulRelease(app, env string) string {
 }
 
 func isAbortedJournalOutcome(outcome string) bool {
-	return strings.HasPrefix(outcome, "aborted_")
+	return outcome == "failed" || strings.HasPrefix(outcome, "aborted_")
 }
 
 func postWebhook(url string, payload webhookPayload) {

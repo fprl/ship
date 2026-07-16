@@ -18,7 +18,7 @@ import (
 func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
 	startedAt := time.Date(2026, time.July, 14, 10, 0, 0, 0, time.UTC)
 	entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", deployIdentity{}, startedAt, errors.New("corrupt upload tar"))
-	if entry.FailingStep != "apply" || entry.Outcome != "aborted_release" || entry.StderrTail != "corrupt upload tar" {
+	if entry.FailingStep != "apply" || entry.Outcome != "failed" || entry.StderrTail != "corrupt upload tar" {
 		t.Fatalf("unwrapped journal entry = %+v", entry)
 	}
 
@@ -26,9 +26,9 @@ func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
 		step    string
 		outcome string
 	}{
-		{step: "build", outcome: "aborted_build"},
-		{step: "probe", outcome: "aborted_probe"},
-		{step: "release", outcome: "aborted_release"},
+			{step: "build", outcome: "failed"},
+			{step: "probe", outcome: "failed"},
+			{step: "release", outcome: "failed"},
 	} {
 		t.Run(tt.step, func(t *testing.T) {
 			entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", deployIdentity{}, startedAt, newJournalStepError(tt.step, errors.New(tt.step+" failed"), nil, nil))

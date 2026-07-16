@@ -27,6 +27,7 @@ type startReleaseProcessesParams struct {
 	Release       string
 	Activation    string
 	Context       *config.AppContext
+	OnlyPortful   bool
 	BeforeStart   func(processStartRuntime) error
 	BeforeProcess func(processName string, proc config.Process) error
 	ContainerName func(processName string, proc config.Process) string
@@ -96,9 +97,11 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 
 	for _, processName := range sortedKeys(params.Context.Processes) {
 		proc := params.Context.Processes[processName]
+		if params.OnlyPortful && proc.Port == nil {
+			continue
+		}
 		if params.BeforeProcess != nil {
 			if err := params.BeforeProcess(processName, proc); err != nil {
-				removeContainers(result.Started)
 				return result, err
 			}
 		}
@@ -110,8 +113,7 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 		if proc.Port != nil {
 			result.ProcessName[processName] = containerName
 		}
-		if err := startProcess(params.App, params.Env, processName, proc, runtime.ImageTag, runtime.UserID, runtime.GroupID, params.Release, containerName, processProbe(runtime.Routed, processName, params.Context.Probe), runtime.PreviewEnv, runtime.ScrubValues, runtime.EnvFile); err != nil {
-			removeContainers(result.Started)
+		if err := startProcessWithActivation(params.App, params.Env, processName, proc, runtime.ImageTag, runtime.UserID, runtime.GroupID, params.Release, params.Activation, containerName, processProbe(runtime.Routed, processName, params.Context.Probe), runtime.PreviewEnv, runtime.ScrubValues, runtime.EnvFile); err != nil {
 			return result, processStartError{Process: processName, Err: err}
 		}
 	}

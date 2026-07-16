@@ -257,14 +257,7 @@ func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease strin
 }
 
 func outcomeForFailingStep(step string) string {
-	switch step {
-	case "build":
-		return "aborted_build"
-	case "probe":
-		return "aborted_probe"
-	default:
-		return "aborted_release"
-	}
+	return "failed"
 }
 
 func commandErrorTail(err error) string {

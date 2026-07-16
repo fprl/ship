@@ -15,6 +15,7 @@ import (
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -30,8 +31,6 @@ type appRollbackCmd struct {
 	ActivationID   string            `kong:"-"`
 	TargetEnvelope envelope.Envelope `kong:"-"`
 }
-
-var rollbackCaddyPath = caddyfilePath
 
 var appendRollbackDeployJournal = appendDeployJournalEntry
 
@@ -59,9 +58,52 @@ func (c appRollbackCmd) runLocked() {
 	startedAt := time.Now().UTC()
 	result, err := c.rollbackRelease(nil)
 	if err != nil {
-		utils.DieError(err, 1)
+		if result.Committed {
+			var degraded committedDegradedError
+			if errors.As(err, &degraded) {
+				c.recordRollbackDegraded(result, startedAt, degraded.Err)
+				utils.DieError(fmt.Errorf("committed but degraded; %s: %w", convergenceNextStep, degraded.Err), 1)
+			}
+			c.recordRollbackFailure(result, startedAt, err)
+			utils.DieError(fmt.Errorf("committed but not converged; %s: %w", convergenceNextStep, err), 1)
+		}
+		removePreparedCandidates(c.App, c.Env, c.ActivationID)
+		utils.DieError(fmt.Errorf("nothing changed: %w", err), 1)
 	}
 	c.recordRollbackSuccess(result, startedAt)
+}
+
+func (c appRollbackCmd) recordRollbackDegraded(result rollbackPayload, startedAt time.Time, err error) {
+	entry := deployJournalEntry{
+		SchemaVersion: deployJournalSchemaVersion, App: c.App, Env: c.Env,
+		Outcome: "committed_degraded", StartedAt: startedAt.Format(time.RFC3339Nano),
+		EndedAt: time.Now().UTC().Format(time.RFC3339Nano), PreviousRelease: result.Previous,
+		AttemptedRelease: result.Release, FailingStep: "durability", StderrTail: err.Error(),
+		Identity: c.actor(), Member: currentServerMemberForJournal(),
+	}
+	if appendErr := appendRollbackDeployJournal(c.App, c.Env, entry, nil); appendErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
+	}
+}
+
+func (c appRollbackCmd) recordRollbackFailure(result rollbackPayload, startedAt time.Time, err error) {
+	entry := deployJournalEntry{
+		SchemaVersion:    deployJournalSchemaVersion,
+		App:              c.App,
+		Env:              c.Env,
+		Outcome:          "committed_unconverged",
+		StartedAt:        startedAt.Format(time.RFC3339Nano),
+		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
+		PreviousRelease:  result.Previous,
+		AttemptedRelease: result.Release,
+		FailingStep:      "converge",
+		StderrTail:       err.Error(),
+		Identity:         c.actor(),
+		Member:           currentServerMemberForJournal(),
+	}
+	if appendErr := appendRollbackDeployJournal(c.App, c.Env, entry, nil); appendErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
+	}
 }
 
 func (c appRollbackCmd) recordRollbackSuccess(result rollbackPayload, startedAt time.Time) {
@@ -78,6 +120,8 @@ func (c appRollbackCmd) recordRollbackSuccess(result rollbackPayload, startedAt 
 		Member:           currentServerMemberForJournal(),
 	}, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: rollback succeeded but failed to write deploy journal: %v; run ship box doctor\n", err)
+	} else {
+		removeContainers(result.StaleContainers)
 	}
 	fmt.Print(renderRollbackText(result))
 }
@@ -86,7 +130,7 @@ func (c appRollbackCmd) actor() deployIdentity {
 	return deployActor(c.SSHKeyComment, c.GitAuthor)
 }
 
-func (c appRollbackCmd) rollbackRelease(currentApp *config.AppContext) (rollbackPayload, error) {
+func (c *appRollbackCmd) rollbackRelease(currentApp *config.AppContext) (rollbackPayload, error) {
 	var currentCleanup func()
 	defer func() {
 		if currentCleanup != nil {
@@ -157,73 +201,36 @@ func activeRelease(app, env string) (string, error) {
 }
 
 func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *config.AppContext) (payload rollbackPayload, err error) {
-	containers, err := podmanPSContainers(c.App, c.Env)
-	if err != nil {
-		return rollbackPayload{}, err
-	}
-	var started []string
-	var stoppedOld []string
-	var caddyPath string
-	var prevFragment []byte
-	var prevExisted bool
-	var caddySnapshotReady bool
-	var trafficSwitched bool
-	cleanupStarted := func() error {
-		removeContainers(started)
-		return startContainers(uniqueContainerNames(stoppedOld))
-	}
-	defer func() {
-		if err == nil {
-			return
-		}
-
-		var restoreErrs []error
-		if caddySnapshotReady {
-			if restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted); restoreErr != nil {
-				restoreErrs = append(restoreErrs, restoreErr)
-			} else if trafficSwitched {
-				if reloadErr := reloadCaddyOrRestore(caddyPath, prevFragment, prevExisted); reloadErr != nil {
-					restoreErrs = append(restoreErrs, caddyStageActionError(reloadErr, "after rollback", caddyPath))
-				}
-			}
-		}
-		if restartErr := cleanupStarted(); restartErr != nil {
-			restoreErrs = append(restoreErrs, restartErr)
-		}
-		if len(restoreErrs) > 0 {
-			err = fmt.Errorf("%w; rollback restore failed: %v", err, errors.Join(restoreErrs...))
-		}
-	}()
-
 	if app.HasStaticRoutes {
 		if err := verifyStaticRelease(c.App, c.Env, targetRelease, app.Routes); err != nil {
 			return rollbackPayload{}, err
 		}
 	}
+	if err := addConfiguredPreviewAlias(c.App, c.Env, app); err != nil {
+		return rollbackPayload{}, err
+	}
 
 	if app.NeedsImage {
+		containers, err := podmanPSContainers(c.App, c.Env)
+		if err != nil {
+			return rollbackPayload{}, err
+		}
 		startedResult, err := startReleaseProcesses(startReleaseProcessesParams{
-			App:        c.App,
-			Env:        c.Env,
-			Release:    targetRelease,
-			Activation: c.ActivationID,
-			Context:    app,
-			BeforeProcess: func(procName string, proc config.Process) error {
-				if proc.Port != nil {
-					return nil
-				}
-				for _, old := range processContainers(containers, procName, targetRelease) {
-					stopped, stopErr := stopContainers([]string{old})
-					stoppedOld = append(stoppedOld, stopped...)
-					if stopErr != nil {
-						return stopErr
-					}
-				}
-				return nil
+			App:         c.App,
+			Env:         c.Env,
+			Release:     targetRelease,
+			Activation:  c.ActivationID,
+			Context:     app,
+			OnlyPortful: true,
+			ContainerName: func(procName string, _ config.Process) string {
+				return nextProcessContainerName(containers, c.App, c.Env, procName, targetRelease, "rollback")
 			},
 		})
-		started = append(started, startedResult.Started...)
 		if err != nil {
+			return rollbackPayload{}, err
+		}
+		processNames := startedResult.ProcessName
+		if err := validateAppCaddy(caddyfilePath(c.App, c.Env), c.App, c.Env, app, targetRelease, processNames); err != nil {
 			return rollbackPayload{}, err
 		}
 	}
@@ -239,38 +246,45 @@ func (c appRollbackCmd) rollbackToTarget(current, targetRelease string, app *con
 			return rollbackPayload{}, resolveErr
 		}
 	}
-	caddyPath = rollbackCaddyPath(c.App, c.Env)
-	if err := addConfiguredPreviewAlias(c.App, c.Env, app); err != nil {
-		return rollbackPayload{}, err
+	if !app.NeedsImage {
+		if err := validateAppCaddy(caddyfilePath(c.App, c.Env), c.App, c.Env, app, targetRelease, nil); err != nil {
+			return rollbackPayload{}, err
+		}
 	}
-	prevFragment, prevExisted, err = snapshotCaddyFragment(caddyPath)
-	if err != nil {
-		return rollbackPayload{}, fmt.Errorf("snapshot existing fragment: %v", err)
-	}
-	caddySnapshotReady = true
-	if err := renderAndReloadAppCaddy(caddyPath, c.App, c.Env, app, targetRelease, nil); err != nil {
-		return rollbackPayload{}, caddyStageActionError(err, "after rollback", caddyPath)
-	}
-	trafficSwitched = true
-	if err := writeActive(c.App, c.Env, activation.Pointer{
+	activeErr := writeActive(c.App, c.Env, activation.Pointer{
 		Version: 1, Release: targetRelease, Activation: c.ActivationID,
 		EnvelopeHash: envelope.HashLabel(c.TargetEnvelopeLabel()),
-	}); err != nil {
-		return rollbackPayload{}, err
+	})
+	if activeErr != nil {
+		var published store.PublishedWriteError
+		if !errors.As(activeErr, &published) {
+			return rollbackPayload{}, activeErr
+		}
+		payload = rollbackPayload{App: c.App, Env: c.Env, Previous: current, Release: targetRelease, Processes: processNames(app.Processes), Committed: true}
+		converged, convergeErr := convergeActive(c.App, c.Env)
+		payload.StaleContainers = converged.StaleContainers
+		if convergeErr != nil {
+			return payload, committedDegradedError{Err: fmt.Errorf("active pointer published but durability is degraded: %v; convergence failed: %w", activeErr, convergeErr)}
+		}
+		return payload, committedDegradedError{Err: fmt.Errorf("active pointer published but durability is degraded: %w", activeErr)}
 	}
-	if app.NeedsImage {
-		removeContainers(containerNamesExceptRelease(containers, targetRelease))
-	} else {
-		removeContainers(appContainerNames(containers))
-	}
-
-	return rollbackPayload{
+	payload = rollbackPayload{
 		App:       c.App,
 		Env:       c.Env,
 		Previous:  current,
 		Release:   targetRelease,
 		Processes: processNames(app.Processes),
-	}, nil
+		Committed: true,
+	}
+	converged, err := convergeActive(c.App, c.Env)
+	payload.StaleContainers = converged.StaleContainers
+	if err != nil {
+		return payload, err
+	}
+	if err := refreshPreviewShip(c.App, c.Env, time.Now().UTC()); err != nil {
+		return payload, committedDegradedError{Err: fmt.Errorf("activation converged but preview metadata refresh failed: %w", err)}
+	}
+	return payload, nil
 }
 
 func (c appRollbackCmd) TargetEnvelopeLabel() string {
@@ -279,11 +293,13 @@ func (c appRollbackCmd) TargetEnvelopeLabel() string {
 }
 
 type rollbackPayload struct {
-	App       string   `json:"app"`
-	Env       string   `json:"env"`
-	Previous  string   `json:"previous"`
-	Release   string   `json:"release"`
-	Processes []string `json:"processes"`
+	App             string   `json:"app"`
+	Env             string   `json:"env"`
+	Previous        string   `json:"previous"`
+	Release         string   `json:"release"`
+	Processes       []string `json:"processes"`
+	Committed       bool     `json:"-"`
+	StaleContainers []string `json:"-"`
 }
 
 type imageRelease struct {
@@ -645,22 +661,6 @@ func loadAppContextFromEnvelope(app, env, release string, e envelope.Envelope, m
 		return nil, func() {}, fmt.Errorf("applied manifest names app %s, expected %s", ctx.AppName, app)
 	}
 	return ctx, cleanup, nil
-}
-
-func containerNamesExceptRelease(entries []containerEntry, release string) []string {
-	var names []string
-	for _, e := range entries {
-		if isEphemeralProcess(e.Labels["ship.process"]) {
-			continue
-		}
-		if e.Labels["ship.release"] == release {
-			continue
-		}
-		if len(e.Names) > 0 {
-			names = append(names, e.Names[0])
-		}
-	}
-	return names
 }
 
 func createStaticServePlaceholders(root, env string) error {
