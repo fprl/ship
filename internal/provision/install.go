@@ -324,20 +324,11 @@ func addSSHHardening(ops *[]operation) {
 
 func ensureSSHHardening(apply host.Apply) (bool, error) {
 	changed := false
-	for _, item := range []struct {
-		re   string
-		line string
-	}{
-		{`^#?PermitRootLogin\b`, "PermitRootLogin prohibit-password"},
-		{`^#?PasswordAuthentication\b`, "PasswordAuthentication no"},
-		{`^#?PubkeyAuthentication\b`, "PubkeyAuthentication yes"},
-		{`^#?X11Forwarding\b`, "X11Forwarding no"},
-		{`^#?MaxAuthTries\b`, "MaxAuthTries 3"},
-	} {
+	for _, item := range sshHardeningExpectations() {
 		lineChanged, err := host.EnsureLineInFile(apply, host.LineInFile{
-			Path:   "/etc/ssh/sshd_config",
-			Regexp: item.re,
-			Line:   item.line,
+			Path:   item.Path,
+			Regexp: item.Pattern,
+			Line:   item.Line,
 			Owner:  "root",
 			Group:  "root",
 			Mode:   0644,
@@ -377,16 +368,11 @@ func addSecurity(ops *[]operation) {
 			return host.EnsureFile(apply, file)
 		}})
 	}
-	for _, rule := range []host.UfwRule{
-		{Rule: "default deny incoming"},
-		{Rule: "default allow outgoing"},
-		{Rule: "allow 22/tcp"},
-		{Rule: "allow 80/tcp"},
-		{Rule: "allow 443/tcp"},
-	} {
-		rule := rule
-		*ops = append(*ops, operation{name: "ufw " + rule.Rule, run: func(apply host.Apply) (bool, error) {
-			return host.EnsureUfwRule(apply, rule)
+	for _, ruleText := range firewallRules() {
+		rule := host.UfwRule{Rule: ruleText}
+		ruleForOperation := rule
+		*ops = append(*ops, operation{name: "ufw " + ruleForOperation.Rule, run: func(apply host.Apply) (bool, error) {
+			return host.EnsureUfwRule(apply, ruleForOperation)
 		}})
 	}
 	*ops = append(*ops, operation{name: "enable ufw", run: func(apply host.Apply) (bool, error) {
@@ -442,7 +428,7 @@ func addHelper(ops *[]operation, opts InstallOptions) {
 		return host.EnsureFile(apply, host.File{Path: "/usr/local/bin/ship", Content: data, Owner: "root", Group: "root", Mode: 0755})
 	}})
 	*ops = append(*ops, operation{name: "ship sudoers", run: func(apply host.Apply) (bool, error) {
-		return host.EnsureSudoersFile(apply, "ship", []byte(fmt.Sprintf("%s ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server config *, /usr/local/bin/ship server webhook *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *\n", defaultDeployUser)))
+		return host.EnsureSudoersFile(apply, "ship", []byte(shipSudoersContent()))
 	}})
 }
 
@@ -663,8 +649,8 @@ func ensurePodmanUfwRules(apply host.Apply) (bool, error) {
 	}
 	policyChanged, err := host.EnsureLineInFile(apply, host.LineInFile{
 		Path:   "/etc/default/ufw",
-		Regexp: `^DEFAULT_FORWARD_POLICY=`,
-		Line:   `DEFAULT_FORWARD_POLICY="ACCEPT"`,
+		Regexp: firewallForwardPolicyExpectation().Pattern,
+		Line:   firewallForwardPolicyExpectation().Line,
 		Owner:  "root",
 		Group:  "root",
 		Mode:   0644,

@@ -370,6 +370,12 @@ func ufwStatusContainsRule(status string, rule string) bool {
 	return false
 }
 
+// UfwStatusContainsRuleForDoctor exposes the provisioner's status matching
+// semantics to read-only consumers such as the doctor drift check.
+func UfwStatusContainsRuleForDoctor(status, rule string) bool {
+	return ufwStatusContainsRule(strings.ToLower(status), strings.ToLower(rule))
+}
+
 func ufwStatusHasPortAction(status string, port string, action string) bool {
 	for _, line := range strings.Split(status, "\n") {
 		fields := strings.Fields(line)

@@ -22,6 +22,7 @@ import (
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/journal"
+	"github.com/fprl/ship/internal/provision"
 	"github.com/fprl/ship/internal/secrets"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
@@ -44,6 +45,7 @@ const (
 	doctorCheckDeployJournals = "deploy_journals"
 	doctorCheckHelperVersion  = "helper_version"
 	doctorCheckBoxUpdate      = "box_update"
+	doctorCheckHardeningDrift = "hardening_drift"
 
 	reaperTimerUnit = "ship-preview-reaper.timer"
 	doctorTimerUnit = "ship-doctor.timer"
@@ -217,15 +219,17 @@ func doctorIdentityFindings() []string {
 }
 
 type doctorOptions struct {
-	StateStore  store.Store
-	BoxTarget   string
-	Now         func() time.Time
-	Service     func(string) string
-	Enabled     func(string) string
-	Timer       func(string) systemdUnitState
-	Disk        func(string) (diskUsage, error)
-	TLSStatuses func(time.Time) ([]tlsCertStatus, error)
-	AppEnvs     func() ([]appEnvStatus, error)
+	StateStore     store.Store
+	BoxTarget      string
+	Now            func() time.Time
+	Service        func(string) string
+	Enabled        func(string) string
+	Timer          func(string) systemdUnitState
+	Disk           func(string) (diskUsage, error)
+	TLSStatuses    func(time.Time) ([]tlsCertStatus, error)
+	AppEnvs        func() ([]appEnvStatus, error)
+	ReadFile       func(string) ([]byte, error)
+	FirewallStatus func() (string, error)
 }
 
 func defaultDoctorOptions(boxTarget string) doctorOptions {
@@ -256,6 +260,12 @@ func normalizeDoctorOptions(opts doctorOptions) doctorOptions {
 	}
 	if opts.AppEnvs == nil {
 		opts.AppEnvs = identityAppEnvs
+	}
+	if opts.ReadFile == nil {
+		opts.ReadFile = os.ReadFile
+	}
+	if opts.FirewallStatus == nil {
+		opts.FirewallStatus = doctorFirewallStatus
 	}
 	return opts
 }
@@ -313,6 +323,7 @@ func doctorChecksFor(opts doctorOptions) []store.DoctorCheck {
 		doctorHostStateCheck(opts.StateStore, opts.BoxTarget),
 		doctorServiceHealthCheck(opts.StateStore, opts.Service, opts.Enabled, opts.BoxTarget),
 		doctorSudoersIdentityCheck(opts.BoxTarget),
+		doctorHardeningDriftCheck(opts.ReadFile, opts.FirewallStatus, opts.BoxTarget),
 		doctorHostToolsCheck(opts.BoxTarget),
 		doctorDiskSpaceCheck(opts.Disk, opts.BoxTarget),
 		doctorTLSCertsCheck(opts.TLSStatuses, opts.Now(), opts.BoxTarget),
@@ -457,6 +468,131 @@ func doctorSudoersIdentityCheck(boxTarget string) store.DoctorCheck {
 		return doctorCheck(doctorCheckSudoersID, doctorStatusDegraded, strings.Join(findings, "; "), doctorBoxSetupCommand(boxTarget))
 	}
 	return doctorCheck(doctorCheckSudoersID, doctorStatusOK, "operator and deploy sudoers grants are split", doctorRerunCommand(boxTarget))
+}
+
+func doctorFirewallStatus() (string, error) {
+	output, err := exec.Command("ufw", "status", "verbose").CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("cannot inspect firewall status: %v", err)
+	}
+	return string(output), nil
+}
+
+func doctorHardeningPath(path string) string {
+	if override := os.Getenv("SHIP_HARDENING_ROOT"); override != "" && strings.HasPrefix(path, "/etc/") {
+		return filepath.Join(override, strings.TrimPrefix(path, "/etc/"))
+	}
+	if path == "/etc/sudoers.d/ship" {
+		return filepath.Join(SudoersDir(), "ship")
+	}
+	switch path {
+	case "/etc/ssh/sshd_config":
+		if override := os.Getenv("SHIP_SSHD_CONFIG_PATH"); override != "" {
+			return override
+		}
+	case "/etc/ufw/before.rules":
+		if override := os.Getenv("SHIP_UFW_BEFORE_RULES_PATH"); override != "" {
+			return override
+		}
+	case "/etc/default/ufw":
+		if override := os.Getenv("SHIP_UFW_DEFAULT_PATH"); override != "" {
+			return override
+		}
+	}
+	return path
+}
+
+func doctorHardeningDriftCheck(readFile func(string) ([]byte, error), firewallStatus func() (string, error), boxTarget string) store.DoctorCheck {
+	if readFile == nil {
+		readFile = os.ReadFile
+	}
+	if firewallStatus == nil {
+		firewallStatus = doctorFirewallStatus
+	}
+	differences := map[string]int{}
+	contents := map[string][]byte{}
+	read := func(path string) ([]byte, bool) {
+		path = doctorHardeningPath(path)
+		if content, ok := contents[path]; ok {
+			return content, true
+		}
+		content, err := readFile(path)
+		if err != nil {
+			return nil, false
+		}
+		contents[path] = content
+		return content, true
+	}
+
+	for _, expectation := range provision.SSHHardeningExpectations() {
+		content, ok := read(expectation.Path)
+		if !ok || !provision.MatchManagedLine(string(content), expectation) {
+			differences[expectation.Path]++
+		}
+	}
+	for _, expectation := range provision.FirewallFileExpectations() {
+		content, ok := read(expectation.Path)
+		if !ok || !provision.MatchManagedLine(string(content), expectation) {
+			differences[expectation.Path]++
+		}
+	}
+	beforeRules := provision.FirewallBeforeRulesExpectation()
+	content, ok := read(beforeRules.Path)
+	if !ok || !managedBlockPresent(string(content), beforeRules.Content) {
+		differences[beforeRules.Path]++
+	}
+	sudoers := provision.ShipSudoersExpectation()
+	content, ok = read(sudoers.Path)
+	if !ok || string(content) != sudoers.Content {
+		differences[sudoers.Path]++
+	}
+
+	status, err := firewallStatus()
+	if err != nil {
+		differences["ufw status"] = len(provision.FirewallRules())
+	} else {
+		for _, rule := range provision.FirewallRules() {
+			if !provision.FirewallRulePresent(status, rule) {
+				differences["ufw status"]++
+			}
+		}
+	}
+	if len(differences) == 0 {
+		return doctorCheck(doctorCheckHardeningDrift, doctorStatusOK, "managed SSH, firewall, and sudoers state matches provisioning", doctorRerunCommand(boxTarget))
+	}
+
+	paths := make([]string, 0, len(differences))
+	for path := range differences {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	parts := make([]string, 0, len(paths))
+	for _, path := range paths {
+		parts = append(parts, fmt.Sprintf("%s: %d difference%s", path, differences[path], pluralSuffix(differences[path])))
+	}
+	return doctorCheck(doctorCheckHardeningDrift, doctorStatusDegraded, strings.Join(parts, "; "), doctorBoxSetupCommand(boxTarget))
+}
+
+func managedBlockPresent(content, expected string) bool {
+	begin := strings.SplitN(expected, "\n", 2)[0]
+	end := "# END " + strings.TrimPrefix(begin, "# BEGIN ")
+	start := strings.Index(content, begin)
+	if start < 0 {
+		return false
+	}
+	endOffset := strings.Index(content[start:], end)
+	if endOffset < 0 {
+		return false
+	}
+	actual := content[start : start+endOffset+len(end)]
+	return strings.TrimSpace(actual) == strings.TrimSpace(expected)
+}
+
+func pluralSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func doctorHostToolsCheck(boxTarget string) store.DoctorCheck {

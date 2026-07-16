@@ -65,13 +65,28 @@ func (c appDataSaveCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
-	authorizeOrDie(helperVerbData, authTargetForAppEnv(c.App, c.Env, "save", "data=save"))
+	target := authTargetForDataSave(c.App, c.Env)
+	authorizeOrDie(helperVerbDataSave, target)
+	if c.Env == productionEnvName {
+		// Saving production data is a guarded owner action. The data verb
+		// keeps preview saves unchanged; this second authorization reuses the
+		// normal one-shot approval path and leaves owners direct.
+		authorizeOrDie(helperVerbBoxMutation, target)
+	}
 	withAppEnvLock(c.App, c.Env, func() {
 		if err := saveAppData(c.App, c.Env, os.Stdout, time.Now().UTC()); err != nil {
 			utils.DieError(err, 1)
 		}
 	})
 	return nil
+}
+
+func authTargetForDataSave(app, env string) authTarget {
+	target := authTargetForAppEnv(app, env, "save", "data=save")
+	if env == productionEnvName {
+		target.Summary = "save production data for " + app
+	}
+	return target
 }
 
 func (c appDataRestoreCmd) Run() error {
