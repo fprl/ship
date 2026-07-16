@@ -239,10 +239,11 @@ ship rollback [release]        previous release of the current branch's env;
                           entries whose artifacts still verify
 ship converge [--json]    make this branch's env match its committed
                           release (§20) — heals "committed, not
-                          converged" after an interrupted deploy; needs
-                          no local source; no-op on a converged env;
-                          every committed_unconverged remediation
-                          prints this verb
+                          converged" after an interrupted deploy;
+                          uploads no source (resolves app+env from
+                          ship.toml + branch, like status); no-op on a
+                          converged env; every committed_unconverged
+                          remediation prints this verb
 ship rm <branch> [--confirm <name>]   destroy an environment
 ship preview share [--rotate]   print (or rotate) this preview's
                           capability URL (§15)
