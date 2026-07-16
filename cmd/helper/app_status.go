@@ -16,8 +16,10 @@ import (
 
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/envelope"
+	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/names"
+	"github.com/fprl/ship/internal/secrets"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -723,6 +725,13 @@ func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, 
 		return false
 	}
 	defer cleanup()
+	if env != productionEnvName {
+		token, err := secrets.GetPreviewCapability(app, env)
+		if err != nil {
+			return false
+		}
+		ctx.PreviewCapabilityToken = string(token)
+	}
 	desiredNames := map[string]string{}
 	if ctx.NeedsImage {
 		for name := range ctx.Processes {
@@ -763,10 +772,26 @@ func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, 
 		return false
 	}
 	expected, err := renderAppCaddyfileWithProcessNames(app, env, ctx, pointer.Release, desiredNames)
-	if err != nil || string(fragment) != expected || !caddyReloadReceiptMatches(caddyfilePath(app, env), []byte(expected)) {
+	if err != nil {
 		return false
 	}
-	return true
+	// Converge renders the fragment either with or without preview alias
+	// routes (the alias is skipped when another env owns the host), so both
+	// shapes are legitimate converged states.
+	candidates := []string{expected}
+	if alias, ok := previewAliasForContext(app, env, ctx); ok {
+		if err := addPreviewAliasRoutes(app, env, alias, ctx); err == nil {
+			if aliased, err := renderAppCaddyfileWithProcessNames(app, env, ctx, pointer.Release, desiredNames); err == nil {
+				candidates = append(candidates, aliased)
+			}
+		}
+	}
+	for _, expected := range candidates {
+		if string(fragment) == expected && caddyReloadReceiptMatches(caddyfilePath(app, env), []byte(expected)) {
+			return true
+		}
+	}
+	return false
 }
 
 func renderStatusReleaseText(release *statusRelease) string {
@@ -865,7 +890,7 @@ func copyStaticReleaseMetadata(static *staticStatus, target *statusRelease) {
 func activeStaticStatus(app, env string) (*staticStatus, error) {
 	pointer, err := readActive(app, env)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errcat.Is(err, errcat.CodeNoDeploys) {
 			return nil, nil
 		}
 		return nil, err

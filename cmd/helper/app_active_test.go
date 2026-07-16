@@ -8,8 +8,18 @@ import (
 
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/envelope"
+	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 )
+
+func TestReadActiveMissingReturnsNoDeploys(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+
+	if _, err := readActive("api", "production"); err == nil || !errcat.Is(err, errcat.CodeNoDeploys) || !strings.Contains(err.Error(), "nothing deployed yet") {
+		t.Fatalf("missing active pointer error = %v, want coded no-deploys error", err)
+	}
+}
 
 func TestActivePointerSurvivesCrashBeforeJournalAppend(t *testing.T) {
 	root := t.TempDir()

@@ -330,7 +330,7 @@ func previewAliasOwner(host, currentApp, currentEnv string, incoming map[string]
 			continue
 		}
 		ctx, cleanup, err := loadActiveEnvelopeContext(item.App, item.Env)
-		if os.IsNotExist(err) {
+		if errcat.Is(err, errcat.CodeNoDeploys) {
 			continue
 		}
 		if err != nil {
@@ -374,12 +374,13 @@ func addPreviewAliasRoutes(app, env, alias string, ctx *config.AppContext) error
 	}
 	canonicalPrefix := names.SynthesizedHostLabel(app, env) + "."
 	aliases := make(map[string]config.Route)
-	for _, route := range ctx.Routes {
+	for key, route := range ctx.Routes {
 		if !strings.HasPrefix(route.Host, canonicalPrefix) {
 			continue
 		}
 		copy := route
 		copy.Host = alias
+		copy.StorageKey = key
 		aliases[alias+copy.Path] = copy
 	}
 	if len(aliases) == 0 {

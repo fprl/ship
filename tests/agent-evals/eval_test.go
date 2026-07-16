@@ -238,7 +238,9 @@ func (e *evalCase) waitForSSH(t *testing.T) {
 func (e *evalCase) ensureSmokeHostSeed(t *testing.T) {
 	t.Helper()
 	e.dockerExec(t, "mkdir -p /etc/ship /var/lib/ship /run/ship /etc/caddy/conf.d /var/lib/caddy /etc/systemd/system")
-	e.dockerExec(t, "printf '%s\\n' '{\"version\":1,\"members\":{}}' > /etc/ship/members.json")
+	// The owner registry is written by configureSSH with the real eval
+	// fingerprint; re-seeding it here would erase that record and leave the
+	// eval identity unrecognized. Only the non-identity box config is seeded.
 	e.dockerExec(t, "printf '%s\\n' '{\"version\":1,\"values\":{\"box.address\":\"fake-vps\"}}' > /etc/ship/box-config.json")
 	e.dockerExec(t, "mkdir -p /tmp/ship-deploy && chmod 1777 /tmp/ship-deploy")
 	e.dockerExec(t, `cat > /etc/caddy/Caddyfile <<'EOF'

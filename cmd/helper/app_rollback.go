@@ -178,7 +178,10 @@ func (c *appRollbackCmd) rollbackRelease(currentApp *config.AppContext, startedA
 			return rollbackPayload{}, err
 		}
 	}
-	releases, err := availableRollbackReleasesWithImages(c.App, c.Env, c.Release, images)
+	// The image lookup above is scoped to the active pointer for envelope
+	// verification; candidate discovery needs the full local image set and
+	// scans on its own.
+	releases, err := availableRollbackReleasesWithImages(c.App, c.Env, c.Release, nil)
 	if err != nil {
 		return rollbackPayload{}, err
 	}
@@ -706,7 +709,7 @@ func verifyReleaseCandidate(app, env string, candidate imageRelease, imageByRele
 func loadActiveEnvelopeContext(app, env string) (*config.AppContext, func(), error) {
 	pointer, err := readActive(app, env)
 	if err != nil {
-		return nil, func() {}, fmt.Errorf("active pointer not found; deploy once before rollback")
+		return nil, func() {}, err
 	}
 	e, err := envelopeForPointer(app, env, pointer)
 	if err != nil {

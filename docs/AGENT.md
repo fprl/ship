@@ -594,7 +594,7 @@ aliases = true
 - `deploy_tmp_missing`: host preflight failed; cause: deploy tmp dir is missing: {path}; remediation: `ship box setup <ssh-target>`.
 - `detached_head_requires_branch`: branch resolution failed; cause: HEAD is detached; pass --branch <name> so ship can resolve the environment; remediation: `{command}`.
 - `dirty_worktree`: Production ship failed; cause: production branch {branch} has uncommitted changes; remediation: `git add . && git commit -m "<message>"`.
-- `dockerfile_missing`: Dockerfile is missing; cause: the declared processes need a Dockerfile to build; write one or declare a [routes] static route in ship.toml; remediation: `ship`.
+- `dockerfile_missing`: Dockerfile is missing; cause: the declared processes need a Dockerfile to build; remediation: `write a Dockerfile, or declare a [routes] static route in ship.toml`.
 - `dotenv_malformed`: dotenv import failed; cause: {detail}; remediation: `{command}`; defaults: `command="ship secret set --from path/to/.env"`.
 - `dotenv_rejected`: deploy artifact contains dotenv files; cause: refusing to deploy dotenv file: {files}; import it with ship secret set --from {file}, then remove it; allowed names: .env.example, .env.sample, .env.defaults; remediation: `ship secret set --from {file}`; defaults: `file=".env"`.
 - `env_invalid`: app environment preflight failed; cause: {detail}; remediation: `ship box doctor`.
@@ -609,14 +609,14 @@ aliases = true
 - `host_install_unsupported_os`: host OS is unsupported; cause: host install requires Ubuntu/Debian apt tooling; missing {tool}; remediation: `ship box setup <ubuntu-24.04-ssh-target>`.
 - `host_invalid`: host preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `host_key_changed`: box host key changed; cause: SSH host key for {box} is unknown or changed; if the box was rebuilt, re-establish the pin (ship box forget {box} clears it); if not, investigate before trusting this host; remediation: `ship box setup <ssh-target>`.
-- `host_label_conflict`: production hostname collision; cause: app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env}); rename app {app} to avoid the collision, then retry ship; remediation: `ship`.
+- `host_label_conflict`: production hostname collision; cause: app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env}); remediation: `rename app {app} and deploy again`.
 - `host_not_installed`: host preflight failed; cause: host is not installed; remediation: `ship box setup <ssh-target>`.
 - `ingress_invalid`: ingress preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `invalid_box_target`: box target is invalid; cause: box target must be a host like 203.0.113.7; remove any user@ prefix; remediation: `{command}`; defaults: `command="ship box app ls 203.0.113.7"`.
 - `invalid_secret_key`: secret key is invalid; cause: secret key {key} must match ^[A-Za-z_][A-Za-z0-9_]*$; remediation: `ship secret set KEY`.
 - `keys_url_unavailable`: remote SSH key lookup failed; cause: no public SSH keys found at {source}; remediation: `ship box member add {source} {box} --name {name}`; defaults: `box="<box>", name="<name>", source="<https-url>"`.
 - `logs_follow_json_conflict`: logs command is invalid; cause: logs --json cannot be combined with --follow; remediation: `ship logs`.
-- `manifest_invalid`: ship.toml validation failed; cause: {details}; remediation: `{command}`; defaults: `command="ship"`.
+- `manifest_invalid`: ship.toml validation failed; cause: {details}; remediation: `{command}`; defaults: `command="fix ship.toml, then ship"`.
 - `member_key_ambiguous`: member key selector is ambiguous; cause: key selector {selector} matches multiple keys: {matches}; remediation: `ship box member rm {name} --key <full-fingerprint> {box}`; defaults: `box="<box>", name="<name>"`.
 - `member_key_not_found`: member key selector failed; cause: no such key for member {name}; remediation: `ship box member ls {box}`; defaults: `box="<box>", name="<name>"`.
 - `member_last_owner`: member mutation refused; cause: the mutation would leave no effective owner key; at least one effective owner key (an owner record with a matching authorized_keys line) must remain; remediation: `ship box member add <https-url|key|path> {box} --name <new-owner> --role owner`; defaults: `box="<box>"`.

@@ -118,13 +118,13 @@ var catalogue = map[Code]Entry{
 		MessageTemplate:     "ship.toml validation failed",
 		CauseTemplate:       "{details}",
 		RemediationTemplate: "{command}",
-		Defaults:            Fields{"command": "ship"},
+		Defaults:            Fields{"command": "fix ship.toml, then ship"},
 	},
 	CodeDockerfileMissing: {
 		Code:                CodeDockerfileMissing,
 		MessageTemplate:     "Dockerfile is missing",
-		CauseTemplate:       "the declared processes need a Dockerfile to build; write one or declare a [routes] static route in ship.toml",
-		RemediationTemplate: "ship",
+		CauseTemplate:       "the declared processes need a Dockerfile to build",
+		RemediationTemplate: "write a Dockerfile, or declare a [routes] static route in ship.toml",
 	},
 	CodeOperationFailed: {
 		Code:                CodeOperationFailed,
@@ -619,8 +619,8 @@ var catalogue = map[Code]Entry{
 	CodeHostLabelConflict: {
 		Code:                CodeHostLabelConflict,
 		MessageTemplate:     "production hostname collision",
-		CauseTemplate:       "app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env}); rename app {app} to avoid the collision, then retry ship",
-		RemediationTemplate: "ship",
+		CauseTemplate:       "app {app} (production) generates host label {label}, already used by {existing_app} ({existing_env})",
+		RemediationTemplate: "rename app {app} and deploy again",
 	},
 }
 

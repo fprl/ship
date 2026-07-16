@@ -13,6 +13,7 @@ import (
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/names"
 	"github.com/fprl/ship/internal/store"
 )
 
@@ -283,6 +284,46 @@ func TestConvergeCaddySecondRunDoesNotReload(t *testing.T) {
 	}
 	if _, err := os.Stat(identity.DeployJournalFile("api", "production")); !os.IsNotExist(err) {
 		t.Fatalf("no-op converge appended a journal entry: %v", err)
+	}
+}
+
+func TestConvergedAliasPreviewReportsConverged(t *testing.T) {
+	setupPreviewHostTest(t)
+	root := t.TempDir()
+	caddyDir := filepath.Join(root, "caddy")
+	t.Setenv("SHIP_CADDY_DIR", caddyDir)
+	if err := os.MkdirAll(caddyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	env := "feat-x-ab12"
+	host := names.SynthesizedHostLabel("api", env) + ".preview.example.com"
+	manifest := "name = \"api\"\nbox = \"example.com\"\n\n[preview]\naliases = true\n\n[routes]\n\"" + host + "\" = { static = \"dist\" }\n"
+	writeActiveEnvelopeForPreviewAliasTest(t, "api", env, manifest)
+	routeDir := filepath.Join(identity.StaticDir("api", env), "releases", "abc1234", config.RouteStorageName(host))
+	if err := os.MkdirAll(routeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeActivationEnvFile("api", env, "abc1234-activation", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := convergeActive("api", env); err != nil {
+		t.Fatal(err)
+	}
+	fragment, err := os.ReadFile(caddyfilePath("api", env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := names.PreviewBranchSlug(env) + ".preview.example.com"
+	if !strings.Contains(string(fragment), alias) {
+		t.Fatalf("converged preview fragment should carry alias %s:\n%s", alias, fragment)
+	}
+	pointer, err := readActive("api", env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	static, err := activeStaticStatus("api", env)
+	if err != nil || !activePointerRuntimeConverged("api", env, pointer, nil, static) {
+		t.Fatalf("converged alias preview should report converged: static=%+v err=%v", static, err)
 	}
 }
 

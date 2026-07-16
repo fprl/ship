@@ -1168,8 +1168,7 @@ func TestDeployDiagnosticsDockerfileMissingNamesBothPaths(t *testing.T) {
 	for _, want := range []string{
 		"Dockerfile is missing",
 		"the declared processes need a Dockerfile to build",
-		"the declared processes need a Dockerfile to build; write one or declare a [routes] static route in ship.toml",
-		"next: ship",
+		"next: write a Dockerfile, or declare a [routes] static route in ship.toml",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error missing %q:\n%s", want, err)

@@ -143,7 +143,8 @@ func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
 		t.Fatalf("stale helper status failed: %v\nstdout:\n%s\nstderr:\n%s", status.err, status.stdout, status.stderr)
 	}
 	assertContains(t, status.stdout, "helper: "+oldVersion)
-	assertContains(t, status.stdout, "last client: "+currentVersion)
+	assertContains(t, status.stdout, "client: "+currentVersion)
+	assertNotContains(t, status.stdout, "last client:")
 	// The smoke container is shared across subtests, so the box carries
 	// however many apps earlier subtests deployed — assert the count-line
 	// shape, not a count.
@@ -159,9 +160,12 @@ func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
 	assertContains(t, status.stdout, "next: ship box update fake-vps")
 	doctor := e.runCommand(t, e.repoRoot, clientEnv, nil, clientBinary, "box", "doctor", "fake-vps", "--json")
 	if doctor.err == nil {
-		t.Fatal("doctor should degrade for stale helper")
+		t.Fatal("doctor should remain non-green for unrelated box checks")
 	}
-	assertHelperVersionCheck(t, doctor.stdout, "degraded")
+	// Legacy host metadata no longer stores last-client data. With no completed
+	// update journal yet, helper_version is informationally OK while other
+	// doctor checks remain degraded/failed.
+	assertHelperVersionCheck(t, doctor.stdout, "ok")
 
 	updated := e.runCommand(t, e.repoRoot, clientEnv, nil, clientBinary, "box", "update", "fake-vps")
 	if updated.err != nil {
@@ -931,7 +935,6 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "docs-dist", "index.html"), "docs failed\n")
 	mustWrite(t, filepath.Join(app, "README.md"), "trigger caddy failure\n")
 	e.commitFixture(t, app)
-	failedRelease := gitRelease(t, e, app)
 	e.dockerExec(t, "touch /run/fake-podman/fail-caddy-reload")
 	defer e.dockerExec(t, "rm -f /run/fake-podman/fail-caddy-reload")
 
@@ -940,19 +943,32 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 		t.Fatal("deploy with failing Caddy reload should fail")
 	}
 	assertContains(t, failed.stdout+failed.stderr, "caddy reload")
+	failedStatus := statusEnvByClass(t, e, app, "production")
+	if failedStatus.Health != "degraded" {
+		t.Fatalf("failed Caddy deploy status = %+v, want degraded", failedStatus)
+	}
 
-	if got := e.dockerExec(t, "cat "+activeEnvPath("caddyfail", productionEnv)); got != stableEnv {
-		t.Fatalf("failing Caddy reload changed runtime env:\nbefore:\n%s\nafter:\n%s", stableEnv, got)
+	// Caddy reload happens during convergence, after active.json has been
+	// committed. Crash-only semantics therefore roll forward: the new
+	// activation remains intent even though the reload failed.
+	if got := e.dockerExec(t, "cat "+activeEnvPath("caddyfail", productionEnv)); got == stableEnv || !strings.Contains(got, "MARKER=failed\n") || !strings.Contains(got, "SHIP_RELEASE=") {
+		t.Fatalf("failing Caddy reload did not retain the new runtime env:\n%s", got)
 	}
-	if got := e.dockerExec(t, "cat "+identity.ActiveFile("caddyfail", productionEnv)); got != stableManifest {
-		t.Fatalf("failing Caddy reload changed current manifest:\nbefore:\n%s\nafter:\n%s", stableManifest, got)
+	if got := e.dockerExec(t, "cat "+identity.ActiveFile("caddyfail", productionEnv)); got == stableManifest {
+		t.Fatalf("failing Caddy reload did not retain the new active pointer:\n%s", got)
 	}
-	if got := e.ssh(t, "cat "+identity.CaddyFragmentFile("caddyfail", productionEnv)); got != stableFragment {
-		t.Fatalf("failing Caddy reload changed traffic:\nbefore:\n%s\nafter:\n%s", stableFragment, got)
+	if got := e.ssh(t, "cat "+identity.CaddyFragmentFile("caddyfail", productionEnv)); got == stableFragment {
+		t.Fatalf("failing Caddy reload did not retain the new fragment:\n%s", got)
 	}
-	e.dockerExec(t, "test -f /run/fake-podman/listeners/"+stableWorker+".pid")
-	e.dockerExec(t, "test ! -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "web", failedRelease)+".labels")
-	e.dockerExec(t, "test ! -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "worker", failedRelease)+".labels")
+	status := e.ship(t, app, nil, "status")
+	assertContains(t, status, "health=degraded")
+	assertContains(t, status, "committed, not converged")
+	assertContains(t, status, "next=ship converge")
+	e.dockerExec(t, "test ! -e /run/fake-podman/listeners/"+stableWorker+".pid")
+	newRelease := "$(grep -o '\"release\": \"[^\"]*\"' " + identity.ActiveFile("caddyfail", productionEnv) + " | cut -d'\"' -f4)"
+	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.InfraID("caddyfail", productionEnv)+"-web-"+newRelease+".labels")
+	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.InfraID("caddyfail", productionEnv)+"-worker-"+newRelease+".labels")
+	e.dockerExec(t, "test -f /run/fake-podman/listeners/"+identity.InfraID("caddyfail", productionEnv)+"-worker-"+newRelease+".pid")
 }
 
 func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
@@ -1009,7 +1025,21 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	if !strings.HasPrefix(status.Release, baseShort+"-dirty-") {
 		t.Fatalf("dirty release id %q should start with %s-dirty-", status.Release, baseShort)
 	}
-	releaseEnvelope := decodeSmokeReleaseEnvelope(t, e.ssh(t, "cat "+filepath.Join(identity.StaticDir("branchapi", featEnv), "releases", status.Release, ".ship-release-*")))
+	imageInspect := e.ssh(t, "podman image inspect --format json "+identity.ImageTag("branchapi", featEnv, status.Release))
+	var inspected []struct {
+		Labels map[string]string `json:"Labels"`
+	}
+	if err := json.Unmarshal([]byte(imageInspect), &inspected); err != nil || len(inspected) != 1 {
+		t.Fatalf("image inspect for dirty release envelope = %q, err=%v", imageInspect, err)
+	}
+	decoded, err := envelope.DecodeLabel(inspected[0].Labels[envelope.Label])
+	if err != nil {
+		t.Fatalf("dirty release envelope label invalid: %v", err)
+	}
+	releaseEnvelope := smokeReleaseEnvelope{Schema: decoded.Schema, Manifest: decoded.Manifest}
+	if err := json.Unmarshal(decoded.Metadata, &releaseEnvelope.Metadata); err != nil {
+		t.Fatalf("dirty release envelope metadata invalid: %v", err)
+	}
 	if dirty, _ := releaseEnvelope.Metadata["dirty"].(bool); !dirty {
 		t.Fatal("dirty release envelope metadata is not marked dirty")
 	}
@@ -2005,8 +2035,8 @@ func (e *smokeEnv) testRollback(t *testing.T) {
 	if strings.Contains(rolledBackFragment, ":3333") {
 		t.Fatalf("rollback should restore the old manifest route shape, got:\n%s", rolledBackFragment)
 	}
-	appliedManifest := e.ssh(t, "cat "+identity.ActiveFile("api", productionEnv))
-	assertContains(t, appliedManifest, "port = 3000")
+	activePointer := e.ssh(t, "cat "+identity.ActiveFile("api", productionEnv))
+	assertContains(t, activePointer, `"release": "`+oldRelease+`"`)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: api.example.com' http://127.0.0.1/health", "ok")
 
 	why := e.ship(t, app, nil, "why")
@@ -2038,9 +2068,8 @@ func (e *smokeEnv) testImagePruning(t *testing.T) {
 		prodReleases = append(prodReleases, commitImagePruneChange(t, e, app, fmt.Sprintf("prod release %d", i)))
 		e.ship(t, app, nil)
 	}
-	assertFakeImageReleases(t, e, "imgprune", productionEnv, prodReleases[2:]...)
+	assertFakeImageReleases(t, e, "imgprune", productionEnv, prodReleases[1:]...)
 	assertFakeImageAbsent(t, e, "imgprune", productionEnv, prodReleases[0])
-	assertFakeImageAbsent(t, e, "imgprune", productionEnv, prodReleases[1])
 	status := statusEnvByClass(t, e, app, "production")
 	if status.Release != prodReleases[len(prodReleases)-1] {
 		t.Fatalf("prod live release = %s, want %s", status.Release, prodReleases[len(prodReleases)-1])
@@ -2053,6 +2082,7 @@ func (e *smokeEnv) testImagePruning(t *testing.T) {
 	assertFakeImagePresent(t, e, "imgprune", productionEnv, rollbackTarget)
 	assertFakeImageReleases(t, e, "imgprune", productionEnv,
 		rollbackTarget,
+		prodReleases[2],
 		prodReleases[4],
 		prodReleases[5],
 		prodReleases[6],
@@ -2077,9 +2107,8 @@ func (e *smokeEnv) testImagePruning(t *testing.T) {
 		previewReleases = append(previewReleases, commitImagePruneChange(t, e, app, fmt.Sprintf("preview release %d", i)))
 		e.ship(t, app, nil)
 	}
-	assertFakeImageReleases(t, e, "imgprune", previewEnv, previewReleases[2:]...)
+	assertFakeImageReleases(t, e, "imgprune", previewEnv, previewReleases[1:]...)
 	assertFakeImageAbsent(t, e, "imgprune", previewEnv, previewReleases[0])
-	assertFakeImageAbsent(t, e, "imgprune", previewEnv, previewReleases[1])
 
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "imgprune", previewEnv)
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")

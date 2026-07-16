@@ -6,12 +6,19 @@ import (
 	"os"
 
 	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
 
-func readActive(app, env string) (activation.Pointer, error) { return activation.Read(app, env) }
+func readActive(app, env string) (activation.Pointer, error) {
+	pointer, err := activation.Read(app, env)
+	if err != nil && os.IsNotExist(err) {
+		return activation.Pointer{}, errcat.WithCause(noDeployJournalError(app, env), "nothing deployed yet")
+	}
+	return pointer, err
+}
 
 func writeActive(app, env string, pointer activation.Pointer) error {
 	return activation.WritePrepared(app, env, pointer, func(tempPath string) error {

@@ -166,7 +166,11 @@ func renderRouteDirectives(app, env string, ctx *config.AppContext, routeName st
 		}
 		return fmt.Sprintf("reverse_proxy http://%s:%d\n", upstream, *proc.Port), nil
 	case route.Serve != "":
-		root := filepath.Join(identity.StaticDir(app, env), "releases", release, config.RouteStorageName(routeName))
+		storageKey := routeName
+		if route.StorageKey != "" {
+			storageKey = route.StorageKey
+		}
+		root := filepath.Join(identity.StaticDir(app, env), "releases", release, config.RouteStorageName(storageKey))
 		quotedRoot, err := caddy.CaddyQuote(root)
 		if err != nil {
 			return "", fmt.Errorf("route %q: %v", routeName, err)

@@ -27,6 +27,10 @@ and built as five gated stages in one night.
   crashed preview creation no longer leaks an env its branch can't find,
   approval audit failures are loud instead of silent, and a stale
   applied manifest can no longer squat a preview alias host.
+- Preview aliases work for static sites: the alias route now serves the
+  canonical route's published files (it previously pointed at a
+  directory that was never created), and a converged aliased preview
+  reports healthy instead of permanently "committed, not converged".
 
 ### Added
 

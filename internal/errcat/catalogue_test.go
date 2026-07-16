@@ -105,18 +105,22 @@ func TestBoxGrammarRemediations(t *testing.T) {
 	}
 }
 
-func TestOutputContractRemediationsAreCommands(t *testing.T) {
+// A remediation is a runnable command whenever a command can make progress.
+// When the fix is an edit, the next: line carries the edit guidance instead —
+// a re-run command there would loop, which the agent-eval oracle treats as a
+// dead end.
+func TestOutputContractRemediationTexts(t *testing.T) {
 	tests := []struct {
 		name   string
 		code   Code
 		fields Fields
 		want   string
 	}{
-		{name: "manifest", code: CodeManifestInvalid, fields: Fields{"details": "invalid"}, want: "ship"},
-		{name: "dockerfile", code: CodeDockerfileMissing, want: "ship"},
+		{name: "manifest", code: CodeManifestInvalid, fields: Fields{"details": "invalid"}, want: "fix ship.toml, then ship"},
+		{name: "dockerfile", code: CodeDockerfileMissing, want: "write a Dockerfile, or declare a [routes] static route in ship.toml"},
 		{name: "approval expired", code: CodeApprovalExpired, fields: Fields{"id": "abc123xy", "summary": "ship app=api", "box": "203.0.113.7"}, want: "ship box approval ls 203.0.113.7"},
 		{name: "dotenv", code: CodeDotenvRejected, fields: Fields{"files": ".env.production", "file": ".env.production"}, want: "ship secret set --from .env.production"},
-		{name: "host label", code: CodeHostLabelConflict, fields: Fields{"app": "api", "label": "api", "existing_app": "other", "existing_env": "production"}, want: "ship"},
+		{name: "host label", code: CodeHostLabelConflict, fields: Fields{"app": "api", "label": "api", "existing_app": "other", "existing_env": "production"}, want: "rename app api and deploy again"},
 	}
 
 	for _, tt := range tests {

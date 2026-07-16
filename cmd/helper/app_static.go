@@ -33,7 +33,11 @@ func verifyStaticRelease(app, env, release string, routes map[string]config.Rout
 		if route.Serve == "" {
 			continue
 		}
-		path := filepath.Join(identity.StaticDir(app, env), "releases", release, config.RouteStorageName(routeName))
+		storageKey := routeName
+		if route.StorageKey != "" {
+			storageKey = route.StorageKey
+		}
+		path := filepath.Join(identity.StaticDir(app, env), "releases", release, config.RouteStorageName(storageKey))
 		info, err := os.Stat(path)
 		if err != nil {
 			return fmt.Errorf("static release %s missing route %s: %v", release, routeName, err)

@@ -66,6 +66,10 @@ type Route struct {
 	//
 	// It is not part of the public MANIFEST schema.
 	TLS string `toml:"-"`
+	// StorageKey is helper-side state: a preview alias route serves the
+	// canonical route's published static directory, so it carries that
+	// route's key here. Empty means the route's own key names its storage.
+	StorageKey string `toml:"-"`
 }
 
 // Preview configures addressing for preview environments only. Production

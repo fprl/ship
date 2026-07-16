@@ -89,7 +89,7 @@ func (c appConvergeCmd) runLocked() (appConvergeSummary, error) {
 	if pointer, err := readActive(c.App, c.Env); err == nil {
 		summary.Release = pointer.Release
 	} else {
-		if os.IsNotExist(err) {
+		if errcat.Is(err, errcat.CodeNoDeploys) {
 			err = fmt.Errorf("nothing deployed yet: %w", noDeployJournalError(c.App, c.Env))
 			summary.Error = err.Error()
 			summary.Outcome = "no_deploys"
