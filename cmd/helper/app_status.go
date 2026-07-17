@@ -64,7 +64,7 @@ func (c appStatusCmd) runLocked() {
 	release := activeStatusRelease(runningProcesses(processes), static)
 	if pointerErr == nil {
 		if pointer.IsLegacy() {
-			release = &statusRelease{Release: pointer.Release, State: "degraded", Detail: "legacy_activation", Next: "ship"}
+			release = &statusRelease{Release: pointer.Legacy.Release, State: "degraded", Detail: "legacy_activation", Next: "ship"}
 		} else if resolved, resolveErr := resolveArtifact(c.App, c.Env, pointer.Artifact); resolveErr != nil {
 			release = &statusRelease{Release: pointer.Artifact.DisplayIdentity(), Artifact: pointer.Artifact, State: "degraded", Detail: "artifact_unavailable", Next: "ship"}
 		} else {
@@ -802,7 +802,7 @@ func activePointerRuntimeConvergedResolved(app, env string, pointer activation.P
 		for name := range ctx.Processes {
 			count := 0
 			for _, process := range processes {
-				if process.Process == name && process.State == "running" && process.Release == pointer.Release && process.Activation == pointer.Activation && (pointer.Artifact.ImageID == "" || normalizeImageID(process.Image) == normalizeImageID(pointer.Artifact.ImageID)) {
+				if process.Process == name && process.State == "running" && process.Release == pointer.Artifact.Release && process.Activation == pointer.Activation && (pointer.Artifact.ImageID == "" || normalizeImageID(process.Image) == normalizeImageID(pointer.Artifact.ImageID)) {
 					count++
 					if process.Container != "" {
 						desiredNames[name] = process.Container
@@ -816,7 +816,7 @@ func activePointerRuntimeConvergedResolved(app, env string, pointer activation.P
 	}
 	for _, process := range processes {
 		if process.State == "running" {
-			if !ctx.NeedsImage || process.Release != pointer.Release || process.Activation != pointer.Activation || (pointer.Artifact.ImageID != "" && normalizeImageID(process.Image) != normalizeImageID(pointer.Artifact.ImageID)) {
+			if !ctx.NeedsImage || process.Release != pointer.Artifact.Release || process.Activation != pointer.Activation || (pointer.Artifact.ImageID != "" && normalizeImageID(process.Image) != normalizeImageID(pointer.Artifact.ImageID)) {
 				return false
 			}
 			if _, ok := ctx.Processes[process.Process]; !ok {
@@ -831,7 +831,7 @@ func activePointerRuntimeConvergedResolved(app, env string, pointer activation.P
 	if err != nil {
 		return false
 	}
-	expected, err := renderAppCaddyfileWithProcessNames(app, env, ctx, pointer.Release, desiredNames)
+	expected, err := renderAppCaddyfileWithProcessNames(app, env, ctx, pointer.Artifact.Release, desiredNames)
 	if err != nil || string(fragment) != expected {
 		return false
 	}

@@ -59,7 +59,7 @@ var (
 	appendSanitizedDeployJournal = appendSanitizedDeployJournalEntry
 )
 
-func (c appApplyCmd) Run() error {
+func (c *appApplyCmd) Run() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
@@ -76,7 +76,7 @@ func (c appApplyCmd) Run() error {
 	return nil
 }
 
-func (c appApplyCmd) runLocked() {
+func (c *appApplyCmd) runLocked() {
 	if err := c.runLockedE(); err != nil {
 		utils.DieError(applyExitError(err), 1)
 	}
@@ -97,7 +97,7 @@ func applyExitError(err error) error {
 	}
 }
 
-func (c appApplyCmd) recordDeployFailure(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
+func (c *appApplyCmd) recordDeployFailure(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
 	entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, err)
 	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
@@ -109,7 +109,7 @@ func (c appApplyCmd) recordDeployFailure(app *config.AppContext, previousRelease
 	return err
 }
 
-func (c appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
+func (c *appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
 	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, "committed_unconverged", previousRelease, c.SHA, c.actor(), startedAt, committedFailureStep(err, "converge"), c.committedArtifact(), err)
 	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
@@ -118,7 +118,7 @@ func (c appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previous
 	return newDeployCommittedUnconvergedError(err)
 }
 
-func (c appApplyCmd) recordCommittedDegraded(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
+func (c *appApplyCmd) recordCommittedDegraded(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
 	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, "committed_degraded", previousRelease, c.SHA, c.actor(), startedAt, "durability", c.committedArtifact(), err)
 	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
@@ -161,7 +161,7 @@ func committedFailureStep(err error, fallback string) string {
 	return fallback
 }
 
-func (c appApplyCmd) committedArtifact() *artifact.Tuple {
+func (c *appApplyCmd) committedArtifact() *artifact.Tuple {
 	tuple := artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash}
 	if c.ImageID == "" {
 		tuple.EnvelopeHash = envelope.HashLabel(c.EnvelopeLabel)
@@ -169,13 +169,16 @@ func (c appApplyCmd) committedArtifact() *artifact.Tuple {
 	return &tuple
 }
 
-func (c appApplyCmd) runLockedE() (err error) {
+func (c *appApplyCmd) runLockedE() (err error) {
 	startedAt := time.Now().UTC()
 	previousPointer, pointerErr := readActive(c.App, c.Env)
 	if pointerErr != nil && !errcat.Is(pointerErr, errcat.CodeNoDeploys) {
 		return pointerErr
 	}
-	previousRelease := previousPointer.Release
+	previousRelease := previousPointer.Artifact.Release
+	if previousPointer.IsLegacy() {
+		previousRelease = previousPointer.Legacy.Release
+	}
 	var app *config.AppContext
 	committed := false
 	defer func() {
@@ -261,7 +264,7 @@ func (c appApplyCmd) runLockedE() (err error) {
 		return err
 	}
 	committed, err = commitAndConverge(c.App, c.Env, activation.Pointer{
-		Version: 2, Release: c.SHA, Activation: c.ActivationID,
+		Version: 2, Activation: c.ActivationID,
 		Artifact: artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash, EnvelopeHash: func() string {
 			if c.ImageID == "" {
 				return envelope.HashLabel(c.EnvelopeLabel)
@@ -281,7 +284,7 @@ type committedDegradedError struct{ Err error }
 func (e committedDegradedError) Error() string { return e.Err.Error() }
 func (e committedDegradedError) Unwrap() error { return e.Err }
 
-func (c appApplyCmd) prepareCaddy(app *config.AppContext, result applyReleaseResult) error {
+func (c *appApplyCmd) prepareCaddy(app *config.AppContext, result applyReleaseResult) error {
 	if c.PreviewAlias != "" {
 		if c.Env == productionEnvName {
 			return fmt.Errorf("production deploys cannot set a preview alias")
@@ -307,7 +310,7 @@ func (c appApplyCmd) prepareCaddy(app *config.AppContext, result applyReleaseRes
 	return nil
 }
 
-func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRelease string, startedAt time.Time, result applyReleaseResult) error {
+func (c *appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRelease string, startedAt time.Time, result applyReleaseResult) error {
 	if err := resetLegacyDeployJournalForV2(c.App, c.Env); err != nil {
 		return err
 	}
@@ -356,15 +359,15 @@ func applyRouteTLS(app *config.AppContext, tlsMode string) {
 	}
 }
 
-func (c appApplyCmd) actor() deployIdentity {
+func (c *appApplyCmd) actor() deployIdentity {
 	return deployActor(c.SSHKeyComment, c.GitAuthor)
 }
 
-func (c appApplyCmd) releaseMetadata() (releaseMetadata, error) {
+func (c *appApplyCmd) releaseMetadata() (releaseMetadata, error) {
 	return newReleaseMetadata(c.SHA, c.Dirty, c.BaseCommit, c.CreatedAt)
 }
 
-func (c appApplyCmd) prepareApplyContext() (string, error) {
+func (c *appApplyCmd) prepareApplyContext() (string, error) {
 	// host.ValidateDeployTmpSource resolves symlinks, ensures the
 	// path is a regular file under the deploy tmp root, and (if invoked
 	// via sudo) verifies the file is owned by the deploying user — so a
@@ -401,7 +404,7 @@ func (c appApplyCmd) prepareApplyContext() (string, error) {
 	return ctxDir, nil
 }
 
-func (c appApplyCmd) loadApplyContext(ctxDir string) (*config.AppContext, error) {
+func (c *appApplyCmd) loadApplyContext(ctxDir string) (*config.AppContext, error) {
 	checkErrors, _, err := config.CheckManifest(ctxDir, c.Env)
 	if err != nil {
 		return nil, err
@@ -422,7 +425,7 @@ func (c appApplyCmd) loadApplyContext(ctxDir string) (*config.AppContext, error)
 	return app, nil
 }
 
-func (c appApplyCmd) applyRelease(ctxDir string, app *config.AppContext) (applyReleaseResult, error) {
+func (c *appApplyCmd) applyRelease(ctxDir string, app *config.AppContext) (applyReleaseResult, error) {
 	var result applyReleaseResult
 
 	if app.HasStaticRoutes {
@@ -503,6 +506,12 @@ func (c *appApplyCmd) prepareContainerArtifact(ctxDir string, previousPointer ac
 	if _, err := utils.RunChecked("podman", []string{"tag", buildRef, committedTag}, ""); err != nil {
 		return fmt.Errorf("tag built image %s: %w", c.ImageID, err)
 	}
+	// With the committed tag in place, dropping the build tag only untags;
+	// leaving it would later block GC's remove-by-ID (podman refuses while
+	// any tag remains). Best-effort: a leftover build tag is GC-able debris.
+	if _, err := utils.RunChecked("podman", []string{"rmi", buildRef}, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not drop build tag %s: %v; next: ship box gc\n", buildRef, err)
+	}
 	return nil
 }
 
@@ -568,7 +577,7 @@ type containerApplyResult struct {
 	processNames map[string]string
 }
 
-func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, existing []containerEntry) (containerApplyResult, error) {
+func (c *appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, existing []containerEntry) (containerApplyResult, error) {
 	startedAt := time.Now().UTC().Format("20060102t150405000000000z")
 	started, err := startReleaseProcesses(startReleaseProcessesParams{
 		App:         c.App,
@@ -663,7 +672,7 @@ func uniqueContainerNames(names []string) []string {
 	return out
 }
 
-func (c appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string, bool, error) {
+func (c *appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string, bool, error) {
 	if err := validateRelease(c.SHA); err != nil {
 		return "", false, err
 	}

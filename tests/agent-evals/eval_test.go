@@ -1168,11 +1168,13 @@ func checkCurrentHeadProductionLive(e *evalCase, p *evalProject) error {
 	if !ok {
 		return fmt.Errorf("status has no Production env: %+v", status.Envs)
 	}
-	if env.Release != head {
+	// v2 prints the display identity (release@artifact-prefix); the release
+	// part must equal HEAD exactly.
+	if release, _, _ := strings.Cut(env.Release, "@"); release != head {
 		return fmt.Errorf("Production release = %q, want current HEAD %q", env.Release, head)
 	}
-	if env.Health != "healthy" {
-		return fmt.Errorf("Production health = %q, want healthy", env.Health)
+	if env.Health != "running" {
+		return fmt.Errorf("Production health = %q, want running", env.Health)
 	}
 	if err := h.URLServes200(e.fakeCaddy, env.URL); err != nil {
 		return err
@@ -1218,8 +1220,8 @@ func checkExpiredPreviewRecreated(e *evalCase, p *evalProject) error {
 	if env.Class != "preview" {
 		return fmt.Errorf("branch %s class = %q, want preview", p.Branch, env.Class)
 	}
-	if env.Health != "healthy" {
-		return fmt.Errorf("Preview health = %q, want healthy", env.Health)
+	if env.Health != "running" {
+		return fmt.Errorf("Preview health = %q, want running", env.Health)
 	}
 	if err := h.URLServes200(e.fakeCaddy, env.URL); err != nil {
 		return err

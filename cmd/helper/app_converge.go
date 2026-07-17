@@ -91,7 +91,7 @@ func (c appConvergeCmd) runLocked() (appConvergeSummary, error) {
 	summary := appConvergeSummary{App: c.App, Env: c.Env}
 	pointer, err := readActive(c.App, c.Env)
 	if err == nil {
-		summary.Release = pointer.Release
+		summary.Release = pointer.Artifact.Release
 		if !pointer.IsLegacy() {
 			tuple := pointer.Artifact
 			summary.pointerArtifact = &tuple
@@ -206,7 +206,7 @@ func convergeActiveWithPointer(app, env string, pointer activation.Pointer) (con
 	processNames := map[string]string{}
 	var stale []string
 	if ctx.NeedsImage {
-		processNames, stale, err = convergeProcessesExact(app, env, pointer.Artifact.ImageID, pointer.Release, pointer.Activation, ctx, entries)
+		processNames, stale, err = convergeProcessesExact(app, env, pointer.Artifact.ImageID, pointer.Artifact.Release, pointer.Activation, ctx, entries)
 		if err != nil {
 			return convergeResult{}, err
 		}
@@ -216,8 +216,8 @@ func convergeActiveWithPointer(app, env string, pointer activation.Pointer) (con
 	}
 
 	path := caddyfilePath(app, env)
-	routeAlreadyConverged := caddyFragmentMatches(path, app, env, ctx, pointer.Release, processNames)
-	if err := renderAndReloadAppCaddy(path, app, env, ctx, pointer.Release, processNames); err != nil {
+	routeAlreadyConverged := caddyFragmentMatches(path, app, env, ctx, pointer.Artifact.Release, processNames)
+	if err := renderAndReloadAppCaddy(path, app, env, ctx, pointer.Artifact.Release, processNames); err != nil {
 		return convergeResult{}, &convergeError{Step: "caddy", Err: caddyStageActionError(err, "converge")}
 	}
 	if len(stale) == 0 && routeAlreadyConverged {

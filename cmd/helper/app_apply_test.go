@@ -413,7 +413,7 @@ web = { port = 3000 }
 `), 0644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := (appApplyCmd{App: "api", Env: "production"}).loadApplyContext(root)
+	_, err := (&appApplyCmd{App: "api", Env: "production"}).loadApplyContext(root)
 	if err == nil || !strings.Contains(err.Error(), "uploaded manifest names app other, expected api") {
 		t.Fatalf("expected app mismatch error, got %v", err)
 	}

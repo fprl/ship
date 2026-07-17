@@ -60,7 +60,7 @@ func TestWriteActivePreparesOwnershipBeforePublishing(t *testing.T) {
 	}
 	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 1\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	old := activation.Pointer{Version: 1, Release: "old1234", Activation: "old1234-old", EnvelopeHash: strings.Repeat("a", 64)}
+	old := activation.LegacyActivation{Release: "old1234", Activation: "old1234-old", EnvelopeHash: strings.Repeat("a", 64)}
 	writeLegacyPointerForTest(t, "api", "production", old.Release, old.Activation, old.EnvelopeHash)
 	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "new1234-new", Artifact: artifact.Tuple{Release: "new1234", StaticHash: strings.Repeat("b", 64), EnvelopeHash: strings.Repeat("c", 64)}}); err != nil {
 		t.Fatalf("writeActive should not invoke root chown: %v", err)

@@ -254,7 +254,7 @@ func TestHybridStatusReadsFullyConvergedWithExactTuple(t *testing.T) {
 		t.Fatal(err)
 	}
 	processes := []processStatus{{Process: "web", Container: container, State: "running", Image: imageID, Release: release, Activation: activationID}}
-	if !activePointerRuntimeConvergedResolved("api", "production", activation.Pointer{Version: 2, Release: release, Activation: activationID, Artifact: tuple}, resolved, processes, static) {
+	if !activePointerRuntimeConvergedResolved("api", "production", activation.Pointer{Version: 2, Activation: activationID, Artifact: tuple}, resolved, processes, static) {
 		t.Fatalf("fully converged hybrid was reported as not converged: static=%+v", static)
 	}
 }

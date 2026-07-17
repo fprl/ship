@@ -15,24 +15,157 @@
 # directly.
 set -euo pipefail
 
-state_dir=/run/fake-podman
+state_dir="${SHIP_FAKE_PODMAN_STATE:-/run/fake-podman}"
 mkdir -p "$state_dir/networks" "$state_dir/containers" "$state_dir/images" "$state_dir/listeners"
 chmod -R 1777 "$state_dir" 2>/dev/null || true
 
 image_safe_name() {
-  printf '%s' "$1" | tr '/:' '__'
+  local ref="${1#localhost/}"
+  printf '%s' "$ref" | tr '/:' '__'
+}
+
+image_id_of_safe() {
+  local safe="$1"
+  local image_path="$state_dir/images/$safe"
+  # Content ids are cached beside the record; computed once per image
+  # lifetime so hot paths never re-hash the whole store.
+  if [[ -f "$image_path.id" ]]; then
+    cat "$image_path.id"
+    return 0
+  fi
+  local hash_path="$image_path"
+  if [[ -f "$image_path.labels" ]]; then
+    hash_path="$image_path.labels"
+  fi
+  if [[ ! -f "$hash_path" ]]; then
+    echo "fake podman: no such image: $safe" >&2
+    return 1
+  fi
+  local id="sha256:$(sha256sum "$hash_path" | awk '{print $1}')"
+  # Best-effort cache: images/ is sticky and multi-writer, so another
+  # user's stale cache file must never turn into a hard failure here.
+  { printf '%s\n' "$id" > "$image_path.id"; } 2>/dev/null || true
+  printf '%s\n' "$id"
+}
+
+resolve_image_ref() {
+  local ref="$1"
+  local safe image_path image_id wanted
+  local -a matches=()
+
+  if [[ "$ref" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
+    wanted="${ref#sha256:}"
+    wanted="$(printf '%s' "$wanted" | tr '[:upper:]' '[:lower:]')"
+  elif [[ "$ref" =~ ^[0-9a-fA-F]{12,64}$ ]]; then
+    wanted="$(printf '%s' "$ref" | tr '[:upper:]' '[:lower:]')"
+  else
+    safe="$(image_safe_name "$ref")"
+    if [[ -f "$state_dir/images/$safe" ]]; then
+      printf '%s\n' "$safe"
+      return 0
+    fi
+    echo "fake podman: no such image: $ref" >&2
+    return 1
+  fi
+
+  for image_path in "$state_dir"/images/*; do
+    [[ -f "$image_path" && "$image_path" != *.labels && "$image_path" != *.id && "$image_path" != *.ref ]] || continue
+    safe="$(basename "$image_path")"
+    image_id="$(image_id_of_safe "$safe")" || return 1
+    image_id="${image_id#sha256:}"
+    if [[ "$image_id" == "$wanted"* ]]; then
+      matches+=("$safe:$image_id")
+    fi
+  done
+
+  if [[ ${#matches[@]} -eq 0 ]]; then
+    echo "fake podman: no such image: $ref" >&2
+    return 1
+  fi
+
+  local -a distinct_ids=()
+  local match match_id found
+  for match in "${matches[@]}"; do
+    match_id="${match#*:}"
+    found=0
+    for image_id in "${distinct_ids[@]:-}"; do
+      if [[ "$image_id" == "$match_id" ]]; then
+        found=1
+        break
+      fi
+    done
+    [[ "$found" == 1 ]] || distinct_ids+=("$match_id")
+  done
+  if [[ ${#distinct_ids[@]} -gt 1 ]]; then
+    echo "fake podman: image reference is ambiguous: $ref" >&2
+    return 1
+  fi
+  printf '%s\n' "${matches[0]%%:*}"
 }
 
 image_in_use() {
-  local ref="$1"
-  local image_file
-  for image_file in "$state_dir"/containers/*.image; do
-    [[ -e "$image_file" ]] || continue
-    if [[ "$(cat "$image_file" 2>/dev/null || true)" == "$ref" ]]; then
-      return 0
-    fi
-  done
-  return 1
+  local safe="$1"
+  python3 - "$state_dir" "$safe" <<'PY'
+import glob
+import hashlib
+import os
+import sys
+
+state_dir, target_safe = sys.argv[1:]
+images = {}
+by_id = {}
+for image_path in glob.glob(os.path.join(state_dir, "images", "*")):
+    if image_path.endswith((".labels", ".id", ".ref")) or not os.path.isfile(image_path):
+        continue
+    safe = os.path.basename(image_path)
+    id_path = image_path + ".id"
+    if os.path.isfile(id_path):
+        with open(id_path) as f:
+            image_id = f.read().strip().removeprefix("sha256:")
+    else:
+        labels_path = image_path + ".labels"
+        hash_path = labels_path if os.path.isfile(labels_path) else image_path
+        with open(hash_path, "rb") as f:
+            image_id = hashlib.sha256(f.read()).hexdigest()
+    images[safe] = image_id
+    by_id.setdefault(image_id, []).append(safe)
+
+target_id = images.get(target_safe)
+if target_id is None:
+    sys.exit(1)
+
+def resolve(ref):
+    safe = ref.replace("/", "_").replace(":", "_")
+    if safe in images:
+        return safe
+    wanted = ref
+    if wanted.startswith("sha256:"):
+        wanted = wanted[7:]
+    if all(c in "0123456789abcdefABCDEF" for c in wanted) and len(wanted) >= 12:
+        matches = [image_id for image_id in by_id if image_id.startswith(wanted.lower())]
+        if len(matches) == 1:
+            return by_id[matches[0]][0]
+    return None
+
+for image_file in glob.glob(os.path.join(state_dir, "containers", "*.image")):
+    try:
+        with open(image_file) as f:
+            stored = f.read().strip()
+    except OSError:
+        continue
+    stored_safe = resolve(stored)
+    if stored_safe is not None and images[stored_safe] == target_id:
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+run_with_env() {
+  if [[ ${#run_env[@]} -gt 0 ]]; then
+    env "${run_env[@]}" "$@"
+  else
+    "$@"
+  fi
 }
 
 log_path="$state_dir/commands.log"
@@ -162,6 +295,8 @@ PY
       for label in "${labels[@]:-}"; do
         [[ -n "$label" ]] && printf '%s\n' "$label" >> "$state_dir/images/$safe.labels"
       done
+      rm -f "$state_dir/images/$safe.id"
+      printf 'localhost/%s\n' "${tag#localhost/}" > "$state_dir/images/$safe.ref"
     fi
     exit 0
     ;;
@@ -180,13 +315,14 @@ PY
       echo "fake podman: unsupported images format: $fmt" >&2
       exit 1
     fi
-    python3 - "$state_dir" <<'PY'
+python3 - "$state_dir" <<'PY'
+import hashlib
 import json, os, glob
 
 state_dir = os.sys.argv[1]
 out = []
 for image_path in sorted(glob.glob(os.path.join(state_dir, "images", "*")), key=os.path.getmtime, reverse=True):
-    if image_path.endswith(".labels"):
+    if image_path.endswith((".labels", ".id", ".ref")):
         continue
     safe = os.path.basename(image_path)
     labels = {}
@@ -199,15 +335,27 @@ for image_path in sorted(glob.glob(os.path.join(state_dir, "images", "*")), key=
                     k, v = line.split("=", 1)
                     labels[k] = v
     repo = ""
-    tag = labels.get("ship.release", "")
     if labels.get("ship.app") and labels.get("ship.env"):
-        import hashlib
         key = hashlib.sha256((labels["ship.app"] + "\0" + labels["ship.env"]).encode()).hexdigest()[:12]
-        repo = f"ship/ship-" + key
+        repo = "localhost/ship/ship-" + key
+    tag = ""
+    ref_path = image_path + ".ref"
+    if os.path.exists(ref_path):
+        with open(ref_path) as f:
+            stored_name = f.read().strip()
+        if ":" in stored_name:
+            repo, tag = stored_name.rsplit(":", 1)
+    elif repo:
+        prefix = repo.removeprefix("localhost/").replace("/", "_") + "_"
+        if safe.startswith(prefix):
+            tag = safe[len(prefix):]
     names = []
     if repo and tag:
         names = [f"{repo}:{tag}"]
-    out.append({"Repository": repo, "Tag": tag, "Names": names, "Labels": labels})
+    hash_path = labels_path if os.path.exists(labels_path) else image_path
+    with open(hash_path, "rb") as f:
+        image_id = "sha256:" + hashlib.sha256(f.read()).hexdigest()
+    out.append({"Id": image_id, "Repository": repo, "Tag": tag, "Names": names, "Labels": labels})
 print(json.dumps(out))
 PY
     exit 0
@@ -218,29 +366,167 @@ PY
       echo "fake podman: forced rmi failure" >&2
       exit 42
     fi
-    status=0
+    declare -a refs=()
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        -f|--force|--ignore)
-          shift
-          ;;
-        *)
-          ref="$1"
-          safe="$(image_safe_name "$ref")"
-          if image_in_use "$ref"; then
-            echo "fake podman: image $ref is used by a container" >&2
-            status=2
-          elif [[ ! -f "$state_dir/images/$safe" ]]; then
-            echo "fake podman: no such image: $ref" >&2
-            status=1
-          else
-            rm -f "$state_dir/images/$safe" "$state_dir/images/$safe.labels"
-          fi
-          shift
-          ;;
+        -f|--force|--ignore) shift ;;
+        *) refs+=("$1"); shift ;;
       esac
     done
-    exit "$status"
+    python3 - "$state_dir" "${refs[@]}" <<'PY'
+import glob
+import hashlib
+import os
+import sys
+
+state_dir = sys.argv[1]
+refs = sys.argv[2:]
+images = {}
+by_id = {}
+for image_path in glob.glob(os.path.join(state_dir, "images", "*")):
+    if image_path.endswith((".labels", ".id", ".ref")) or not os.path.isfile(image_path):
+        continue
+    safe = os.path.basename(image_path)
+    id_path = image_path + ".id"
+    if os.path.isfile(id_path):
+        with open(id_path) as f:
+            image_id = f.read().strip().removeprefix("sha256:")
+    else:
+        labels_path = image_path + ".labels"
+        hash_path = labels_path if os.path.isfile(labels_path) else image_path
+        with open(hash_path, "rb") as f:
+            image_id = hashlib.sha256(f.read()).hexdigest()
+    images[safe] = image_id
+    by_id.setdefault(image_id, []).append(safe)
+
+def resolve(ref):
+    safe = ref.removeprefix("localhost/").replace("/", "_").replace(":", "_")
+    if safe in images:
+        return safe
+    wanted = ref[7:] if ref.startswith("sha256:") else ref
+    if len(wanted) < 12 or any(c not in "0123456789abcdefABCDEF" for c in wanted):
+        return None
+    matches = [image_id for image_id in by_id if image_id.startswith(wanted.lower())]
+    if len(matches) != 1:
+        return None
+    return by_id[matches[0]][0]
+
+in_use_ids = set()
+for image_file in glob.glob(os.path.join(state_dir, "containers", "*.image")):
+    try:
+        with open(image_file) as f:
+            stored = f.read().strip()
+    except OSError:
+        continue
+    safe = resolve(stored)
+    if safe is not None:
+        in_use_ids.add(images[safe])
+
+def unlink_record(candidate):
+    os.unlink(os.path.join(state_dir, "images", candidate))
+    for suffix in (".labels", ".id", ".ref"):
+        side = os.path.join(state_dir, "images", candidate + suffix)
+        if os.path.exists(side):
+            os.unlink(side)
+
+status = 0
+for ref in refs:
+    safe = resolve(ref)
+    if safe is None:
+        print(f"fake podman: no such image: {ref}", file=sys.stderr)
+        status = 1
+        continue
+    image_id = images[safe]
+    aliases = by_id.get(image_id, [])
+    hash_ref = ref.startswith("sha256:") or (len(ref) >= 12 and all(c in "0123456789abcdefABCDEF" for c in ref))
+    if hash_ref and len(aliases) > 1:
+        # Real podman refuses ID removal while multiple tags remain.
+        print(f"fake podman: unable to delete image {ref}: image is referred to in multiple tags", file=sys.stderr)
+        status = 125
+        continue
+    if not hash_ref and len(aliases) > 1:
+        # Untagging one of several names never touches containers.
+        unlink_record(safe)
+        by_id[image_id].remove(safe)
+        del images[safe]
+        continue
+    if image_id in in_use_ids:
+        print(f"fake podman: image {ref} is used by a container", file=sys.stderr)
+        status = 2
+        continue
+    unlink_record(safe)
+    by_id[image_id].remove(safe)
+    del images[safe]
+sys.exit(status)
+PY
+    exit $?
+    ;;
+
+  tag)
+    source_ref="${1:-}"
+    destination_ref="${2:-}"
+    if [[ -z "$source_ref" || -z "$destination_ref" ]]; then
+      echo "fake podman: tag requires source and destination" >&2
+      exit 1
+    fi
+    source_safe="$(resolve_image_ref "$source_ref")" || exit 1
+    destination_safe="$(image_safe_name "$destination_ref")"
+    cp "$state_dir/images/$source_safe" "$state_dir/images/$destination_safe"
+    rm -f "$state_dir/images/$destination_safe.id"
+    if [[ -f "$state_dir/images/$source_safe.id" ]]; then
+      cp "$state_dir/images/$source_safe.id" "$state_dir/images/$destination_safe.id"
+    fi
+    printf 'localhost/%s\n' "${destination_ref#localhost/}" > "$state_dir/images/$destination_safe.ref"
+    if [[ -f "$state_dir/images/$source_safe.labels" ]]; then
+      cp "$state_dir/images/$source_safe.labels" "$state_dir/images/$destination_safe.labels"
+    else
+      rm -f "$state_dir/images/$destination_safe.labels"
+    fi
+    exit 0
+    ;;
+
+  inspect)
+    fmt=""
+    declare -a names=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --format)
+          fmt="$2"; shift 2 ;;
+        *)
+          names+=("$1"); shift ;;
+      esac
+    done
+    if [[ "$fmt" != "json" ]]; then
+      echo "fake podman: unsupported inspect format: $fmt" >&2
+      exit 1
+    fi
+    declare -a inspected=()
+    for name in "${names[@]}"; do
+      if [[ -z "$name" || ! -f "$state_dir/containers/$name.labels" ]]; then
+        echo "fake podman: no such container: $name" >&2
+        exit 125
+      fi
+      image_file="$state_dir/containers/$name.image"
+      stored_image="$(cat "$image_file" 2>/dev/null || true)"
+      image_safe="$(resolve_image_ref "$stored_image")" || exit 125
+      image_id="$(image_id_of_safe "$image_safe")" || exit 125
+      inspected+=("$name" "$image_id" "$stored_image")
+    done
+    python3 - "${inspected[@]}" <<'PY'
+import json, sys
+
+args = sys.argv[1:]
+out = []
+for i in range(0, len(args), 3):
+    name, image_id, stored_image = args[i:i + 3]
+    out.append({
+        "Name": name,
+        "Image": image_id,
+        "Config": {"Image": stored_image},
+    })
+print(json.dumps(out))
+PY
+    exit 0
     ;;
 
   image)
@@ -249,8 +535,7 @@ PY
     case "$sub" in
       exists)
         ref="${1:-}"
-        safe=$(printf '%s' "$ref" | tr '/:' '__')
-        if [[ -f "$state_dir/images/$safe" ]]; then
+        if resolve_image_ref "$ref" >/dev/null 2>&1; then
           exit 0
         fi
         exit 1
@@ -270,14 +555,20 @@ PY
           echo "fake podman: unsupported image inspect format: $fmt" >&2
           exit 1
         fi
-        python3 - "$state_dir" "${refs[@]}" <<'PY'
+        declare -a resolved_refs=()
+        for ref in "${refs[@]}"; do
+          safe="$(resolve_image_ref "$ref")" || exit 1
+          resolved_refs+=("$safe" "$ref")
+        done
+        python3 - "$state_dir" "${resolved_refs[@]}" <<'PY'
 import json, os, sys
+import hashlib
 
 state_dir = sys.argv[1]
-refs = sys.argv[2:]
+args = sys.argv[2:]
 out = []
-for ref in refs:
-    safe = ref.replace("/", "_").replace(":", "_")
+for i in range(0, len(args), 2):
+    safe, ref = args[i:i + 2]
     image_path = os.path.join(state_dir, "images", safe)
     if not os.path.exists(image_path):
         print(f"fake podman: no such image: {ref}", file=sys.stderr)
@@ -295,10 +586,24 @@ for ref in refs:
     if labels.get("ship.app") and labels.get("ship.env"):
         import hashlib
         key = hashlib.sha256((labels["ship.app"] + "\0" + labels["ship.env"]).encode()).hexdigest()[:12]
-        repository = "ship/ship-" + key
-    tag = labels.get("ship.release", "")
+        repository = "localhost/ship/ship-" + key
+    tag = ""
+    ref_path = os.path.join(state_dir, "images", safe + ".ref")
+    if os.path.exists(ref_path):
+        with open(ref_path) as f:
+            stored_name = f.read().strip()
+        if ":" in stored_name:
+            repository, tag = stored_name.rsplit(":", 1)
+    elif repository:
+        prefix = repository.removeprefix("localhost/").replace("/", "_") + "_"
+        if safe.startswith(prefix):
+            tag = safe[len(prefix):]
     name = f"{repository}:{tag}" if repository and tag else ref
+    hash_path = labels_path if os.path.exists(labels_path) else image_path
+    with open(hash_path, "rb") as f:
+        image_id = "sha256:" + hashlib.sha256(f.read()).hexdigest()
     out.append({
+        "Id": image_id,
         "Repository": repository,
         "Tag": tag,
         "Names": [name],
@@ -314,15 +619,68 @@ PY
         # The real `podman image prune` without `-a` removes dangling
         # untagged images. In fake state, those are image records with
         # no ship.release label.
-        for image_path in "$state_dir"/images/*; do
-          [[ -e "$image_path" ]] || continue
-          [[ "$image_path" == *.labels ]] && continue
-          labels_path="$image_path.labels"
-          if [[ ! -f "$labels_path" ]] || ! grep -q '^ship.release=' "$labels_path"; then
-            rm -f "$image_path" "$labels_path"
-          fi
-        done
-        exit 0
+        python3 - "$state_dir" <<'PY'
+import glob
+import hashlib
+import os
+import sys
+
+state_dir = sys.argv[1]
+images = {}
+by_id = {}
+for image_path in glob.glob(os.path.join(state_dir, "images", "*")):
+    if image_path.endswith((".labels", ".id", ".ref")) or not os.path.isfile(image_path):
+        continue
+    safe = os.path.basename(image_path)
+    labels_path = image_path + ".labels"
+    if os.path.isfile(labels_path):
+        with open(labels_path, "rb") as f:
+            label_bytes = f.read()
+        labels = {}
+        for line in label_bytes.decode(errors="replace").splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                labels[key] = value
+        image_id = hashlib.sha256(label_bytes).hexdigest()
+    else:
+        labels = {}
+        with open(image_path, "rb") as f:
+            image_id = hashlib.sha256(f.read()).hexdigest()
+    images[safe] = (image_id, labels)
+    by_id.setdefault(image_id, []).append(safe)
+
+def resolve(ref):
+    safe = ref.removeprefix("localhost/").replace("/", "_").replace(":", "_")
+    if safe in images:
+        return safe
+    wanted = ref[7:] if ref.startswith("sha256:") else ref
+    if len(wanted) < 12 or any(c not in "0123456789abcdefABCDEF" for c in wanted):
+        return None
+    matches = [image_id for image_id in by_id if image_id.startswith(wanted.lower())]
+    if len(matches) != 1:
+        return None
+    return by_id[matches[0]][0]
+
+in_use_ids = set()
+for image_file in glob.glob(os.path.join(state_dir, "containers", "*.image")):
+    try:
+        with open(image_file) as f:
+            stored = f.read().strip()
+    except OSError:
+        continue
+    safe = resolve(stored)
+    if safe is not None:
+        in_use_ids.add(images[safe][0])
+
+for safe, (image_id, labels) in images.items():
+    if "ship.release" in labels or image_id in in_use_ids:
+        continue
+    os.unlink(os.path.join(state_dir, "images", safe))
+    labels_path = os.path.join(state_dir, "images", safe + ".labels")
+    if os.path.exists(labels_path):
+        os.unlink(labels_path)
+PY
+        exit $?
         ;;
       *)
         echo "fake podman: unsupported image command: $sub" >&2
@@ -433,6 +791,7 @@ PY
     data_mount=""
     env_file=""
     detached=0
+    replace=0
     declare -a labels=()
     declare -a command_args=()
     declare -a env_assignments=()
@@ -456,6 +815,10 @@ PY
           shift
           ;;
         -i|--interactive|-t|--tty|--read-only|--rm)
+          shift
+          ;;
+        --replace)
+          replace=1
           shift
           ;;
         --env-file)
@@ -490,6 +853,24 @@ PY
       echo "fake podman: run requires --name" >&2
       exit 1
     fi
+    resolved_safe=""
+    if [[ "$image" == *caddy* ]]; then
+      if ! resolved_safe="$(resolve_image_ref "$image" 2>/dev/null)"; then
+        # The smoke seeds Caddy as a base image without a labels file.
+        # Keep the existing Caddy special-case, but give it an image
+        # record so container inspect can still report a content ID.
+        resolved_safe="$(image_safe_name "$image")"
+        printf '%s\n' "$image" > "$state_dir/images/$resolved_safe"
+      fi
+    elif resolved_safe="$(resolve_image_ref "$image")"; then
+      :
+    else
+      exit 1
+    fi
+    stored_image="$image"
+    if [[ "$image" =~ ^sha256:[0-9a-fA-F]{64}$ || "$image" =~ ^[0-9a-fA-F]{12,64}$ ]]; then
+      stored_image="$(image_id_of_safe "$resolved_safe")"
+    fi
     declare -a run_env=()
     if [[ -n "$env_file" && -f "$env_file" ]]; then
       while IFS= read -r line || [[ -n "$line" ]]; do
@@ -520,6 +901,17 @@ PY
       exit 0
     fi
 
+    # `--replace` mirrors real podman: an existing container with this
+    # name is stopped and removed before the new one is created.
+    if [[ "$replace" == "1" && -f "$state_dir/listeners/$name.pid" ]]; then
+      old_pid="$(cat "$state_dir/listeners/$name.pid")"
+      kill "$old_pid" 2>/dev/null || true
+      rm -f "$state_dir/listeners/$name.pid" \
+        "$state_dir/containers/$name.labels" \
+        "$state_dir/containers/$name.image" \
+        "$state_dir/containers/$name.port"
+    fi
+
     if [[ "$detached" != "1" ]]; then
       declare -a mapped_command=()
       for arg in "${command_args[@]:-}"; do
@@ -532,7 +924,7 @@ PY
       if [[ ${#mapped_command[@]} -eq 0 ]]; then
         exit 0
       fi
-      env "${run_env[@]}" "${mapped_command[@]}"
+      run_with_env "${mapped_command[@]}"
       exit $?
     fi
 
@@ -545,7 +937,7 @@ PY
         declared_port="${label#ship.port=}"
       fi
     done
-    printf '%s\n' "$image" > "$state_dir/containers/$name.image"
+    printf '%s\n' "$stored_image" > "$state_dir/containers/$name.image"
     if [[ -n "$env_file" ]]; then
       printf '%s\n' "$env_file" > "$state_dir/containers/$name.env-file"
     fi
@@ -576,7 +968,7 @@ PY
       printf '%s\n' "$bind_port" > "$state_dir/containers/$name.port"
     else
       port_file="$state_dir/containers/$name.port"
-      env "${run_env[@]}" python3 -u "$(dirname "$0")/fake-podman.app.py" "$port_file" \
+      run_with_env python3 -u "$(dirname "$0")/fake-podman.app.py" "$port_file" \
         >>"$log_file" 2>&1 &
       pid=$!
       echo "$pid" > "$state_dir/listeners/$name.pid"
@@ -703,7 +1095,7 @@ PY
               run_env+=("SHIP_FAKE_DATA_DIR=$data_mount")
             fi
           fi
-          env "${run_env[@]}" python3 -u "$(dirname "$0")/fake-podman.app.py" "$port_file" \
+          run_with_env python3 -u "$(dirname "$0")/fake-podman.app.py" "$port_file" \
             >>"$log_file" 2>&1 &
         fi
     echo "$!" > "$listener"

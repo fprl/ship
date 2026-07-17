@@ -15,7 +15,7 @@ type imageRelease struct {
 	Release      string
 	Image        string
 	ImageID      string
-	ArtifactTag  string
+	ShipTags     []string
 	Envelope     envelope.Envelope
 	EnvelopeHash string
 	CreatedAt    time.Time
@@ -87,17 +87,24 @@ func imageReleasesFromEntries(app, env string, entries []imageEntry) []imageRele
 		if created == "" {
 			created = entry.Config.Created
 		}
-		artifactTag := identity.ImageTag(app, env, "img-"+key)
+		// Podman canonicalizes unqualified build tags to localhost/<name>;
+		// ship-owned tags are recognized by suffix so real and bare forms
+		// both match, and every alias is collected so GC can untag them all
+		// before removing the image by ID (podman refuses ID removal while
+		// any tag remains).
+		repoPrefix := identity.ImageRepo(app, env) + ":"
+		var shipTags []string
+		seenTags := map[string]bool{}
 		for _, name := range append(append([]string{}, entry.Names...), entry.RepoTags...) {
-			if name == artifactTag {
-				artifactTag = name
-				break
+			if seenTags[name] {
+				continue
+			}
+			if strings.HasPrefix(strings.TrimPrefix(name, "localhost/"), repoPrefix) {
+				seenTags[name] = true
+				shipTags = append(shipTags, name)
 			}
 		}
-		if !containsString(append(append([]string{}, entry.Names...), entry.RepoTags...), artifactTag) {
-			artifactTag = ""
-		}
-		out = append(out, imageRelease{Release: release, Image: entry.ID, ImageID: entry.ID, ArtifactTag: artifactTag, Envelope: decoded, EnvelopeHash: envelopeHash, CreatedAt: parseImageCreatedAt(created)})
+		out = append(out, imageRelease{Release: release, Image: entry.ID, ImageID: entry.ID, ShipTags: shipTags, Envelope: decoded, EnvelopeHash: envelopeHash, CreatedAt: parseImageCreatedAt(created)})
 	}
 	return out
 }

@@ -108,7 +108,9 @@ func TestContainerSmoke(t *testing.T) {
 
 func (e *smokeEnv) testCaddyValidationRejectsMalformedFragment(t *testing.T) {
 	const fragment = "/etc/caddy/conf.d/malformed.caddy"
-	e.dockerExec(t, "cat > "+fragment+" <<'EOF'\n\"malformed.example.com\" {\n\troute {\n\t\t@ship_capability_query query \"ship=tok\"\n\t}\nEOF")
+	// Caddy 2.11+ EOF-closes unbalanced braces, so the specimen must be
+	// malformed to every caddyfile parser, not just structurally truncated.
+	e.dockerExec(t, "cat > "+fragment+" <<'EOF'\nthis is not caddyfile syntax {{{\nEOF")
 	t.Cleanup(func() { e.dockerExec(t, "rm -f "+fragment) })
 
 	result := e.run(t, e.repoRoot, nil, "docker", "exec", e.container, "podman", "exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile")
@@ -518,7 +520,7 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 
 	release := gitRelease(t, e, app)
 	webContainer := identity.ContainerName("api", productionEnv, "web", release)
-	imageInspect := e.ssh(t, "podman image inspect --format json "+identity.ImageTag("api", productionEnv, release))
+	imageInspect := e.ssh(t, "podman image inspect --format json "+fakeImageIDForRelease(t, e, "api", productionEnv, release))
 	var inspected []struct {
 		Labels map[string]string `json:"Labels"`
 	}
@@ -582,7 +584,7 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	}
 
 	// 6. Helper should reload Caddy by execing into the container.
-	assertContains(t, commandsLog, "podman exec caddy caddy reload --config /etc/caddy/Caddyfile")
+	assertContains(t, commandsLog, "podman exec caddy caddy reload --config /etc/caddy/.ship-caddy-validate-")
 
 	// 7. End-to-end: curl through the fake Caddy with Host header reaches
 	// the app container. This is the assertion the host-port path could
@@ -618,20 +620,23 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	commandsAfterRedeploy := e.ssh(t, "cat /run/fake-podman/commands.log")
 	redeployCommands := strings.TrimPrefix(commandsAfterRedeploy, commandsBeforeRedeploy)
 	assertContainsInOrder(t, redeployCommands,
-		"podman run -d --name "+secondWebContainer,
-		"podman exec caddy caddy reload --config /etc/caddy/Caddyfile",
+		"podman run --replace -d --name "+secondWebContainer,
+		"podman exec caddy caddy reload --config /etc/caddy/.ship-caddy-validate-",
 		"podman rm -f "+webContainer,
 	)
 
-	// 9. A committed release's image is immutable: --rebuild refuses instead
-	// of replacing committed bytes under the same tag. Rebuilding is for
-	// debris from a never-committed prepare.
+	// 9. Committed artifacts are immutable, so --rebuild is legal: it mints a
+	// NEW artifact (new image ID under a new img- tag) and never touches the
+	// committed bytes; the previous artifact stays intact for rollback.
+	tagsBefore := strings.Count(e.ssh(t, "podman images --format json"), `img-`)
 	rebuild := e.runShip(t, app, nil, "--rebuild")
-	if rebuild.err == nil {
-		t.Fatal("ship --rebuild on a committed release should refuse")
+	if rebuild.err != nil {
+		t.Fatalf("ship --rebuild on a committed release should succeed: %v\nstdout:\n%s\nstderr:\n%s", rebuild.err, rebuild.stdout, rebuild.stderr)
 	}
-	assertContains(t, rebuild.stdout+rebuild.stderr, "release artifacts are immutable")
-	assertContains(t, rebuild.stdout+rebuild.stderr, "next: create a new commit, then ship")
+	tagsAfter := strings.Count(e.ssh(t, "podman images --format json"), `img-`)
+	if tagsAfter <= tagsBefore {
+		t.Fatalf("--rebuild should mint a new immutable image tag: before=%d after=%d", tagsBefore, tagsAfter)
+	}
 }
 
 func (e *smokeEnv) testDailyVerbHostKeyTOFU(t *testing.T) {
@@ -951,37 +956,41 @@ func (e *smokeEnv) testCaddySwitchFailureRollback(t *testing.T) {
 		t.Fatalf("failed Caddy deploy status = %+v, want degraded", failedStatus)
 	}
 	var failedPointer struct {
-		Release string `json:"release"`
+		Artifact struct {
+			Release string `json:"release"`
+		} `json:"artifact"`
 	}
 	if err := json.Unmarshal([]byte(e.dockerExec(t, "cat "+identity.ActiveFile("caddyfail", productionEnv))), &failedPointer); err != nil {
 		t.Fatalf("active pointer not parseable after failed reload: %v", err)
 	}
 	// The full release id carries an -s<hash> static-tree suffix; gitRelease
 	// only knows the commit part.
-	if !strings.HasPrefix(failedPointer.Release, failedRelease) {
-		t.Fatalf("failed deploy release = %s, want commit prefix %s", failedPointer.Release, failedRelease)
+	if !strings.HasPrefix(failedPointer.Artifact.Release, failedRelease) {
+		t.Fatalf("failed deploy release = %s, want commit prefix %s", failedPointer.Artifact.Release, failedRelease)
 	}
 
 	// Caddy reload happens during convergence, after active.json has been
-	// committed. Crash-only semantics therefore roll forward: the new
-	// activation remains intent even though the reload failed.
+	// committed. Crash-only semantics roll forward: pointer and runtime env
+	// carry the new activation even though the reload failed.
 	if got := e.dockerExec(t, "cat "+activeEnvPath("caddyfail", productionEnv)); got == stableEnv || !strings.Contains(got, "MARKER=failed\n") || !strings.Contains(got, "SHIP_RELEASE=") {
 		t.Fatalf("failing Caddy reload did not retain the new runtime env:\n%s", got)
 	}
 	if got := e.dockerExec(t, "cat "+identity.ActiveFile("caddyfail", productionEnv)); got == stableManifest {
 		t.Fatalf("failing Caddy reload did not retain the new active pointer:\n%s", got)
 	}
-	if got := e.ssh(t, "cat "+identity.CaddyFragmentFile("caddyfail", productionEnv)); got == stableFragment || !strings.Contains(got, failedPointer.Release) {
-		t.Fatalf("failing Caddy reload did not retain the new release's fragment:\n%s", got)
+	// Load-first: a refused reload leaves BOTH live Caddy and the on-disk
+	// fragment untouched; the healed converge below publishes the new one.
+	if got := e.ssh(t, "cat "+identity.CaddyFragmentFile("caddyfail", productionEnv)); got != stableFragment {
+		t.Fatalf("failed reload must leave the committed fragment untouched:\n%s", got)
 	}
 	status := e.ship(t, app, nil, "status")
 	assertContains(t, status, "health=degraded")
 	assertContains(t, status, "committed, not converged")
 	assertContains(t, status, "next=ship converge")
 	e.dockerExec(t, "test ! -e /run/fake-podman/listeners/"+stableWorker+".pid")
-	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "web", failedPointer.Release)+".labels")
-	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "worker", failedPointer.Release)+".labels")
-	e.dockerExec(t, "test -f /run/fake-podman/listeners/"+identity.ContainerName("caddyfail", productionEnv, "worker", failedPointer.Release)+".pid")
+	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "web", failedPointer.Artifact.Release)+".labels")
+	e.dockerExec(t, "test -e /run/fake-podman/containers/"+identity.ContainerName("caddyfail", productionEnv, "worker", failedPointer.Artifact.Release)+".labels")
+	e.dockerExec(t, "test -f /run/fake-podman/listeners/"+identity.ContainerName("caddyfail", productionEnv, "worker", failedPointer.Artifact.Release)+".pid")
 }
 
 func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
@@ -1035,10 +1044,10 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 	if !status.Dirty {
 		t.Fatalf("expected dirty release in status: %+v", status)
 	}
-	if !strings.HasPrefix(status.Release, baseShort+"-dirty-") {
+	if !strings.HasPrefix(releaseID(status.Release), baseShort+"-dirty-") {
 		t.Fatalf("dirty release id %q should start with %s-dirty-", status.Release, baseShort)
 	}
-	imageInspect := e.ssh(t, "podman image inspect --format json "+identity.ImageTag("branchapi", featEnv, status.Release))
+	imageInspect := e.ssh(t, "podman image inspect --format json "+fakeImageIDForRelease(t, e, "branchapi", featEnv, releaseID(status.Release)))
 	var inspected []struct {
 		Labels map[string]string `json:"Labels"`
 	}
@@ -1173,11 +1182,11 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	}
 	appList := appListPayloadForBox(t, e, app)
 	prodAppListEnv := appListEnvByAppClassBranch(t, appList, "previewapi", "production", "main")
-	if prodAppListEnv.Env != productionEnv || prodAppListEnv.URL != "https://preview.example.com" || prodAppListEnv.CurrentRelease == "" || prodAppListEnv.Health != "healthy" || prodAppListEnv.ExpiresAt != "" || prodAppListEnv.Pinned || prodAppListEnv.ShippedBy == nil {
+	if prodAppListEnv.Env != productionEnv || prodAppListEnv.URL != "https://preview.example.com" || prodAppListEnv.CurrentRelease == "" || !strings.Contains(prodAppListEnv.CurrentRelease, "@") || prodAppListEnv.Health != "running" || prodAppListEnv.ExpiresAt != "" || prodAppListEnv.Pinned || prodAppListEnv.ShippedBy == nil {
 		t.Fatalf("production app ls summary missing fields: %+v", prodAppListEnv)
 	}
 	previewAppListEnv := appListEnvByAppClassBranch(t, appList, "previewapi", "preview", "feature/lifecycle")
-	if previewAppListEnv.Env != previewEnv || !strings.Contains(previewAppListEnv.URL, "previewapi-"+previewEnv+".") || previewAppListEnv.CurrentRelease == "" || previewAppListEnv.Health != "healthy" || previewAppListEnv.ExpiresAt == "" || previewAppListEnv.Pinned || previewAppListEnv.ShippedBy == nil {
+	if previewAppListEnv.Env != previewEnv || !strings.Contains(previewAppListEnv.URL, "previewapi-"+previewEnv+".") || previewAppListEnv.CurrentRelease == "" || !strings.Contains(previewAppListEnv.CurrentRelease, "@") || previewAppListEnv.Health != "running" || previewAppListEnv.ExpiresAt == "" || previewAppListEnv.Pinned || previewAppListEnv.ShippedBy == nil {
 		t.Fatalf("preview app ls summary missing fields: %+v", previewAppListEnv)
 	}
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "previewapi", previewEnv)
@@ -2077,14 +2086,16 @@ func (e *smokeEnv) testImagePruning(t *testing.T) {
 
 	prodReleases := []string{gitRelease(t, e, app)}
 	e.ship(t, app, nil)
+	prodArtifacts := []fakeImageArtifact{fakeImageArtifactForRelease(t, e, "imgprune", productionEnv, prodReleases[0])}
 	for i := 2; i <= 7; i++ {
 		prodReleases = append(prodReleases, commitImagePruneChange(t, e, app, fmt.Sprintf("prod release %d", i)))
 		e.ship(t, app, nil)
+		prodArtifacts = append(prodArtifacts, fakeImageArtifactForRelease(t, e, "imgprune", productionEnv, prodReleases[len(prodReleases)-1]))
 	}
-	assertFakeImageReleases(t, e, "imgprune", productionEnv, prodReleases[1:]...)
-	assertFakeImageAbsent(t, e, "imgprune", productionEnv, prodReleases[0])
+	assertFakeImageArtifacts(t, e, "imgprune", productionEnv, prodArtifacts[1:]...)
+	assertFakeImageAbsentArtifact(t, e, "imgprune", productionEnv, prodArtifacts[0])
 	status := statusEnvByClass(t, e, app, "production")
-	if status.Release != prodReleases[len(prodReleases)-1] {
+	if releaseID(status.Release) != prodReleases[len(prodReleases)-1] {
 		t.Fatalf("prod live release = %s, want %s", status.Release, prodReleases[len(prodReleases)-1])
 	}
 
@@ -2092,14 +2103,15 @@ func (e *smokeEnv) testImagePruning(t *testing.T) {
 	e.ship(t, app, nil, "rollback", rollbackTarget)
 	nextRelease := commitImagePruneChange(t, e, app, "prod release 8 after rollback")
 	e.ship(t, app, nil)
-	assertFakeImagePresent(t, e, "imgprune", productionEnv, rollbackTarget)
-	assertFakeImageReleases(t, e, "imgprune", productionEnv,
-		rollbackTarget,
-		prodReleases[2],
-		prodReleases[4],
-		prodReleases[5],
-		prodReleases[6],
-		nextRelease,
+	nextArtifact := fakeImageArtifactForRelease(t, e, "imgprune", productionEnv, nextRelease)
+	assertFakeImagePresentArtifact(t, e, "imgprune", productionEnv, prodArtifacts[3])
+	assertFakeImageArtifacts(t, e, "imgprune", productionEnv,
+		prodArtifacts[3],
+		prodArtifacts[2],
+		prodArtifacts[4],
+		prodArtifacts[5],
+		prodArtifacts[6],
+		nextArtifact,
 	)
 
 	e.dockerExec(t, "touch /run/fake-podman/fail-rmi")
@@ -2110,22 +2122,24 @@ func (e *smokeEnv) testImagePruning(t *testing.T) {
 		t.Fatalf("deploy should succeed when image pruning fails: %v\nstdout:\n%s\nstderr:\n%s", pruneFailure.err, pruneFailure.stdout, pruneFailure.stderr)
 	}
 	assertContains(t, pruneFailure.stdout, "https://img-prune.example.com")
-	assertFakeImagePresent(t, e, "imgprune", productionEnv, pruneFailureRelease)
+	assertFakeImagePresentArtifact(t, e, "imgprune", productionEnv, fakeImageArtifactForRelease(t, e, "imgprune", productionEnv, pruneFailureRelease))
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feature/image-pruning")
 	previewReleases := []string{gitRelease(t, e, app)}
 	e.ship(t, app, nil)
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "imgprune", "feature/image-pruning")
+	previewArtifacts := []fakeImageArtifact{fakeImageArtifactForRelease(t, e, "imgprune", previewEnv, previewReleases[0])}
 	for i := 2; i <= 4; i++ {
 		previewReleases = append(previewReleases, commitImagePruneChange(t, e, app, fmt.Sprintf("preview release %d", i)))
 		e.ship(t, app, nil)
+		previewArtifacts = append(previewArtifacts, fakeImageArtifactForRelease(t, e, "imgprune", previewEnv, previewReleases[len(previewReleases)-1]))
 	}
-	assertFakeImageReleases(t, e, "imgprune", previewEnv, previewReleases[1:]...)
-	assertFakeImageAbsent(t, e, "imgprune", previewEnv, previewReleases[0])
+	assertFakeImageArtifacts(t, e, "imgprune", previewEnv, previewArtifacts[1:]...)
+	assertFakeImageAbsentArtifact(t, e, "imgprune", previewEnv, previewArtifacts[0])
 
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "imgprune", previewEnv)
 	e.dockerExec(t, "/usr/local/bin/ship server env reap")
-	assertFakeImageReleases(t, e, "imgprune", previewEnv)
+	assertFakeImageArtifacts(t, e, "imgprune", previewEnv)
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("imgprune", previewEnv))
 	e.dockerExec(t, "test ! -e /etc/ship/secrets/imgprune/"+previewEnv)
 }
@@ -2157,7 +2171,7 @@ func (e *smokeEnv) testConcurrentDeploys(t *testing.T) {
 
 	status := e.ship(t, app, nil, "status")
 	assertContains(t, status, "Production ")
-	assertContains(t, status, "health=healthy")
+	assertContains(t, status, "health=running")
 }
 
 func (e *smokeEnv) testRemovedProcessReconciliation(t *testing.T) {
@@ -2200,14 +2214,15 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	e.commitFixture(t, app)
 
 	e.ship(t, app, nil)
-	oldRelease := currentStaticReleaseFor(t, e, "site", productionEnv)
-	staticReleaseEnvelope := decodeSmokeReleaseEnvelope(t, e.ssh(t, "cat "+filepath.Join(identity.StaticDir("site", productionEnv), "releases", oldRelease, ".ship-release-*")))
+	oldArtifact := currentStaticArtifactFor(t, e, "site", productionEnv)
+	oldRelease := oldArtifact.Release
+	staticReleaseEnvelope := decodeSmokeReleaseEnvelope(t, e.ssh(t, "cat "+filepath.Join(identity.StaticDir("site", productionEnv), "releases", ".ship-release-*")))
 	assertContains(t, staticReleaseEnvelope.Manifest, `static = "dist"`)
 
 	status := e.ship(t, app, nil, "status")
 	assertContains(t, status, "Production ")
 	assertContains(t, status, "release="+oldRelease)
-	assertContains(t, status, "health=healthy")
+	assertContains(t, status, "health=running")
 
 	rawListJSON := e.ship(t, app, nil, "box", "app", "ls", "--json")
 	var listPayload struct {
@@ -2235,7 +2250,7 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 			continue
 		}
 		for _, env := range listed.Envs {
-			if env.Class == "production" && env.Env == productionEnv && env.CurrentRelease == oldRelease && env.Health == "healthy" && len(env.Processes) == 0 && env.URL == "https://static.example.com" {
+			if env.Class == "production" && env.Env == productionEnv && env.CurrentRelease == staticDisplayIdentity(oldArtifact) && env.Health == "running" && len(env.Processes) == 0 && env.URL == "https://static.example.com" {
 				foundStatic = true
 			}
 		}
@@ -2249,7 +2264,8 @@ func (e *smokeEnv) testStaticOnlyAppLifecycle(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "dist", "index.html"), "static-v2")
 	e.commitFixture(t, app)
 	e.ship(t, app, nil)
-	newRelease := currentStaticReleaseFor(t, e, "site", productionEnv)
+	newArtifact := currentStaticArtifactFor(t, e, "site", productionEnv)
+	newRelease := newArtifact.Release
 	if newRelease == oldRelease {
 		t.Fatal("expected static fixture deploy to produce a new release")
 	}
@@ -2269,11 +2285,12 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	e.commitFixture(t, app)
 
 	e.ship(t, app, nil)
-	oldRelease := currentStaticReleaseFor(t, e, "mix", productionEnv)
+	oldArtifact := currentStaticArtifactFor(t, e, "mix", productionEnv)
+	oldRelease := oldArtifact.Release
 	oldWeb := identity.ContainerName("mix", productionEnv, "web", oldRelease)
 	fragment := e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", productionEnv))
 	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
-	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", productionEnv, oldRelease, "mixed.example.com/docs")+`"`)
+	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", productionEnv, oldRelease, oldArtifact.StaticHash, "mixed.example.com/docs")+`"`)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/health", "ok")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs/", "docs-v1")
@@ -2283,21 +2300,22 @@ func (e *smokeEnv) testMixedContainerStaticLifecycle(t *testing.T) {
 	mustWrite(t, filepath.Join(app, "README.md"), "docs v2\n")
 	e.commitFixture(t, app)
 	e.ship(t, app, nil)
-	newRelease := currentStaticReleaseFor(t, e, "mix", productionEnv)
+	newArtifact := currentStaticArtifactFor(t, e, "mix", productionEnv)
+	newRelease := newArtifact.Release
 	if newRelease == oldRelease {
 		t.Fatal("expected mixed fixture deploy to produce a new release")
 	}
 	newWeb := identity.ContainerName("mix", productionEnv, "web", newRelease)
 	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", productionEnv))
 	assertContains(t, fragment, "reverse_proxy http://"+newWeb+":3000")
-	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", productionEnv, newRelease, "mixed.example.com/docs")+`"`)
+	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", productionEnv, newRelease, newArtifact.StaticHash, "mixed.example.com/docs")+`"`)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/health", "ok")
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v2")
 
 	e.ship(t, app, nil, "rollback")
 	fragment = e.ssh(t, "cat "+identity.CaddyFragmentFile("mix", productionEnv))
 	assertContains(t, fragment, "reverse_proxy http://"+oldWeb+":3000")
-	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", productionEnv, oldRelease, "mixed.example.com/docs")+`"`)
+	assertContains(t, fragment, `root * "`+staticRouteRoot("mix", productionEnv, oldRelease, oldArtifact.StaticHash, "mixed.example.com/docs")+`"`)
 	e.assertRemoteBody(t, "curl -fsS -H 'Host: mixed.example.com' http://127.0.0.1/docs", "docs-v1")
 
 	manifestPath := filepath.Join(app, "ship.toml")
@@ -2787,7 +2805,7 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 	text := e.ship(t, app, nil, "status")
 	assertContains(t, text, "Production ")
 	assertContains(t, text, "release=")
-	assertContains(t, text, "health=healthy")
+	assertContains(t, text, "health=running")
 	assertContains(t, text, `shipped_by="Smoke <smoke@example.com>"`)
 	assertContains(t, text, `ssh_key="fake-vps-smoke"`)
 	if strings.Contains(text, "No live envs") {
@@ -2862,8 +2880,8 @@ func (e *smokeEnv) testStatusAndLogs(t *testing.T) {
 				env.Branch == "main" &&
 				env.Env == productionEnv &&
 				env.URL == "https://api.example.com" &&
-				env.CurrentRelease != "" &&
-				env.Health == "healthy" &&
+				env.CurrentRelease != "" && strings.Contains(env.CurrentRelease, "@") &&
+				env.Health == "running" &&
 				env.ExpiresAt == "" &&
 				!env.Pinned &&
 				env.ShippedBy != nil &&
@@ -2966,7 +2984,7 @@ func (e *smokeEnv) testDestroy(t *testing.T) {
 	commandsLog := e.ssh(t, "cat /run/fake-podman/commands.log")
 	assertContains(t, commandsLog, "podman rm -f "+currentContainer)
 	assertContains(t, commandsLog, "podman network rm "+identity.Network("api", productionEnv))
-	assertContains(t, commandsLog, "podman exec caddy caddy reload --config /etc/caddy/Caddyfile")
+	assertContains(t, commandsLog, "podman exec caddy caddy reload --config /etc/caddy/.ship-caddy-validate-")
 
 	e.dockerExec(t, "test ! -e /run/fake-podman/containers/"+currentContainer+".labels")
 	e.dockerExec(t, "test ! -e /run/fake-podman/networks/"+identity.Network("api", productionEnv))
@@ -3362,54 +3380,122 @@ func commitImagePruneChange(t *testing.T, e *smokeEnv, app string, message strin
 	return gitRelease(t, e, app)
 }
 
-func fakeImageReleases(t *testing.T, e *smokeEnv, app, env string) []string {
+type fakeImage struct {
+	ID     string            `json:"Id"`
+	Names  []string          `json:"Names"`
+	Labels map[string]string `json:"Labels"`
+}
+
+type fakeImageArtifact struct {
+	Release string
+	ImageID string
+}
+
+func fakeImageInventory(t *testing.T, e *smokeEnv) []fakeImage {
 	t.Helper()
 	raw := e.dockerExec(t, "podman images --format json")
-	var images []struct {
-		Labels map[string]string `json:"Labels"`
-	}
+	var images []fakeImage
 	if err := json.Unmarshal([]byte(raw), &images); err != nil {
 		t.Fatalf("podman images JSON not parseable: %v\nraw:\n%s", err, raw)
 	}
-	var releases []string
-	for _, image := range images {
-		labels := image.Labels
-		if labels["ship.app"] != app || labels["ship.env"] != env {
+	return images
+}
+
+func fakeImageIDForRelease(t *testing.T, e *smokeEnv, app, env, release string) string {
+	t.Helper()
+	ids := map[string]bool{}
+	for _, image := range fakeImageInventory(t, e) {
+		if image.Labels["ship.app"] == app && image.Labels["ship.env"] == env && image.Labels["ship.release"] == release && image.ID != "" {
+			ids[image.ID] = true
+		}
+	}
+	if len(ids) != 1 {
+		t.Fatalf("expected one image id for %s/%s release %s, got %v", app, env, release, ids)
+	}
+	for id := range ids {
+		return id
+	}
+	return ""
+}
+
+func fakeImageArtifacts(t *testing.T, e *smokeEnv, app, env string) []fakeImageArtifact {
+	t.Helper()
+	byID := map[string]fakeImageArtifact{}
+	committedTag := map[string]bool{}
+	repo := identity.ImageRepo(app, env)
+	for _, image := range fakeImageInventory(t, e) {
+		if image.Labels["ship.app"] != app || image.Labels["ship.env"] != env || image.Labels["ship.release"] == "" || image.ID == "" {
 			continue
 		}
-		if labels["ship.release"] != "" {
-			releases = append(releases, labels["ship.release"])
+		artifact := fakeImageArtifact{Release: image.Labels["ship.release"], ImageID: image.ID}
+		byID[image.ID] = artifact
+		for _, name := range image.Names {
+			if strings.TrimPrefix(name, "localhost/") == repo+":img-"+strings.TrimPrefix(image.ID, "sha256:") {
+				committedTag[image.ID] = true
+			}
 		}
 	}
-	sort.Strings(releases)
-	return releases
+	artifacts := make([]fakeImageArtifact, 0, len(byID))
+	for id, artifact := range byID {
+		if committedTag[id] {
+			artifacts = append(artifacts, artifact)
+		}
+	}
+	sort.Slice(artifacts, func(i, j int) bool {
+		if artifacts[i].Release != artifacts[j].Release {
+			return artifacts[i].Release < artifacts[j].Release
+		}
+		return artifacts[i].ImageID < artifacts[j].ImageID
+	})
+	return artifacts
 }
 
-func assertFakeImageReleases(t *testing.T, e *smokeEnv, app, env string, want ...string) {
+func fakeImageArtifactForRelease(t *testing.T, e *smokeEnv, app, env, release string) fakeImageArtifact {
 	t.Helper()
-	got := fakeImageReleases(t, e, app, env)
-	want = append([]string(nil), want...)
-	sort.Strings(want)
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("images for %s/%s:\nwant: %v\n got: %v", app, env, want, got)
+	var matches []fakeImageArtifact
+	for _, artifact := range fakeImageArtifacts(t, e, app, env) {
+		if artifact.Release == release {
+			matches = append(matches, artifact)
+		}
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected one committed image for %s/%s release %s, got %v", app, env, release, matches)
+	}
+	return matches[0]
+}
+
+func assertFakeImageArtifacts(t *testing.T, e *smokeEnv, app, env string, want ...fakeImageArtifact) {
+	t.Helper()
+	got := fakeImageArtifacts(t, e, app, env)
+	key := func(artifacts []fakeImageArtifact) []string {
+		keys := make([]string, 0, len(artifacts))
+		for _, artifact := range artifacts {
+			keys = append(keys, artifact.Release+"@"+artifact.ImageID)
+		}
+		sort.Strings(keys)
+		return keys
+	}
+	gotKeys, wantKeys := key(got), key(want)
+	if strings.Join(gotKeys, ",") != strings.Join(wantKeys, ",") {
+		t.Fatalf("committed images for %s/%s:\nwant: %v\n got: %v", app, env, wantKeys, gotKeys)
 	}
 }
 
-func assertFakeImagePresent(t *testing.T, e *smokeEnv, app, env, release string) {
+func assertFakeImagePresentArtifact(t *testing.T, e *smokeEnv, app, env string, want fakeImageArtifact) {
 	t.Helper()
-	for _, got := range fakeImageReleases(t, e, app, env) {
-		if got == release {
+	for _, got := range fakeImageArtifacts(t, e, app, env) {
+		if got == want {
 			return
 		}
 	}
-	t.Fatalf("image %s/%s:%s not found; images=%v", app, env, release, fakeImageReleases(t, e, app, env))
+	t.Fatalf("image artifact %s/%s %s not found; images=%v", app, env, want.Release, fakeImageArtifacts(t, e, app, env))
 }
 
-func assertFakeImageAbsent(t *testing.T, e *smokeEnv, app, env, release string) {
+func assertFakeImageAbsentArtifact(t *testing.T, e *smokeEnv, app, env string, want fakeImageArtifact) {
 	t.Helper()
-	for _, got := range fakeImageReleases(t, e, app, env) {
-		if got == release {
-			t.Fatalf("image %s/%s:%s should have been pruned; images=%v", app, env, release, fakeImageReleases(t, e, app, env))
+	for _, got := range fakeImageArtifacts(t, e, app, env) {
+		if got == want {
+			t.Fatalf("image artifact %s/%s %s should have been pruned; images=%v", app, env, want.Release, fakeImageArtifacts(t, e, app, env))
 		}
 	}
 }
@@ -3512,13 +3598,43 @@ func stripURLs(text string) string {
 	return strings.Join(fields, " ")
 }
 
-func staticRouteRoot(app, env, release, routeKey string) string {
-	return filepath.Join(identity.StaticDir(app, env), "releases", release, config.RouteStorageName(routeKey))
+func staticRouteRoot(app, env, release, staticHash, routeKey string) string {
+	return filepath.Join(identity.StaticDir(app, env), "releases", release+"-"+staticHash, config.RouteStorageName(routeKey))
 }
 
 func currentStaticReleaseFor(t *testing.T, e *smokeEnv, app, env string) string {
 	t.Helper()
-	return strings.TrimSpace(e.ssh(t, "grep -o '\"release\": \"[^\"]*\"' "+identity.ActiveFile(app, env)+" | cut -d'\"' -f4"))
+	return currentStaticArtifactFor(t, e, app, env).Release
+}
+
+type smokeStaticArtifact struct {
+	Release    string `json:"release"`
+	StaticHash string `json:"static_hash"`
+}
+
+func currentStaticArtifactFor(t *testing.T, e *smokeEnv, app, env string) smokeStaticArtifact {
+	t.Helper()
+	var pointer struct {
+		Artifact smokeStaticArtifact `json:"artifact"`
+	}
+	if err := json.Unmarshal([]byte(e.ssh(t, "cat "+identity.ActiveFile(app, env))), &pointer); err != nil {
+		t.Fatalf("active pointer is not parseable: %v", err)
+	}
+	if pointer.Artifact.Release == "" || len(pointer.Artifact.StaticHash) != 64 {
+		t.Fatalf("active pointer has invalid static artifact: %+v", pointer.Artifact)
+	}
+	return pointer.Artifact
+}
+
+func staticDisplayIdentity(artifact smokeStaticArtifact) string {
+	return artifact.Release + "@" + artifact.StaticHash[:12]
+}
+
+func releaseID(display string) string {
+	if release, _, ok := strings.Cut(display, "@"); ok {
+		return release
+	}
+	return display
 }
 
 func currentWebContainer(t *testing.T, e *smokeEnv, app string) string {

@@ -29,10 +29,6 @@ type Pointer struct {
 	Activation string            `json:"activation"`
 	Artifact   artifact.Tuple    `json:"artifact"`
 	Legacy     *LegacyActivation `json:"-"`
-	// These fields remain source-compatible for old in-tree fixtures. They are
-	// never serialized or accepted as a v2 pointer.
-	Release      string `json:"-"`
-	EnvelopeHash string `json:"-"`
 }
 
 type ValidationError struct {
@@ -95,7 +91,7 @@ func Read(app, env string) (Pointer, error) {
 		if err := json.Unmarshal(data, &legacy); err != nil {
 			return Pointer{}, &ValidationError{Err: fmt.Errorf("invalid legacy active.json: %w", err)}
 		}
-		return Pointer{Version: 1, Release: legacy.Release, Activation: legacy.Activation, EnvelopeHash: legacy.EnvelopeHash, Legacy: &legacy}, nil
+		return Pointer{Version: 1, Activation: legacy.Activation, Legacy: &legacy}, nil
 	}
 	var pointer Pointer
 	if err := json.Unmarshal(data, &pointer); err != nil {
@@ -104,8 +100,6 @@ func Read(app, env string) (Pointer, error) {
 	if err := Validate(pointer); err != nil {
 		return Pointer{}, &ValidationError{Err: err}
 	}
-	pointer.Release = pointer.Artifact.Release
-	pointer.EnvelopeHash = pointer.Artifact.EnvelopeHash
 	return pointer, nil
 }
 

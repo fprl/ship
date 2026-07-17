@@ -11,16 +11,12 @@ import (
 func TestPointerRoundTripsAtActivePath(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	pointer := Pointer{Version: 1, Release: "abc1234", Activation: "abc1234-deadbeef", EnvelopeHash: strings.Repeat("a", 64)}
+	legacy := LegacyActivation{Release: "abc1234", Activation: "abc1234-deadbeef", EnvelopeHash: strings.Repeat("a", 64)}
 	path := filepath.Join(root, "apps", "api.production", "active.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.Marshal(struct {
-		Release      string `json:"release"`
-		Activation   string `json:"activation"`
-		EnvelopeHash string `json:"envelope_hash"`
-	}{pointer.Release, pointer.Activation, pointer.EnvelopeHash})
+	data, err := json.Marshal(legacy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,8 +27,8 @@ func TestPointerRoundTripsAtActivePath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Version != pointer.Version || got.Activation != pointer.Activation || got.Release != pointer.Release || got.EnvelopeHash != pointer.EnvelopeHash {
-		t.Fatalf("pointer = %+v, want %+v", got, pointer)
+	if got.Version != 1 || got.Activation != legacy.Activation || got.Legacy == nil || got.Legacy.Release != legacy.Release || got.Legacy.EnvelopeHash != legacy.EnvelopeHash {
+		t.Fatalf("pointer = %+v, want legacy %+v", got, legacy)
 	}
 	info, err := os.Stat(path)
 	if err != nil {

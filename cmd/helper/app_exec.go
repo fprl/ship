@@ -85,7 +85,7 @@ func resolveExecTarget(app, env string) (execTarget, error) {
 		return execTarget{}, execOperationFailed(err)
 	}
 	if !resolved.Context.NeedsImage || resolved.ImageID == "" {
-		return execTarget{}, execOperationFailed(fmt.Errorf("release %s has no container image", pointer.Release))
+		return execTarget{}, execOperationFailed(fmt.Errorf("release %s has no container image", pointer.Artifact.Release))
 	}
 	envFile := identity.ActivationEnvFile(app, env, pointer.Activation)
 	if _, err := os.Stat(envFile); err != nil {
@@ -95,7 +95,7 @@ func resolveExecTarget(app, env string) (execTarget, error) {
 		})
 	}
 	return execTarget{
-		Release:    pointer.Release,
+		Release:    pointer.Artifact.Release,
 		Activation: pointer.Activation,
 		Image:      resolved.ImageID,
 		Context:    resolved.Context,
