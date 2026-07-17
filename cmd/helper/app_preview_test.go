@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/internal/artifact"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
@@ -627,10 +628,11 @@ func writeActiveEnvelopeForPreviewAliasTest(t *testing.T, app, env, body string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := activation.Write(app, env, activation.Pointer{Version: 1, Release: release, Activation: release + "-activation", EnvelopeHash: envelope.HashLabel(label)}); err != nil {
+	staticHash := strings.Repeat("a", 64)
+	if err := activation.Write(app, env, activation.Pointer{Version: 2, Activation: release + "-activation", Artifact: artifact.Tuple{Release: release, StaticHash: staticHash, EnvelopeHash: envelope.HashLabel(label)}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(identity.StaticDir(app, env), "releases", release), 0755); err != nil {
+	if err := os.MkdirAll(staticReleasePath(app, env, release, staticHash), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeStaticReleaseEnvelope(app, env, release, e); err != nil {
@@ -656,6 +658,9 @@ func setupPreviewHostTest(t *testing.T) {
 	writeFakeCommand(t, bin, "podman", `#!/usr/bin/env sh
 if [ "$1" = "network" ] && [ "$2" = "exists" ]; then
   exit 1
+fi
+if [ "$1" = "ps" ]; then
+  printf '[]\n'
 fi
 exit 0
 `)

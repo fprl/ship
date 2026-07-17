@@ -32,12 +32,12 @@ func InfraID(app, env string) string {
 // SystemUser is the Linux account that owns /data files and runs
 // container processes.
 func SystemUser(app, env string) string {
-	return boundedIdentityName(InfraID(app, env), linuxUserNameLimit)
+	return InfraID(app, env)
 }
 
 // Network is the per-(app, env) Podman network used for intra-app DNS.
 func Network(app, env string) string {
-	return boundedIdentityName(InfraID(app, env), dnsLabelLimit)
+	return InfraID(app, env)
 }
 
 // ContainerName names one versioned process container. Caddy points at
@@ -133,6 +133,12 @@ func ReleaseDir(app, env string) string {
 
 // DeployJournalFile stores append-only deploy/rollback attempts for one env.
 func DeployJournalFile(app, env string) string {
+	return ReleaseDir(app, env) + "/journal.v2.jsonl"
+}
+
+// LegacyDeployJournalFile is the pre-v2 journal path. It is never read by v2;
+// a v2 deploy removes it as flag-day residue before writing the new journal.
+func LegacyDeployJournalFile(app, env string) string {
 	return ReleaseDir(app, env) + "/journal.jsonl"
 }
 

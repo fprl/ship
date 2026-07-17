@@ -555,7 +555,7 @@ web = "bun run src/server.ts"
 	}
 }
 
-func TestCheckManifestRejectsServeSymlinks(t *testing.T) {
+func TestCheckManifestAllowsRelativeServeSymlinks(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
 		t.Fatal(err)
@@ -577,8 +577,8 @@ box = "example.com"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(errors, `[routes."site.example.com"].static must not contain symlink "dist/index.html"`) {
-		t.Fatalf("missing serve symlink error: %v", errors)
+	if len(errors) != 0 {
+		t.Fatalf("relative symlink should be accepted until static preparation: %v", errors)
 	}
 }
 

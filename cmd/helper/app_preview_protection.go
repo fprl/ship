@@ -32,11 +32,10 @@ func attachPreviewProtection(appName, env string, app *config.AppContext) error 
 }
 
 func rerenderPreviewCapabilityLocked(appName, env string) error {
-	app, cleanup, err := loadActiveEnvelopeContext(appName, env)
+	app, tuple, err := resolveActiveContext(appName, env)
 	if err != nil {
 		return err
 	}
-	defer cleanup()
 	if env == productionEnvName {
 		return nil
 	}
@@ -46,10 +45,7 @@ func rerenderPreviewCapabilityLocked(appName, env string) error {
 	if err := addConfiguredPreviewAlias(appName, env, app); err != nil {
 		return err
 	}
-	release, err := activeRelease(appName, env)
-	if err != nil {
-		return err
-	}
+	release := tuple.Release
 	processes, err := podmanPSContainers(appName, env)
 	if err != nil {
 		return err

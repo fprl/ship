@@ -1,14 +1,14 @@
 package helper
 
 import (
-	"bytes"
+	"errors"
 	"fmt"
 	"os"
+	"syscall"
 
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
-	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -21,66 +21,65 @@ func readActive(app, env string) (activation.Pointer, error) {
 }
 
 func writeActive(app, env string, pointer activation.Pointer) error {
-	return activation.WritePrepared(app, env, pointer, func(tempPath string) error {
-		if _, err := utils.RunChecked("chown", []string{"root:root", tempPath}, ""); err != nil {
-			return fmt.Errorf("chown active pointer: %v", err)
-		}
-		return nil
-	})
-}
-
-func activeEnvFile(app, env string) (string, error) {
-	pointer, err := readActive(app, env)
-	if err != nil {
-		return "", err
-	}
-	path := identity.ActivationEnvFile(app, env, pointer.Activation)
-	if _, err := os.Stat(path); err != nil {
-		return "", fmt.Errorf("frozen environment for active activation %s is gone: %v; next: ship", pointer.Activation, err)
-	}
-	return path, nil
+	return activation.WritePrepared(app, env, pointer, nil)
 }
 
 func writeActivationEnvFile(app, env, activationID string, values map[string]string) (string, error) {
 	path := identity.ActivationEnvFile(app, env, activationID)
 	data := []byte(renderEnvFile(values))
-	if existing, err := os.ReadFile(path); err == nil {
-		if !bytes.Equal(existing, data) {
-			return "", fmt.Errorf("activation env file %s is immutable", activationID)
-		}
-		// Existing activation files are immutable in content, not in their
-		// security properties. Re-apply both properties so a chmod/chown
-		// drift is repaired instead of being accepted by an early return.
-		if err := os.Chmod(path, 0600); err != nil {
-			return "", fmt.Errorf("chmod activation env file: %v", err)
-		}
-		user := identity.SystemUser(app, env)
-		if _, err := utils.RunChecked("chown", []string{user + ":" + user, path}, ""); err != nil {
-			return "", fmt.Errorf("chown activation env file: %v", err)
-		}
-		return path, nil
-	} else if !os.IsNotExist(err) {
+	if err := os.MkdirAll(identity.ActivationsDir(app, env), 0755); err != nil {
 		return "", err
 	}
-	if err := store.AtomicWrite(path, data, 0600); err != nil {
+	file, err := os.OpenFile(path, os.O_WRONLY, 0600)
+	if err != nil {
+		return "", err
+	}
+	info, statErr := file.Stat()
+	if statErr != nil || info.Size() != 0 {
+		_ = file.Close()
+		return "", fmt.Errorf("activation env file %s already contains data", activationID)
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
 		return "", err
 	}
 	user := identity.SystemUser(app, env)
 	if _, err := utils.RunChecked("chown", []string{user + ":" + user, path}, ""); err != nil {
+		_ = os.Remove(path)
 		return "", fmt.Errorf("chown activation env file: %v", err)
 	}
 	return path, nil
 }
 
 func newActivationID(app, env, release string) (string, error) {
-	for range 8 {
-		id, err := identity.NewActivationID(release)
-		if err != nil {
-			return "", err
-		}
-		if _, err := os.Stat(identity.ActivationEnvFile(app, env, id)); os.IsNotExist(err) {
-			return id, nil
-		}
+	id, err := identity.NewActivationID(release)
+	if err != nil {
+		return "", err
 	}
-	return "", fmt.Errorf("could not allocate a unique activation for %s", release)
+	if err := os.MkdirAll(identity.ActivationsDir(app, env), 0755); err != nil {
+		return "", err
+	}
+	path := identity.ActivationEnvFile(app, env, id)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		if errors.Is(err, syscall.EEXIST) {
+			return "", fmt.Errorf("activation id collision for %s", release)
+		}
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", err
+	}
+	return id, nil
 }

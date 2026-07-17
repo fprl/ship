@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/utils"
 )
 
 type convergeBootCmd struct{}
@@ -42,6 +44,16 @@ func runBootConvergence() error {
 		_ = lock.Release()
 		if errcat.Is(convergeErr, errcat.CodeNoDeploys) {
 			bootLog("boot convergence skipped for %s (%s): nothing deployed", item.App, item.Env)
+			continue
+		}
+		if convergeErr != nil && strings.Contains(convergeErr.Error(), "legacy activation") {
+			bootLog("boot convergence skipped for %s (%s): legacy activation; redeploy to heal", item.App, item.Env)
+			continue
+		}
+		var stepErr *convergeError
+		var commandErr *utils.CommandError
+		if errors.As(convergeErr, &stepErr) && stepErr.Step == "resolve" && !errors.As(convergeErr, &commandErr) {
+			bootLog("boot convergence skipped for %s (%s): artifact unavailable; redeploy to heal", item.App, item.Env)
 			continue
 		}
 		if convergeErr != nil {

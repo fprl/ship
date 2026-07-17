@@ -518,11 +518,10 @@ func sweepDataSnapshotStaging(app, env string) error {
 }
 
 func currentDataRelease(app, env string) (string, error) {
-	ctx, cleanup, err := loadActiveEnvelopeContext(app, env)
+	ctx, _, err := resolveActiveContext(app, env)
 	if err != nil {
 		return "", err
 	}
-	defer cleanup()
 	if ctx.NeedsImage {
 		containers, err := podmanPSContainers(app, env)
 		if err != nil {

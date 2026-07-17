@@ -19,7 +19,7 @@ func commitAndConverge(app, env string, pointer activation.Pointer, addStale fun
 		if !errors.As(activeErr, &published) {
 			return false, activeErr
 		}
-		converged, convergeErr := convergeActive(app, env)
+		converged, convergeErr := convergeActiveWithPointer(app, env, pointer)
 		addStale(converged.StaleContainers)
 		if convergeErr != nil {
 			return true, committedDegradedError{Err: newDeployCommittedDegradedError(fmt.Errorf("active pointer published but durability is degraded: %v; convergence failed: %w", activeErr, convergeErr))}
@@ -27,7 +27,7 @@ func commitAndConverge(app, env string, pointer activation.Pointer, addStale fun
 		return true, committedDegradedError{Err: newDeployCommittedDegradedError(fmt.Errorf("active pointer published but durability is degraded: %v", activeErr))}
 	}
 
-	converged, err := convergeActive(app, env)
+	converged, err := convergeActiveWithPointer(app, env, pointer)
 	addStale(converged.StaleContainers)
 	if err != nil {
 		return true, newDeployCommittedUnconvergedError(err)

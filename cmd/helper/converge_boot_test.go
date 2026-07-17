@@ -35,6 +35,26 @@ func TestBootConvergenceContinuesAfterOneEnvironmentFails(t *testing.T) {
 	}
 }
 
+func TestBootConvergenceSkipsConfirmedAbsentArtifact(t *testing.T) {
+	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
+	oldEnvs, oldConverge, oldLog := bootEnvs, bootConverge, bootLog
+	t.Cleanup(func() { bootEnvs, bootConverge, bootLog = oldEnvs, oldConverge, oldLog })
+	bootEnvs = func() ([]appEnvStatus, error) {
+		return []appEnvStatus{{App: "api", Env: "production"}}, nil
+	}
+	bootConverge = func(string, string) (convergeResult, error) {
+		return convergeResult{}, &convergeError{Step: "resolve", Err: &artifactAbsentError{ImageID: "missing"}}
+	}
+	var log strings.Builder
+	bootLog = func(format string, args ...any) { log.WriteString(fmt.Sprintf(format, args...)) }
+	if err := runBootConvergence(); err != nil {
+		t.Fatalf("confirmed absent artifact made boot fatal: %v", err)
+	}
+	if !strings.Contains(log.String(), "artifact unavailable") {
+		t.Fatalf("boot skip log=%q", log.String())
+	}
+}
+
 func TestBootConvergenceSkipsNeverDeployedEnvs(t *testing.T) {
 	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
 	oldEnvs, oldConverge, oldLog := bootEnvs, bootConverge, bootLog

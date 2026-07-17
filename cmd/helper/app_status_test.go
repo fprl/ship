@@ -2,12 +2,16 @@ package helper
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/identity"
 )
 
@@ -21,17 +25,13 @@ func TestAttachProcessReleaseMetadataToleratesEnvelopelessRelease(t *testing.T) 
 	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nprintf '[]\\n'\nexit 0\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	processes := []processStatus{{Process: "web", State: "running", Release: "92eb1d95075f"}}
-	if err := attachProcessReleaseMetadata("probe", "production", processes); err != nil {
-		t.Fatalf("a release without a readable envelope must stay listed undecorated: %v", err)
-	}
+	attachProcessReleaseMetadata("probe", "production", processes, activation.Pointer{})
 	if processes[0].Dirty || processes[0].BaseCommit != "" || processes[0].CreatedAt != "" {
 		t.Fatalf("undecorated process = %+v", processes[0])
 	}
 
 	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nexit 1\n")
-	if err := attachProcessReleaseMetadata("probe", "production", processes); err != nil {
-		t.Fatalf("a failed image enumeration must degrade decoration, not status: %v", err)
-	}
+	attachProcessReleaseMetadata("probe", "production", processes, activation.Pointer{})
 }
 
 func TestContainersToProcessesFiltersUnlabelledAndSorts(t *testing.T) {
@@ -75,25 +75,25 @@ func TestContainersToAppEnvsGroupsAndSorts(t *testing.T) {
 			Names:  []string{"ship-api-staging-web"},
 			State:  "running",
 			Status: "Up",
-			Labels: map[string]string{"ship.app": "api", "ship.env": "staging", "ship.process": "web", "ship.infra_id": identity.InfraID("api", "staging")},
+			Labels: map[string]string{"ship.app": "api", "ship.env": "staging", "ship.process": "web"},
 		},
 		{
 			Names:  []string{"ship-api-production-worker"},
 			State:  "running",
 			Status: "Up",
-			Labels: map[string]string{"ship.app": "api", "ship.env": "production", "ship.process": "worker", "ship.infra_id": identity.InfraID("api", "production")},
+			Labels: map[string]string{"ship.app": "api", "ship.env": "production", "ship.process": "worker"},
 		},
 		{
 			Names:  []string{"ship-api-production-web"},
 			State:  "running",
 			Status: "Up",
-			Labels: map[string]string{"ship.app": "api", "ship.env": "production", "ship.process": "web", "ship.infra_id": identity.InfraID("api", "production")},
+			Labels: map[string]string{"ship.app": "api", "ship.env": "production", "ship.process": "web"},
 		},
 		{
 			Names:  []string{"ship-blog-production-web"},
 			State:  "running",
 			Status: "Up",
-			Labels: map[string]string{"ship.app": "blog", "ship.env": "production", "ship.process": "web", "ship.infra_id": identity.InfraID("blog", "production")},
+			Labels: map[string]string{"ship.app": "blog", "ship.env": "production", "ship.process": "web"},
 		},
 		{
 			Names:  []string{"not-ours"},
@@ -105,7 +105,7 @@ func TestContainersToAppEnvsGroupsAndSorts(t *testing.T) {
 			Names:  []string{"wrong-infra"},
 			State:  "running",
 			Status: "Up",
-			Labels: map[string]string{"ship.app": "api", "ship.env": "production", "ship.process": "web", "ship.infra_id": "ship-other"},
+			Labels: map[string]string{"ship.app": "api", "ship.env": "production", "ship.process": "web"},
 		},
 	})
 
@@ -121,7 +121,7 @@ func TestContainersToAppEnvsGroupsAndSorts(t *testing.T) {
 	if got[2].App != "blog" || got[2].Env != "production" {
 		t.Fatalf("expected blog production third, got %+v", got[2])
 	}
-	if len(got[0].Processes) != 2 || got[0].Processes[0].Process != "web" || got[0].Processes[1].Process != "worker" {
+	if len(got[0].Processes) != 3 || got[0].Processes[0].Process != "web" || got[0].Processes[1].Process != "web" || got[0].Processes[2].Process != "worker" {
 		t.Fatalf("expected api production processes sorted by name, got %+v", got[0].Processes)
 	}
 }
@@ -155,6 +155,77 @@ func TestAppStatusJSONArrayFieldsAreNonNilWhenEmpty(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"routes":[]`) {
 		t.Fatalf("empty routes JSON = %s", data)
+	}
+}
+
+func TestStaticStatusKeepsFullTupleForStaticAndHybridConvergence(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	for _, tuple := range []artifact.Tuple{
+		{Release: "static-release", StaticHash: strings.Repeat("a", 64)},
+		{Release: "hybrid-release", ImageID: strings.Repeat("b", 64), StaticHash: strings.Repeat("c", 64)},
+	} {
+		path := staticReleasePath("api", "production", tuple.Release, tuple.StaticHash)
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+		status := staticStatusFromResolved("api", "production", resolvedArtifact{Tuple: tuple, Context: &config.AppContext{HasStaticRoutes: true}})
+		if status == nil || status.Release != tuple.DisplayIdentity() || status.RawRelease != tuple.Release || status.Artifact != tuple {
+			t.Fatalf("status=%+v, want display plus full tuple %v", status, tuple)
+		}
+	}
+}
+
+func TestHybridStatusReadsFullyConvergedWithExactTuple(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	t.Setenv("SHIP_CADDY_DIR", filepath.Join(root, "caddy"))
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0755); err != nil {
+		t.Fatal(err)
+	}
+	release := "abc1234"
+	activationID := release + "-a1b2"
+	imageID := strings.Repeat("b", 64)
+	staticHash := strings.Repeat("c", 64)
+	meta, err := newReleaseMetadata(release, false, release, "2026-07-16T12:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := []byte("name = \"api\"\nbox = \"example.com\"\n\n[processes]\nweb = { port = 3000 }\n\n[routes]\n\"site.example.com\" = { static = \"dist\" }\n")
+	_, label, err := releaseEnvelope(manifest, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFakeCommand(t, bin, "podman", fmt.Sprintf("#!/usr/bin/env sh\nprintf '%%s\\n' '[{\"Id\":\"sha256:%s\",\"Labels\":{\"ship.app\":\"api\",\"ship.env\":\"production\",\"ship.release_envelope\":\"%s\"}}]'\n", imageID, label))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	tuple := artifact.Tuple{Release: release, ImageID: imageID, StaticHash: staticHash}
+	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: activationID, Artifact: tuple}); err != nil {
+		t.Fatal(err)
+	}
+	prepareTestActivationEnv(t, "api", "production", activationID)
+	if err := os.MkdirAll(staticReleasePath("api", "production", release, staticHash), 0755); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := resolveArtifact("api", "production", tuple)
+	if err != nil {
+		t.Fatal(err)
+	}
+	static := staticStatusFromResolved("api", "production", resolved)
+	container := "ship-api-web-abc1234"
+	expected, err := renderAppCaddyfileWithProcessNames("api", "production", resolved.Context, release, map[string]string{"web": container})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(caddyfilePath("api", "production")), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(caddyfilePath("api", "production"), []byte(expected), 0644); err != nil {
+		t.Fatal(err)
+	}
+	processes := []processStatus{{Process: "web", Container: container, State: "running", Image: imageID, Release: release, Activation: activationID}}
+	if !activePointerRuntimeConvergedResolved("api", "production", activation.Pointer{Version: 2, Release: release, Activation: activationID, Artifact: tuple}, resolved, processes, static) {
+		t.Fatalf("fully converged hybrid was reported as not converged: static=%+v", static)
 	}
 }
 
@@ -202,14 +273,14 @@ func TestRenderAppListTextWithApps(t *testing.T) {
 					Branch:         "main",
 					URL:            "https://api.example.com",
 					CurrentRelease: "abc1234",
-					Health:         "healthy",
+					Health:         "running",
 					Processes:      []processStatus{{Process: "web", State: "running", Status: "Up 4 minutes", Release: "abc1234"}},
 				},
 			},
 		},
 	}}
 	out := renderAppListText(payload)
-	for _, want := range []string{"APP", "api", "Production", "main", "https://api.example.com", "abc1234", "healthy"} {
+	for _, want := range []string{"APP", "api", "Production", "main", "https://api.example.com", "abc1234", "running"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("app ls table missing %q:\n%s", want, out)
 		}
@@ -248,7 +319,7 @@ func TestAppListFromStatusesSummarizesProductionAndPreview(t *testing.T) {
 		t.Fatalf("unexpected app ls payload: %+v", payload)
 	}
 	prod := payload.Apps[0].Envs[0]
-	if prod.Class != "production" || prod.Branch != "main" || prod.Env != productionEnvName || prod.CurrentRelease != "abc1234" || prod.Health != "healthy" || prod.AgeSeconds != 60 || prod.ShippedBy == nil {
+	if prod.Class != "production" || prod.Branch != "main" || prod.Env != productionEnvName || prod.CurrentRelease != "abc1234" || prod.Health != "running" || prod.AgeSeconds != 60 || prod.ShippedBy == nil {
 		t.Fatalf("bad production summary: %+v", prod)
 	}
 	preview := payload.Apps[0].Envs[1]

@@ -10,9 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/config"
-	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/secrets"
@@ -121,166 +119,6 @@ func TestResolveEnvDoesNotMutateInputMaps(t *testing.T) {
 
 func ptrTime(t time.Time) *time.Time {
 	return &t
-}
-
-func TestContainerBuildPlanProtectsCommittedImages(t *testing.T) {
-	root := t.TempDir()
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	release := "abcdef1234ab"
-	meta, err := newReleaseMetadata(release, false, release, "2026-07-16T12:00:00Z")
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest := []byte("name = \"api\"\nbox = \"example.com\"\n\n[processes]\nweb = { port = 3000 }\n\n[routes]\n\"api.example.com\" = \"web\"\n")
-	committedEnvelope, label, err := releaseEnvelope(manifest, meta)
-	if err != nil {
-		t.Fatal(err)
-	}
-	laterMeta, err := newReleaseMetadata(release, false, release, "2026-07-16T13:00:00Z")
-	if err != nil {
-		t.Fatal(err)
-	}
-	laterEnvelope, laterLabel, err := releaseEnvelope(manifest, laterMeta)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if laterLabel == label {
-		t.Fatal("fixture needs distinct envelope labels for the same configuration")
-	}
-	otherManifest := []byte("name = \"api\"\nbox = \"example.com\"\n\n[processes]\nweb = { port = 3001 }\n\n[routes]\n\"api.example.com\" = \"web\"\n")
-	otherEnvelope, otherLabel, err := releaseEnvelope(otherManifest, meta)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	imageJSON, err := json.Marshal([]map[string]any{{
-		"Labels": map[string]string{
-			"ship.app": "api", "ship.env": "production",
-			"ship.infra_id":         identity.InfraID("api", "production"),
-			"ship.release":          release,
-			"ship.release_envelope": label,
-		},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	imagePath := filepath.Join(root, "image.json")
-	if err := os.WriteFile(imagePath, imageJSON, 0644); err != nil {
-		t.Fatal(err)
-	}
-	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nif [ \"$1\" = image ] && [ \"$2\" = inspect ]; then cat \"$SHIP_TEST_IMAGE_JSON\"; exit 0; fi\nif [ \"$1\" = image ] && [ \"$2\" = exists ]; then exit \"${SHIP_TEST_EXISTS_CODE:-1}\"; fi\nexit 1\n")
-	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
-
-	commit := func(t *testing.T) {
-		t.Helper()
-		if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: release, Activation: release + "-a1b2", EnvelopeHash: envelope.HashLabel(label)}); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	t.Run("same configuration reuses the image and adopts its envelope", func(t *testing.T) {
-		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
-		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
-		commit(t)
-		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: laterEnvelope, EnvelopeLabel: laterLabel}
-		if err := cmd.planContainerBuild(); err != nil || !cmd.SkipBuild {
-			t.Fatalf("skip=%v err=%v, want reuse", cmd.SkipBuild, err)
-		}
-		if cmd.EnvelopeLabel != label {
-			t.Fatalf("envelope not adopted from the committed image: %q", cmd.EnvelopeLabel[:24])
-		}
-	})
-	t.Run("rebuild of a committed release refuses", func(t *testing.T) {
-		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
-		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
-		commit(t)
-		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: committedEnvelope, EnvelopeLabel: label, Rebuild: true}
-		if err := cmd.planContainerBuild(); !errcat.Is(err, errcat.CodeReleaseImmutable) {
-			t.Fatalf("err=%v, want release_immutable", err)
-		}
-	})
-	t.Run("changed configuration on a committed release refuses", func(t *testing.T) {
-		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
-		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
-		commit(t)
-		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: otherEnvelope, EnvelopeLabel: otherLabel}
-		if err := cmd.planContainerBuild(); !errcat.Is(err, errcat.CodeReleaseImmutable) {
-			t.Fatalf("err=%v, want release_immutable", err)
-		}
-	})
-	t.Run("never-committed debris may be rebuilt", func(t *testing.T) {
-		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
-		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
-		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: otherEnvelope, EnvelopeLabel: otherLabel, Rebuild: true}
-		if err := cmd.planContainerBuild(); err != nil || cmd.SkipBuild {
-			t.Fatalf("skip=%v err=%v, want fresh build over debris", cmd.SkipBuild, err)
-		}
-	})
-	t.Run("torn journal with a conflicting image refuses", func(t *testing.T) {
-		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
-		t.Setenv("SHIP_TEST_IMAGE_JSON", imagePath)
-		if err := appendDeployJournalEntry("api", "production", deployJournalEntry{
-			Outcome: "deployed", StartedAt: "2026-07-16T10:00:00Z", EndedAt: "2026-07-16T10:00:01Z", AttemptedRelease: release,
-		}, nil); err != nil {
-			t.Fatal(err)
-		}
-		file, err := os.OpenFile(identity.DeployJournalFile("api", "production"), os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := file.WriteString(`{"outcome":"deployed"`); err != nil {
-			t.Fatal(err)
-		}
-		if err := file.Close(); err != nil {
-			t.Fatal(err)
-		}
-		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: otherEnvelope, EnvelopeLabel: otherLabel}
-		if planErr := cmd.planContainerBuild(); !errcat.Is(planErr, errcat.CodeReleaseImmutable) {
-			t.Fatalf("err=%v, want fail-closed release_immutable", planErr)
-		}
-	})
-	t.Run("confirmed-absent tag builds freely", func(t *testing.T) {
-		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
-		t.Setenv("SHIP_TEST_IMAGE_JSON", filepath.Join(root, "missing.json"))
-		t.Setenv("SHIP_TEST_EXISTS_CODE", "1")
-		commit(t)
-		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: otherEnvelope, EnvelopeLabel: otherLabel}
-		if err := cmd.planContainerBuild(); err != nil || cmd.SkipBuild {
-			t.Fatalf("skip=%v err=%v, want build", cmd.SkipBuild, err)
-		}
-	})
-	t.Run("unverifiable committed image fails closed", func(t *testing.T) {
-		t.Setenv("SHIP_APPS_DIR", filepath.Join(t.TempDir(), "apps"))
-		t.Setenv("SHIP_TEST_IMAGE_JSON", filepath.Join(root, "missing.json"))
-		t.Setenv("SHIP_TEST_EXISTS_CODE", "0")
-		commit(t)
-		cmd := appApplyCmd{App: "api", Env: "production", SHA: release, Envelope: otherEnvelope, EnvelopeLabel: otherLabel}
-		if err := cmd.planContainerBuild(); !errcat.Is(err, errcat.CodeReleaseImmutable) {
-			t.Fatalf("err=%v, want fail-closed release_immutable", err)
-		}
-	})
-}
-
-func TestCaddyStageActionErrorReportsStageAndAction(t *testing.T) {
-	for _, action := range []string{"deploy", "after rollback", "after restore", "after destroy"} {
-		t.Run(action, func(t *testing.T) {
-			err := caddyStageActionError(caddyReloadStageError{
-				Stage: "reload",
-				Err:   errors.New("reload rejected config"),
-			}, action)
-
-			for _, want := range []string{"reload rejected config", "reload (" + action + ")"} {
-				if !strings.Contains(err.Error(), want) {
-					t.Fatalf("error %q does not contain %q", err, want)
-				}
-			}
-		})
-	}
 }
 
 func TestCaddyStageActionErrorPassesThroughOtherErrors(t *testing.T) {
@@ -590,7 +428,6 @@ func TestPodmanBuildArgsLabelsWithDerivedIdentity(t *testing.T) {
 		"-t " + identity.ImageTag("api", "production", "abc123"),
 		"--label ship.app=api",
 		"--label ship.env=production",
-		"--label ship.infra_id=" + identity.InfraID("api", "production"),
 		"--label ship.release=abc123",
 		"-f /tmp/Dockerfile",
 		"/tmp/ctx",
@@ -610,22 +447,10 @@ func TestPodmanBuildArgsCarriesReleaseEnvelopeLabel(t *testing.T) {
 	}
 }
 
-func TestContainersForRemovedProcesses(t *testing.T) {
-	entries := []containerEntry{
-		{Names: []string{"web-old"}, Labels: map[string]string{"ship.process": "web"}},
-		{Names: []string{"worker-old"}, Labels: map[string]string{"ship.process": "worker"}},
-		{Names: []string{"release-job"}, Labels: map[string]string{"ship.process": "release"}},
-	}
-	got := containersForRemovedProcesses(entries, map[string]config.Process{"web": {}})
-	if len(got) != 1 || got[0] != "worker-old" {
-		t.Fatalf("unexpected stale containers: %+v", got)
-	}
-}
-
-func TestApplyStaticDoesNotDeleteActiveReleaseDuringPrepare(t *testing.T) {
+func TestApplyStaticPublishesHashNamedReleaseWithoutTouchingOldBytes(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	releaseDir := filepath.Join(identity.StaticDir("api", "production"), "releases", "abc1234")
+	releaseDir := filepath.Join(identity.StaticDir("api", "production"), "releases", "abc1234-deadbeef")
 	if err := os.MkdirAll(releaseDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -633,17 +458,30 @@ func TestApplyStaticDoesNotDeleteActiveReleaseDuringPrepare(t *testing.T) {
 	if err := os.WriteFile(sentinel, []byte("serving"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: "abc1234", Activation: "abc1234-a1b2", EnvelopeHash: strings.Repeat("a", 64)}); err != nil {
+	ctxDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ctxDir, "dist"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := (appApplyCmd{App: "api", Env: "production", SHA: "abc1234"}).applyStatic(t.TempDir(), &config.AppContext{
+	if err := os.WriteFile(filepath.Join(ctxDir, "dist", "index.html"), []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	meta, err := newReleaseMetadata("abc1234", false, "abc1234", "2026-07-16T12:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, _, err := releaseEnvelope([]byte("name = \"api\"\nbox = \"example.com\"\n\n[routes]\n\"site.example.com\" = { static = \"dist\" }\n"), meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := appApplyCmd{App: "api", Env: "production", SHA: "abc1234", Envelope: env}
+	_, _, err = cmd.applyStatic(ctxDir, &config.AppContext{
 		Routes: map[string]config.Route{"site": {Serve: "dist"}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "cannot be replaced") {
-		t.Fatalf("applyStatic error = %v, want active-release refusal", err)
+	if err != nil {
+		t.Fatalf("applyStatic error = %v", err)
 	}
 	if data, readErr := os.ReadFile(sentinel); readErr != nil || string(data) != "serving" {
-		t.Fatalf("active release changed after failed prepare: %q, %v", data, readErr)
+		t.Fatalf("old release changed after prepare: %q, %v", data, readErr)
 	}
 }
 
@@ -719,7 +557,7 @@ func TestBuildPodmanRunArgsMatchesActivationShape(t *testing.T) {
 }
 
 func TestBuildPodmanRunArgsSkipsEnvFileWhenAbsent(t *testing.T) {
-	args := buildPodmanRunArgs("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "production", "web", "abc123"), false, false)
+	args := buildPodmanRunArgsWithEnvFile("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "production", "web", "abc123"), false, false, "")
 	for _, a := range args {
 		if a == "--env-file" {
 			t.Fatalf("did not expect --env-file when env file is absent, args:\n%s", strings.Join(args, " "))
@@ -728,7 +566,7 @@ func TestBuildPodmanRunArgsSkipsEnvFileWhenAbsent(t *testing.T) {
 }
 
 func TestBuildPodmanRunArgsAppliesDefaultPreviewResourceCaps(t *testing.T) {
-	args := buildPodmanRunArgs("api", "feat-x-ab12", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "feat-x-ab12", "web", "abc123"), false, true)
+	args := buildPodmanRunArgsWithEnvFile("api", "feat-x-ab12", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "feat-x-ab12", "web", "abc123"), false, true, "")
 	joined := strings.Join(args, " ")
 	for _, want := range []string{"--memory 512m", "--cpus 0.5"} {
 		if !strings.Contains(joined, want) {
@@ -738,7 +576,7 @@ func TestBuildPodmanRunArgsAppliesDefaultPreviewResourceCaps(t *testing.T) {
 }
 
 func TestBuildPodmanRunArgsLeavesProdUncappedByDefault(t *testing.T) {
-	args := buildPodmanRunArgs("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "production", "web", "abc123"), false, false)
+	args := buildPodmanRunArgsWithEnvFile("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "production", "web", "abc123"), false, false, "")
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "--memory") || strings.Contains(joined, "--cpus") {
 		t.Fatalf("production args should not get default resource caps:\n%s", joined)
@@ -764,7 +602,7 @@ func TestBuildPodmanExecRunArgsTTYOnlyWhenRequested(t *testing.T) {
 		t.Fatalf("exec args should include the runtime env file: %s", joined)
 	}
 
-	withTTY := buildPodmanExecRunArgs("api", "feat-x", "exec-name", identity.ImageTag("api", "feat-x", "abc123"), "999", "988", "abc123", command, injected, true, true, true)
+	withTTY := buildPodmanExecRunArgsWithEnvFile("api", "feat-x", "exec-name", identity.ImageTag("api", "feat-x", "abc123"), "999", "988", "abc123", command, injected, true, true, true, "")
 	joinedTTY := strings.Join(withTTY, " ")
 	if !strings.Contains(joinedTTY, " -t ") {
 		t.Fatalf("tty exec args should request a tty: %s", joinedTTY)

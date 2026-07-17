@@ -3,48 +3,35 @@ package helper
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-
-	"github.com/fprl/ship/internal/config"
-	"github.com/fprl/ship/internal/identity"
 )
+
+func currentRelease(processes []processStatus) (string, error) {
+	if len(processes) == 0 {
+		return "", fmt.Errorf("no processes running; deploy before rollback")
+	}
+	release := processes[0].Release
+	if release == "" {
+		return "", fmt.Errorf("running processes do not expose a release label")
+	}
+	for _, process := range processes[1:] {
+		if process.Release != release {
+			return "", fmt.Errorf("running processes are on different releases")
+		}
+	}
+	return release, nil
+}
 
 func currentStaticRelease(app, env string) (string, error) {
 	pointer, err := readActive(app, env)
 	if err != nil {
 		return "", fmt.Errorf("active static release not found; deploy before rollback or backup")
 	}
-	release := pointer.Release
-	if err := validateRelease(release); err != nil {
-		return "", err
+	if pointer.IsLegacy() || pointer.Artifact.StaticHash == "" {
+		return "", fmt.Errorf("active static release is unavailable")
 	}
-	if _, err := os.Stat(filepath.Join(identity.StaticDir(app, env), "releases", release)); err != nil {
-		return "", fmt.Errorf("static release %s not found: %v", release, err)
+	path := staticReleasePath(app, env, pointer.Artifact.Release, pointer.Artifact.StaticHash)
+	if _, err := os.Stat(path); err != nil {
+		return "", fmt.Errorf("static release %s not found: %v", pointer.Artifact.DisplayIdentity(), err)
 	}
-	return release, nil
-}
-
-func verifyStaticRelease(app, env, release string, routes map[string]config.Route) error {
-	if err := validateRelease(release); err != nil {
-		return err
-	}
-	for _, routeName := range sortedKeys(routes) {
-		route := routes[routeName]
-		if route.Serve == "" {
-			continue
-		}
-		storageKey := routeName
-		if route.StorageKey != "" {
-			storageKey = route.StorageKey
-		}
-		path := filepath.Join(identity.StaticDir(app, env), "releases", release, config.RouteStorageName(storageKey))
-		info, err := os.Stat(path)
-		if err != nil {
-			return fmt.Errorf("static release %s missing route %s: %v", release, routeName, err)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("static release %s route %s is not a directory", release, routeName)
-		}
-	}
-	return nil
+	return pointer.Artifact.Release, nil
 }

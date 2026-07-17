@@ -47,7 +47,7 @@ Truth stores:
 
 - Manifest truth is the repo `ship.toml` at deploy time. The effective manifest and
   release metadata travel with the immutable release envelope: the image label
-  `ship.release_envelope` for image releases or a hash-named `.ship-release-<hash12>` sidecar for
+  `ship.release_envelope` for image releases or a hash-named `.ship-release-<full-envelope-hash>` sidecar for
   static releases. The active pointer's envelope hash selects the sidecar. They are not host-level manifest state files.
 - Box truth is host state: env identity files, preview mapping metadata, active
   intent, deploy journals, members, roles, box configuration, secrets, Podman
@@ -62,7 +62,7 @@ Runtime state layout:
 - /etc/ship: members.json, box-config.json including box.address, and secrets/<app>/<env>/<key>.
 - /var/lib/ship: doctor.json, approval/update journals, and other durable helper journals.
 - /run/ship: pending approvals.json and lock files.
-- Each environment under /var/apps/<app>.<env>/ has ship.json, active.json, and runtime/activations/<id>.env; its deploy journal is releases/journal.jsonl.
+- Each environment under /var/apps/<app>.<env>/ has ship.json, active.json with an artifact tuple (`release`, `image_id`, `envelope_hash`, and `static_hash`), and runtime/activations/<id>.env; its v2 deploy journal is releases/journal.v2.jsonl.
 
 Member identity and approvals:
 
@@ -132,13 +132,13 @@ Secret scoping:
 
 ## Deploy journal schema
 
-Each env has an append-only `journal.jsonl`. Each line is:
+Each env has an append-only `journal.v2.jsonl`. Each line is:
 
 ```json
-{"schema_version":1,"app":"api","env":"production","outcome":"converged | deployed | rolled_back | committed_unconverged | committed_degraded | failed | gc","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","activation":"def456-0123abcd","envelope_hash":"sha256","failing_step":"apply | build | release | probe | converge | durability","stderr_tail":"last scrubbed stderr lines","gc":"cleanup summary","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"member":{"fingerprint":"fingerprint","name":"alice","role":"owner"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
+{"schema_version":2,"app":"api","env":"production","outcome":"converged | deployed | rolled_back | committed_unconverged | committed_degraded | failed | gc","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","activation":"def456-0123abcd","artifact":{"release":"def456","image_id":"<full-64-hex>","envelope_hash":"<full-64-hex>","static_hash":"<full-64-hex>"},"failing_step":"resolve | apply | build | release | probe | converge | durability","stderr_tail":"last scrubbed stderr lines","gc":"cleanup summary","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"member":{"fingerprint":"fingerprint","name":"alice","role":"owner"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
 ```
 
-`activation`, `envelope_hash`, `gc`, and `member` are optional (`omitempty`); `member.fingerprint` is also optional. `probe` is present as an object or `null`. `committed_unconverged` and `committed_degraded` mean `active.json` was committed but convergence or durability failed; neither path auto-restores the previous release, and both prescribe `ship converge`.
+`activation`, `artifact`, `gc`, and `member` are optional (`omitempty`); `artifact` is the exact tuple identity and is attached to every committed outcome. `member.fingerprint` is also optional. `probe` is present as an object or `null`. `committed_unconverged` and `committed_degraded` mean `active.json` was committed but convergence or durability failed; neither path auto-restores the previous release, and both prescribe `ship converge`.
 
 ## Webhook payload schemas
 
@@ -243,7 +243,7 @@ aliases = true
 - Purpose: Show all live environments for this app.
 - Usage: `ship status [--json] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--json`: Emit structured JSON instead of the text table.
-- `--json` stdout schema: `{"app":"api","envs":[{"class":"preview","branch":"feature/x","url":"https://...","capability_url":"https://...?ship=...","env":"feature-x-ab12","release":"abc123","health":"healthy","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":true,"dirty":true,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}],"state":"committed, not converged","next":"ship converge"}]}`
+- `--json` stdout schema: `{"app":"api","envs":[{"class":"preview","branch":"feature/x","url":"https://...","capability_url":"https://...?ship=...","env":"feature-x-ab12","current_release":"abc123","health":"running","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":true,"dirty":true,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}],"state":"committed, not converged","next":"ship converge"}]}`
 - Notes: capability_url is optional and appears only for Preview environments. pinned and dirty are omitted when false. state and next appear when active.json is committed but runtime has not converged; state is `committed, not converged` and next is `ship converge`. A committed failure is reported as degraded rather than auto-restoring the previous release. envs is always an array; it is [] when nothing is live.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `manifest_invalid`, `ssh_unreachable`, `box_not_initialized`, `host_key_changed`, `operation_failed`
@@ -268,7 +268,7 @@ aliases = true
 - Purpose: Explain the latest deploy journal entry for the current branch environment.
 - Usage: `ship why [--branch <name>] [--json] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--branch <name>`: Inspect another branch environment; `--json`: Emit the raw deploy journal entry.
-- `--json` stdout schema: `{"schema_version":1,"app":"api","env":"production","outcome":"converged | deployed | rolled_back | committed_unconverged | committed_degraded | failed | gc","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","activation":"def-0123abcd","envelope_hash":"sha256","failing_step":"converge","stderr_tail":"...","gc":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"member":{"fingerprint":"SHA256:...","name":"alice","role":"owner"},"probe":null}`
+- `--json` stdout schema: `{"schema_version":2,"app":"api","env":"production","outcome":"converged | deployed | rolled_back | committed_unconverged | committed_degraded | failed | gc","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","activation":"def-0123abcd","artifact":{"release":"def","image_id":"<full-64-hex>","envelope_hash":"<full-64-hex>","static_hash":"<full-64-hex>"},"failing_step":"resolve | apply | build | release | probe | converge | durability","stderr_tail":"...","gc":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"member":{"fingerprint":"SHA256:...","name":"alice","role":"owner"},"probe":null}`
 - Notes: JSON is the raw helper journal entry. Outcomes include `converged`, successful deploy/rollback, `committed_unconverged`, `committed_degraded`, `failed`, and `gc`; committed failures mean active intent was committed and prescribe `ship converge`, never automatic restore.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `unknown_preview_branch`, `no_deploys`, `host_key_changed`, `operation_failed`
@@ -277,7 +277,7 @@ aliases = true
 - Purpose: Select a verified committed release and converge the current branch environment to it.
 - Usage: `ship rollback [release] [--config <path>]`
 - Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `release`: Release to run. Omitted means previous local release.
-- Notes: Rollback is intent selection: candidates come from committed `deployed`/`rolled_back` journal entries whose image or static envelope and runtime artifacts verify. Omitted release selects the newest available candidate that is not active. A torn deploy journal makes implicit selection unsafe and requires an explicit release. Rollback does not auto-restore after a crash; after active.json is committed, failures are `committed_unconverged` or `committed_degraded` and the next step is `ship converge`.
+- Notes: Rollback is intent selection: candidates come from committed `deployed`, `rolled_back`, `committed_unconverged`, and `committed_degraded` journal entries with a non-null artifact tuple whose image or static envelope and runtime artifacts verify. Omitted release selects the newest available candidate that is not active. A torn deploy journal makes implicit selection unsafe and requires an explicit release. Rollback does not auto-restore after a crash; after active.json is committed, failures are `committed_unconverged` or `committed_degraded` and the next step is `ship converge`.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `unknown_preview_branch`, `no_deploys`, `host_key_changed`, `operation_failed`
 
@@ -467,8 +467,8 @@ aliases = true
 - Purpose: Sweep release and temporary artifacts using the box retention policy.
 - Usage: `ship box gc [<box>] [--json]`
 - Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit per-environment removals and failures as JSON.
-- `--json` stdout schema: `{"environments":[{"app":"api","env":"production","active_release":"abc123","kept_releases":["abc123","def456"],"removed":["image ship-...:old"],"skipped":["activation /var/apps/api.production/runtime/activations/old.env"],"failures":["container old: permission denied"]}]}`
-- Notes: The box-wide sweep prints removed, skipped, and failed items. It keeps the active release plus up to 5 newest verified candidates for Production or 2 for Preview; candidates whose artifacts cannot be verified are protected instead of deleted, and fresh debris inside the grace period is skipped. Per-environment removals append an `outcome=gc` entry with the removal summary to that env's journal. Agents use the normal approval flow.
+- `--json` stdout schema: `{"environments":[{"app":"api","env":"production","active_release":"abc123","kept_releases":["abc123","def456"],"absent":["old@<image-prefix>"],"removed":["image ship-...:old"],"skipped":["activation /var/apps/api.production/runtime/activations/old.env"],"failures":["container old: permission denied"]}]}`
+- Notes: The box-wide sweep prints absent, removed, skipped, and failed items. It keeps the active release plus up to 5 newest verified candidates for Production or 2 for Preview; unverifiable artifacts are protected instead of deleted, while confirmed-absent tuples are reported without becoming protected roots, and fresh debris inside the grace period is skipped. Per-environment removals append an `outcome=gc` entry with the removal summary to that env's journal. Agents use the normal approval flow.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_target_required`, `invalid_box_target`, `approval_required`, `host_key_changed`, `operation_failed`
 
@@ -526,7 +526,7 @@ aliases = true
 - Purpose: Show the box's app table.
 - Usage: `ship box app ls [<box>] [--json]`
 - Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit the box app/environment list as JSON.
-- `--json` stdout schema: `{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"production","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`
+- `--json` stdout schema: `{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"production","current_release":"abc123","health":"running","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `box_target_required`, `invalid_box_target`, `ssh_unreachable`, `box_not_initialized`, `host_key_changed`, `operation_failed`
 
@@ -633,7 +633,6 @@ aliases = true
 - `probe_failed`: probe failed; cause: {detail}; remediation: `ship why`.
 - `production_branch_not_preview`: preview command failed; cause: branch {branch} maps to Production; remediation: `{command}`; defaults: `command="ship preview pin <preview-branch>"`.
 - `release_command_failed`: release command failed; cause: {detail}; remediation: `ship why`.
-- `release_immutable`: release artifacts are immutable; cause: {detail}; remediation: `create a new commit, then ship`.
 - `remote_preflight_after_prepare_failed`: deploy preflight failed after preparing the app environment; cause: {detail}; remediation: `ship box doctor`.
 - `remote_preflight_failed`: deploy preflight failed before upload/build/mutation; cause: {detail}; remediation: `ship box doctor`.
 - `rm_confirmation_required`: Production rm confirmation failed; cause: Production rm requires --confirm {app}; remediation: `ship rm {branch} --confirm {app}`.

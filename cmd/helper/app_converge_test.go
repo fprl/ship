@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/internal/artifact"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
@@ -16,6 +17,17 @@ import (
 	"github.com/fprl/ship/internal/names"
 	"github.com/fprl/ship/internal/store"
 )
+
+func prepareTestActivationEnv(t *testing.T, app, env, activationID string) {
+	t.Helper()
+	path := identity.ActivationEnvFile(app, env, activationID)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("TOKEN=test\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestConvergeUsesShipApprovalGate(t *testing.T) {
 	setupAuthTest(t, map[string]store.MemberRecord{
@@ -46,6 +58,7 @@ func TestConvergeWorkerStartFailureRestartsOldAndReportsDegraded(t *testing.T) {
 	old := identity.ContainerName("api", "production", "worker", "old111")
 	entries := []containerEntry{{Names: []string{old}, State: "running", Labels: map[string]string{"ship.process": "worker", "ship.release": "old111"}}}
 	ctx := &config.AppContext{NeedsImage: true, Processes: map[string]config.Process{"worker": {Command: "run worker"}}}
+	prepareTestActivationEnv(t, "api", "production", "new222-a1b2")
 	_, _, err := convergeProcesses("api", "production", "new222", "new222-a1b2", ctx, entries)
 	if err == nil || !strings.Contains(err.Error(), "degraded") || !strings.Contains(err.Error(), "old worker restarted") {
 		t.Fatalf("convergence error = %v", err)
@@ -76,6 +89,7 @@ func TestConvergeWorkerPlainStartFailureRestartsOldAndReportsDegraded(t *testing
 	old := identity.ContainerName("api", "production", "worker", "old111")
 	entries := []containerEntry{{Names: []string{old}, State: "running", Labels: map[string]string{"ship.process": "worker", "ship.release": "old111"}}}
 	ctx := &config.AppContext{NeedsImage: true, Processes: map[string]config.Process{"worker": {Command: "run worker"}}}
+	prepareTestActivationEnv(t, "api", "production", "new222-a1b2")
 	_, _, err := convergeProcesses("api", "production", "new222", "new222-a1b2", ctx, entries)
 	if err == nil || !strings.Contains(err.Error(), "degraded") || !strings.Contains(err.Error(), "old worker restarted") {
 		t.Fatalf("convergence error = %v", err)
@@ -109,7 +123,10 @@ func TestPrepareStartsOnlyPortfulProcesses(t *testing.T) {
 	}}
 	result, err := startReleaseProcesses(startReleaseProcessesParams{
 		App: "api", Env: "production", Release: "new222", Activation: "new222-a1b2",
-		Context: ctx, OnlyPortful: true,
+		Context: ctx, OnlyPortful: true, EnvFile: func() string {
+			prepareTestActivationEnv(t, "api", "production", "new222-a1b2")
+			return identity.ActivationEnvFile("api", "production", "new222-a1b2")
+		}(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -145,6 +162,7 @@ func TestConvergeWorkerStopsOldBeforeStartingReplacement(t *testing.T) {
 		"ship.process": "worker", "ship.release": "abcdef1", "ship.activation": "abcdef1-old",
 	}}}
 	ctx := &config.AppContext{NeedsImage: true, Processes: map[string]config.Process{"worker": {Command: "run-worker"}}}
+	prepareTestActivationEnv(t, "api", "production", "abcdef2-new")
 	if _, _, err := convergeProcesses("api", "production", "abcdef2", "abcdef2-new", ctx, entries); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +172,7 @@ func TestConvergeWorkerStopsOldBeforeStartingReplacement(t *testing.T) {
 	}
 	log := string(data)
 	stopAt := strings.Index(log, "stop "+old)
-	runAt := strings.Index(log, "run -d")
+	runAt := strings.Index(log, "run --replace -d")
 	if stopAt < 0 || runAt < 0 || stopAt > runAt {
 		t.Fatalf("worker replacement was not stop-old-then-start-new: %s", log)
 	}
@@ -182,6 +200,7 @@ func TestConvergeWebFailureDoesNotCompensateWorkers(t *testing.T) {
 	ctx := &config.AppContext{NeedsImage: true, Processes: map[string]config.Process{
 		"web": {Port: &port}, "worker": {Command: "run-worker"},
 	}}
+	prepareTestActivationEnv(t, "api", "production", "abcdef2-new")
 	if _, _, err := convergeProcesses("api", "production", "abcdef2", "abcdef2-new", ctx, entries); err == nil {
 		t.Fatal("web start failure unexpectedly converged")
 	}
@@ -238,19 +257,18 @@ func TestConvergeCaddySecondRunUsesCaddyNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	releaseDir := filepath.Join(identity.StaticDir("api", "production"), "releases", "abcdef2", config.RouteStorageName("web.example.com"))
+	staticHash := strings.Repeat("a", 64)
+	releaseDir := filepath.Join(staticReleasePath("api", "production", "abcdef2", staticHash), config.RouteStorageName("web.example.com"))
 	if err := os.MkdirAll(releaseDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeStaticReleaseEnvelope("api", "production", "abcdef2", e); err != nil {
 		t.Fatal(err)
 	}
-	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: "abcdef2", Activation: "abcdef2-a1b2", EnvelopeHash: envelope.HashLabel(label)}); err != nil {
+	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "abcdef2-a1b2", Artifact: artifact.Tuple{Release: "abcdef2", StaticHash: staticHash, EnvelopeHash: envelope.HashLabel(label)}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeActivationEnvFile("api", "production", "abcdef2-a1b2", nil); err != nil {
-		t.Fatal(err)
-	}
+	prepareTestActivationEnv(t, "api", "production", "abcdef2-a1b2")
 	if _, err := convergeActive("api", "production"); err != nil {
 		t.Fatal(err)
 	}
@@ -299,13 +317,11 @@ func TestConvergedAliasPreviewReportsConverged(t *testing.T) {
 	host := names.SynthesizedHostLabel("api", env) + ".preview.example.com"
 	manifest := "name = \"api\"\nbox = \"example.com\"\n\n[preview]\naliases = true\n\n[routes]\n\"" + host + "\" = { static = \"dist\" }\n"
 	writeActiveEnvelopeForPreviewAliasTest(t, "api", env, manifest)
-	routeDir := filepath.Join(identity.StaticDir("api", env), "releases", "abc1234", config.RouteStorageName(host))
+	routeDir := filepath.Join(staticReleasePath("api", env, "abc1234", strings.Repeat("a", 64)), config.RouteStorageName(host))
 	if err := os.MkdirAll(routeDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeActivationEnvFile("api", env, "abc1234-activation", nil); err != nil {
-		t.Fatal(err)
-	}
+	prepareTestActivationEnv(t, "api", env, "abc1234-activation")
 	if _, err := convergeActive("api", env); err != nil {
 		t.Fatal(err)
 	}
@@ -348,63 +364,6 @@ func TestCrashOnlyJournalOutcomeTable(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestAppConvergeRecordsConvergedAndCommittedUnconvergedOutcomes(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: "abcdef1", Activation: "abcdef1-a1b2", EnvelopeHash: strings.Repeat("a", 64)}); err != nil {
-		t.Fatal(err)
-	}
-	oldConverge := convergeActiveForCommand
-	oldAppend := appendConvergeJournal
-	t.Cleanup(func() {
-		convergeActiveForCommand = oldConverge
-		appendConvergeJournal = oldAppend
-	})
-	var entries []deployJournalEntry
-	appendConvergeJournal = func(_ string, _ string, entry deployJournalEntry, _ []string) error {
-		entries = append(entries, entry)
-		return nil
-	}
-	convergeActiveForCommand = func(_, _ string) (convergeResult, error) {
-		return convergeResult{StaleContainers: []string{"old"}, Changed: true}, nil
-	}
-	summary, err := (appConvergeCmd{App: "api", Env: "production"}).runLocked()
-	if err != nil || summary.Outcome != "converged" || len(entries) != 1 || entries[0].Outcome != "converged" {
-		t.Fatalf("success summary=%+v err=%v entries=%+v", summary, err, entries)
-	}
-	convergeActiveForCommand = func(_, _ string) (convergeResult, error) {
-		return convergeResult{}, errors.New("caddy unavailable")
-	}
-	summary, err = (appConvergeCmd{App: "api", Env: "production"}).runLocked()
-	if err == nil || summary.Outcome != "committed_unconverged" || entries[1].Outcome != "committed_unconverged" {
-		t.Fatalf("failure summary=%+v err=%v entries=%+v", summary, err, entries)
-	}
-}
-
-func TestAppConvergeNoopDoesNotJournal(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: "abcdef1", Activation: "abcdef1-a1b2", EnvelopeHash: strings.Repeat("a", 64)}); err != nil {
-		t.Fatal(err)
-	}
-	oldConverge := convergeActiveForCommand
-	oldAppend := appendConvergeJournal
-	t.Cleanup(func() {
-		convergeActiveForCommand = oldConverge
-		appendConvergeJournal = oldAppend
-	})
-	convergeActiveForCommand = func(_, _ string) (convergeResult, error) { return convergeResult{}, nil }
-	var journaled int
-	appendConvergeJournal = func(string, string, deployJournalEntry, []string) error {
-		journaled++
-		return nil
-	}
-	summary, err := (appConvergeCmd{App: "api", Env: "production"}).runLocked()
-	if err != nil || summary.Outcome != "converged" || journaled != 0 {
-		t.Fatalf("no-op summary=%+v err=%v journaled=%d", summary, err, journaled)
 	}
 }
 

@@ -707,14 +707,13 @@ func routedTLSCertStatuses(now time.Time) ([]tlsCertStatus, error) {
 	}
 	hosts := map[string]bool{}
 	for _, app := range apps {
-		ctx, cleanup, err := loadActiveEnvelopeContext(app.App, app.Env)
+		ctx, _, err := resolveActiveContext(app.App, app.Env)
 		if errcat.Is(err, errcat.CodeNoDeploys) {
 			continue
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s/%s active release: %v", app.App, app.Env, err)
 		}
-		defer cleanup()
 		for _, route := range ctx.Routes {
 			if route.Host == "" || normalizeTLS(route.TLS) == "internal" || deployedRouteUsesInternalTLS(app.App, app.Env, route.Host) {
 				continue
@@ -923,6 +922,12 @@ func doctorDeployJournalsCheck(appEnvs func() ([]appEnvStatus, error), boxTarget
 		entries, torn, err := readDeployJournalEntriesWithStatus(app.App, app.Env)
 		name := app.App + "/" + app.Env
 		if err != nil {
+			if errcat.Is(err, errcat.CodeNoDeploys) {
+				if _, oldErr := os.Stat(identity.LegacyDeployJournalFile(app.App, app.Env)); oldErr == nil {
+					readable = append(readable, name+" (old v1 journal ignored)")
+					continue
+				}
+			}
 			path := identity.DeployJournalFile(app.App, app.Env)
 			if firstBadPath == "" {
 				firstBadPath = path

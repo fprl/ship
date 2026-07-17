@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/internal/artifact"
 	"github.com/fprl/ship/internal/identity"
 )
 
@@ -25,16 +26,18 @@ func TestGCRemovesOrphansButKeepsActiveArtifactsAndSkipsFreshTemp(t *testing.T) 
 	writeFakeCommand(t, bin, "podman", `#!/usr/bin/env sh
 case "$1" in
   ps) printf '%s\n' '[{"Names":["active"],"State":"running","Labels":{"ship.app":"api","ship.env":"production","ship.release":"abcdef1","ship.activation":"abcdef1-a1b2"}},{"Names":["failed"],"State":"exited","Labels":{"ship.app":"api","ship.env":"production","ship.release":"old1111","ship.activation":"old1111-a1b2"}}]' ;;
-	  images) printf '%s\n' '[{"Repository":"ship/ignored","Tag":"dead111","Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"`+identity.InfraID("api", "production")+`","ship.release":"dead111"}}]' ;;
+	  images) printf '%s\n' '[{"Id":"dead111","Repository":"ship/ignored","Tag":"dead111","RepoTags":["ship/`+identity.InfraID("api", "production")+`:img-dead111"],"Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"`+identity.InfraID("api", "production")+`","ship.release":"dead111"}}]' ;;
+	  inspect) printf '%s\n' '[]' ;;
   rm|rmi) printf '%s\n' "$*" >> "$PODMAN_LOG" ;;
 esac
 exit 0
 `)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: "abcdef1", Activation: "abcdef1-a1b2", EnvelopeHash: strings.Repeat("a", 64)}); err != nil {
+	activeTuple := artifact.Tuple{Release: "abcdef1", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}
+	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "abcdef1-a1b2", Artifact: activeTuple}); err != nil {
 		t.Fatal(err)
 	}
-	activeDir := filepath.Join(identity.StaticDir("api", "production"), "releases", "abcdef1")
+	activeDir := staticReleasePath("api", "production", activeTuple.Release, activeTuple.StaticHash)
 	orphanDir := filepath.Join(identity.StaticDir("api", "production"), "releases", "old1111")
 	for _, dir := range []string{activeDir, orphanDir, identity.ActivationsDir("api", "production")} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -84,7 +87,7 @@ exit 0
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(log), "rm -f failed") || !strings.Contains(string(log), "rmi ship/"+identity.InfraID("api", "production")+":dead111") {
+	if !strings.Contains(string(log), "rm -f failed") || !strings.Contains(string(log), "rmi ship/"+identity.InfraID("api", "production")+":img-dead111") {
 		t.Fatalf("GC podman removals=%q summary=%+v", log, summary)
 	}
 }
@@ -118,16 +121,18 @@ func TestGCProtectsAllArtifactsForUnverifiableRelease(t *testing.T) {
 	writeFakeCommand(t, bin, "podman", `#!/usr/bin/env sh
 case "$1" in
   ps) printf '%s\n' '[]' ;;
-  images) printf '%s\n' '[{"Repository":"ship/ignored","Tag":"dead111","Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"`+identity.InfraID("api", "production")+`","ship.release":"dead111"}}]' ;;
+  images) printf '%s\n' '[{"Id":"dead111","Repository":"ship/ignored","Tag":"dead111","RepoTags":["ship/`+identity.InfraID("api", "production")+`:img-dead111"],"Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"`+identity.InfraID("api", "production")+`","ship.release":"dead111"}}]' ;;
   rmi) printf '%s\n' "$*" >> "$PODMAN_LOG" ;;
 esac
 exit 0
 `)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: "abcdef1", Activation: "abcdef1-a1b2", EnvelopeHash: strings.Repeat("a", 64)}); err != nil {
+	activeTuple := artifact.Tuple{Release: "abcdef1", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}
+	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "abcdef1-a1b2", Artifact: activeTuple}); err != nil {
 		t.Fatal(err)
 	}
-	oldDir := filepath.Join(identity.StaticDir("api", "production"), "releases", "bad1111")
+	oldTuple := artifact.Tuple{Release: "bad1111", StaticHash: strings.Repeat("c", 64), EnvelopeHash: strings.Repeat("d", 64)}
+	oldDir := staticReleasePath("api", "production", oldTuple.Release, oldTuple.StaticHash)
 	if err := os.MkdirAll(oldDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +145,7 @@ exit 0
 	}
 	if err := appendDeployJournalEntry("api", "production", deployJournalEntry{
 		Outcome: "deployed", StartedAt: "2026-07-16T10:00:00Z", EndedAt: "2026-07-16T10:00:01Z",
-		AttemptedRelease: "bad1111", Activation: "bad1111-a1b2",
+		AttemptedRelease: "bad1111", Activation: "bad1111-a1b2", Artifact: &oldTuple,
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +173,7 @@ exit 0
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(log), "rmi ship/"+identity.InfraID("api", "production")+":dead111") {
+	if !strings.Contains(string(log), "rmi ship/"+identity.InfraID("api", "production")+":img-dead111") {
 		t.Fatalf("unrelated image was not removed: %s", log)
 	}
 }
@@ -195,7 +200,7 @@ func TestGCSkipsEnvOnTornJournal(t *testing.T) {
 	}
 	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: "abcdef1", Activation: "abcdef1-a1b2", EnvelopeHash: strings.Repeat("a", 64)}); err != nil {
+	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "abcdef1-a1b2", Artifact: artifact.Tuple{Release: "abcdef1", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := appendDeployJournalEntry("api", "production", deployJournalEntry{
@@ -224,36 +229,6 @@ func TestGCSkipsEnvOnTornJournal(t *testing.T) {
 	}
 }
 
-func TestGCUsesLongGraceForSharedDeployTemps(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("SHIP_DEPLOY_TMP_DIR", root)
-	now := time.Now()
-	oldNow := gcNow
-	t.Cleanup(func() { gcNow = oldNow })
-	gcNow = func() time.Time { return now }
-	oneHour := filepath.Join(root, "upload-one-hour")
-	twoDays := filepath.Join(root, "upload-two-days")
-	for _, path := range []string{oneHour, twoDays} {
-		if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.Chtimes(oneHour, now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(twoDays, now.Add(-48*time.Hour), now.Add(-48*time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	var summary gcBoxSummary
-	gcRemoveGlobalDeployTemps(&summary)
-	if _, err := os.Stat(oneHour); err != nil {
-		t.Fatalf("legitimate upload temp removed too early: %v", err)
-	}
-	if _, err := os.Stat(twoDays); !os.IsNotExist(err) {
-		t.Fatalf("stale deploy temp was not removed: %v", err)
-	}
-}
-
 func TestGCNoopDoesNotAppendJournal(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
@@ -265,13 +240,77 @@ func TestGCNoopDoesNotAppendJournal(t *testing.T) {
 	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
 	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nprintf '%s\\n' '[]'\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: "abcdef1", Activation: "abcdef1-a1b2", EnvelopeHash: strings.Repeat("a", 64)}); err != nil {
-		t.Fatal(err)
-	}
+	writeLegacyPointerForTest(t, "api", "production", "abcdef1", "abcdef1-a1b2", strings.Repeat("a", 64))
 	if summary, err := gcEnv("api", "production"); err != nil || len(summary.Removed) != 0 {
 		t.Fatalf("no-op GC summary=%+v err=%v", summary, err)
 	}
 	if _, err := os.Stat(identity.DeployJournalFile("api", "production")); !os.IsNotExist(err) {
 		t.Fatalf("no-op GC created journal: %v", err)
+	}
+}
+
+func TestGCRemovesOnlyShipOwnedTempDirectories(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	staticRoot := identity.StaticDir("api", "production")
+	envRoot := identity.EnvRoot("api", "production")
+	paths := []string{
+		filepath.Join(staticRoot, ".staging-old"),
+		filepath.Join(envRoot, ".data-save-old"),
+		filepath.Join(envRoot, ".staging-old"),
+		filepath.Join(staticRoot, ".keep"),
+		filepath.Join(envRoot, ".user-dot-dir"),
+		filepath.Join(staticRoot, ".staging-fresh"),
+	}
+	for _, path := range paths {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-time.Hour)
+	for _, path := range paths[:5] {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	previousNow := gcNow
+	t.Cleanup(func() { gcNow = previousNow })
+	gcNow = func() time.Time { return now }
+	gcRemoveTempDirs("api", "production", &gcSummary{})
+	for _, path := range paths[:3] {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("owned temp survived: %s err=%v", path, err)
+		}
+	}
+	for _, path := range paths[3:] {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("non-owned or fresh temp was removed: %s err=%v", path, err)
+		}
+	}
+}
+
+func TestGCProtectsCommittedStaticTreeThatChangedBeforeDelete(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	tuple := artifact.Tuple{Release: "old", StaticHash: strings.Repeat("a", 64)}
+	path := staticReleasePath("api", "production", tuple.Release, tuple.StaticHash)
+	if err := os.MkdirAll(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "index.html"), []byte("changed"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	summary := gcSummary{}
+	gcRemoveStatic("api", "production", map[artifact.Tuple]bool{}, []artifactCandidate{{Tuple: tuple}}, &summary)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("changed committed static tree was deleted: %v", err)
+	}
+	if len(summary.Skipped) != 1 || !strings.Contains(summary.Skipped[0], "protected static") {
+		t.Fatalf("summary=%+v, want protected static report", summary)
 	}
 }

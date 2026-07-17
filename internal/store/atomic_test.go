@@ -43,9 +43,9 @@ func TestAtomicWriteReportsPublishedWhenDirectorySyncFailsAfterRename(t *testing
 	}
 	t.Cleanup(func() { syncParentDirectory = previous })
 
-	result := AtomicWriteResult(path, []byte("active\n"), 0644)
-	if !result.Published || result.Durable || result.Err == nil {
-		t.Fatalf("result = %+v, want published and non-durable error", result)
+	err := AtomicWritePrepared(path, []byte("active\n"), 0644, nil)
+	if err == nil {
+		t.Fatal("expected published but non-durable error")
 	}
 	if calls != 2 {
 		t.Fatalf("directory sync calls = %d, want one retry", calls)
@@ -54,7 +54,7 @@ func TestAtomicWriteReportsPublishedWhenDirectorySyncFailsAfterRename(t *testing
 		t.Fatalf("published file missing after durability failure: %v", err)
 	}
 	var published PublishedWriteError
-	if !errors.As(result.Err, &published) || !published.Published || published.Durable {
-		t.Fatalf("error = %T %v, want published write error", result.Err, result.Err)
+	if !errors.As(err, &published) || !published.Published || published.Durable {
+		t.Fatalf("error = %T %v, want published write error", err, err)
 	}
 }

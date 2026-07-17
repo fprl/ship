@@ -120,8 +120,10 @@ type AppContext struct {
 	Routes           map[string]Route
 	Preview          Preview
 	Release          string
-	Probe            string
-	Webhook          string
+	// StaticHash is helper-side committed artifact state, not manifest input.
+	StaticHash string
+	Probe      string
+	Webhook    string
 	// Vars holds resolved non-secret env values for this env.
 	Vars map[string]string
 	// SecretRefs maps env-var key -> secret key name. The helper resolves
@@ -378,6 +380,12 @@ func ReadManifest(root string) (*Manifest, error) {
 	if err != nil {
 		return nil, manifestError("ship.toml not found")
 	}
+	return ParseManifest(data)
+}
+
+// ParseManifest decodes already-persisted manifest bytes without creating a
+// fake source tree around them.
+func ParseManifest(data []byte) (*Manifest, error) {
 	var raw rawManifest
 	// Strict decoding: removed fields (`runtime`, `[build]`, `[services]`,
 	// `[env.*.env]`, `tmpfs`, route `type`, etc.) fail at
@@ -650,9 +658,11 @@ func stripDockerfileComment(line string) string {
 }
 
 func detectShape(root string, processes map[string]Process, routes map[string]Route) (string, string) {
-	hasDockerfile := false
-	if _, err := os.Stat(filepath.Join(root, "Dockerfile")); err == nil {
-		hasDockerfile = true
+	hasDockerfile := root == ""
+	if !hasDockerfile {
+		if _, err := os.Stat(filepath.Join(root, "Dockerfile")); err == nil {
+			hasDockerfile = true
+		}
 	}
 
 	hasProcesses := len(processes) > 0
@@ -778,6 +788,17 @@ func LoadAppContextFromManifest(root string, envName string, manifest *Manifest)
 		Vars:             vars,
 		SecretRefs:       secretRefs,
 	}, nil
+}
+
+// LoadAppContextFromManifestBytes is the committed-artifact loader. It does
+// not inspect or materialize source files; a container manifest uses the
+// documented default port when its original Dockerfile is unavailable.
+func LoadAppContextFromManifestBytes(data []byte, envName string) (*AppContext, error) {
+	manifest, err := ParseManifest(data)
+	if err != nil {
+		return nil, err
+	}
+	return LoadAppContextFromManifest("", envName, manifest)
 }
 
 func hasProcessRoutes(routes map[string]Route) bool {
@@ -1079,6 +1100,9 @@ func validateServeDir(root, routeName, dir string, errors *[]string) {
 		*errors = append(*errors, label+` must not contain ".."`)
 		return
 	}
+	if root == "" {
+		return
+	}
 	info, err := os.Stat(filepath.Join(root, dir))
 	if err != nil {
 		*errors = append(*errors, fmt.Sprintf("%s directory %q does not exist", label, dir))
@@ -1087,29 +1111,5 @@ func validateServeDir(root, routeName, dir string, errors *[]string) {
 	if !info.IsDir() {
 		*errors = append(*errors, fmt.Sprintf("%s %q must be a directory", label, dir))
 		return
-	}
-	rooted := filepath.Join(root, dir)
-	if err := filepath.WalkDir(rooted, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		info, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink == 0 {
-			return nil
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			rel = path
-		}
-		*errors = append(*errors, fmt.Sprintf("%s must not contain symlink %q", label, filepath.ToSlash(rel)))
-		if d.IsDir() {
-			return filepath.SkipDir
-		}
-		return nil
-	}); err != nil {
-		*errors = append(*errors, fmt.Sprintf("%s scan failed: %v", label, err))
 	}
 }

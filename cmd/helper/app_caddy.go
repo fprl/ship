@@ -170,6 +170,9 @@ func renderRouteDirectives(app, env string, ctx *config.AppContext, routeName st
 			storageKey = route.StorageKey
 		}
 		root := filepath.Join(identity.StaticDir(app, env), "releases", release, config.RouteStorageName(storageKey))
+		if ctx.StaticHash != "" {
+			root = filepath.Join(staticReleasePath(app, env, release, ctx.StaticHash), config.RouteStorageName(storageKey))
+		}
 		quotedRoot, err := caddy.CaddyQuote(root)
 		if err != nil {
 			return "", fmt.Errorf("route %q: %v", routeName, err)

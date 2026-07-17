@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/envelope"
+	"github.com/fprl/ship/internal/artifact"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 )
@@ -40,6 +40,35 @@ func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
 	}
 }
 
+func TestCommittedFailuresRecordResolveStepAndCommittedTuple(t *testing.T) {
+	oldAppend := appendSanitizedDeployJournal
+	t.Cleanup(func() { appendSanitizedDeployJournal = oldAppend })
+	var got deployJournalEntry
+	appendSanitizedDeployJournal = func(_ string, _ string, entry deployJournalEntry) error {
+		got = entry
+		return nil
+	}
+	c := appApplyCmd{App: "api", Env: "production", SHA: "abc1234", ImageID: strings.Repeat("a", 64), StaticHash: strings.Repeat("b", 64)}
+	if err := c.recordCommittedUnconverged(nil, "old", time.Now(), &convergeError{Step: "resolve", Err: errors.New("gone")}); err == nil {
+		t.Fatal("expected committed unconverged error")
+	}
+	if got.FailingStep != "resolve" || got.Artifact == nil || got.Artifact.ImageID != c.ImageID || got.Artifact.StaticHash != c.StaticHash {
+		t.Fatalf("journal entry=%+v, want resolve and committed tuple", got)
+	}
+
+	oldRollbackAppend := appendRollbackDeployJournal
+	t.Cleanup(func() { appendRollbackDeployJournal = oldRollbackAppend })
+	appendRollbackDeployJournal = func(_ string, _ string, entry deployJournalEntry, _ []string) error {
+		got = entry
+		return nil
+	}
+	result := rollbackPayload{Previous: "old", Release: "abc1234", Artifact: artifact.Tuple{Release: "abc1234", ImageID: strings.Repeat("c", 64)}}
+	(appRollbackCmd{}).recordRollbackFailure(result, time.Now(), &convergeError{Step: "resolve", Err: errors.New("gone")})
+	if got.FailingStep != "resolve" {
+		t.Fatalf("rollback journal entry=%+v, want resolve", got)
+	}
+}
+
 func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {
 	setupJournalHostTest(t)
 	secretValue := "super-secret-token"
@@ -58,7 +87,7 @@ func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(os.Getenv("SHIP_APPS_DIR"), "api.production", "releases", "journal.jsonl"))
+	raw, err := os.ReadFile(identity.DeployJournalFile("api", "production"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +106,24 @@ func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {
 	}
 	if latest.Probe == nil || !strings.Contains(latest.Probe.BodySnippet, "[redacted]") {
 		t.Fatalf("probe body was not scrubbed: %+v", latest.Probe)
+	}
+}
+
+func TestV2DeployDeletesMalformedOldJournalWithoutSniffing(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	oldPath := identity.LegacyDeployJournalFile("api", "production")
+	if err := os.MkdirAll(filepath.Dir(oldPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(oldPath, []byte("not json\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := resetLegacyDeployJournalForV2("api", "production"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("old journal survived reset: %v", err)
 	}
 }
 
@@ -159,11 +206,13 @@ func TestExecReleaseSelectionUsesActivePointerDespiteTornDeployJournalTail(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: release, Activation: release + "-activation", EnvelopeHash: envelope.HashLabel(label)}); err != nil {
+	imageID := strings.Repeat("a", 64)
+	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: release + "-activation", Artifact: artifact.Tuple{Release: release, ImageID: imageID}}); err != nil {
 		t.Fatal(err)
 	}
+	prepareTestActivationEnv(t, "api", "production", release+"-activation")
 	bin := t.TempDir()
-	payload := fmt.Sprintf(`[{"Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"%s","ship.release":"%s","ship.release_envelope":"%s"}}]`, identity.InfraID("api", "production"), release, label)
+	payload := fmt.Sprintf(`[{"Id":"sha256:%s","Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"%s","ship.release":"%s","ship.release_envelope":"%s"}}]`, imageID, identity.InfraID("api", "production"), release, label)
 	writeFakeCommand(t, bin, "podman", fmt.Sprintf("#!/usr/bin/env sh\nprintf '%%s\\n' '%s'\n", payload))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 

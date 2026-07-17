@@ -598,7 +598,7 @@ var verbs = []Verb{
 		Usage:   "ship status [--json] [--config <path>]",
 		Flags:   []Flag{configFlag, {Name: "--json", Purpose: "Emit structured JSON instead of the text table."}},
 		JSONSchema: schema(
-			`{"app":"api","envs":[{"class":"preview","branch":"feature/x","url":"https://...","capability_url":"https://...?ship=...","env":"feature-x-ab12","release":"abc123","health":"healthy","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":true,"dirty":true,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}],"state":"committed, not converged","next":"ship converge"}]}`,
+			`{"app":"api","envs":[{"class":"preview","branch":"feature/x","url":"https://...","capability_url":"https://...?ship=...","env":"feature-x-ab12","current_release":"abc123","health":"running","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":true,"dirty":true,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}],"state":"committed, not converged","next":"ship converge"}]}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"manifest_invalid", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
@@ -647,7 +647,7 @@ var verbs = []Verb{
 			{Name: "--json", Purpose: "Emit the raw deploy journal entry."},
 		},
 		JSONSchema: schema(
-			`{"schema_version":1,"app":"api","env":"production","outcome":"converged | deployed | rolled_back | committed_unconverged | committed_degraded | failed | gc","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","activation":"def-0123abcd","envelope_hash":"sha256","failing_step":"converge","stderr_tail":"...","gc":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"member":{"fingerprint":"SHA256:...","name":"alice","role":"owner"},"probe":null}`,
+			`{"schema_version":2,"app":"api","env":"production","outcome":"converged | deployed | rolled_back | committed_unconverged | committed_degraded | failed | gc","started_at":"...","ended_at":"...","previous_release":"abc","attempted_release":"def","activation":"def-0123abcd","artifact":{"release":"def","image_id":"<full-64-hex>","envelope_hash":"<full-64-hex>","static_hash":"<full-64-hex>"},"failing_step":"resolve | apply | build | release | probe | converge | durability","stderr_tail":"...","gc":"...","identity":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"member":{"fingerprint":"SHA256:...","name":"alice","role":"owner"},"probe":null}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"unknown_preview_branch", "no_deploys", "host_key_changed", "operation_failed"},
@@ -661,7 +661,7 @@ var verbs = []Verb{
 		ExitCodes: normalExit,
 		Errors:    []string{"unknown_preview_branch", "no_deploys", "host_key_changed", "operation_failed"},
 		Notes: []string{
-			"Rollback is intent selection: candidates come from committed `deployed`/`rolled_back` journal entries whose image or static envelope and runtime artifacts verify. Omitted release selects the newest available candidate that is not active.",
+			"Rollback is intent selection: candidates come from committed `deployed`, `rolled_back`, `committed_unconverged`, and `committed_degraded` journal entries with a non-null artifact tuple whose image or static envelope and runtime artifacts verify. Omitted release selects the newest available candidate that is not active.",
 			"A torn deploy journal makes implicit selection unsafe and requires an explicit release. Rollback does not auto-restore after a crash; after active.json is committed, failures are `committed_unconverged` or `committed_degraded` and the next step is `ship converge`.",
 		},
 	},
@@ -978,11 +978,11 @@ var verbs = []Verb{
 		Usage:   "ship box gc [<box>] [--json]",
 		Flags:   []Flag{{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."}, {Name: "--json", Purpose: "Emit per-environment removals and failures as JSON."}},
 		JSONSchema: schema(
-			`{"environments":[{"app":"api","env":"production","active_release":"abc123","kept_releases":["abc123","def456"],"removed":["image ship-...:old"],"skipped":["activation /var/apps/api.production/runtime/activations/old.env"],"failures":["container old: permission denied"]}]}`,
+			`{"environments":[{"app":"api","env":"production","active_release":"abc123","kept_releases":["abc123","def456"],"absent":["old@<image-prefix>"],"removed":["image ship-...:old"],"skipped":["activation /var/apps/api.production/runtime/activations/old.env"],"failures":["container old: permission denied"]}]}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"box_target_required", "invalid_box_target", "approval_required", "host_key_changed", "operation_failed"},
-		Notes:     []string{"The box-wide sweep prints removed, skipped, and failed items. It keeps the active release plus up to 5 newest verified candidates for Production or 2 for Preview; candidates whose artifacts cannot be verified are protected instead of deleted, and fresh debris inside the grace period is skipped. Per-environment removals append an `outcome=gc` entry with the removal summary to that env's journal. Agents use the normal approval flow."},
+		Notes:     []string{"The box-wide sweep prints absent, removed, skipped, and failed items. It keeps the active release plus up to 5 newest verified candidates for Production or 2 for Preview; unverifiable artifacts are protected instead of deleted, while confirmed-absent tuples are reported without becoming protected roots, and fresh debris inside the grace period is skipped. Per-environment removals append an `outcome=gc` entry with the removal summary to that env's journal. Agents use the normal approval flow."},
 	},
 	{
 		Verb:    "box update",
@@ -1077,7 +1077,7 @@ var verbs = []Verb{
 			{Name: "--json", Purpose: "Emit the box app/environment list as JSON."},
 		},
 		JSONSchema: schema(
-			`{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"production","current_release":"abc123","health":"healthy","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`,
+			`{"apps":[{"app":"api","envs":[{"class":"production","branch":"main","url":"https://api.example.com","env":"production","current_release":"abc123","health":"running","age_seconds":60,"expires_at":"","pinned":false,"dirty":false,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","release":"abc123"}],"static":{"release":"abc123","routes":["api.example.com"]}}]}]}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"box_target_required", "invalid_box_target", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
@@ -1187,7 +1187,7 @@ Truth stores:
 
 - Manifest truth is the repo ` + "`ship.toml`" + ` at deploy time. The effective manifest and
   release metadata travel with the immutable release envelope: the image label
-  ` + "`ship.release_envelope`" + ` for image releases or a hash-named ` + "`.ship-release-<hash12>`" + ` sidecar for
+  ` + "`ship.release_envelope`" + ` for image releases or a hash-named ` + "`.ship-release-<full-envelope-hash>`" + ` sidecar for
   static releases. The active pointer's envelope hash selects the sidecar. They are not host-level manifest state files.
 - Box truth is host state: env identity files, preview mapping metadata, active
   intent, deploy journals, members, roles, box configuration, secrets, Podman
@@ -1202,7 +1202,7 @@ Runtime state layout:
 - /etc/ship: members.json, box-config.json including box.address, and secrets/<app>/<env>/<key>.
 - /var/lib/ship: doctor.json, approval/update journals, and other durable helper journals.
 - /run/ship: pending approvals.json and lock files.
-- Each environment under /var/apps/<app>.<env>/ has ship.json, active.json, and runtime/activations/<id>.env; its deploy journal is releases/journal.jsonl.
+- Each environment under /var/apps/<app>.<env>/ has ship.json, active.json with an artifact tuple (` + "`release`" + `, ` + "`image_id`" + `, ` + "`envelope_hash`" + `, and ` + "`static_hash`" + `), and runtime/activations/<id>.env; its v2 deploy journal is releases/journal.v2.jsonl.
 
 Member identity and approvals:
 
@@ -1347,13 +1347,13 @@ const outputAndDataContracts = `
 
 ## Deploy journal schema
 
-Each env has an append-only ` + "`journal.jsonl`" + `. Each line is:
+Each env has an append-only ` + "`journal.v2.jsonl`" + `. Each line is:
 
 ` + "```json" + `
-{"schema_version":1,"app":"api","env":"production","outcome":"converged | deployed | rolled_back | committed_unconverged | committed_degraded | failed | gc","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","activation":"def456-0123abcd","envelope_hash":"sha256","failing_step":"apply | build | release | probe | converge | durability","stderr_tail":"last scrubbed stderr lines","gc":"cleanup summary","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"member":{"fingerprint":"fingerprint","name":"alice","role":"owner"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
+{"schema_version":2,"app":"api","env":"production","outcome":"converged | deployed | rolled_back | committed_unconverged | committed_degraded | failed | gc","started_at":"2026-07-07T10:00:00Z","ended_at":"2026-07-07T10:00:10Z","previous_release":"abc123","attempted_release":"def456","activation":"def456-0123abcd","artifact":{"release":"def456","image_id":"<full-64-hex>","envelope_hash":"<full-64-hex>","static_hash":"<full-64-hex>"},"failing_step":"resolve | apply | build | release | probe | converge | durability","stderr_tail":"last scrubbed stderr lines","gc":"cleanup summary","identity":{"ssh_key_comment":"alice","git_author":"Name <name@example.com>"},"member":{"fingerprint":"fingerprint","name":"alice","role":"owner"},"probe":{"status":502,"body_snippet":"scrubbed response body"}}
 ` + "```" + `
 
-` + "`activation`, `envelope_hash`, `gc`, and `member` are optional (" + "`omitempty`" + `); ` + "`member.fingerprint`" + ` is also optional. ` + "`probe`" + ` is present as an object or ` + "`null`" + `. ` + "`committed_unconverged`" + ` and ` + "`committed_degraded`" + ` mean ` + "`active.json`" + ` was committed but convergence or durability failed; neither path auto-restores the previous release, and both prescribe ` + "`ship converge`" + `.
+` + "`activation`, `artifact`, `gc`, and `member` are optional (" + "`omitempty`" + `); ` + "`artifact`" + ` is the exact tuple identity and is attached to every committed outcome. ` + "`member.fingerprint`" + ` is also optional. ` + "`probe`" + ` is present as an object or ` + "`null`" + `. ` + "`committed_unconverged`" + ` and ` + "`committed_degraded`" + ` mean ` + "`active.json`" + ` was committed but convergence or durability failed; neither path auto-restores the previous release, and both prescribe ` + "`ship converge`" + `.
 
 ## Webhook payload schemas
 

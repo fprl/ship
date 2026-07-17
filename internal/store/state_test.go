@@ -192,7 +192,7 @@ func TestGoSourcesContainNoLegacyHostStateReference(t *testing.T) {
 		t.Fatal("runtime.Caller failed")
 	}
 	repo := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-	legacy := "host" + ".json"
+	oldStateRef := "host" + ".json"
 	err := filepath.WalkDir(repo, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -210,8 +210,8 @@ func TestGoSourcesContainNoLegacyHostStateReference(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(data), legacy) {
-			return &legacyReferenceError{path: path}
+		if strings.Contains(string(data), oldStateRef) {
+			return &obsoleteReferenceError{path: path}
 		}
 		return nil
 	})
@@ -220,9 +220,9 @@ func TestGoSourcesContainNoLegacyHostStateReference(t *testing.T) {
 	}
 }
 
-type legacyReferenceError struct{ path string }
+type obsoleteReferenceError struct{ path string }
 
-func (e *legacyReferenceError) Error() string { return "legacy host state reference in " + e.path }
+func (e *obsoleteReferenceError) Error() string { return "obsolete host state reference in " + e.path }
 
 func assertMode(t *testing.T, path string, want os.FileMode) {
 	t.Helper()

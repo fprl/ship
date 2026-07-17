@@ -15,11 +15,6 @@ const (
 	imagePruneCommandTimeout   = 15 * time.Second
 )
 
-type releaseDeployRecord struct {
-	Release      string
-	EnvelopeHash string
-}
-
 func releaseImageKeepLimit(env string) int {
 	if env == productionEnvName {
 		return productionReleaseImageKeep
@@ -37,48 +32,6 @@ func purgeReleaseImagesForEnv(app, env string) (int, error) {
 		pruneErr = danglingErr
 	}
 	return removed, pruneErr
-}
-
-func releaseDeployHistory(entries []deployJournalEntry) ([]releaseDeployRecord, error) {
-	all := append([]deployJournalEntry(nil), entries...)
-	seen := map[string]bool{}
-	var history []releaseDeployRecord
-	for i := len(all) - 1; i >= 0; i-- {
-		entry := all[i]
-		if (entry.Outcome != "deployed" && entry.Outcome != "rolled_back") || entry.AttemptedRelease == "" {
-			continue
-		}
-		if err := validateRelease(entry.AttemptedRelease); err != nil {
-			return nil, err
-		}
-		if seen[entry.AttemptedRelease] {
-			continue
-		}
-		seen[entry.AttemptedRelease] = true
-		history = append(history, releaseDeployRecord{Release: entry.AttemptedRelease, EnvelopeHash: entry.EnvelopeHash})
-	}
-	return history, nil
-}
-
-func retainedReleaseHistory(env, active string, history []releaseDeployRecord) []releaseDeployRecord {
-	retained := make([]releaseDeployRecord, 0, releaseImageKeepLimit(env)+1)
-	for _, record := range history {
-		if record.Release == active {
-			retained = append(retained, record)
-		}
-	}
-	kept := 0
-	for _, record := range history {
-		if record.Release == active {
-			continue
-		}
-		if kept == releaseImageKeepLimit(env) {
-			break
-		}
-		retained = append(retained, record)
-		kept++
-	}
-	return retained
 }
 
 func pruneReleaseImages(images []imageRelease, keep map[string]bool) (int, error) {

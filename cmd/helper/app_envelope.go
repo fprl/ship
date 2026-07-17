@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/store"
-	"github.com/fprl/ship/internal/utils"
 )
 
 func releaseEnvelope(manifest []byte, meta releaseMetadata) (envelope.Envelope, string, error) {
@@ -38,44 +36,15 @@ func writeStaticReleaseEnvelope(app, env, release string, e envelope.Envelope) e
 	if err := store.AtomicWrite(path, append(data, '\n'), 0644); err != nil {
 		return fmt.Errorf("write static release envelope: %v", err)
 	}
-	if _, err := utils.RunChecked("chown", []string{"root:root", path}, ""); err != nil {
-		return fmt.Errorf("chown static release envelope: %v", err)
-	}
 	return nil
 }
 
-func readStaticReleaseEnvelope(app, env, release string) (envelope.Envelope, error) {
-	entries, err := os.ReadDir(filepath.Join(identity.StaticDir(app, env), "releases", release))
-	if err != nil {
-		return envelope.Envelope{}, fmt.Errorf("read static release envelopes: %w", err)
-	}
-	var found []envelope.Envelope
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasPrefix(entry.Name(), ".ship-release-") {
-			continue
-		}
-		data, readErr := os.ReadFile(filepath.Join(identity.StaticDir(app, env), "releases", release, entry.Name()))
-		if readErr != nil {
-			return envelope.Envelope{}, fmt.Errorf("read static release envelope: %w", readErr)
-		}
-		e, decodeErr := envelope.DecodeJSON(data)
-		if decodeErr != nil {
-			return envelope.Envelope{}, decodeErr
-		}
-		found = append(found, e)
-	}
-	if len(found) != 1 {
-		return envelope.Envelope{}, fmt.Errorf("static release %s has %d envelope sidecars; envelope hash is required", release, len(found))
-	}
-	return found[0], nil
-}
-
 func staticReleaseEnvelopePath(app, env, release, envelopeHash string) string {
-	return filepath.Join(identity.StaticDir(app, env), "releases", release, ".ship-release-"+envelopeHash[:12])
+	return filepath.Join(identity.StaticDir(app, env), "releases", ".ship-release-"+envelopeHash)
 }
 
 func readStaticReleaseEnvelopeByHash(app, env, release, envelopeHash string) (envelope.Envelope, error) {
-	if len(envelopeHash) < 12 {
+	if len(envelopeHash) != 64 {
 		return envelope.Envelope{}, fmt.Errorf("invalid release envelope hash")
 	}
 	path := staticReleaseEnvelopePath(app, env, release, envelopeHash)

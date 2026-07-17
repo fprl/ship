@@ -329,14 +329,13 @@ func previewAliasOwner(host, currentApp, currentEnv string, incoming map[string]
 		if item.App == currentApp && item.Env == currentEnv {
 			continue
 		}
-		ctx, cleanup, err := loadActiveEnvelopeContext(item.App, item.Env)
+		ctx, _, err := resolveActiveContext(item.App, item.Env)
 		if errcat.Is(err, errcat.CodeNoDeploys) {
 			continue
 		}
 		if err != nil {
 			return previewHostOwner{}, false, fmt.Errorf("read active release for %s (%s): %w", item.App, item.Env, err)
 		}
-		defer cleanup()
 		for _, route := range ctx.Routes {
 			if route.Host == host {
 				return previewHostOwner{App: item.App, Env: item.Env, Kind: "route"}, true, nil

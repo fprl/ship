@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -43,7 +42,6 @@ func podmanBuildArgsWithEnvelope(app, env, imageTag, release, dockerfile, ctxDir
 		"-t", imageTag,
 		"--label", "ship.app="+app,
 		"--label", "ship.env="+env,
-		"--label", "ship.infra_id="+identity.InfraID(app, env),
 		"--label", "ship.release="+release,
 	)
 	if envelopeLabel != "" {
@@ -67,9 +65,6 @@ func hostUserIDs(name string) (string, string, error) {
 	}
 	uid := strings.TrimSpace(string(uidOut))
 	gid := strings.TrimSpace(string(gidOut))
-	if uid == "" || gid == "" {
-		return "", "", fmt.Errorf("empty id output for %s", name)
-	}
 	return uid, gid, nil
 }
 
@@ -88,7 +83,6 @@ func podmanBaseRunArgs(opts podmanBaseRunOptions) []string {
 		"--label", "ship.app="+opts.App,
 		"--label", "ship.env="+opts.Env,
 		"--label", "ship.process="+opts.ProcessName,
-		"--label", "ship.infra_id="+identity.InfraID(opts.App, opts.Env),
 		"--label", "ship.release="+opts.Release,
 	)
 	if opts.Activation != "" {
@@ -128,11 +122,6 @@ func appendResourceArgs(args []string, resources config.Resources) []string {
 // No --publish: Caddy reaches the process over the shared `ingress`
 // network by container DNS. Manifest-declared memory and CPU limits
 // render to the closed set of runtime flags.
-func buildPodmanRunArgs(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, envFileExists bool, previewEnv bool) []string {
-	envFile, _ := activeEnvFile(app, env)
-	return buildPodmanRunArgsWithActivation(app, env, processName, proc, imageTag, userID, groupID, release, "", containerName, envFileExists, previewEnv, envFile)
-}
-
 func buildPodmanRunArgsWithEnvFile(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, envFileExists bool, previewEnv bool, envFile string) []string {
 	return buildPodmanRunArgsWithActivation(app, env, processName, proc, imageTag, userID, groupID, release, "", containerName, envFileExists, previewEnv, envFile)
 }
@@ -142,7 +131,7 @@ func buildPodmanRunArgsWithActivation(app, env, processName string, proc config.
 	resources := effectiveProcessResources(proc, previewEnv)
 
 	args := []string{
-		"run", "-d",
+		"run", "--replace", "-d",
 		"--name", containerName,
 		// Long-running app processes should come back after host or
 		// Podman restarts. Release and exec containers are one-shot and
@@ -197,20 +186,9 @@ func effectiveProcessResources(proc config.Process, previewEnv bool) config.Reso
 	return resources
 }
 
-func startProcess(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, probe string, previewEnv bool, scrubValues []string, envFile string) error {
-	return startProcessWithActivation(app, env, processName, proc, imageTag, userID, groupID, release, "", containerName, probe, previewEnv, scrubValues, envFile)
-}
-
 func startProcessWithActivation(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, activation, containerName string, probe string, previewEnv bool, scrubValues []string, envFile string) error {
-
-	_, _ = utils.RunChecked("podman", []string{"rm", "-f", containerName}, "")
-
-	envFileExists := false
-	if _, err := os.Stat(envFile); err == nil {
-		envFileExists = true
-	}
+	envFileExists := envFile != ""
 	args := buildPodmanRunArgsWithActivation(app, env, processName, proc, imageTag, userID, groupID, release, activation, containerName, envFileExists, previewEnv, envFile)
-
 	if _, err := utils.RunChecked("podman", args, ""); err != nil {
 		return fmt.Errorf("podman run %s: %v", containerName, err)
 	}
@@ -281,15 +259,11 @@ func probeStatusFromDetail(detail string) int {
 
 const releaseCommandTimeout = 10 * time.Minute
 
-func runReleaseCommand(app, env, command, imageTag, userID, groupID, release, envFile string) error {
-	return runReleaseCommandWithActivation(app, env, command, imageTag, userID, groupID, release, "", envFile)
-}
-
 func runReleaseCommandWithActivation(app, env, command, imageTag, userID, groupID, release, activation, envFile string) error {
 	name := identity.ContainerName(app, env, "release", release)
 	_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
 	args := []string{
-		"run", "--rm",
+		"run", "--replace", "--rm",
 		"--name", name,
 	}
 	// Release commands are one-shot migrations: --rm cleans them up,
@@ -314,21 +288,4 @@ func runReleaseCommandWithActivation(app, env, command, imageTag, userID, groupI
 		return fmt.Errorf("release command %q failed before traffic switch: %w", command, err)
 	}
 	return nil
-}
-
-func processContainers(entries []containerEntry, processName, excludeRelease string) []string {
-	var names []string
-	for _, e := range entries {
-		if e.Labels["ship.process"] != processName {
-			continue
-		}
-		if excludeRelease != "" && e.Labels["ship.release"] == excludeRelease {
-			continue
-		}
-		if len(e.Names) > 0 {
-			names = append(names, e.Names[0])
-		}
-	}
-	sort.Strings(names)
-	return names
 }

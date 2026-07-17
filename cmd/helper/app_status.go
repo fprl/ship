@@ -3,7 +3,6 @@ package helper
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	neturl "net/url"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/names"
@@ -51,33 +49,32 @@ func (c appStatusCmd) runLocked() {
 	if processes == nil {
 		processes = []processStatus{}
 	}
-	if err := attachProcessReleaseMetadata(c.App, c.Env, processes); err != nil {
-		utils.DieError(err, 1)
-	}
-	envKnown := envIdentityExists(c.App, c.Env)
-	static, err := activeStaticStatus(c.App, c.Env)
-	if err != nil {
-		utils.DieError(err, 1)
-	}
-	release := activeStatusRelease(runningProcesses(processes), static)
-	if pointer, pointerErr := readActive(c.App, c.Env); pointerErr == nil {
-		intended := &statusRelease{Release: pointer.Release}
-		for _, process := range processes {
-			if process.Release == pointer.Release {
-				intended.Dirty = process.Dirty
-				intended.BaseCommit = process.BaseCommit
-				intended.CreatedAt = process.CreatedAt
-				break
+	pointer, pointerErr := readActive(c.App, c.Env)
+	if pointerErr == nil && !pointer.IsLegacy() && pointer.Artifact.ImageID != "" {
+		if imageIDs, inspectErr := podmanContainerImageIDs(out); inspectErr == nil {
+			for i := range processes {
+				processes[i].Image = imageIDs[processes[i].Container]
 			}
 		}
-		if static != nil && static.Release == pointer.Release {
-			copyStaticReleaseMetadata(static, intended)
+	}
+	attachProcessReleaseMetadata(c.App, c.Env, processes, pointer)
+	envKnown := envIdentityExists(c.App, c.Env)
+	var static *staticStatus
+	release := activeStatusRelease(runningProcesses(processes), static)
+	if pointerErr == nil {
+		if pointer.IsLegacy() {
+			release = &statusRelease{Release: pointer.Release, State: "legacy_activation", Next: "redeploy to heal"}
+		} else if resolved, resolveErr := resolveArtifact(c.App, c.Env, pointer.Artifact); resolveErr != nil {
+			release = &statusRelease{Release: pointer.Artifact.DisplayIdentity(), Artifact: pointer.Artifact, State: "degraded", Next: "artifact_unavailable; redeploy to heal"}
+		} else {
+			static = staticStatusFromResolved(c.App, c.Env, resolved)
+			intended := &statusRelease{Release: pointer.Artifact.DisplayIdentity(), Artifact: pointer.Artifact}
+			if !activePointerRuntimeConvergedResolved(c.App, c.Env, pointer, resolved, processes, static) {
+				intended.State = committedNotConvergedState
+				intended.Next = convergenceNextStep
+			}
+			release = intended
 		}
-		if !activePointerRuntimeConverged(c.App, c.Env, pointer, processes, static) {
-			intended.State = committedNotConvergedState
-			intended.Next = convergenceNextStep
-		}
-		release = intended
 	}
 	if c.JSON {
 		if static != nil && static.Routes == nil {
@@ -92,6 +89,27 @@ func (c appStatusCmd) runLocked() {
 		return
 	}
 	fmt.Print(renderStatusText(c.App, c.Env, processes, envKnown, release, static))
+}
+
+func staticStatusFromResolved(app, env string, resolved resolvedArtifact) *staticStatus {
+	if !resolved.Context.HasStaticRoutes || resolved.Tuple.StaticHash == "" {
+		return nil
+	}
+	if _, err := os.Stat(staticReleasePath(app, env, resolved.Tuple.Release, resolved.Tuple.StaticHash)); err != nil {
+		return nil
+	}
+	routes := make([]string, 0)
+	for name, route := range resolved.Context.Routes {
+		if route.Serve != "" {
+			routes = append(routes, name)
+		}
+	}
+	sort.Strings(routes)
+	status := &staticStatus{Release: resolved.Tuple.DisplayIdentity(), RawRelease: resolved.Tuple.Release, Artifact: resolved.Tuple, Routes: routes}
+	if meta, err := releaseMetadataFromEnvelope(resolved.Envelope, resolved.Tuple.Release); err == nil {
+		status.Dirty, status.BaseCommit, status.CreatedAt = meta.Dirty, meta.BaseCommit, meta.CreatedAt
+	}
+	return status
 }
 
 // appLsCmd merges durable env identity anchors with live process labels.
@@ -246,14 +264,17 @@ type appListEnvStatus struct {
 }
 
 type appEnvStatus struct {
-	App       string                    `json:"app"`
-	Env       string                    `json:"env"`
-	Preview   *identity.PreviewIdentity `json:"preview,omitempty"`
-	ShippedBy *deployIdentity           `json:"shipped_by,omitempty"`
-	Processes []processStatus           `json:"processes"`
-	Static    *staticStatus             `json:"static,omitempty"`
-	State     string                    `json:"state,omitempty"`
-	Next      string                    `json:"next,omitempty"`
+	App        string                    `json:"app"`
+	Env        string                    `json:"env"`
+	Preview    *identity.PreviewIdentity `json:"preview,omitempty"`
+	ShippedBy  *deployIdentity           `json:"shipped_by,omitempty"`
+	Processes  []processStatus           `json:"processes"`
+	Static     *staticStatus             `json:"static,omitempty"`
+	State      string                    `json:"state,omitempty"`
+	Next       string                    `json:"next,omitempty"`
+	pointer    activation.Pointer        `json:"-"`
+	pointerErr error                     `json:"-"`
+	resolved   *resolvedArtifact         `json:"-"`
 }
 
 type processStatus struct {
@@ -275,6 +296,8 @@ type staticStatus struct {
 	Dirty      bool     `json:"dirty,omitempty"`
 	BaseCommit string   `json:"base_commit,omitempty"`
 	CreatedAt  string   `json:"created_at,omitempty"`
+	RawRelease string   `json:"-"`
+	Artifact   Tuple    `json:"-"`
 }
 
 type statusRelease struct {
@@ -287,6 +310,7 @@ type statusRelease struct {
 	StaticRelease  string `json:"static_release,omitempty"`
 	State          string `json:"state,omitempty"`
 	Next           string `json:"next,omitempty"`
+	Artifact       Tuple  `json:"-"`
 }
 
 // containerEntry is the slice of `podman ps --format json` we care
@@ -354,9 +378,6 @@ func containersToAppEnvs(entries []containerEntry) []appEnvStatus {
 		if app == "" || env == "" || process == "" || isEphemeralProcess(process) {
 			continue
 		}
-		if e.Labels["ship.infra_id"] != identity.InfraID(app, env) {
-			continue
-		}
 		k := key{app: app, env: env}
 		grouped[k] = append(grouped[k], e)
 	}
@@ -383,46 +404,30 @@ func containersToAppEnvs(entries []containerEntry) []appEnvStatus {
 	return out
 }
 
-func attachProcessReleaseMetadata(app, env string, processes []processStatus) error {
-	// Decoration is best-effort end to end: a failed image enumeration leaves
-	// every process listed undecorated, the same as a single unreadable
-	// envelope — status must not die over cosmetics.
-	images, err := podmanImages(app, env)
-	if err != nil {
-		return nil
+func attachProcessReleaseMetadata(app, env string, processes []processStatus, pointer activation.Pointer) {
+	if pointer.IsLegacy() || pointer.Artifact.ImageID == "" {
+		return
 	}
-	byRelease := map[string]imageRelease{}
-	activePointer, _ := readActive(app, env)
-	for _, image := range images {
-		if image.Release == activePointer.Release && activePointer.EnvelopeHash != "" && image.EnvelopeHash != activePointer.EnvelopeHash {
-			continue
-		}
-		byRelease[image.Release] = image
+	resolved, err := resolveArtifact(app, env, pointer.Artifact)
+	if err != nil {
+		return
+	}
+	attachProcessReleaseMetadataResolved(processes, pointer, resolved)
+}
+
+func attachProcessReleaseMetadataResolved(processes []processStatus, pointer activation.Pointer, resolved resolvedArtifact) {
+	meta, err := releaseMetadataFromEnvelope(resolved.Envelope, pointer.Artifact.Release)
+	if err != nil {
+		return
 	}
 	for i := range processes {
-		release := processes[i].Release
-		if release == "" {
-			continue
-		}
-		candidate := byRelease[release]
-		if candidate.Envelope.Schema == 0 {
-			candidate.Envelope, err = readStaticReleaseEnvelope(app, env, release)
-			if err != nil {
-				continue
-			}
-		}
-		// Metadata is decoration (dirty marker, base commit, created-at). A
-		// release without a readable envelope — pre-envelope residue or
-		// debris — stays listed undecorated; status must not die on it.
-		meta, err := releaseMetadataFromEnvelope(candidate.Envelope, release)
-		if err != nil {
+		if processes[i].Release != pointer.Artifact.Release {
 			continue
 		}
 		processes[i].Dirty = meta.Dirty
 		processes[i].BaseCommit = meta.BaseCommit
 		processes[i].CreatedAt = meta.CreatedAt
 	}
-	return nil
 }
 
 func mergeAppEnvs(identityApps, processApps []appEnvStatus) []appEnvStatus {
@@ -591,8 +596,8 @@ func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 	}
 	url := ""
 	capabilityURL := ""
-	if ctx, cleanup, err := loadActiveEnvelopeContext(item.App, item.Env); err == nil {
-		defer cleanup()
+	if item.pointerErr == nil && !item.pointer.IsLegacy() && item.resolved != nil {
+		ctx := item.resolved.Context
 		url = execDeploymentURL(ctx)
 		if class == "preview" && url != "" {
 			if token, tokenErr := previewCapability(item.App, item.Env); tokenErr == nil {
@@ -656,7 +661,7 @@ func appListHealth(item appEnvStatus) string {
 	}
 	if len(item.Processes) == 0 {
 		if item.Static != nil {
-			return "healthy"
+			return "running"
 		}
 		return "stopped"
 	}
@@ -665,7 +670,7 @@ func appListHealth(item appEnvStatus) string {
 			return "degraded"
 		}
 	}
-	return "healthy"
+	return "running"
 }
 
 func appListAgeSeconds(createdAt string, now time.Time) int64 {
@@ -700,15 +705,33 @@ func renderAge(seconds int64) string {
 
 func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 	for i := range apps {
-		if err := attachProcessReleaseMetadata(apps[i].App, apps[i].Env, apps[i].Processes); err != nil {
-			return err
+		pointer, pointerErr := readActive(apps[i].App, apps[i].Env)
+		apps[i].pointer = pointer
+		apps[i].pointerErr = pointerErr
+		if pointerErr == nil && pointer.IsLegacy() {
+			apps[i].State = "legacy_activation"
+			apps[i].Next = "redeploy to heal"
+			continue
 		}
-		static, err := activeStaticStatus(apps[i].App, apps[i].Env)
-		if err != nil {
-			return err
+		if errcat.Is(pointerErr, errcat.CodeNoDeploys) {
+			continue
 		}
+		var resolved resolvedArtifact
+		if pointerErr == nil && !pointer.IsLegacy() {
+			resolved, pointerErr = resolveArtifact(apps[i].App, apps[i].Env, pointer.Artifact)
+			if pointerErr == nil {
+				apps[i].resolved = &resolved
+				attachProcessReleaseMetadataResolved(apps[i].Processes, pointer, resolved)
+			}
+		}
+		if pointerErr != nil {
+			apps[i].State = "degraded"
+			apps[i].Next = "artifact_unavailable; redeploy to heal"
+			continue
+		}
+		static := staticStatusFromResolved(apps[i].App, apps[i].Env, resolved)
 		apps[i].Static = static
-		if pointer, pointerErr := readActive(apps[i].App, apps[i].Env); pointerErr == nil && !activePointerRuntimeConverged(apps[i].App, apps[i].Env, pointer, apps[i].Processes, static) {
+		if !pointer.IsLegacy() && !activePointerRuntimeConvergedResolved(apps[i].App, apps[i].Env, pointer, resolved, apps[i].Processes, static) {
 			apps[i].State = committedNotConvergedState
 			apps[i].Next = convergenceNextStep
 		}
@@ -729,11 +752,15 @@ func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 const committedNotConvergedState = "committed, not converged"
 
 func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, processes []processStatus, static *staticStatus) bool {
-	ctx, cleanup, err := loadActiveEnvelopeContext(app, env)
+	resolved, err := resolveArtifact(app, env, pointer.Artifact)
 	if err != nil {
 		return false
 	}
-	defer cleanup()
+	return activePointerRuntimeConvergedResolved(app, env, pointer, resolved, processes, static)
+}
+
+func activePointerRuntimeConvergedResolved(app, env string, pointer activation.Pointer, resolved resolvedArtifact, processes []processStatus, static *staticStatus) bool {
+	ctx := resolved.Context
 	if env != productionEnvName {
 		token, err := secrets.GetPreviewCapability(app, env)
 		if err != nil {
@@ -752,7 +779,7 @@ func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, 
 		for name := range ctx.Processes {
 			count := 0
 			for _, process := range processes {
-				if process.Process == name && process.State == "running" && process.Release == pointer.Release && process.Activation == pointer.Activation {
+				if process.Process == name && process.State == "running" && process.Release == pointer.Release && process.Activation == pointer.Activation && (pointer.Artifact.ImageID == "" || normalizeImageID(process.Image) == normalizeImageID(pointer.Artifact.ImageID)) {
 					count++
 					if process.Container != "" {
 						desiredNames[name] = process.Container
@@ -766,7 +793,7 @@ func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, 
 	}
 	for _, process := range processes {
 		if process.State == "running" {
-			if !ctx.NeedsImage || process.Release != pointer.Release || process.Activation != pointer.Activation {
+			if !ctx.NeedsImage || process.Release != pointer.Release || process.Activation != pointer.Activation || (pointer.Artifact.ImageID != "" && normalizeImageID(process.Image) != normalizeImageID(pointer.Artifact.ImageID)) {
 				return false
 			}
 			if _, ok := ctx.Processes[process.Process]; !ok {
@@ -774,13 +801,8 @@ func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, 
 			}
 		}
 	}
-	if ctx.HasStaticRoutes && (static == nil || static.Release != pointer.Release) {
+	if ctx.HasStaticRoutes && (static == nil || static.Artifact != pointer.Artifact) {
 		return false
-	}
-	if ctx.HasStaticRoutes {
-		if err := verifyStaticRelease(app, env, pointer.Release, ctx.Routes); err != nil {
-			return false
-		}
 	}
 	fragment, err := os.ReadFile(caddyfilePath(app, env))
 	if err != nil {
@@ -818,8 +840,13 @@ func renderStatusReleaseText(release *statusRelease) string {
 func activeStatusRelease(processes []processStatus, static *staticStatus) *statusRelease {
 	processRelease, processMixed := commonProcessRelease(processes)
 	staticRelease := ""
+	staticDisplayRelease := ""
 	if static != nil {
-		staticRelease = static.Release
+		staticRelease = static.RawRelease
+		if staticRelease == "" {
+			staticRelease = static.Release
+		}
+		staticDisplayRelease = static.Release
 	}
 	switch {
 	case processMixed:
@@ -829,23 +856,32 @@ func activeStatusRelease(processes []processStatus, static *staticStatus) *statu
 		return &statusRelease{
 			Mixed:          true,
 			ProcessRelease: processRelease,
-			StaticRelease:  staticRelease,
+			StaticRelease:  firstNonEmpty(staticDisplayRelease, staticRelease),
 		}
 	case processRelease != "":
 		release := statusRelease{Release: processRelease}
 		copyProcessReleaseMetadata(processes, processRelease, &release)
 		if staticRelease == processRelease {
-			release.StaticRelease = staticRelease
+			release.StaticRelease = firstNonEmpty(staticDisplayRelease, staticRelease)
 			release.ProcessRelease = processRelease
 		}
 		return &release
 	case staticRelease != "":
-		release := statusRelease{Release: staticRelease}
+		release := statusRelease{Release: firstNonEmpty(staticDisplayRelease, staticRelease)}
 		copyStaticReleaseMetadata(static, &release)
 		return &release
 	default:
 		return nil
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func commonProcessRelease(processes []processStatus) (string, bool) {
@@ -894,44 +930,14 @@ func activeStaticStatus(app, env string) (*staticStatus, error) {
 		}
 		return nil, err
 	}
-	e, err := readStaticReleaseEnvelopeByHash(app, env, pointer.Release, pointer.EnvelopeHash)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("static release %s integrity error: %v", pointer.Release, err)
-	}
-	label, labelErr := e.LabelValue()
-	if labelErr != nil || envelope.HashLabel(label) != pointer.EnvelopeHash {
-		return nil, fmt.Errorf("active static release envelope hash does not match active.json")
-	}
-	ctx, cleanup, err := loadAppContextFromEnvelope(app, env, pointer.Release, e, "active static release envelope is missing")
-	if err != nil {
-		return nil, err
-	}
-	defer cleanup()
-	if !ctx.HasStaticRoutes {
+	if pointer.IsLegacy() {
 		return nil, nil
 	}
-	if err := verifyStaticRelease(app, env, pointer.Release, ctx.Routes); err != nil {
-		return nil, fmt.Errorf("static release %s integrity error: %v", pointer.Release, err)
-	}
-	routes := make([]string, 0, len(ctx.Routes))
-	for name, route := range ctx.Routes {
-		if route.Serve != "" {
-			routes = append(routes, name)
-		}
-	}
-	sort.Strings(routes)
-	status := &staticStatus{Release: pointer.Release, Routes: routes}
-	meta, err := releaseMetadataFromEnvelope(e, pointer.Release)
+	resolved, err := resolveArtifact(app, env, pointer.Artifact)
 	if err != nil {
 		return nil, err
 	}
-	status.Dirty = meta.Dirty
-	status.BaseCommit = meta.BaseCommit
-	status.CreatedAt = meta.CreatedAt
-	return status, nil
+	return staticStatusFromResolved(app, env, resolved), nil
 }
 
 // --- podman calls ---
@@ -942,7 +948,6 @@ func podmanPSContainers(app, env string) ([]containerEntry, error) {
 	cmd := exec.Command("podman", "ps", "-a",
 		"--filter", "label=ship.app="+app,
 		"--filter", "label=ship.env="+env,
-		"--filter", "label=ship.infra_id="+identity.InfraID(app, env),
 		"--format", "json",
 	)
 	out, err := cmd.Output()
@@ -963,14 +968,48 @@ func podmanPSAllContainers() ([]containerEntry, error) {
 
 func parsePodmanPSJSON(out []byte) ([]containerEntry, error) {
 	out = []byte(strings.TrimSpace(string(out)))
-	if len(out) == 0 {
-		return nil, nil
-	}
 	var entries []containerEntry
 	if err := json.Unmarshal(out, &entries); err != nil {
 		return nil, fmt.Errorf("parse podman ps json: %v", err)
 	}
 	return entries, nil
+}
+
+func podmanContainerImageIDs(entries []containerEntry) (map[string]string, error) {
+	ids := map[string]string{}
+	var names []string
+	for _, entry := range entries {
+		if len(entry.Names) > 0 {
+			names = append(names, entry.Names[0])
+		}
+	}
+	if len(names) == 0 {
+		return ids, nil
+	}
+	args := append([]string{"inspect", "--format", "json"}, names...)
+	out, err := utils.RunChecked("podman", args, "")
+	if err != nil {
+		return nil, fmt.Errorf("podman inspect containers: %w", err)
+	}
+	var inspected []struct {
+		Name   string `json:"Name"`
+		Image  string `json:"Image"`
+		Config struct {
+			Image string `json:"Image"`
+		} `json:"Config"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &inspected); err != nil {
+		return nil, fmt.Errorf("parse podman inspect containers: %w", err)
+	}
+	for _, item := range inspected {
+		name := strings.TrimPrefix(item.Name, "/")
+		image := item.Image
+		if image == "" {
+			image = item.Config.Image
+		}
+		ids[name] = image
+	}
+	return ids, nil
 }
 
 var envIdentityGlob string

@@ -2,6 +2,7 @@ package helper
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/identity"
@@ -15,23 +16,24 @@ type processStartRuntime struct {
 	ScrubValues []string
 	UserID      string
 	GroupID     string
-	ImageTag    string
+	ImageID     string
 	Routed      map[string]bool
 	PreviewEnv  bool
 	EnvFile     string
 }
 
 type startReleaseProcessesParams struct {
-	App                      string
-	Env                      string
-	Release                  string
-	Activation               string
-	Context                  *config.AppContext
-	OnlyPortful              bool
-	UseExistingActivationEnv bool
-	BeforeStart              func(processStartRuntime) error
-	BeforeProcess            func(processName string, proc config.Process) error
-	ContainerName            func(processName string, proc config.Process) string
+	App           string
+	Env           string
+	Release       string
+	Activation    string
+	Context       *config.AppContext
+	OnlyPortful   bool
+	ImageID       string
+	EnvFile       string
+	ScrubValues   []string
+	BeforeStart   func(processStartRuntime) error
+	ContainerName func(processName string, proc config.Process) string
 }
 
 type startReleaseProcessesResult struct {
@@ -40,10 +42,7 @@ type startReleaseProcessesResult struct {
 	ScrubValues []string
 }
 
-type processStartError struct {
-	Process string
-	Err     error
-}
+type processStartError struct{ Err error }
 
 func (e processStartError) Error() string {
 	return e.Err.Error()
@@ -60,33 +59,14 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 	result := startReleaseProcessesResult{
 		ProcessName: map[string]string{},
 	}
-	var envFile string
-	var err error
-	var scrubValues []string
-	if params.UseExistingActivationEnv {
-		pointer, pointerErr := readActive(params.App, params.Env)
-		if pointerErr == nil && pointer.Activation == params.Activation {
-			envFile, err = activeEnvFile(params.App, params.Env)
-		} else {
-			params.UseExistingActivationEnv = false
-		}
-	} else {
-		params.UseExistingActivationEnv = false
+	if params.EnvFile == "" {
+		return result, fmt.Errorf("resolved activation env file is required")
 	}
-	if !params.UseExistingActivationEnv {
-		resolved, resolveErr := resolveEnv(params.App, params.Env, params.Context.Vars, params.Context.SecretRefs)
-		if resolveErr != nil {
-			return result, resolveErr
-		}
-		scrubValues = collectEnvValues(resolved)
-		for key, value := range shipInjectedEnv(params.App, params.Env, params.Release, params.Context) {
-			resolved[key] = value
-		}
-		envFile, err = writeActivationEnvFile(params.App, params.Env, params.Activation, resolved)
+	if _, err := os.Stat(params.EnvFile); err != nil {
+		return result, fmt.Errorf("resolved activation env file is unavailable: %w", err)
 	}
-	if err != nil {
-		return result, err
-	}
+	envFile := params.EnvFile
+	scrubValues := append([]string(nil), params.ScrubValues...)
 	result.ScrubValues = scrubValues
 
 	userID, groupID, err := hostUserIDs(identity.SystemUser(params.App, params.Env))
@@ -97,7 +77,7 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 		ScrubValues: scrubValues,
 		UserID:      userID,
 		GroupID:     groupID,
-		ImageTag:    identity.ImageTag(params.App, params.Env, params.Release),
+		ImageID:     params.ImageID,
 		EnvFile:     envFile,
 		Routed:      routedProcessNames(params.Context.Routes),
 	}
@@ -116,11 +96,6 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 		if params.OnlyPortful && proc.Port == nil {
 			continue
 		}
-		if params.BeforeProcess != nil {
-			if err := params.BeforeProcess(processName, proc); err != nil {
-				return result, err
-			}
-		}
 		containerName := identity.ContainerName(params.App, params.Env, processName, params.Release)
 		if params.ContainerName != nil {
 			containerName = params.ContainerName(processName, proc)
@@ -129,8 +104,8 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 		if proc.Port != nil {
 			result.ProcessName[processName] = containerName
 		}
-		if err := startProcessWithActivation(params.App, params.Env, processName, proc, runtime.ImageTag, runtime.UserID, runtime.GroupID, params.Release, params.Activation, containerName, processProbe(runtime.Routed, processName, params.Context.Probe), runtime.PreviewEnv, runtime.ScrubValues, runtime.EnvFile); err != nil {
-			return result, processStartError{Process: processName, Err: err}
+		if err := startProcessWithActivation(params.App, params.Env, processName, proc, runtime.ImageID, runtime.UserID, runtime.GroupID, params.Release, params.Activation, containerName, processProbe(runtime.Routed, processName, params.Context.Probe), runtime.PreviewEnv, runtime.ScrubValues, runtime.EnvFile); err != nil {
+			return result, processStartError{Err: err}
 		}
 	}
 	result.Started = uniqueContainerNames(result.Started)

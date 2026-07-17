@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/internal/artifact"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
@@ -38,9 +39,7 @@ func TestActivePointerSurvivesCrashBeforeJournalAppend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := activation.Write("api", "production", activation.Pointer{Version: 1, Release: "abc1234", Activation: "abc1234-deadbeef", EnvelopeHash: envelope.HashLabel(label)}); err != nil {
-		t.Fatal(err)
-	}
+	writeLegacyPointerForTest(t, "api", "production", "abc1234", "abc1234-deadbeef", envelope.HashLabel(label))
 	if _, err := readActive("api", "production"); err != nil {
 		t.Fatal(err)
 	}
@@ -59,30 +58,18 @@ func TestWriteActivePreparesOwnershipBeforePublishing(t *testing.T) {
 	if err := os.MkdirAll(bin, 0755); err != nil {
 		t.Fatal(err)
 	}
-	chownTarget := filepath.Join(root, "chown-target")
-	t.Setenv("CHOWN_TARGET", chownTarget)
-	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nprintf '%s\\n' \"$2\" > \"$CHOWN_TARGET\"\nexit 1\n")
+	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 1\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	old := activation.Pointer{Version: 1, Release: "old1234", Activation: "old1234-old", EnvelopeHash: strings.Repeat("a", 64)}
-	if err := activation.Write("api", "production", old); err != nil {
-		t.Fatal(err)
-	}
-	next := activation.Pointer{Version: 1, Release: "new1234", Activation: "new1234-new", EnvelopeHash: strings.Repeat("b", 64)}
-	if err := writeActive("api", "production", next); err == nil {
-		t.Fatal("writeActive succeeded despite chown failure")
+	writeLegacyPointerForTest(t, "api", "production", old.Release, old.Activation, old.EnvelopeHash)
+	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "new1234-new", Artifact: artifact.Tuple{Release: "new1234", StaticHash: strings.Repeat("b", 64), EnvelopeHash: strings.Repeat("c", 64)}}); err != nil {
+		t.Fatalf("writeActive should not invoke root chown: %v", err)
 	}
 	got, err := readActive("api", "production")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != old {
-		t.Fatalf("active pointer changed before ownership preparation: %+v", got)
-	}
-	target, err := os.ReadFile(chownTarget)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(target) == identity.ActiveFile("api", "production") {
-		t.Fatal("chown ran against the serving active.json path")
+	if got.Version != 2 || got.Activation != "new1234-new" || got.Artifact.Release != "new1234" {
+		t.Fatalf("active pointer was not published: %+v", got)
 	}
 }

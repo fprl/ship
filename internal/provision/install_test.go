@@ -67,7 +67,7 @@ func TestRunInstallWritesHonestChangedCount(t *testing.T) {
 		t.Fatalf("box.address = %q, want 203.0.113.7", boxConfig.Values["box.address"])
 	}
 	if _, err := os.Stat(filepath.Join(root, "host"+".json")); !os.IsNotExist(err) {
-		t.Fatalf("legacy host state exists: %v", err)
+		t.Fatalf("obsolete host state exists: %v", err)
 	}
 	if _, ok := runner.files["/etc/systemd/system/ssh.service"]; ok {
 		t.Fatal("install must not overwrite the packaged ssh.service unit")

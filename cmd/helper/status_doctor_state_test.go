@@ -285,7 +285,7 @@ func TestDoctorDeployJournalCheckReadsEachAppEnv(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(journalPath), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(journalPath, []byte(`{"schema_version":1,"app":"api","env":"production"}`+"\n"), 0644); err != nil {
+	if err := os.WriteFile(journalPath, []byte(`{"schema_version":2,"app":"api","env":"production"}`+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -304,10 +304,10 @@ func TestDoctorDeployJournalCheckReadsEachAppEnv(t *testing.T) {
 	}
 }
 
-func TestDoctorDeployJournalTornTailIsDegraded(t *testing.T) {
+func TestDoctorDeployJournalV1IsIgnored(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	path := identity.DeployJournalFile("api", "production")
+	path := identity.LegacyDeployJournalFile("api", "production")
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -319,11 +319,8 @@ func TestDoctorDeployJournalTornTailIsDegraded(t *testing.T) {
 	check := doctorDeployJournalsCheck(func() ([]appEnvStatus, error) {
 		return []appEnvStatus{{App: "api", Env: "production"}}, nil
 	}, "fake-vps")
-	if check.Status != doctorStatusDegraded {
-		t.Fatalf("status = %q, want degraded: %+v", check.Status, check)
-	}
-	if !strings.Contains(check.Evidence, "incomplete final entry") {
-		t.Fatalf("evidence = %q, want incomplete final entry", check.Evidence)
+	if check.Status != doctorStatusOK {
+		t.Fatalf("status = %q, want ok: %+v", check.Status, check)
 	}
 }
 

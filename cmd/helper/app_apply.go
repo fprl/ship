@@ -4,13 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/internal/artifact"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
@@ -45,7 +45,9 @@ type appApplyCmd struct {
 	ActivationID  string            `kong:"-"`
 	Envelope      envelope.Envelope `kong:"-"`
 	EnvelopeLabel string            `kong:"-"`
-	SkipBuild     bool              `kong:"-"`
+	ImageID       string            `kong:"-"`
+	StaticHash    string            `kong:"-"`
+	ScrubValues   []string          `kong:"-"`
 }
 
 type applyReleaseResult struct {
@@ -108,9 +110,10 @@ func (c appApplyCmd) recordDeployFailure(app *config.AppContext, previousRelease
 }
 
 func (c appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
-	stepErr := newJournalStepError("converge", err, nil, nil)
+	stepErr := newJournalStepError(committedFailureStep(err, "converge"), err, nil, nil)
 	entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, stepErr)
 	entry.Outcome = "committed_unconverged"
+	entry.Artifact = c.committedArtifact()
 	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
@@ -122,6 +125,7 @@ func (c appApplyCmd) recordCommittedDegraded(app *config.AppContext, previousRel
 	stepErr := newJournalStepError("durability", err, nil, nil)
 	entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, stepErr)
 	entry.Outcome = "committed_degraded"
+	entry.Artifact = c.committedArtifact()
 	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
@@ -133,19 +137,51 @@ func newDeployCommittedUnconvergedError(err error) error {
 	if errcat.Is(err, errcat.CodeDeployCommittedUnconverged) {
 		return err
 	}
-	return errcat.New(errcat.CodeDeployCommittedUnconverged, errcat.Fields{"detail": err.Error()})
+	return &committedCodedError{coded: errcat.New(errcat.CodeDeployCommittedUnconverged, errcat.Fields{"detail": err.Error()}), cause: err}
 }
 
 func newDeployCommittedDegradedError(err error) error {
 	if errcat.Is(err, errcat.CodeDeployCommittedDegraded) {
 		return err
 	}
-	return errcat.New(errcat.CodeDeployCommittedDegraded, errcat.Fields{"detail": err.Error()})
+	return &committedCodedError{coded: errcat.New(errcat.CodeDeployCommittedDegraded, errcat.Fields{"detail": err.Error()}), cause: err}
+}
+
+type committedCodedError struct {
+	coded *errcat.Error
+	cause error
+}
+
+func (e *committedCodedError) Error() string   { return e.coded.Error() }
+func (e *committedCodedError) Unwrap() []error { return []error{e.coded, e.cause} }
+
+func committedFailureStep(err error, fallback string) string {
+	var convergeErr *convergeError
+	if errors.As(err, &convergeErr) && convergeErr.Step != "" {
+		return convergeErr.Step
+	}
+	var stepErr *journalStepError
+	if errors.As(err, &stepErr) && stepErr.Step != "" {
+		return stepErr.Step
+	}
+	return fallback
+}
+
+func (c appApplyCmd) committedArtifact() *artifact.Tuple {
+	tuple := artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash}
+	if c.ImageID == "" {
+		tuple.EnvelopeHash = envelope.HashLabel(c.EnvelopeLabel)
+	}
+	return &tuple
 }
 
 func (c appApplyCmd) runLockedE() (err error) {
 	startedAt := time.Now().UTC()
-	previousRelease := currentActiveReleaseBestEffort(c.App, c.Env)
+	previousPointer, pointerErr := readActive(c.App, c.Env)
+	if pointerErr != nil && !errcat.Is(pointerErr, errcat.CodeNoDeploys) {
+		return pointerErr
+	}
+	previousRelease := previousPointer.Release
 	var app *config.AppContext
 	committed := false
 	defer func() {
@@ -192,16 +228,18 @@ func (c appApplyCmd) runLockedE() (err error) {
 	if err != nil {
 		return err
 	}
-	c.ActivationID, err = newActivationID(c.App, c.Env, c.SHA)
-	if err != nil {
-		return err
+	if app.NeedsImage {
+		c.ActivationID, err = newActivationID(c.App, c.Env, c.SHA)
+		if err != nil {
+			return err
+		}
 	}
 	c.Envelope, c.EnvelopeLabel, err = releaseEnvelope(manifestData, meta)
 	if err != nil {
 		return err
 	}
 	if app.NeedsImage {
-		if err := c.planContainerBuild(); err != nil {
+		if err := c.prepareContainerArtifact(ctxDir, previousPointer, pointerErr == nil); err != nil {
 			return err
 		}
 	}
@@ -212,8 +250,11 @@ func (c appApplyCmd) runLockedE() (err error) {
 	for key, value := range shipInjectedEnv(c.App, c.Env, c.SHA, app) {
 		resolved[key] = value
 	}
-	if _, err := writeActivationEnvFile(c.App, c.Env, c.ActivationID, resolved); err != nil {
-		return err
+	c.ScrubValues = collectEnvValues(resolved)
+	if app.NeedsImage {
+		if _, err := writeActivationEnvFile(c.App, c.Env, c.ActivationID, resolved); err != nil {
+			return err
+		}
 	}
 
 	result, err := c.applyRelease(ctxDir, app)
@@ -221,12 +262,18 @@ func (c appApplyCmd) runLockedE() (err error) {
 		return err
 	}
 
+	app.StaticHash = c.StaticHash
 	if err := c.prepareCaddy(app, result); err != nil {
 		return err
 	}
 	committed, err = commitAndConverge(c.App, c.Env, activation.Pointer{
-		Version: 1, Release: c.SHA, Activation: c.ActivationID,
-		EnvelopeHash: envelope.HashLabel(c.EnvelopeLabel),
+		Version: 2, Release: c.SHA, Activation: c.ActivationID,
+		Artifact: artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash, EnvelopeHash: func() string {
+			if c.ImageID == "" {
+				return envelope.HashLabel(c.EnvelopeLabel)
+			}
+			return ""
+		}()},
 	}, func(stale []string) {
 		result.containersToRemove = uniqueContainerNames(append(result.containersToRemove, stale...))
 	}, func() error {
@@ -267,14 +314,14 @@ func (c appApplyCmd) prepareCaddy(app *config.AppContext, result applyReleaseRes
 }
 
 func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRelease string, startedAt time.Time, result applyReleaseResult) error {
+	if err := resetLegacyDeployJournalForV2(c.App, c.Env); err != nil {
+		return err
+	}
 	previousJournal, previousJournalTorn, previousJournalErr := readLatestDeployJournalEntryWithStatus(c.App, c.Env)
 	if previousJournalTorn {
 		warnTornDeployJournal(identity.DeployJournalFile(c.App, c.Env))
 	}
 	entry := sanitizeDeployJournalEntry(c.App, c.Env, deployJournalEntry{
-		SchemaVersion:    deployJournalSchemaVersion,
-		App:              c.App,
-		Env:              c.Env,
 		Outcome:          "deployed",
 		StartedAt:        startedAt.Format(time.RFC3339Nano),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
@@ -283,11 +330,16 @@ func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRel
 		Activation:       c.ActivationID,
 		Identity:         c.actor(),
 		Member:           currentServerMemberForJournal(),
-		EnvelopeHash:     envelope.HashLabel(c.EnvelopeLabel),
+		Artifact: &artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash, EnvelopeHash: func() string {
+			if c.ImageID == "" {
+				return envelope.HashLabel(c.EnvelopeLabel)
+			}
+			return ""
+		}()},
 	}, nil)
 	if err := appendSanitizedDeployJournal(c.App, c.Env, entry); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: deployed but failed to write deploy journal %s: %v; cleanup/GC were skipped; run ship box doctor\n", identity.DeployJournalFile(c.App, c.Env), err)
-		fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, c.SHA)
+		fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash}.DisplayIdentity())
 		return nil
 	}
 	removeContainers(result.containersToRemove)
@@ -296,7 +348,7 @@ func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRel
 		webhookDeployRecovered(app.Webhook, app, previousJournal, entry, time.Now().UTC())
 	}
 
-	fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, c.SHA)
+	fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash}.DisplayIdentity())
 	return nil
 }
 
@@ -395,7 +447,6 @@ func (c appApplyCmd) applyRelease(ctxDir string, app *config.AppContext) (applyR
 		if err != nil {
 			return applyReleaseResult{}, err
 		}
-		result.containersToRemove = containerResult.containersToRemove
 		result.processNames = containerResult.processNames
 	} else {
 		// Static-only targets have no prepared runtime shape. Convergence
@@ -403,6 +454,62 @@ func (c appApplyCmd) applyRelease(ctxDir string, app *config.AppContext) (applyR
 	}
 
 	return result, nil
+}
+
+// prepareContainerArtifact builds a fresh image or adopts an exact committed
+// artifact whose envelope has the same configuration identity. The release
+// name is only metadata; the runtime reference is the inspected ImageID.
+func (c *appApplyCmd) prepareContainerArtifact(ctxDir string, previousPointer activation.Pointer, hasPreviousPointer bool) error {
+	incomingMeta, err := releaseMetadataFromEnvelope(c.Envelope, c.SHA)
+	if err != nil {
+		return err
+	}
+	if !c.Rebuild {
+		var history []artifact.Tuple
+		var historyErr error
+		if hasPreviousPointer {
+			history, _, historyErr = committedHistoryWithPointer(c.App, c.Env, previousPointer)
+		}
+		if historyErr == nil {
+			for _, tuple := range history {
+				if tuple.Release != c.SHA || tuple.ImageID == "" {
+					continue
+				}
+				candidate, resolveErr := resolveArtifact(c.App, c.Env, tuple)
+				if resolveErr != nil || candidate.Envelope.Manifest != c.Envelope.Manifest {
+					continue
+				}
+				meta, metaErr := releaseMetadataFromEnvelope(candidate.Envelope, c.SHA)
+				if metaErr != nil || meta.Dirty != incomingMeta.Dirty || meta.BaseCommit != incomingMeta.BaseCommit {
+					continue
+				}
+				label, labelErr := candidate.Envelope.LabelValue()
+				if labelErr != nil {
+					continue
+				}
+				c.Envelope, c.EnvelopeLabel, c.ImageID = candidate.Envelope, label, tuple.ImageID
+				return nil
+			}
+		}
+	}
+	buildRef := identity.ImageTag(c.App, c.Env, "build-"+c.ActivationID)
+	args := podmanBuildArgsWithEnvelope(c.App, c.Env, buildRef, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild, c.EnvelopeLabel)
+	if _, err := utils.RunChecked("podman", args, ""); err != nil {
+		return newJournalStepError("build", fmt.Errorf("podman build: %w", err), nil, nil)
+	}
+	entry, err := inspectExactImage(buildRef)
+	if err != nil {
+		return err
+	}
+	if entry.ID == "" {
+		return errors.New("podman image inspect returned empty image id")
+	}
+	c.ImageID = entry.ID
+	committedTag := identity.ImageTag(c.App, c.Env, "img-"+normalizeImageID(c.ImageID))
+	if _, err := utils.RunChecked("podman", []string{"tag", buildRef, committedTag}, ""); err != nil {
+		return fmt.Errorf("tag built image %s: %w", c.ImageID, err)
+	}
+	return nil
 }
 
 func removeContainers(names []string) {
@@ -464,12 +571,10 @@ func warnOnRestartFailure(stopped []string) {
 }
 
 type containerApplyResult struct {
-	containersToRemove []string
-	processNames       map[string]string
+	processNames map[string]string
 }
 
 func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, existing []containerEntry) (containerApplyResult, error) {
-	var containersToRemove []string
 	startedAt := time.Now().UTC().Format("20060102t150405000000000z")
 	started, err := startReleaseProcesses(startReleaseProcessesParams{
 		App:         c.App,
@@ -478,20 +583,9 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		Activation:  c.ActivationID,
 		Context:     app,
 		OnlyPortful: true,
-		BeforeStart: func(runtime processStartRuntime) error {
-			if !c.SkipBuild {
-				buildArgs := podmanBuildArgsWithEnvelope(c.App, c.Env, runtime.ImageTag, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild, c.EnvelopeLabel)
-				if _, err := utils.RunChecked("podman", buildArgs, ""); err != nil {
-					return newJournalStepError("build", fmt.Errorf("podman build: %w", err), runtime.ScrubValues, nil)
-				}
-			}
-			if app.Release != "" {
-				if err := runReleaseCommandWithActivation(c.App, c.Env, app.Release, runtime.ImageTag, runtime.UserID, runtime.GroupID, c.SHA, c.ActivationID, runtime.EnvFile); err != nil {
-					return newJournalStepError("release", err, runtime.ScrubValues, nil)
-				}
-			}
-			return nil
-		},
+		ImageID:     c.ImageID,
+		EnvFile:     identity.ActivationEnvFile(c.App, c.Env, c.ActivationID),
+		ScrubValues: c.ScrubValues,
 		ContainerName: func(processName string, proc config.Process) string {
 			return nextProcessContainerName(existing, c.App, c.Env, processName, c.SHA, startedAt)
 		},
@@ -517,113 +611,19 @@ func (c appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exist
 		}
 		return containerApplyResult{}, err
 	}
+	if app.Release != "" {
+		// Migrations run against the same exact image that will be committed.
+		userID, groupID, idErr := hostUserIDs(identity.SystemUser(c.App, c.Env))
+		if idErr != nil {
+			return containerApplyResult{}, idErr
+		}
+		if releaseErr := runReleaseCommandWithActivation(c.App, c.Env, app.Release, c.ImageID, userID, groupID, c.SHA, c.ActivationID, identity.ActivationEnvFile(c.App, c.Env, c.ActivationID)); releaseErr != nil {
+			return containerApplyResult{}, newJournalStepError("release", releaseErr, started.ScrubValues, nil)
+		}
+	}
 	return containerApplyResult{
-		containersToRemove: uniqueContainerNames(containersToRemove),
-		processNames:       started.ProcessName,
+		processNames: started.ProcessName,
 	}, nil
-}
-
-// planContainerBuild decides whether the deploy may build. A committed image
-// (active or in a committed journal entry) is immutable: when an image under
-// the release tag carries the same configuration — manifest, release, dirty
-// marker, and base commit; the envelope's created_at timestamp is not
-// configuration — the deploy reuses it and adopts its envelope identity, so
-// the committed pointer hash keeps matching the image label. This keeps
-// same-release redeploys (secret rotation, retries) working. --rebuild or a
-// changed configuration on a committed release refuses rather than replace
-// committed bytes under the same tag; debris from a never-committed prepare
-// may be rebuilt freely.
-func (c *appApplyCmd) planContainerBuild() error {
-	c.SkipBuild = false
-	images, err := podmanImagesForRelease(c.App, c.Env, c.SHA)
-	if err != nil || len(images) == 0 {
-		// Only confirmed tag absence may build: a transient inspect failure
-		// over a committed tag must not open a rebuild window.
-		if imageTagConfirmedAbsent(c.App, c.Env, c.SHA) {
-			return nil
-		}
-		if releaseArtifactsCommitted(c.App, c.Env, c.SHA) {
-			return errcat.New(errcat.CodeReleaseImmutable, errcat.Fields{
-				"detail": fmt.Sprintf("release %s has committed artifacts but its image cannot be verified right now; deploying could replace committed bytes", c.SHA),
-			})
-		}
-		return nil
-	}
-	if !c.Rebuild {
-		incomingMeta, err := releaseMetadataFromEnvelope(c.Envelope, c.SHA)
-		if err != nil {
-			return err
-		}
-		for _, image := range images {
-			if image.Release != c.SHA || image.Envelope.Schema == 0 || image.Envelope.Manifest != c.Envelope.Manifest {
-				continue
-			}
-			imageMeta, metaErr := releaseMetadataFromEnvelope(image.Envelope, c.SHA)
-			if metaErr != nil || imageMeta.Dirty != incomingMeta.Dirty || imageMeta.BaseCommit != incomingMeta.BaseCommit {
-				continue
-			}
-			label, labelErr := image.Envelope.LabelValue()
-			if labelErr != nil {
-				continue
-			}
-			c.Envelope, c.EnvelopeLabel = image.Envelope, label
-			c.SkipBuild = true
-			return nil
-		}
-	}
-	if releaseArtifactsCommitted(c.App, c.Env, c.SHA) {
-		detail := fmt.Sprintf("release %s already has a committed image with a different configuration; deploying would replace it", c.SHA)
-		if c.Rebuild {
-			detail = fmt.Sprintf("release %s already has a committed image; --rebuild would replace it", c.SHA)
-		}
-		return errcat.New(errcat.CodeReleaseImmutable, errcat.Fields{"detail": detail})
-	}
-	return nil
-}
-
-// imageTagConfirmedAbsent reports that the release tag definitively does not
-// exist (podman image exists, exit status 1). Any other outcome — including a
-// daemon error — is not absence.
-func imageTagConfirmedAbsent(app, env, release string) bool {
-	_, err := utils.RunChecked("podman", []string{"image", "exists", identity.ImageTag(app, env, release)}, "")
-	if err == nil {
-		return false
-	}
-	var cmdErr *utils.CommandError
-	if errors.As(err, &cmdErr) {
-		var exitErr *exec.ExitError
-		if errors.As(cmdErr.Err, &exitErr) && exitErr.ExitCode() == 1 {
-			return true
-		}
-	}
-	return false
-}
-
-// releaseArtifactsCommitted reports whether a release's artifacts are part of
-// committed history. Unreadable pointer or journal state fails closed: with a
-// conflicting image present, ship refuses to replace what it cannot prove
-// uncommitted.
-func releaseArtifactsCommitted(app, env, release string) bool {
-	if pointer, err := readActive(app, env); err == nil {
-		if pointer.Release == release {
-			return true
-		}
-	} else if !errcat.Is(err, errcat.CodeNoDeploys) {
-		return true
-	}
-	entries, torn, err := readDeployJournalEntriesWithStatus(app, env)
-	if err != nil && !errcat.Is(err, errcat.CodeNoDeploys) {
-		return true
-	}
-	if torn {
-		return true
-	}
-	for _, entry := range entries {
-		if entry.AttemptedRelease == release && (entry.Outcome == "deployed" || entry.Outcome == "rolled_back") {
-			return true
-		}
-	}
-	return false
 }
 
 func nextProcessContainerName(entries []containerEntry, app, env, processName, release, instance string) string {
@@ -655,37 +655,6 @@ func processProbe(routed map[string]bool, processName string, probe string) stri
 	return ""
 }
 
-func containersForRemovedProcesses(entries []containerEntry, next map[string]config.Process) []string {
-	var names []string
-	for _, e := range entries {
-		process := e.Labels["ship.process"]
-		if process == "" || isEphemeralProcess(process) {
-			continue
-		}
-		if _, ok := next[process]; ok {
-			continue
-		}
-		if len(e.Names) > 0 {
-			names = append(names, e.Names[0])
-		}
-	}
-	return uniqueContainerNames(names)
-}
-
-func appContainerNames(entries []containerEntry) []string {
-	var names []string
-	for _, e := range entries {
-		process := e.Labels["ship.process"]
-		if process == "" || isEphemeralProcess(process) {
-			continue
-		}
-		if len(e.Names) > 0 {
-			names = append(names, e.Names[0])
-		}
-	}
-	return uniqueContainerNames(names)
-}
-
 func uniqueContainerNames(names []string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -705,44 +674,9 @@ func (c appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string,
 		return "", false, err
 	}
 	staticDir := identity.StaticDir(c.App, c.Env)
-	releaseDir := filepath.Join(identity.StaticDir(c.App, c.Env), "releases", c.SHA)
-	activeRelease := currentActiveReleaseBestEffort(c.App, c.Env)
-	if err := os.MkdirAll(filepath.Dir(releaseDir), 0755); err != nil {
-		return "", false, err
-	}
-	if _, err := os.Stat(releaseDir); err == nil {
-		if _, envelopeErr := readStaticReleaseEnvelopeByHash(c.App, c.Env, c.SHA, envelope.HashLabel(c.EnvelopeLabel)); envelopeErr == nil {
-			if err := verifyStaticRelease(c.App, c.Env, c.SHA, app.Routes); err != nil {
-				return "", false, err
-			}
-			return releaseDir, false, nil
-		}
-		if activeRelease == c.SHA {
-			if err := verifyStaticRelease(c.App, c.Env, c.SHA, app.Routes); err != nil {
-				return "", false, fmt.Errorf("active static release %s cannot be replaced during prepare: %v", c.SHA, err)
-			}
-			if err := writeStaticReleaseEnvelope(c.App, c.Env, c.SHA, c.Envelope); err != nil {
-				return "", false, err
-			}
-			return releaseDir, true, nil
-		}
-		if err := verifyStaticRelease(c.App, c.Env, c.SHA, app.Routes); err == nil {
-			if err := writeStaticReleaseEnvelope(c.App, c.Env, c.SHA, c.Envelope); err != nil {
-				return "", false, err
-			}
-			return releaseDir, true, nil
-		}
-		if err := os.RemoveAll(releaseDir); err != nil {
-			return "", false, err
-		}
-	} else if !os.IsNotExist(err) {
-		return "", false, err
-	}
-	stageDir := filepath.Join(staticDir, ".staging-"+c.SHA)
-	if err := os.RemoveAll(stageDir); err != nil {
-		return "", false, err
-	}
-	if err := os.MkdirAll(stageDir, 0755); err != nil {
+	root := filepath.Join(staticDir, "releases")
+	stageDir, err := os.MkdirTemp(staticDir, ".staging-")
+	if err != nil {
 		return "", false, err
 	}
 	staged := false
@@ -765,14 +699,54 @@ func (c appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string,
 			return "", false, fmt.Errorf("copy static route %s: %v", routeName, err)
 		}
 	}
-	if err := os.Rename(stageDir, releaseDir); err != nil {
-		return "", false, fmt.Errorf("publish static release: %v", err)
+	if err := normalizeStaticTree(stageDir); err != nil {
+		return "", false, err
 	}
-	staged = true
+	staticHash, err := artifact.StaticTreeHash(stageDir)
+	if err != nil {
+		return "", false, err
+	}
+	releaseDir := staticReleasePath(c.App, c.Env, c.SHA, staticHash)
+	if err := os.MkdirAll(root, 0755); err != nil {
+		return "", false, err
+	}
+	if info, statErr := os.Stat(releaseDir); statErr == nil {
+		if !info.IsDir() {
+			return "", false, fmt.Errorf("static artifact path %s is not a directory", releaseDir)
+		}
+		if existingHash, hashErr := artifact.StaticTreeHash(releaseDir); hashErr != nil || existingHash != staticHash {
+			return "", false, fmt.Errorf("static artifact %s does not match its directory hash", releaseDir)
+		}
+		_ = os.RemoveAll(stageDir)
+	} else if os.IsNotExist(statErr) {
+		if err := os.Rename(stageDir, releaseDir); err != nil {
+			return "", false, fmt.Errorf("publish static release: %v", err)
+		}
+		staged = true
+	} else {
+		return "", false, statErr
+	}
 	if err := writeStaticReleaseEnvelope(c.App, c.Env, c.SHA, c.Envelope); err != nil {
 		return releaseDir, true, err
 	}
+	c.StaticHash = staticHash
 	return releaseDir, true, nil
+}
+
+func normalizeStaticTree(root string) error {
+	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		mode := os.FileMode(0644)
+		if info.IsDir() {
+			mode = 0755
+		}
+		return os.Chmod(path, mode)
+	})
 }
 
 func renderEnvFile(vals map[string]string) string {

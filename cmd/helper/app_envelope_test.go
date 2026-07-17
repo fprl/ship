@@ -41,15 +41,21 @@ func TestStaticEnvelopeSidecarsAreHashNamedAndPointerSelectable(t *testing.T) {
 	if err := writeStaticReleaseEnvelope("api", "production", "abc1234", second); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := os.ReadDir(releaseDir)
+	entries, err := os.ReadDir(filepath.Dir(releaseDir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 || !strings.HasPrefix(entries[0].Name(), ".ship-release-") || !strings.HasPrefix(entries[1].Name(), ".ship-release-") {
+	var sidecars []string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".ship-release-") {
+			sidecars = append(sidecars, entry.Name())
+		}
+	}
+	if len(sidecars) != 2 {
 		t.Fatalf("sidecars = %+v", entries)
 	}
-	if _, err := os.Stat(filepath.Join(releaseDir, ".ship-release")); !os.IsNotExist(err) {
-		t.Fatalf("legacy sidecar exists: %v", err)
+	if _, err := os.Stat(filepath.Join(filepath.Dir(releaseDir), ".ship-release")); !os.IsNotExist(err) {
+		t.Fatalf("unqualified sidecar exists: %v", err)
 	}
 	for _, tc := range []struct {
 		label string

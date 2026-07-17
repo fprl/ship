@@ -187,10 +187,9 @@ func webhookApprovalRequested(request store.ApprovalRequest, now time.Time) {
 	env := strings.TrimSpace(request.Target.Env)
 	var ctx *config.AppContext
 	if app != "" && env != "" {
-		loaded, cleanup, err := loadActiveEnvelopeContext(app, env)
+		loaded, _, err := resolveActiveContext(app, env)
 		if err == nil {
 			ctx = loaded
-			defer cleanup()
 		}
 	}
 	payload := webhookPayload{
