@@ -1,5 +1,65 @@
 # Changelog
 
+## v0.9.0
+
+One trust check for release artifacts. Every old release ship runs,
+offers, or deletes is now named by an exact immutable artifact — the
+podman image ID and a content hash, not a reusable name — verified by
+one shared resolver instead of four hand-written lookup ladders
+(ADR-0023, designed in a seven-round architecture convergence, proven
+end to end on a real box including the live flag-day cutover from
+v0.8.0).
+
+### Changed
+
+- **`ship --rebuild` works on committed releases.** A rebuild mints a
+  new immutable artifact beside the old one; committed bytes are never
+  touched, so the v0.8.0 refusal and its whole guard are gone. After a
+  bad rebuild, `ship rollback` selects the previous artifact of the
+  same release — and always prints exactly what it chose
+  (`abc123@9d562e5333`) before committing.
+- **Rollback and GC can no longer disagree.** Both walk the same
+  untruncated committed history and verify every candidate before
+  retention counts, so a broken newest release no longer consumes the
+  quota. GC deletes only what it can prove: committed-but-unverifiable
+  artifacts are protected, running containers are never touched, and a
+  committed static tree is re-hashed immediately before deletion.
+- **Route changes ride Caddy's own transaction.** The candidate config
+  is loaded into the running Caddy first; the fragment is published on
+  disk only after Caddy accepts it. A refused config leaves live routes
+  and disk untouched — the snapshot/restore machinery and receipt files
+  are deleted.
+- **Status tells the truth.** `running`/`degraded`/`stopped` replaces
+  the unmeasured `healthy`; degraded envs carry a machine-readable
+  detail (`legacy_activation`, `artifact_unavailable`) and every
+  `next:` is a runnable command. The convergence check resolves runtime
+  identity through container inspect, so an instance-suffixed redeploy
+  reads converged.
+- **The OS owns what the OS does well.** systemd-tmpfiles ages deploy
+  temp files (ship's hand-rolled sweeper is deleted), `podman run
+  --replace` replaces the manual remove-then-run, and static releases
+  live in content-hash-named folders so a rebuild can never overwrite
+  served bytes.
+- Pointer and journal are v2 (flag-day): both record the exact artifact
+  tuple as plain fields; the first v2 deploy starts a fresh journal and
+  deletes the v1 file. Pre-cutover envs keep serving; exec and converge
+  refuse with redeploy-to-heal guidance until one deploy heals them,
+  and pre-cutover releases lose rollback eligibility.
+
+### Fixed
+
+- The healing deploy can no longer be blocked by its own guard: a
+  legacy or unresolvable active artifact waives the production ancestry
+  check, since redeploying is the documented heal.
+- Boot self-heal distinguishes a confirmed-absent artifact (skip the
+  env, report it) from infrastructure failure (systemd retries), so a
+  transient permission error no longer silently strands an env.
+- Box GC groups its physical sweep by image ID (podman lists one row
+  per tag), collects every ship-owned tag alias before removing, and
+  survives real podman's refuse-while-tagged rules.
+- Deploys drop the temporary build tag once the immutable tag is
+  committed, so GC is never blocked by build debris.
+
 ## v0.8.0
 
 The box takes care of itself. A reboot no longer silences your apps, an
