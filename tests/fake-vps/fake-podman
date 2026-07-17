@@ -41,7 +41,8 @@ image_id_of_safe() {
     echo "fake podman: no such image: $safe" >&2
     return 1
   fi
-  local id="sha256:$(sha256sum "$hash_path" | awk '{print $1}')"
+  local id
+  id="sha256:$(sha256sum "$hash_path" | awk '{print $1}')"
   # Best-effort cache: images/ is sticky and multi-writer, so another
   # user's stale cache file must never turn into a hard failure here.
   { printf '%s\n' "$id" > "$image_path.id"; } 2>/dev/null || true
@@ -101,63 +102,6 @@ resolve_image_ref() {
     return 1
   fi
   printf '%s\n' "${matches[0]%%:*}"
-}
-
-image_in_use() {
-  local safe="$1"
-  python3 - "$state_dir" "$safe" <<'PY'
-import glob
-import hashlib
-import os
-import sys
-
-state_dir, target_safe = sys.argv[1:]
-images = {}
-by_id = {}
-for image_path in glob.glob(os.path.join(state_dir, "images", "*")):
-    if image_path.endswith((".labels", ".id", ".ref")) or not os.path.isfile(image_path):
-        continue
-    safe = os.path.basename(image_path)
-    id_path = image_path + ".id"
-    if os.path.isfile(id_path):
-        with open(id_path) as f:
-            image_id = f.read().strip().removeprefix("sha256:")
-    else:
-        labels_path = image_path + ".labels"
-        hash_path = labels_path if os.path.isfile(labels_path) else image_path
-        with open(hash_path, "rb") as f:
-            image_id = hashlib.sha256(f.read()).hexdigest()
-    images[safe] = image_id
-    by_id.setdefault(image_id, []).append(safe)
-
-target_id = images.get(target_safe)
-if target_id is None:
-    sys.exit(1)
-
-def resolve(ref):
-    safe = ref.replace("/", "_").replace(":", "_")
-    if safe in images:
-        return safe
-    wanted = ref
-    if wanted.startswith("sha256:"):
-        wanted = wanted[7:]
-    if all(c in "0123456789abcdefABCDEF" for c in wanted) and len(wanted) >= 12:
-        matches = [image_id for image_id in by_id if image_id.startswith(wanted.lower())]
-        if len(matches) == 1:
-            return by_id[matches[0]][0]
-    return None
-
-for image_file in glob.glob(os.path.join(state_dir, "containers", "*.image")):
-    try:
-        with open(image_file) as f:
-            stored = f.read().strip()
-    except OSError:
-        continue
-    stored_safe = resolve(stored)
-    if stored_safe is not None and images[stored_safe] == target_id:
-        sys.exit(0)
-sys.exit(1)
-PY
 }
 
 run_with_env() {
