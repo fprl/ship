@@ -261,7 +261,7 @@ func (c appApplyCmd) prepareCaddy(app *config.AppContext, result applyReleaseRes
 	}
 	path := caddyfilePath(c.App, c.Env)
 	if err := validateAppCaddy(path, c.App, c.Env, app, c.SHA, result.processNames); err != nil {
-		return caddyStageActionError(err, "deploy", path)
+		return caddyStageActionError(err, "deploy")
 	}
 	return nil
 }

@@ -196,11 +196,12 @@ func convergeActive(app, env string) (convergeResult, error) {
 	}
 
 	path := caddyfilePath(app, env)
-	if len(stale) == 0 && caddyAlreadyConverged(path, app, env, ctx, pointer.Release, processNames) {
-		return convergeResult{}, nil
-	}
+	routeAlreadyConverged := caddyFragmentMatches(path, app, env, ctx, pointer.Release, processNames)
 	if err := renderAndReloadAppCaddy(path, app, env, ctx, pointer.Release, processNames); err != nil {
-		return convergeResult{}, &convergeError{Step: "caddy", Err: caddyStageActionError(err, "converge", path)}
+		return convergeResult{}, &convergeError{Step: "caddy", Err: caddyStageActionError(err, "converge")}
+	}
+	if len(stale) == 0 && routeAlreadyConverged {
+		return convergeResult{}, nil
 	}
 
 	// Routed old containers remain untouched until the target fragment has
@@ -214,13 +215,13 @@ func convergeActive(app, env string) (convergeResult, error) {
 	return convergeResult{StaleContainers: uniqueContainerNames(stale), Changed: true}, nil
 }
 
-func caddyAlreadyConverged(path, app, env string, ctx *config.AppContext, release string, processNames map[string]string) bool {
+func caddyFragmentMatches(path, app, env string, ctx *config.AppContext, release string, processNames map[string]string) bool {
 	content, err := renderAppCaddyfileWithProcessNames(app, env, ctx, release, processNames)
 	if err != nil {
 		return false
 	}
 	fragment, err := os.ReadFile(path)
-	return err == nil && string(fragment) == content && caddyReloadReceiptMatches(path, []byte(content))
+	return err == nil && string(fragment) == content
 }
 
 func convergeProcesses(app, env, release, activationID string, ctx *config.AppContext, entries []containerEntry) (map[string]string, []string, error) {

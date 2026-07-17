@@ -2,7 +2,6 @@ package helper
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -206,10 +205,8 @@ func indent(s string, levels int) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderAndReloadAppCaddy validates a scratch copy of the complete Caddy
-// configuration before replacing the serving fragment. The serving tree is
-// untouched during validation, so a crash cannot leave a staging *.caddy file
-// for a later reload to import.
+// renderAndReloadAppCaddy reloads a complete candidate configuration before
+// publishing the serving fragment that produced it.
 func renderAndReloadAppCaddy(path, app, env string, ctx *config.AppContext, release string, processNames map[string]string) error {
 	reloadLock, err := acquireLockFile(filepath.Join(appEnvLockDir(), "caddy-reload.lock"))
 	if err != nil {
@@ -217,54 +214,57 @@ func renderAndReloadAppCaddy(path, app, env string, ctx *config.AppContext, rele
 	}
 	defer func() { _ = reloadLock.Release() }()
 
-	previous, existed, err := snapshotCaddyFragment(path)
-	if err != nil {
-		return err
-	}
 	content, err := renderAppCaddyfileWithProcessNames(app, env, ctx, release, processNames)
 	if err != nil {
 		return err
 	}
-	if existed && bytes.Equal(previous, []byte(content)) && caddyReloadReceiptMatches(path, []byte(content)) {
-		return nil
+	return reloadCaddyCandidateAndPublish(path, &content)
+}
+
+func removeAndReloadAppCaddy(path string) error {
+	reloadLock, err := acquireLockFile(filepath.Join(appEnvLockDir(), "caddy-reload.lock"))
+	if err != nil {
+		return err
 	}
-	validationDir, err := prepareCaddyValidationTree(path, content)
+	defer func() { _ = reloadLock.Release() }()
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return reloadCaddyCandidateAndPublish(path, nil)
+}
+
+// reloadCaddyCandidateAndPublish keeps the candidate reload and its fragment
+// publication under the box-wide lock. Caddy owns validation, atomic apply,
+// and no-op handling for the complete candidate configuration.
+func reloadCaddyCandidateAndPublish(path string, replacement *string) error {
+	validationDir, err := prepareCaddyValidationTree(path, replacement)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(validationDir) }()
 	validationConfig := filepath.Join(validationDir, "Caddyfile")
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", validationConfig, "--adapter", "caddyfile"}, ""); err != nil {
-		return caddyReloadStageError{Stage: "validate", Err: err}
-	}
-	// This is the first mutation of the serving fragment. AtomicWrite keeps
-	// the old inode in place until the validated replacement is ready.
-	if err := store.AtomicWrite(path, []byte(content), caddyFragmentMode([]byte(content))); err != nil {
-		return err
-	}
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
-		// The fragment is derived state. Once the active pointer has been
-		// committed, keep the intended fragment even when Caddy refuses the
-		// reload; the next convergence reruns the reload and never restores
-		// an older intent.
+	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", validationConfig, "--adapter", "caddyfile"}, ""); err != nil {
 		return caddyReloadStageError{Stage: "reload", Err: err}
 	}
-	if err := writeCaddyReloadReceipt(path, []byte(content)); err != nil {
+	// A crash after reload succeeds and before publication leaves live Caddy
+	// ahead of disk. The next converge reloads the same candidate (a no-op)
+	// and then completes publication. Destroy/reap retries own removal; an
+	// ordinary converge may legitimately restore a still-committed route.
+	if err := os.Remove(path + ".loaded"); err != nil && !os.IsNotExist(err) {
 		return caddyReloadStageError{Stage: "receipt", Err: err}
 	}
+	if replacement == nil {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return caddyReloadStageError{Stage: "publish", Err: err}
+		}
+		return nil
+	}
+	if err := store.AtomicWrite(path, []byte(*replacement), caddyFragmentMode([]byte(*replacement))); err != nil {
+		return caddyReloadStageError{Stage: "publish", Err: err}
+	}
 	return nil
-}
-
-func caddyReloadReceiptPath(path string) string { return path + ".loaded" }
-
-func caddyReloadReceiptMatches(path string, content []byte) bool {
-	receipt, err := os.ReadFile(caddyReloadReceiptPath(path))
-	return err == nil && bytes.Equal(bytes.TrimSpace(receipt), []byte(fmt.Sprintf("%x", sha256.Sum256(content))))
-}
-
-func writeCaddyReloadReceipt(path string, content []byte) error {
-	digest := sha256.Sum256(content)
-	return store.AtomicWrite(caddyReloadReceiptPath(path), []byte(fmt.Sprintf("%x\n", digest)), 0644)
 }
 
 // validateAppCaddy renders the candidate fragment and validates the complete
@@ -280,7 +280,7 @@ func validateAppCaddy(path, app, env string, ctx *config.AppContext, release str
 	if err != nil {
 		return err
 	}
-	validationDir, err := prepareCaddyValidationTree(path, content)
+	validationDir, err := prepareCaddyValidationTree(path, &content)
 	if err != nil {
 		return err
 	}
@@ -293,11 +293,9 @@ func validateAppCaddy(path, app, env string, ctx *config.AppContext, release str
 }
 
 // prepareCaddyValidationTree builds a private config tree under /etc/caddy
-// (or the corresponding test root). The real serving conf.d directory is
-// copied into it and the replacement is written there, so validation sees
-// the exact assembled config without exposing any temporary *.caddy file to
-// the serving import glob.
-func prepareCaddyValidationTree(path, replacement string) (string, error) {
+// (or the corresponding test root). A nil replacement omits the target
+// fragment, which is the candidate used for route removal.
+func prepareCaddyValidationTree(path string, replacement *string) (string, error) {
 	configRoot := filepath.Dir(filepath.Dir(path))
 	validationDir, err := os.MkdirTemp(configRoot, ".ship-caddy-validate-*")
 	if err != nil {
@@ -335,15 +333,18 @@ func prepareCaddyValidationTree(path, replacement string) (string, error) {
 			return cleanup(err)
 		}
 		if entry.Name() == filepath.Base(path) {
-			data = []byte(replacement)
+			if replacement == nil {
+				continue
+			}
+			data = []byte(*replacement)
 			found = true
 		}
 		if err := store.AtomicWrite(filepath.Join(validationConfDir, entry.Name()), data, caddyFragmentMode(data)); err != nil {
 			return cleanup(err)
 		}
 	}
-	if !found {
-		if err := store.AtomicWrite(filepath.Join(validationConfDir, filepath.Base(path)), []byte(replacement), caddyFragmentMode([]byte(replacement))); err != nil {
+	if replacement != nil && !found {
+		if err := store.AtomicWrite(filepath.Join(validationConfDir, filepath.Base(path)), []byte(*replacement), caddyFragmentMode([]byte(*replacement))); err != nil {
 			return cleanup(err)
 		}
 	}
@@ -360,47 +361,12 @@ func caddyFragmentMode(content []byte) os.FileMode {
 	return 0644
 }
 
-// snapshotCaddyFragment reads the existing fragment for idempotency and
-// for destructive non-deploy operations that still need a safe restore.
-// Returns (contents, true, nil) when a fragment exists,
-// (nil, false, nil) when nothing is there, or an error for anything
-// other than ENOENT.
-func snapshotCaddyFragment(path string) ([]byte, bool, error) {
-	data, err := os.ReadFile(path)
-	if err == nil {
-		return data, true, nil
-	}
-	if os.IsNotExist(err) {
-		return nil, false, nil
-	}
-	return nil, false, err
-}
-
-// restoreCaddyFragment puts back what snapshotCaddyFragment captured.
-// If there was no previous fragment, remove the new one so subsequent
-// reloads don't trip on it.
-func restoreCaddyFragment(path string, prev []byte, existed bool) error {
-	if existed {
-		// Atomic like the normal write path: a concurrent full-config
-		// parse must never observe a half-restored fragment.
-		return store.AtomicWrite(path, prev, caddyFragmentMode(prev))
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
-
 type caddyReloadStageError struct {
-	Stage      string
-	Err        error
-	RestoreErr error
+	Stage string
+	Err   error
 }
 
 func (e caddyReloadStageError) Error() string {
-	if e.RestoreErr != nil {
-		return fmt.Sprintf("caddy %s failed AND restore failed (manual fix required): %v (restore: %v)", e.Stage, e.Err, e.RestoreErr)
-	}
 	return fmt.Sprintf("caddy %s failed: %v", e.Stage, e.Err)
 }
 
@@ -408,10 +374,7 @@ func (e caddyReloadStageError) Unwrap() error {
 	return e.Err
 }
 
-// caddyStageActionError renders a caddyReloadStageError for the user:
-// which caddy stage failed during which action, and — when the fragment
-// restore ALSO failed — the manual-fix warning with the fragment path.
-func caddyStageActionError(err error, action string, caddyPath string) error {
+func caddyStageActionError(err error, action string) error {
 	if err == nil {
 		return nil
 	}
@@ -419,34 +382,5 @@ func caddyStageActionError(err error, action string, caddyPath string) error {
 	if !errors.As(err, &caddyErr) {
 		return err
 	}
-	if caddyErr.RestoreErr != nil {
-		return fmt.Errorf("caddy %s (%s) failed AND fragment restore failed (manual fix required at %s): %v (restore: %v)", caddyErr.Stage, action, caddyPath, caddyErr.Err, caddyErr.RestoreErr)
-	}
-	return fmt.Errorf("caddy %s (%s) failed, kept committed fragment; converge will retry the reload: %v", caddyErr.Stage, action, caddyErr.Err)
-}
-
-// reloadCaddyOrRestore serializes on a box-wide lock: validate and
-// reload parse the FULL Caddyfile, so two concurrent reloads could
-// otherwise apply a config parsed before another actor's fragment
-// write — resurrecting a revoked share link or a reaped preview's
-// route. Fragment writes are atomic renames, every writer reloads
-// after writing, and reloads are serial: the last reload always
-// carries the newest state of every fragment.
-func reloadCaddyOrRestore(caddyPath string, prevFragment []byte, prevExisted bool) error {
-	reloadLock, err := acquireLockFile(filepath.Join(appEnvLockDir(), "caddy-reload.lock"))
-	if err != nil {
-		return err
-	}
-	defer func() { _ = reloadLock.Release() }()
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"}, ""); err != nil {
-		if restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted); restoreErr != nil {
-			return caddyReloadStageError{Stage: "validate", Err: err, RestoreErr: restoreErr}
-		}
-		return caddyReloadStageError{Stage: "validate", Err: err}
-	}
-	if _, err := utils.RunChecked("podman", []string{"exec", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"}, ""); err != nil {
-		restoreErr := restoreCaddyFragment(caddyPath, prevFragment, prevExisted)
-		return caddyReloadStageError{Stage: "reload", Err: err, RestoreErr: restoreErr}
-	}
-	return nil
+	return fmt.Errorf("caddy %s (%s) failed: %v", caddyErr.Stage, action, caddyErr.Err)
 }

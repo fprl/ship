@@ -266,39 +266,17 @@ func TestContainerBuildPlanProtectsCommittedImages(t *testing.T) {
 	})
 }
 
-func TestCaddyStageActionErrorReportsCommittedFragmentAndRetry(t *testing.T) {
-	path := "/etc/caddy/conf.d/api.production.caddy"
+func TestCaddyStageActionErrorReportsStageAndAction(t *testing.T) {
 	for _, action := range []string{"deploy", "after rollback", "after restore", "after destroy"} {
 		t.Run(action, func(t *testing.T) {
 			err := caddyStageActionError(caddyReloadStageError{
-				Stage:      "reload",
-				Err:        errors.New("reload rejected config"),
-				RestoreErr: errors.New("restore rename failed"),
-			}, action, path)
+				Stage: "reload",
+				Err:   errors.New("reload rejected config"),
+			}, action)
 
-			for _, want := range []string{"reload rejected config", "restore rename failed", "manual fix required at " + path} {
+			for _, want := range []string{"reload rejected config", "reload (" + action + ")"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Fatalf("error %q does not contain %q", err, want)
-				}
-			}
-		})
-	}
-	for _, action := range []string{"deploy", "after rollback", "after restore", "after destroy"} {
-		t.Run("validate "+action, func(t *testing.T) {
-			restored := caddyStageActionError(caddyReloadStageError{Stage: "validate", Err: errors.New("invalid config")}, action, path)
-			if !strings.Contains(restored.Error(), "invalid config") {
-				t.Fatalf("validate restore success error = %q", restored)
-			}
-			for _, want := range []string{"kept committed fragment", "converge will retry the reload"} {
-				if !strings.Contains(restored.Error(), want) {
-					t.Fatalf("validate error = %q, want %q", restored, want)
-				}
-			}
-
-			failed := caddyStageActionError(caddyReloadStageError{Stage: "validate", Err: errors.New("invalid config"), RestoreErr: errors.New("restore failed")}, action, path)
-			for _, want := range []string{"invalid config", "restore failed", "manual fix required at " + path} {
-				if !strings.Contains(failed.Error(), want) {
-					t.Fatalf("error %q does not contain %q", failed, want)
 				}
 			}
 		})
@@ -306,11 +284,11 @@ func TestCaddyStageActionErrorReportsCommittedFragmentAndRetry(t *testing.T) {
 }
 
 func TestCaddyStageActionErrorPassesThroughOtherErrors(t *testing.T) {
-	if err := caddyStageActionError(nil, "deploy", "/etc/caddy/conf.d/api.production.caddy"); err != nil {
+	if err := caddyStageActionError(nil, "deploy"); err != nil {
 		t.Fatalf("nil error = %v", err)
 	}
 	original := errors.New("unrelated failure")
-	if got := caddyStageActionError(original, "deploy", "/etc/caddy/conf.d/api.production.caddy"); got != original {
+	if got := caddyStageActionError(original, "deploy"); got != original {
 		t.Fatalf("pass-through error = %v, want original", got)
 	}
 }
@@ -1028,75 +1006,6 @@ func TestRenderAppCaddyfileRejectsProcessWithoutPort(t *testing.T) {
 	}
 	if _, err := renderAppCaddyfileWithProcessNames("api", productionEnvName, ctx, "abc123", nil); err == nil {
 		t.Fatal("expected error for process route pointing at portless process")
-	}
-}
-
-func TestSnapshotAndRestoreCaddyFragmentRoundTrips(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "frag.caddy")
-	original := []byte("\"api.example.com\" {\n\treverse_proxy http://x:3000\n}\n")
-	if err := os.WriteFile(path, original, 0644); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, existed, err := snapshotCaddyFragment(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !existed || string(snapshot) != string(original) {
-		t.Fatalf("snapshot mismatch existed=%v snapshot=%q", existed, snapshot)
-	}
-	if err := os.WriteFile(path, []byte("garbage"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := restoreCaddyFragment(path, snapshot, existed); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != string(original) {
-		t.Fatalf("restore mismatch:\nwant: %q\n got: %q", original, got)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0644 {
-		t.Fatalf("restored plain Caddy fragment mode = %o, want 0644", info.Mode().Perm())
-	}
-}
-
-func TestRestoreCaddyFragmentKeepsProtectedFragmentRootOnly(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "frag.caddy")
-	protected := []byte("\"pv.example.com\" {\n\t@ship_capability_denied {\n\t\tnot header x-ship-capability \"tok\"\n\t}\n\treverse_proxy http://x:3000\n}\n")
-	if err := os.WriteFile(path, []byte("garbage"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := restoreCaddyFragment(path, protected, true); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("restored protected Caddy fragment mode = %o, want 0600", info.Mode().Perm())
-	}
-}
-
-func TestRestoreCaddyFragmentRemovesWhenNoPreviousExisted(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "new.caddy")
-	if err := os.WriteFile(path, []byte("bad fragment"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := restoreCaddyFragment(path, nil, false); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatalf("expected fragment removed, stat err = %v", err)
 	}
 }
 

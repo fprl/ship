@@ -206,7 +206,7 @@ func TestStaticTargetMarksOldImageContainersStale(t *testing.T) {
 	}
 }
 
-func TestConvergeCaddySecondRunDoesNotReload(t *testing.T) {
+func TestConvergeCaddySecondRunUsesCaddyNoOp(t *testing.T) {
 	setupAuthTest(t, map[string]store.MemberRecord{
 		bobFingerprint: {Name: "bob", Role: store.MemberRoleOwner},
 	})
@@ -276,8 +276,8 @@ func TestConvergeCaddySecondRunDoesNotReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(string(log), "reload"); got != 1 || strings.Count(string(firstLog), "reload") != 1 {
-		t.Fatalf("Caddy reload count = %d, want 1", got)
+	if got := strings.Count(string(log), "reload"); got != 2 || strings.Count(string(firstLog), "reload") != 1 {
+		t.Fatalf("Caddy reload count = %d, want 2 total and 1 after first converge", got)
 	}
 	if strings.Contains(string(log), "run ") || strings.Contains(string(log), " stop ") || strings.Contains(string(log), " start ") {
 		t.Fatalf("second converge churned containers: %s", log)

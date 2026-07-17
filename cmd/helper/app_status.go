@@ -787,7 +787,7 @@ func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, 
 		return false
 	}
 	expected, err := renderAppCaddyfileWithProcessNames(app, env, ctx, pointer.Release, desiredNames)
-	if err != nil || string(fragment) != expected || !caddyReloadReceiptMatches(caddyfilePath(app, env), []byte(expected)) {
+	if err != nil || string(fragment) != expected {
 		return false
 	}
 	return true

@@ -62,7 +62,7 @@ func rerenderPreviewCapabilityLocked(appName, env string) error {
 	}
 	path := caddyfilePath(appName, env)
 	if err := renderAndReloadAppCaddy(path, appName, env, app, release, names); err != nil {
-		return caddyStageActionError(err, "updating preview capability", path)
+		return caddyStageActionError(err, "updating preview capability")
 	}
 	return nil
 }

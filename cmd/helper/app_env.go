@@ -253,10 +253,8 @@ func destroyEnv(app, env string, purge bool) (destroySummary, error) {
 	network := identity.Network(app, env)
 	envRoot := identity.EnvRoot(app, env)
 
-	// 1. Remove the Caddy fragment and reload first, so traffic stops
-	// routing here before the containers disappear. Restore the
-	// fragment if validation or reload fails; otherwise a healthy route
-	// could be lost on a later reload even though destroy failed.
+	// 1. Remove the Caddy route through Caddy's candidate transaction before
+	// the containers disappear.
 	caddyRemoved, err := removeAppCaddyfile(app, env)
 	if err != nil {
 		return destroySummary{}, err
@@ -351,18 +349,13 @@ func destroyContainerNames(processes []processStatus) []string {
 
 func removeAppCaddyfile(app, env string) (bool, error) {
 	path := caddyfilePath(app, env)
-	prevFragment, prevExisted, err := snapshotCaddyFragment(path)
-	if err != nil {
-		return false, fmt.Errorf("snapshot existing fragment: %v", err)
-	}
-	if !prevExisted {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return false, nil
+	} else if err != nil {
+		return false, err
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return false, fmt.Errorf("remove caddy fragment %s: %v", path, err)
-	}
-	if err := reloadCaddyOrRestore(path, prevFragment, prevExisted); err != nil {
-		return false, caddyStageActionError(err, "after destroy", path)
+	if err := removeAndReloadAppCaddy(path); err != nil {
+		return false, caddyStageActionError(err, "after destroy")
 	}
 	return true, nil
 }

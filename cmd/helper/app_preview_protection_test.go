@@ -2,7 +2,6 @@ package helper
 
 import (
 	"errors"
-	"strings"
 	"testing"
 )
 
@@ -21,14 +20,12 @@ func TestPreviewCapabilityIsPerEnvAndIdempotent(t *testing.T) {
 	}
 }
 
-func TestPreviewProtectionCaddyFailureIncludesManualFixPath(t *testing.T) {
-	path := "/etc/caddy/conf.d/api.preview.caddy"
+func TestPreviewProtectionCaddyFailureReportsReloadStage(t *testing.T) {
 	err := caddyStageActionError(caddyReloadStageError{
-		Stage:      "validate",
-		Err:        errors.New("invalid config"),
-		RestoreErr: errors.New("restore failed"),
-	}, "updating preview protection", path)
-	if !strings.Contains(err.Error(), "manual fix required at "+path) {
-		t.Fatalf("error = %q, want manual fix path", err)
+		Stage: "reload",
+		Err:   errors.New("reload failed"),
+	}, "updating preview protection")
+	if err == nil || err.Error() != "caddy reload (updating preview protection) failed: reload failed" {
+		t.Fatalf("error = %v", err)
 	}
 }
