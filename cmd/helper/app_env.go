@@ -54,7 +54,6 @@ func (c appSetupEnvCmd) runLocked(printSummary bool) {
 		Version: 1,
 		App:     c.App,
 		Env:     c.Env,
-		InfraID: identity.InfraID(c.App, c.Env),
 	}); err != nil {
 		utils.DieError(err, 1)
 	}
@@ -460,7 +459,6 @@ func writeEnvIdentityWithPreview(app, env string, preview *identity.PreviewIdent
 		Version: 1,
 		App:     app,
 		Env:     env,
-		InfraID: identity.InfraID(app, env),
 		Preview: preview,
 	})
 }
@@ -500,7 +498,7 @@ func readEnvIdentityFile(path string) (identity.EnvIdentity, error) {
 	if file.Version != 1 {
 		return identity.EnvIdentity{}, fmt.Errorf("unsupported identity version %d", file.Version)
 	}
-	if file.App == "" || file.Env == "" || file.InfraID != identity.InfraID(file.App, file.Env) {
+	if file.App == "" || file.Env == "" {
 		return identity.EnvIdentity{}, fmt.Errorf("invalid env identity %s", path)
 	}
 	return file, nil

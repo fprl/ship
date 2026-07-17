@@ -21,9 +21,9 @@ func TestReadBoxStatusSummaryUsesIdentityLayoutAndDoctorRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: "production", InfraID: identity.InfraID("api", "production")})
-	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: "preview", InfraID: identity.InfraID("api", "preview")})
-	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "web", Env: "production", InfraID: identity.InfraID("web", "production")})
+	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: "production"})
+	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: "preview"})
+	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "web", Env: "production"})
 	if err := store.Default().WriteMembers(store.MembersFile{
 		Version: store.CurrentVersion,
 		Members: map[string]store.MemberRecord{

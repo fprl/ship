@@ -2,8 +2,8 @@
 // `(app, env)` pair.
 //
 // Human-readable host paths use `/var/apps/<app>.<env>`. Linux, Podman,
-// DNS, and lock identifiers use a bounded derived infra ID so names stay
-// within platform limits without becoming reverse-parsed state.
+// DNS, and lock identifiers use a bounded derived environment key so names
+// stay within platform limits without becoming reverse-parsed state.
 package identity
 
 import (
@@ -22,35 +22,35 @@ const (
 	dnsLabelLimit      = 63
 )
 
-// InfraID is the deterministic bounded ID for one `(app, env)` pair.
-// It is stable before the env identity file exists, which lets setup
-// and locking use the same name as later lifecycle operations.
-func InfraID(app, env string) string {
+// EnvironmentKey is the deterministic bounded key for one `(app, env)` pair.
+// It is stable before the env identity file exists, which lets setup and
+// locking use the same name as later lifecycle operations.
+func EnvironmentKey(app, env string) string {
 	return "ship-" + shortHash(app+"\x00"+env, 12)
 }
 
 // SystemUser is the Linux account that owns /data files and runs
 // container processes.
 func SystemUser(app, env string) string {
-	return InfraID(app, env)
+	return EnvironmentKey(app, env)
 }
 
 // Network is the per-(app, env) Podman network used for intra-app DNS.
 func Network(app, env string) string {
-	return InfraID(app, env)
+	return EnvironmentKey(app, env)
 }
 
 // ContainerName names one versioned process container. Caddy points at
 // these names directly during the web handoff.
 func ContainerName(app, env, process, release string) string {
-	return boundedIdentityName(InfraID(app, env)+"-"+process+"-"+release, dnsLabelLimit)
+	return boundedIdentityName(EnvironmentKey(app, env)+"-"+process+"-"+release, dnsLabelLimit)
 }
 
 // ContainerInstanceName names an extra container for the same process and
 // release. It is used when redeploying the same release so a fresh web
 // container can be started and routed before the previous one is removed.
 func ContainerInstanceName(app, env, process, release, instance string) string {
-	return boundedIdentityName(InfraID(app, env)+"-"+process+"-"+release+"-"+instance, dnsLabelLimit)
+	return boundedIdentityName(EnvironmentKey(app, env)+"-"+process+"-"+release+"-"+instance, dnsLabelLimit)
 }
 
 func boundedIdentityName(base string, limit int) string {
@@ -78,7 +78,7 @@ func shortHash(value string, chars int) string {
 // ImageRepo is the local Podman image repo (without tag) for one
 // `(app, env)` pair. The full image reference is `ImageTag(app, env, sha)`.
 func ImageRepo(app, env string) string {
-	return "ship/" + InfraID(app, env)
+	return "ship/" + EnvironmentKey(app, env)
 }
 
 // ImageTag is the full image reference for a deploy.
@@ -154,7 +154,7 @@ func IdentityFile(app, env string) string {
 
 // CaddyFragmentFile is the generated ingress fragment for one `(app, env)`.
 func CaddyFragmentFile(app, env string) string {
-	return "/etc/caddy/conf.d/ship-" + InfraID(app, env) + ".caddy"
+	return "/etc/caddy/conf.d/ship-" + EnvironmentKey(app, env) + ".caddy"
 }
 
 // EnvIdentity is the durable identity anchor stored at IdentityFile(app, env).
@@ -162,7 +162,6 @@ type EnvIdentity struct {
 	Version int              `json:"version"`
 	App     string           `json:"app"`
 	Env     string           `json:"env"`
-	InfraID string           `json:"infra_id"`
 	Preview *PreviewIdentity `json:"preview,omitempty"`
 }
 

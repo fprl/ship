@@ -16,7 +16,7 @@ import (
 
 func TestWebhookDeployAbortedPayloadCarriesScrubbedJournalAndRemediation(t *testing.T) {
 	setupPreviewHostTest(t)
-	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName, InfraID: identity.InfraID("api", productionEnvName)})
+	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName})
 	sink := newWebhookTestSink(t)
 	now := time.Date(2026, 7, 7, 10, 1, 2, 0, time.UTC)
 	entry := sanitizeDeployJournalEntry("api", productionEnvName, deployJournalEntry{
@@ -45,7 +45,7 @@ func TestWebhookDeployAbortedPayloadCarriesScrubbedJournalAndRemediation(t *test
 
 func TestWebhookDeployRecoveredPayloadCarriesPreviousFailure(t *testing.T) {
 	setupPreviewHostTest(t)
-	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName, InfraID: identity.InfraID("api", productionEnvName)})
+	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName})
 	sink := newWebhookTestSink(t)
 	now := time.Date(2026, 7, 7, 10, 2, 3, 0, time.UTC)
 	previous := sanitizeDeployJournalEntry("api", productionEnvName, deployJournalEntry{
@@ -86,7 +86,6 @@ func TestWebhookPreviewReapedPayloadCarriesBranchAndEnv(t *testing.T) {
 		Version: 1,
 		App:     "api",
 		Env:     "feature-payments-ab12",
-		InfraID: identity.InfraID("api", "feature-payments-ab12"),
 		Preview: &identity.PreviewIdentity{
 			Branch:     "feature/payments",
 			LastShipAt: expires.Add(-previewTTL),
@@ -133,7 +132,7 @@ func TestWebhookApprovalRequestedPayloadCarriesLiteralApproveCommand(t *testing.
 	setupPreviewHostTest(t)
 	setTestStateRoot(t, t.TempDir())
 	setHelperBoxClientAddress(t, "203.0.113.7")
-	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName, InfraID: identity.InfraID("api", productionEnvName)})
+	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName})
 	sink := newWebhookTestSink(t)
 	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"webhook.url": sink.URL, "box.address": "203.0.113.7"}}); err != nil {
 		t.Fatal(err)

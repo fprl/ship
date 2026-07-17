@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	shiphost "github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/provision/host"
@@ -646,41 +647,42 @@ func addPodman(ops *[]operation) {
 	*ops = append(*ops, operation{name: "podman ingress network", run: ensureIngressNetwork})
 }
 
-// addDeployTmpDir creates /tmp/ship-deploy with mode 1777 (sticky
-// world-writable) so the unprivileged deploy user can drop the source
-// tarball and manifest under it during `ship deploy`, while still
-// preventing other local users from deleting another user's files mid-
-// deploy. The helper's `server app apply` reads from this directory via
-// systemd.ValidateDeployTmpSource, which also enforces ownership via
-// SUDO_UID.
+const deployTmpFilesPath = "/etc/tmpfiles.d/ship-deploy.conf"
+
+func deployTmpFilesContent() []byte {
+	return []byte(fmt.Sprintf("d %s 1777 root root 24h\n", shiphost.DeployTmpDir()))
+}
+
+// addDeployTmpDir installs the tmpfiles.d policy for the global deploy
+// staging directory. tmpfiles.d owns both creation and age-based cleanup;
+// applying it here makes setup effective without waiting for the next boot.
 func addDeployTmpDir(ops *[]operation) {
 	*ops = append(*ops, operation{name: "deploy tmp dir", run: ensureDeployTmpDir})
 }
 
-// 1777 = sticky + world-writable. EnsureDirectory's mode argument is
-// stripped to .Perm() (low 9 bits) so it can't express the sticky bit;
-// roll our own stat-then-install for this one path.
 func ensureDeployTmpDir(apply host.Apply) (bool, error) {
-	const path = "/tmp/ship-deploy"
-	const wantMode = "1777"
-	probe, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "stat", Args: []string{"-c", "%U\t%G\t%a\t%F", path}})
+	changed, err := host.EnsureFile(apply, host.File{
+		Path:    deployTmpFilesPath,
+		Content: deployTmpFilesContent(),
+		Owner:   "root",
+		Group:   "root",
+		Mode:    0644,
+	})
 	if err != nil {
 		return false, err
-	}
-	fields := strings.Split(strings.TrimSpace(string(probe.Stdout)), "\t")
-	if probe.ExitCode == 0 && len(fields) == 4 &&
-		fields[0] == "root" && fields[1] == "root" && fields[2] == wantMode && fields[3] == "directory" {
-		return false, nil
 	}
 	if apply.CheckMode {
-		return true, nil
+		return changed, nil
 	}
-	args := []string{"-d", "-o", "root", "-g", "root", "-m", wantMode, path}
-	res, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "install", Args: args})
+	args := []string{"--create", deployTmpFilesPath}
+	res, err := apply.Runner.Run(apply.ContextOrBackground(), host.Command{Program: "systemd-tmpfiles", Args: args})
 	if err != nil {
 		return false, err
 	}
-	return true, host.RequireZero(res, "install", args)
+	if err := host.RequireZero(res, "systemd-tmpfiles", args); err != nil {
+		return false, err
+	}
+	return changed, nil
 }
 
 // addPodmanHostBaseline writes the host config that makes Podman bridge

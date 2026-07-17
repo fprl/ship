@@ -255,9 +255,6 @@ func reloadCaddyCandidateAndPublish(path string, replacement *string) error {
 	// ahead of disk. The next converge reloads the same candidate (a no-op)
 	// and then completes publication. Destroy/reap retries own removal; an
 	// ordinary converge may legitimately restore a still-committed route.
-	if err := os.Remove(path + ".loaded"); err != nil && !os.IsNotExist(err) {
-		return caddyReloadStageError{Stage: "receipt", Err: err}
-	}
 	if replacement == nil {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return caddyReloadStageError{Stage: "publish", Err: err}

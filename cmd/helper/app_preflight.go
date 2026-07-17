@@ -173,8 +173,8 @@ func validateEnvIdentityData(app, env string, data []byte) error {
 	if file.Version != 1 {
 		return fmt.Errorf("unsupported identity version %d", file.Version)
 	}
-	if file.App != app || file.Env != env || file.InfraID != identity.InfraID(app, env) {
-		return fmt.Errorf("expected app=%s env=%s infra_id=%s", app, env, identity.InfraID(app, env))
+	if file.App != app || file.Env != env {
+		return fmt.Errorf("expected app=%s env=%s", app, env)
 	}
 	return nil
 }

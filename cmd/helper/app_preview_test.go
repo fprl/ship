@@ -108,7 +108,7 @@ func TestShipIdentityPersistsOnlyNonDerivablePreviewFields(t *testing.T) {
 func TestValidatePreviewIdentityUsesDerivedFields(t *testing.T) {
 	expires := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	valid := identity.EnvIdentity{
-		Version: 1, App: "api", Env: "feature-login-a1b2", InfraID: identity.InfraID("api", "feature-login-a1b2"),
+		Version: 1, App: "api", Env: "feature-login-a1b2",
 		Preview: &identity.PreviewIdentity{Branch: "feature/login", LastShipAt: expires.Add(-previewTTL), ExpiresAt: &expires},
 	}
 	if err := validatePreviewIdentity(valid); err != nil {
@@ -130,7 +130,7 @@ func TestValidatePreviewIdentityUsesDerivedFields(t *testing.T) {
 
 func invalidPreviewIdentity(branch, env string) identity.EnvIdentity {
 	return identity.EnvIdentity{
-		Version: 1, App: "api", Env: env, InfraID: identity.InfraID("api", env),
+		Version: 1, App: "api", Env: env,
 		Preview: &identity.PreviewIdentity{Branch: branch, LastShipAt: time.Now().UTC()},
 	}
 }
@@ -398,7 +398,6 @@ func TestReapExpiredPreviewsDestroysUnpinnedPurgesSecretsAndSkipsPinnedAndProd(t
 		Version: 1,
 		App:     "api",
 		Env:     productionEnvName,
-		InfraID: identity.InfraID("api", productionEnvName),
 	})
 	if err := secrets.Put("api", expiredEnv, "DATABASE_URL", []byte("secret")); err != nil {
 		t.Fatal(err)
@@ -557,7 +556,7 @@ web = { port = 3000 }
 		{
 			name: "configured route wins",
 			setup: func(t *testing.T) {
-				writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "site", Env: productionEnvName, InfraID: identity.InfraID("site", productionEnvName)})
+				writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "site", Env: productionEnvName})
 				writeActiveEnvelopeForPreviewAliasTest(t, "site", productionEnvName, `name = "site"
 box = "example.com"
 
@@ -573,7 +572,7 @@ web = { port = 3000 }
 		{
 			name: "production synthesized host wins",
 			setup: func(t *testing.T) {
-				writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "feat-x", Env: productionEnvName, InfraID: identity.InfraID("feat-x", productionEnvName)})
+				writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "feat-x", Env: productionEnvName})
 				writeActiveEnvelopeForPreviewAliasTest(t, "feat-x", productionEnvName, `name = "feat-x"
 box = "example.com"
 
@@ -685,7 +684,6 @@ func writePreviewIdentityForTest(t *testing.T, app, env, branch, sanitizedBranch
 		Version: 1,
 		App:     app,
 		Env:     env,
-		InfraID: identity.InfraID(app, env),
 		Preview: &identity.PreviewIdentity{
 			Branch:     branch,
 			LastShipAt: lastShip,

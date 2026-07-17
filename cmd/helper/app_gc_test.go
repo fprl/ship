@@ -26,7 +26,7 @@ func TestGCRemovesOrphansButKeepsActiveArtifactsAndSkipsFreshTemp(t *testing.T) 
 	writeFakeCommand(t, bin, "podman", `#!/usr/bin/env sh
 case "$1" in
   ps) printf '%s\n' '[{"Names":["active"],"State":"running","Labels":{"ship.app":"api","ship.env":"production","ship.release":"abcdef1","ship.activation":"abcdef1-a1b2"}},{"Names":["failed"],"State":"exited","Labels":{"ship.app":"api","ship.env":"production","ship.release":"old1111","ship.activation":"old1111-a1b2"}}]' ;;
-	  images) printf '%s\n' '[{"Id":"dead111","Repository":"ship/ignored","Tag":"dead111","RepoTags":["ship/`+identity.InfraID("api", "production")+`:img-dead111"],"Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"`+identity.InfraID("api", "production")+`","ship.release":"dead111"}}]' ;;
+	  images) printf '%s\n' '[{"Id":"dead111","Repository":"ship/ignored","Tag":"dead111","RepoTags":["`+identity.ImageTag("api", "production", "img-dead111")+`"],"Labels":{"ship.app":"api","ship.env":"production","ship.release":"dead111"}}]' ;;
 	  inspect) printf '%s\n' '[]' ;;
   rm|rmi) printf '%s\n' "$*" >> "$PODMAN_LOG" ;;
 esac
@@ -87,7 +87,7 @@ exit 0
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(log), "rm -f failed") || !strings.Contains(string(log), "rmi ship/"+identity.InfraID("api", "production")+":img-dead111") {
+	if !strings.Contains(string(log), "rm -f failed") || !strings.Contains(string(log), "rmi "+identity.ImageTag("api", "production", "img-dead111")) {
 		t.Fatalf("GC podman removals=%q summary=%+v", log, summary)
 	}
 }
@@ -121,7 +121,7 @@ func TestGCProtectsAllArtifactsForUnverifiableRelease(t *testing.T) {
 	writeFakeCommand(t, bin, "podman", `#!/usr/bin/env sh
 case "$1" in
   ps) printf '%s\n' '[]' ;;
-  images) printf '%s\n' '[{"Id":"dead111","Repository":"ship/ignored","Tag":"dead111","RepoTags":["ship/`+identity.InfraID("api", "production")+`:img-dead111"],"Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"`+identity.InfraID("api", "production")+`","ship.release":"dead111"}}]' ;;
+	  images) printf '%s\n' '[{"Id":"dead111","Repository":"ship/ignored","Tag":"dead111","RepoTags":["`+identity.ImageTag("api", "production", "img-dead111")+`"],"Labels":{"ship.app":"api","ship.env":"production","ship.release":"dead111"}}]' ;;
   rmi) printf '%s\n' "$*" >> "$PODMAN_LOG" ;;
 esac
 exit 0
@@ -173,7 +173,7 @@ exit 0
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(log), "rmi ship/"+identity.InfraID("api", "production")+":img-dead111") {
+	if !strings.Contains(string(log), "rmi "+identity.ImageTag("api", "production", "img-dead111")) {
 		t.Fatalf("unrelated image was not removed: %s", log)
 	}
 }

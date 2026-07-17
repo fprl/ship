@@ -200,9 +200,10 @@ for image_path in sorted(glob.glob(os.path.join(state_dir, "images", "*")), key=
                     labels[k] = v
     repo = ""
     tag = labels.get("ship.release", "")
-    infra_id = labels.get("ship.infra_id", "")
-    if infra_id:
-        repo = f"ship/{infra_id}"
+    if labels.get("ship.app") and labels.get("ship.env"):
+        import hashlib
+        key = hashlib.sha256((labels["ship.app"] + "\0" + labels["ship.env"]).encode()).hexdigest()[:12]
+        repo = f"ship/ship-" + key
     names = []
     if repo and tag:
         names = [f"{repo}:{tag}"]
@@ -290,7 +291,11 @@ for ref in refs:
                 if "=" in line:
                     key, value = line.split("=", 1)
                     labels[key] = value
-    repository = "ship/" + labels["ship.infra_id"] if labels.get("ship.infra_id") else ""
+    repository = ""
+    if labels.get("ship.app") and labels.get("ship.env"):
+        import hashlib
+        key = hashlib.sha256((labels["ship.app"] + "\0" + labels["ship.env"]).encode()).hexdigest()[:12]
+        repository = "ship/ship-" + key
     tag = labels.get("ship.release", "")
     name = f"{repository}:{tag}" if repository and tag else ref
     out.append({

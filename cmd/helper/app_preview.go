@@ -248,7 +248,6 @@ func completePreviewAllocation(app, env string, preview *identity.PreviewIdentit
 		Version: 1,
 		App:     app,
 		Env:     env,
-		InfraID: identity.InfraID(app, env),
 		Preview: preview,
 	}); err != nil {
 		_ = lock.Release()

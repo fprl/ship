@@ -974,7 +974,7 @@ var verbs = []Verb{
 	},
 	{
 		Verb:    "box gc",
-		Purpose: "Sweep release and temporary artifacts using the box retention policy.",
+		Purpose: "Sweep release artifacts using the box retention policy.",
 		Usage:   "ship box gc [<box>] [--json]",
 		Flags:   []Flag{{Name: "box", Purpose: "Box host. Defaults to ship.toml box when run in an app directory."}, {Name: "--json", Purpose: "Emit per-environment removals and failures as JSON."}},
 		JSONSchema: schema(

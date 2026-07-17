@@ -73,14 +73,11 @@ func TestCaddyCandidateIsReloadedBeforePublication(t *testing.T) {
 	}
 }
 
-func TestCaddyReloadIsUnconditionalAndCleansReceipt(t *testing.T) {
+func TestCaddyReloadIsUnconditionalAndLeavesServingFragmentAloneUntilPublish(t *testing.T) {
 	root, path := setupCaddyStageTest(t, "#!/usr/bin/env sh\nif [ \"$1\" = \"exec\" ] && [ \"$4\" = \"reload\" ]; then printf 'reload\\n' >> \"$CADDY_LOG\"; fi\nexit 0\n")
 	logPath := filepath.Join(root, "caddy.log")
 	t.Setenv("CADDY_LOG", logPath)
 	if err := os.WriteFile(path, []byte("old serving fragment\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path+".loaded", []byte("stale receipt\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
@@ -94,9 +91,6 @@ func TestCaddyReloadIsUnconditionalAndCleansReceipt(t *testing.T) {
 	}
 	if got := strings.Count(string(log), "reload"); got != 2 {
 		t.Fatalf("reload count = %d, want 2", got)
-	}
-	if _, err := os.Stat(path + ".loaded"); !os.IsNotExist(err) {
-		t.Fatalf("stale receipt still exists: %v", err)
 	}
 }
 

@@ -3374,7 +3374,7 @@ func fakeImageReleases(t *testing.T, e *smokeEnv, app, env string) []string {
 	var releases []string
 	for _, image := range images {
 		labels := image.Labels
-		if labels["ship.app"] != app || labels["ship.env"] != env || labels["ship.infra_id"] != identity.InfraID(app, env) {
+		if labels["ship.app"] != app || labels["ship.env"] != env {
 			continue
 		}
 		if labels["ship.release"] != "" {

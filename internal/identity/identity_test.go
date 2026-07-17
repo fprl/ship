@@ -36,22 +36,22 @@ func TestDataRuntimeStaticAndActivationPaths(t *testing.T) {
 	if got := IdentityFile("api", "production"); got != "/var/apps/api.production/ship.json" {
 		t.Fatalf("IdentityFile = %q", got)
 	}
-	if got, want := CaddyFragmentFile("api", "production"), "/etc/caddy/conf.d/ship-"+InfraID("api", "production")+".caddy"; got != want {
+	if got, want := CaddyFragmentFile("api", "production"), "/etc/caddy/conf.d/ship-"+EnvironmentKey("api", "production")+".caddy"; got != want {
 		t.Fatalf("CaddyFragmentFile = %q, want %q", got, want)
 	}
 }
 
-func TestInfraIDIsDeterministicAndBounded(t *testing.T) {
-	a := InfraID("api", "production")
-	b := InfraID("api", "production")
+func TestEnvironmentKeyIsDeterministicAndBounded(t *testing.T) {
+	a := EnvironmentKey("api", "production")
+	b := EnvironmentKey("api", "production")
 	if a != b {
-		t.Fatalf("InfraID not deterministic: %q vs %q", a, b)
+		t.Fatalf("EnvironmentKey not deterministic: %q vs %q", a, b)
 	}
 	if !strings.HasPrefix(a, "ship-") || len(a) != len("ship-")+12 {
-		t.Fatalf("InfraID = %q, want ship- plus 12 hex chars", a)
+		t.Fatalf("EnvironmentKey = %q, want ship- plus 12 hex chars", a)
 	}
-	if a == InfraID("api", "staging") {
-		t.Fatal("different envs should not share infra id")
+	if a == EnvironmentKey("api", "staging") {
+		t.Fatal("different envs should not share an environment key")
 	}
 }
 
@@ -78,10 +78,10 @@ func TestInfraNamesStayWithinLimits(t *testing.T) {
 	}
 }
 
-func TestImageRepoUsesInfraID(t *testing.T) {
-	wantRepo := "ship/" + InfraID("api", "production")
-	if got := ImageRepo("api", "production"); got != wantRepo {
-		t.Fatalf("ImageRepo = %q, want %q", got, wantRepo)
+func TestImageTagUsesImageRepo(t *testing.T) {
+	wantRepo := ImageRepo("api", "production")
+	if !strings.HasPrefix(wantRepo, "ship/") {
+		t.Fatalf("ImageRepo = %q, want ship/ prefix", wantRepo)
 	}
 	if got := ImageTag("api", "production", "abc123"); got != wantRepo+":abc123" {
 		t.Fatalf("ImageTag = %q", got)

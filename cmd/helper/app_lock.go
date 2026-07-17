@@ -25,7 +25,7 @@ func appEnvLockDir() string {
 }
 
 func appEnvLockPath(app, env string) string {
-	return filepath.Join(appEnvLockDir(), fmt.Sprintf("%s.lock", identity.InfraID(app, env)))
+	return filepath.Join(appEnvLockDir(), fmt.Sprintf("%s.lock", identity.EnvironmentKey(app, env)))
 }
 
 func appNamedLockPath(app, name string) string {

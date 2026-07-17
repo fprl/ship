@@ -5,7 +5,6 @@ package journal
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,36 +28,17 @@ func Append(path string, entry any) error {
 	if err != nil {
 		return fmt.Errorf("open journal: %w", err)
 	}
-
-	closeFile := func() error {
-		if closeErr := file.Close(); closeErr != nil {
-			return fmt.Errorf("close journal: %w", closeErr)
-		}
-		return nil
-	}
-	closeOnError := func(operation string, operationErr error) error {
-		if closeErr := file.Close(); closeErr != nil {
-			return errors.Join(
-				fmt.Errorf("%s: %w", operation, operationErr),
-				fmt.Errorf("close journal: %w", closeErr),
-			)
-		}
-		return fmt.Errorf("%s: %w", operation, operationErr)
-	}
+	defer func() { _ = file.Close() }()
 	if err := truncateTornTail(file); err != nil {
-		return closeOnError("repair journal tail", err)
+		return fmt.Errorf("repair journal tail: %w", err)
 	}
-	n, err := file.Write(data)
-	if err != nil {
-		return closeOnError("write journal", err)
-	}
-	if n != len(data) {
-		return closeOnError("write journal", io.ErrShortWrite)
+	if _, err := file.Write(data); err != nil {
+		return fmt.Errorf("write journal: %w", err)
 	}
 	if err := file.Sync(); err != nil {
-		return closeOnError("sync journal", err)
+		return fmt.Errorf("sync journal: %w", err)
 	}
-	return closeFile()
+	return nil
 }
 
 // truncateTornTail removes the uncommitted final record before appending.
@@ -109,45 +89,30 @@ func Read(path string, decode func([]byte) error) (torn bool, err error) {
 		}
 		return false, fmt.Errorf("open journal: %w", err)
 	}
+	defer func() { _ = file.Close() }()
 
 	reader := bufio.NewReader(file)
 	lineNumber := 0
-	closeOnError := func(operation string, operationErr error) error {
-		if closeErr := file.Close(); closeErr != nil {
-			return errors.Join(
-				fmt.Errorf("%s: %w", operation, operationErr),
-				fmt.Errorf("close journal: %w", closeErr),
-			)
-		}
-		return fmt.Errorf("%s: %w", operation, operationErr)
-	}
 	for {
 		line, readErr := reader.ReadString('\n')
 		if len(line) > 0 && !strings.HasSuffix(line, "\n") {
 			if readErr != nil && readErr != io.EOF {
-				return false, closeOnError("read journal", readErr)
-			}
-			closeErr := file.Close()
-			if closeErr != nil {
-				return false, fmt.Errorf("close journal: %w", closeErr)
+				return false, fmt.Errorf("read journal: %w", readErr)
 			}
 			return true, nil
 		}
 		if len(line) > 0 {
 			lineNumber++
 			if err := decode([]byte(line[:len(line)-1])); err != nil {
-				return false, closeOnError(fmt.Sprintf("decode journal line %d", lineNumber), err)
+				return false, fmt.Errorf("decode journal line %d: %w", lineNumber, err)
 			}
 		}
 		if readErr == io.EOF {
 			break
 		}
 		if readErr != nil {
-			return false, closeOnError("read journal", readErr)
+			return false, fmt.Errorf("read journal: %w", readErr)
 		}
-	}
-	if err := file.Close(); err != nil {
-		return false, fmt.Errorf("close journal: %w", err)
 	}
 	return false, nil
 }

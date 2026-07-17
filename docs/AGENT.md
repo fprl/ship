@@ -464,7 +464,7 @@ aliases = true
 - Common error codes: `box_target_required`, `invalid_box_target`, `ssh_unreachable`, `box_not_initialized`, `host_key_changed`, `operation_failed`
 
 ### `box gc`
-- Purpose: Sweep release and temporary artifacts using the box retention policy.
+- Purpose: Sweep release artifacts using the box retention policy.
 - Usage: `ship box gc [<box>] [--json]`
 - Arguments and flags: `box`: Box host. Defaults to ship.toml box when run in an app directory; `--json`: Emit per-environment removals and failures as JSON.
 - `--json` stdout schema: `{"environments":[{"app":"api","env":"production","active_release":"abc123","kept_releases":["abc123","def456"],"absent":["old@<image-prefix>"],"removed":["image ship-...:old"],"skipped":["activation /var/apps/api.production/runtime/activations/old.env"],"failures":["container old: permission denied"]}]}`

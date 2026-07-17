@@ -500,7 +500,7 @@ func TestRunInstallCreatesIngressNetworkWhenAbsent(t *testing.T) {
 	}
 }
 
-func TestRunInstallCreatesDeployTmpDirWithStickyMode(t *testing.T) {
+func TestRunInstallWritesDeployTmpFilesPolicyAndAppliesIt(t *testing.T) {
 	root := t.TempDir()
 	helper := filepath.Join(root, "ship")
 	if err := os.WriteFile(helper, []byte("helper"), 0755); err != nil {
@@ -518,10 +518,15 @@ func TestRunInstallCreatesDeployTmpDirWithStickyMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Mode 1777 = sticky world-writable. The deploy user needs to drop
-	// files there, but other local users must not delete them mid-deploy.
-	if !runner.ranCommand("install", "-d -o root -g root -m 1777 /tmp/ship-deploy") {
-		t.Fatalf("expected /tmp/ship-deploy to be created with mode 1777, commands: %+v", runner.commands)
+	policy, ok := runner.files[deployTmpFilesPath]
+	if !ok {
+		t.Fatal("expected deploy tmpfiles.d policy to be installed")
+	}
+	if got, want := string(policy.Content), "d /tmp/ship-deploy 1777 root root 24h\n"; got != want {
+		t.Fatalf("deploy tmpfiles.d content = %q, want %q", got, want)
+	}
+	if !runner.ranCommand("systemd-tmpfiles", "--create /etc/tmpfiles.d/ship-deploy.conf") {
+		t.Fatalf("expected deploy tmpfiles.d policy to be applied immediately, commands: %+v", runner.commands)
 	}
 }
 

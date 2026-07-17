@@ -212,7 +212,7 @@ func TestExecReleaseSelectionUsesActivePointerDespiteTornDeployJournalTail(t *te
 	}
 	prepareTestActivationEnv(t, "api", "production", release+"-activation")
 	bin := t.TempDir()
-	payload := fmt.Sprintf(`[{"Id":"sha256:%s","Labels":{"ship.app":"api","ship.env":"production","ship.infra_id":"%s","ship.release":"%s","ship.release_envelope":"%s"}}]`, imageID, identity.InfraID("api", "production"), release, label)
+	payload := fmt.Sprintf(`[{"Id":"sha256:%s","Labels":{"ship.app":"api","ship.env":"production","ship.release":"%s","ship.release_envelope":"%s"}}]`, imageID, release, label)
 	writeFakeCommand(t, bin, "podman", fmt.Sprintf("#!/usr/bin/env sh\nprintf '%%s\\n' '%s'\n", payload))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 

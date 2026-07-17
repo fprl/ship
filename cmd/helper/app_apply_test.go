@@ -334,7 +334,6 @@ func writePreviewIdentityForResolveTest(t *testing.T, app, env string, preview *
 		Version: 1,
 		App:     app,
 		Env:     env,
-		InfraID: identity.InfraID(app, env),
 		Preview: preview,
 	}
 	data, err := json.Marshal(file)
