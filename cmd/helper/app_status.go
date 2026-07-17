@@ -798,11 +798,34 @@ func activePointerRuntimeConvergedResolved(app, env string, pointer activation.P
 		}
 	}
 	desiredNames := map[string]string{}
+	// podman ps reports a tag name in Image, not the ID; runtime identity is
+	// the exact image ID, so resolve names through container inspect exactly
+	// like converge does. Unprovable = not converged.
+	imageIDs := map[string]string{}
+	if ctx.NeedsImage {
+		var entries []containerEntry
+		for _, process := range processes {
+			if process.State == "running" && process.Container != "" {
+				entries = append(entries, containerEntry{Names: []string{process.Container}})
+			}
+		}
+		var inspectErr error
+		imageIDs, inspectErr = podmanContainerImageIDs(entries)
+		if inspectErr != nil {
+			return false
+		}
+	}
+	runtimeImageID := func(process processStatus) string {
+		if id := imageIDs[process.Container]; id != "" {
+			return id
+		}
+		return process.Image
+	}
 	if ctx.NeedsImage {
 		for name := range ctx.Processes {
 			count := 0
 			for _, process := range processes {
-				if process.Process == name && process.State == "running" && process.Release == pointer.Artifact.Release && process.Activation == pointer.Activation && (pointer.Artifact.ImageID == "" || normalizeImageID(process.Image) == normalizeImageID(pointer.Artifact.ImageID)) {
+				if process.Process == name && process.State == "running" && process.Release == pointer.Artifact.Release && process.Activation == pointer.Activation && (pointer.Artifact.ImageID == "" || normalizeImageID(runtimeImageID(process)) == normalizeImageID(pointer.Artifact.ImageID)) {
 					count++
 					if process.Container != "" {
 						desiredNames[name] = process.Container
@@ -816,7 +839,7 @@ func activePointerRuntimeConvergedResolved(app, env string, pointer activation.P
 	}
 	for _, process := range processes {
 		if process.State == "running" {
-			if !ctx.NeedsImage || process.Release != pointer.Artifact.Release || process.Activation != pointer.Activation || (pointer.Artifact.ImageID != "" && normalizeImageID(process.Image) != normalizeImageID(pointer.Artifact.ImageID)) {
+			if !ctx.NeedsImage || process.Release != pointer.Artifact.Release || process.Activation != pointer.Activation || (pointer.Artifact.ImageID != "" && normalizeImageID(runtimeImageID(process)) != normalizeImageID(pointer.Artifact.ImageID)) {
 				return false
 			}
 			if _, ok := ctx.Processes[process.Process]; !ok {

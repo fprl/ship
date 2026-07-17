@@ -624,6 +624,14 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 		"podman exec caddy caddy reload --config /etc/caddy/.ship-caddy-validate-",
 		"podman rm -f "+webContainer,
 	)
+	// The redeploy's instance-suffixed container must read as converged:
+	// the predicate resolves image identity via container inspect, never
+	// by comparing ps's display name against the pointer's image ID.
+	redeployStatus := e.ship(t, app, nil, "status")
+	assertContains(t, redeployStatus, "health=running")
+	if strings.Contains(redeployStatus, "committed, not converged") {
+		t.Fatalf("same-release redeploy must converge:\n%s", redeployStatus)
+	}
 
 	// 9. Committed artifacts are immutable, so --rebuild is legal: it mints a
 	// NEW artifact (new image ID under a new img- tag) and never touches the

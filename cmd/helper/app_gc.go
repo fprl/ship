@@ -259,12 +259,31 @@ func gcRemoveImages(app, env string, protected map[string]bool, summary *gcSumma
 		summary.Failures = append(summary.Failures, "containers: "+containerErr.Error())
 		return
 	}
+	// podman images reports one row per repo:tag with a shared Id, so the
+	// sweep groups physically: skip decisions and the final remove-by-ID
+	// happen once per image, after every ship-owned tag is untagged.
+	removedIDs := map[string]bool{}
+	skippedIDs := map[string]bool{}
 	for _, image := range images {
 		id := normalizeImageID(image.ImageID)
+		if removedIDs[id] || skippedIDs[id] {
+			continue
+		}
 		if protected[id] || freshAt(image.CreatedAt) {
+			skippedIDs[id] = true
 			summary.Skipped = append(summary.Skipped, "image "+image.ImageID)
 			continue
 		}
+		shipTags := map[string]bool{}
+		for _, row := range images {
+			if normalizeImageID(row.ImageID) == id {
+				for _, tag := range row.ShipTags {
+					shipTags[tag] = true
+				}
+			}
+		}
+		image.ShipTags = sortedKeys(shipTags)
+		removedIDs[id] = true
 		tagFailed := false
 		for _, tag := range image.ShipTags {
 			if _, err := utils.RunChecked("podman", []string{"rmi", tag}, ""); err != nil {

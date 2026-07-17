@@ -2635,3 +2635,16 @@ func TestIsGitDescribeVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestProductionGuardAllowsHealingDeploys(t *testing.T) {
+	for _, detail := range []string{"legacy_activation", "artifact_unavailable"} {
+		out := `{"release":{"release":"5a982a263ad8","state":"degraded","detail":"` + detail + `"}}`
+		var status deployedReleaseStatus
+		if err := json.Unmarshal([]byte(out), &status); err != nil {
+			t.Fatal(err)
+		}
+		if status.Release.BaseCommit != "" || status.Release.Detail != detail {
+			t.Fatalf("parse: %+v", status.Release)
+		}
+	}
+}

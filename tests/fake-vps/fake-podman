@@ -256,6 +256,20 @@ for labels_path in sorted(glob.glob(os.path.join(state_dir, "containers", "*.lab
     if os.path.exists(image_file):
         with open(image_file) as f:
             image = f.read().strip()
+    # Real podman ps reports a tag NAME in Image even when the container
+    # was started by ID; mirror that so name-vs-id confusion is caught in
+    # the smoke instead of on a real box.
+    if image.startswith("sha256:") or (len(image) == 64 and all(c in "0123456789abcdef" for c in image)):
+        wanted = image[7:] if image.startswith("sha256:") else image
+        for candidate in glob.glob(os.path.join(state_dir, "images", "*.id")):
+            with open(candidate) as f:
+                cid = f.read().strip().removeprefix("sha256:")
+            if cid == wanted:
+                ref_path = candidate[:-3] + ".ref"
+                if os.path.exists(ref_path):
+                    with open(ref_path) as f:
+                        image = f.read().strip()
+                break
     out.append({
         "Names": [name],
         # Fake-podman doesn't really track state; if the listener
