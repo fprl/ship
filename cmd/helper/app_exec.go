@@ -89,7 +89,10 @@ func resolveExecTarget(app, env string) (execTarget, error) {
 	}
 	envFile := identity.ActivationEnvFile(app, env, pointer.Activation)
 	if _, err := os.Stat(envFile); err != nil {
-		return execTarget{}, execOperationFailed(fmt.Errorf("frozen environment for active activation %s is gone: %v; next: ship", pointer.Activation, err))
+		return execTarget{}, errcat.New(errcat.CodeOperationFailed, errcat.Fields{
+			"detail":  fmt.Sprintf("frozen environment for active activation %s is gone: %v", pointer.Activation, err),
+			"command": "ship",
+		})
 	}
 	return execTarget{
 		Release:    pointer.Release,
@@ -151,10 +154,6 @@ func execDeploymentURL(ctx *config.AppContext) string {
 		return candidates[i].url < candidates[j].url
 	})
 	return candidates[0].url
-}
-
-func buildPodmanExecRunArgsWithEnvFile(app, env, containerName, imageTag, userID, groupID, release string, command []string, injected map[string]string, envFileExists, previewEnv, tty bool, envFile string) []string {
-	return buildPodmanExecRunArgsWithActivation(app, env, containerName, imageTag, userID, groupID, release, "", command, injected, envFileExists, previewEnv, tty, envFile)
 }
 
 func buildPodmanExecRunArgsWithActivation(app, env, containerName, imageTag, userID, groupID, release, activation string, command []string, injected map[string]string, envFileExists, previewEnv, tty bool, envFile string) []string {

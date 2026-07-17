@@ -201,7 +201,7 @@ func gcEnv(app, env string) (gcSummary, error) {
 			protectedImages[normalizeImageID(tuple.ImageID)] = true
 		}
 	}
-	gcRemoveContainers(app, env, pointer, &summary)
+	gcRemoveContainers(app, env, &summary)
 	gcRemoveImages(app, env, protectedImages, &summary)
 	gcRemoveStatic(app, env, kept, set.All, &summary)
 	gcRemoveActivations(app, env, pointer, &summary)
@@ -218,7 +218,7 @@ func gcEnv(app, env string) (gcSummary, error) {
 	return summary, nil
 }
 
-func gcRemoveContainers(app, env string, pointer activation.Pointer, summary *gcSummary) {
+func gcRemoveContainers(app, env string, summary *gcSummary) {
 	entries, err := podmanPSContainers(app, env)
 	if err != nil {
 		summary.Failures = append(summary.Failures, "containers: "+err.Error())
@@ -228,7 +228,7 @@ func gcRemoveContainers(app, env string, pointer activation.Pointer, summary *gc
 		if len(entry.Names) == 0 || entry.Labels["ship.app"] != app || entry.Labels["ship.env"] != env {
 			continue
 		}
-		if entry.State == "running" && entry.Labels["ship.activation"] == pointer.Activation {
+		if entry.State == "running" {
 			continue
 		}
 		name := entry.Names[0]
@@ -261,7 +261,7 @@ func gcRemoveImages(app, env string, protected map[string]bool, summary *gcSumma
 	}
 	for _, image := range images {
 		id := normalizeImageID(image.ImageID)
-		if protected[id] || freshImage(image) {
+		if protected[id] || freshAt(image.CreatedAt) {
 			summary.Skipped = append(summary.Skipped, "image "+image.ImageID)
 			continue
 		}
@@ -279,8 +279,8 @@ func gcRemoveImages(app, env string, protected map[string]bool, summary *gcSumma
 	}
 }
 
-func freshImage(image imageRelease) bool {
-	return !image.CreatedAt.IsZero() && gcNow().Sub(image.CreatedAt) < gcGracePeriod
+func freshAt(createdAt time.Time) bool {
+	return !createdAt.IsZero() && gcNow().Sub(createdAt) < gcGracePeriod
 }
 
 func gcRemoveStatic(app, env string, kept map[artifact.Tuple]bool, all []artifactCandidate, summary *gcSummary) {
@@ -416,5 +416,5 @@ func gcOwnsTempDir(root, envRoot, name string) bool {
 
 func freshPath(path string) bool {
 	info, err := os.Stat(path)
-	return err == nil && gcNow().Sub(info.ModTime()) < gcGracePeriod
+	return err == nil && freshAt(info.ModTime())
 }

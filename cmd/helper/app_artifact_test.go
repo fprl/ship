@@ -10,6 +10,7 @@ import (
 
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/identity"
 )
 
@@ -36,6 +37,15 @@ func testTuple(release, image, static string) artifact.Tuple {
 	return artifact.Tuple{Release: release, ImageID: image, StaticHash: static}
 }
 
+func committedHistoryForTest(t *testing.T, app, env string) ([]Tuple, bool, error) {
+	t.Helper()
+	pointer, err := readActive(app, env)
+	if err != nil {
+		return nil, false, err
+	}
+	return committedHistoryWithPointer(app, env, pointer)
+}
+
 func TestCommittedHistoryDeduplicatesTuplesKeepsRepeatedReleasesAndReportsTorn(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
@@ -51,7 +61,7 @@ func TestCommittedHistoryDeduplicatesTuplesKeepsRepeatedReleasesAndReportsTorn(t
 			t.Fatal(err)
 		}
 	}
-	history, torn, err := CommittedHistory("api", "production")
+	history, torn, err := committedHistoryForTest(t, "api", "production")
 	if err != nil || torn {
 		t.Fatalf("history=%v torn=%v err=%v", history, torn, err)
 	}
@@ -75,7 +85,7 @@ func TestCommittedHistoryDeduplicatesTuplesKeepsRepeatedReleasesAndReportsTorn(t
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	_, torn, err = CommittedHistory("api", "production")
+	_, torn, err = committedHistoryForTest(t, "api", "production")
 	if err != nil || !torn {
 		t.Fatalf("torn history err=%v torn=%v", err, torn)
 	}
@@ -95,7 +105,7 @@ func TestCommittedHistoryIgnoresV1Journal(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"schema_version":1,"outcome":"deployed","attempted_release":"old"}`+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	history, torn, err := CommittedHistory("api", "production")
+	history, torn, err := committedHistoryForTest(t, "api", "production")
 	if err != nil || torn || len(history) != 1 || history[0] != tuple {
 		t.Fatalf("history=%v torn=%v err=%v", history, torn, err)
 	}
@@ -122,7 +132,7 @@ func TestCommittedHistoryIncludesPostCommitArtifacts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	history, _, err := CommittedHistory("api", "production")
+	history, _, err := committedHistoryForTest(t, "api", "production")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,6 +156,31 @@ exit 0
 	wanted := artifact.Tuple{Release: "abcdef1", ImageID: strings.Repeat("a", 64)}
 	if _, err := ResolveArtifact("api", "production", wanted); err == nil || !strings.Contains(err.Error(), "identity mismatch") {
 		t.Fatalf("resolve error = %v, want exact-image mismatch", err)
+	}
+}
+
+func TestResolveArtifactRejectsStaticHashShapeThatDisagreesWithManifest(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	release := "abc1234"
+	meta, err := newReleaseMetadata(release, false, release+strings.Repeat("a", 33), "2026-07-16T12:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, label, err := releaseEnvelope([]byte("name = \"api\"\nbox = \"example.com\"\n\n[processes]\nworker = {}\n"), meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStaticReleaseEnvelope("api", "production", release, e); err != nil {
+		t.Fatal(err)
+	}
+	staticHash := strings.Repeat("b", 64)
+	if err := os.MkdirAll(staticReleasePath("api", "production", release, staticHash), 0755); err != nil {
+		t.Fatal(err)
+	}
+	_, err = resolveArtifact("api", "production", artifact.Tuple{Release: release, StaticHash: staticHash, EnvelopeHash: envelope.HashLabel(label)})
+	if err == nil || !strings.Contains(err.Error(), "static_hash does not match manifest serve routes") {
+		t.Fatalf("resolve mismatch error = %v", err)
 	}
 }
 

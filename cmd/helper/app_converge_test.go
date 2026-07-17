@@ -276,11 +276,12 @@ func TestConvergeCaddySecondRunUsesCaddyNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	static, err := activeStaticStatus("api", "production")
-	if err != nil || !activePointerRuntimeConverged("api", "production", pointer, nil, static) {
+	resolved, err := resolveArtifact("api", "production", pointer.Artifact)
+	static := staticStatusFromResolved("api", "production", resolved)
+	if err != nil || !activePointerRuntimeConvergedResolved("api", "production", pointer, resolved, nil, static) {
 		t.Fatalf("static-only target should converge: static=%+v err=%v", static, err)
 	}
-	if activePointerRuntimeConverged("api", "production", pointer, []processStatus{{Process: "old", State: "running", Release: "old111", Activation: "old-a1b2"}}, static) {
+	if activePointerRuntimeConvergedResolved("api", "production", pointer, resolved, []processStatus{{Process: "old", State: "running", Release: "old111", Activation: "old-a1b2"}}, static) {
 		t.Fatal("extra running app container must make status non-converged")
 	}
 	firstLog, err := os.ReadFile(logPath)
@@ -337,8 +338,9 @@ func TestConvergedAliasPreviewReportsConverged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	static, err := activeStaticStatus("api", env)
-	if err != nil || !activePointerRuntimeConverged("api", env, pointer, nil, static) {
+	resolved, err := resolveArtifact("api", env, pointer.Artifact)
+	static := staticStatusFromResolved("api", env, resolved)
+	if err != nil || !activePointerRuntimeConvergedResolved("api", env, pointer, resolved, nil, static) {
 		t.Fatalf("converged alias preview should report converged: static=%+v err=%v", static, err)
 	}
 
@@ -349,7 +351,7 @@ func TestConvergedAliasPreviewReportsConverged(t *testing.T) {
 	})
 	rivalManifest := "name = \"rival\"\nbox = \"example.com\"\n\n[routes]\n\"" + alias + "\" = { static = \"dist\" }\n"
 	writeActiveEnvelopeForPreviewAliasTest(t, "rival", "production", rivalManifest)
-	if activePointerRuntimeConverged("api", env, pointer, nil, static) {
+	if activePointerRuntimeConvergedResolved("api", env, pointer, resolved, nil, static) {
 		t.Fatal("a fragment carrying an alias owned by another env must not report converged")
 	}
 }

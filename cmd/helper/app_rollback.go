@@ -54,6 +54,9 @@ func (c appRollbackCmd) runLocked() {
 			utils.DieError(rollbackCommittedError(err), 1)
 		}
 		removePreparedCandidates(c.App, c.Env, c.ActivationID)
+		if strings.Contains(err.Error(), "legacy activation") {
+			utils.DieError(err, 1)
+		}
 		utils.DieError(fmt.Errorf("nothing changed: %w", err), 1)
 	}
 }
@@ -67,23 +70,25 @@ func rollbackCommittedError(err error) error {
 }
 
 func (c appRollbackCmd) recordRollbackDegraded(result rollbackPayload, startedAt time.Time, err error) {
-	entry := deployJournalEntry{Outcome: "committed_degraded", StartedAt: startedAt.Format(time.RFC3339Nano), EndedAt: time.Now().UTC().Format(time.RFC3339Nano), PreviousRelease: result.Previous, AttemptedRelease: result.Release, FailingStep: "durability", StderrTail: err.Error(), Identity: c.actor(), Member: currentServerMemberForJournal(), Artifact: &result.Artifact}
+	entry, _ := committedOutcomeJournalEntry(c.App, c.Env, "committed_degraded", result.Previous, result.Release, c.actor(), startedAt, "durability", &result.Artifact, err)
+	entry.Member = currentServerMemberForJournal()
 	if appendErr := appendRollbackDeployJournal(c.App, c.Env, entry, nil); appendErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
+		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
 	}
 }
 
 func (c appRollbackCmd) recordRollbackFailure(result rollbackPayload, startedAt time.Time, err error) {
-	entry := deployJournalEntry{Outcome: "committed_unconverged", StartedAt: startedAt.Format(time.RFC3339Nano), EndedAt: time.Now().UTC().Format(time.RFC3339Nano), PreviousRelease: result.Previous, AttemptedRelease: result.Release, FailingStep: committedFailureStep(err, "converge"), StderrTail: err.Error(), Identity: c.actor(), Member: currentServerMemberForJournal(), Artifact: &result.Artifact}
+	entry, _ := committedOutcomeJournalEntry(c.App, c.Env, "committed_unconverged", result.Previous, result.Release, c.actor(), startedAt, committedFailureStep(err, "converge"), &result.Artifact, err)
+	entry.Member = currentServerMemberForJournal()
 	if appendErr := appendRollbackDeployJournal(c.App, c.Env, entry, nil); appendErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
+		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
 	}
 }
 
 func (c appRollbackCmd) recordRollbackSuccess(result rollbackPayload, startedAt time.Time) {
 	entry := deployJournalEntry{Outcome: "rolled_back", StartedAt: startedAt.Format(time.RFC3339Nano), EndedAt: time.Now().UTC().Format(time.RFC3339Nano), PreviousRelease: result.Previous, AttemptedRelease: result.Release, Activation: c.ActivationID, Identity: c.actor(), Member: currentServerMemberForJournal(), Artifact: &result.Artifact}
 	if err := appendRollbackDeployJournal(c.App, c.Env, entry, nil); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: rollback succeeded but failed to write deploy journal %s: %v; cleanup/GC were skipped; run ship box doctor\n", identity.DeployJournalFile(c.App, c.Env), err)
+		fmt.Fprintf(os.Stderr, "warning: rollback succeeded but failed to write deploy journal %s: %v; cleanup/GC were skipped; next: ship box doctor\n", identity.DeployJournalFile(c.App, c.Env), err)
 	} else {
 		removeContainers(result.StaleContainers)
 		bestEffortGCAfterLifecycle(c.App, c.Env)
@@ -99,7 +104,7 @@ func (c *appRollbackCmd) rollbackRelease(startedAt time.Time) (rollbackPayload, 
 		return rollbackPayload{}, err
 	}
 	if pointer.IsLegacy() {
-		return rollbackPayload{}, fmt.Errorf("legacy activation; redeploy to heal")
+		return rollbackPayload{}, activationLegacyError()
 	}
 	target, err := retainedArtifactForRollback(c.App, c.Env, c.Release, pointer)
 	if err != nil {

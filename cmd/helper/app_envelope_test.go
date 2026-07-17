@@ -64,7 +64,11 @@ func TestStaticEnvelopeSidecarsAreHashNamedAndPointerSelectable(t *testing.T) {
 		{firstLabel, first},
 		{secondLabel, second},
 	} {
-		got, err := readStaticReleaseEnvelopeByHash("api", "production", "abc1234", envelope.HashLabel(tc.label))
+		data, err := os.ReadFile(staticReleaseEnvelopePath("api", "production", "abc1234", envelope.HashLabel(tc.label)))
+		got, decodeErr := envelope.DecodeJSON(data)
+		if err == nil {
+			err = decodeErr
+		}
 		if err != nil || got.Manifest != tc.want.Manifest {
 			t.Fatalf("sidecar %s = %+v, err=%v", tc.label, got, err)
 		}

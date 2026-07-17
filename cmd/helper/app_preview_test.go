@@ -538,7 +538,7 @@ aliases = true
 web = { port = 3000 }
 
 [routes]
-"other-feat-x-cd34.preview.example.com" = "web"
+"other-feat-x-cd34.preview.example.com" = { static = "dist" }
 `)
 				previousRead := readCaddyFragment
 				readCaddyFragment = func(path string) ([]byte, error) {
@@ -564,7 +564,7 @@ box = "example.com"
 web = { port = 3000 }
 
 [routes]
-"feat-x.preview.example.com" = "web"
+"feat-x.preview.example.com" = { static = "dist" }
 `)
 			},
 			kind: "route",
@@ -580,7 +580,7 @@ box = "example.com"
 web = { port = 3000 }
 
 [routes]
-"feat-x.203-0-113-7.sslip.io" = "web"
+"feat-x.203-0-113-7.sslip.io" = { static = "dist" }
 `)
 			},
 			kind: "route",

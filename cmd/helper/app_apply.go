@@ -101,7 +101,7 @@ func (c appApplyCmd) recordDeployFailure(app *config.AppContext, previousRelease
 	entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, err)
 	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
+		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
 	}
 	if app != nil && isFailedJournalOutcome(entry.Outcome) {
 		webhookDeployAborted(app.Webhook, app, entry, time.Now().UTC())
@@ -110,25 +110,19 @@ func (c appApplyCmd) recordDeployFailure(app *config.AppContext, previousRelease
 }
 
 func (c appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
-	stepErr := newJournalStepError(committedFailureStep(err, "converge"), err, nil, nil)
-	entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, stepErr)
-	entry.Outcome = "committed_unconverged"
-	entry.Artifact = c.committedArtifact()
+	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, "committed_unconverged", previousRelease, c.SHA, c.actor(), startedAt, committedFailureStep(err, "converge"), c.committedArtifact(), err)
 	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
+		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
 	}
 	return newDeployCommittedUnconvergedError(err)
 }
 
 func (c appApplyCmd) recordCommittedDegraded(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
-	stepErr := newJournalStepError("durability", err, nil, nil)
-	entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, stepErr)
-	entry.Outcome = "committed_degraded"
-	entry.Artifact = c.committedArtifact()
+	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, "committed_degraded", previousRelease, c.SHA, c.actor(), startedAt, "durability", c.committedArtifact(), err)
 	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; run ship box doctor\n", appendErr)
+		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
 	}
 	return newDeployCommittedDegradedError(err)
 }
@@ -338,7 +332,7 @@ func (c appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRel
 		}()},
 	}, nil)
 	if err := appendSanitizedDeployJournal(c.App, c.Env, entry); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: deployed but failed to write deploy journal %s: %v; cleanup/GC were skipped; run ship box doctor\n", identity.DeployJournalFile(c.App, c.Env), err)
+		fmt.Fprintf(os.Stderr, "warning: deployed but failed to write deploy journal %s: %v; cleanup/GC were skipped; next: ship box doctor\n", identity.DeployJournalFile(c.App, c.Env), err)
 		fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash}.DisplayIdentity())
 		return nil
 	}
@@ -524,7 +518,7 @@ func removePreparedCandidates(app, env, activationID string) {
 	}
 	entries, err := podmanPSContainers(app, env)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to remove pre-commit candidates for activation %s: %v; run ship box doctor\n", activationID, err)
+		fmt.Fprintf(os.Stderr, "warning: failed to remove pre-commit candidates for activation %s: %v; next: ship box doctor\n", activationID, err)
 		return
 	}
 	var candidates []string
@@ -566,7 +560,7 @@ func startContainers(names []string) error {
 // operator still needs a visible recovery path.
 func warnOnRestartFailure(stopped []string) {
 	if err := startContainers(stopped); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: %v; run ship box doctor\n", err)
+		fmt.Fprintf(os.Stderr, "warning: %v; next: ship box doctor\n", err)
 	}
 }
 

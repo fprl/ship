@@ -363,7 +363,7 @@ func doctorBoxUpdateCheck(stateStore store.Store, boxTarget string) store.Doctor
 		return doctorCheck(doctorCheckBoxUpdate, doctorStatusDegraded, "cannot read update journal: "+singleLine(err.Error()), doctorBoxUpdateCommand(boxTarget))
 	}
 	if torn {
-		fmt.Fprintln(os.Stderr, "warning: update journal has an incomplete final entry (interrupted write); run ship box doctor")
+		fmt.Fprintln(os.Stderr, "warning: update journal has an incomplete final entry (interrupted write); next: ship box doctor")
 	}
 	if len(pending) > 0 {
 		versions := make([]string, 0, len(pending))

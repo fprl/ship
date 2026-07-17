@@ -654,8 +654,9 @@ func deployTmpFilesContent() []byte {
 }
 
 // addDeployTmpDir installs the tmpfiles.d policy for the global deploy
-// staging directory. tmpfiles.d owns both creation and age-based cleanup;
-// applying it here makes setup effective without waiting for the next boot.
+// staging directory consumed by host.ValidateDeployTmpSource. tmpfiles.d
+// owns both creation and age-based cleanup; applying it here makes setup
+// effective without waiting for the next boot.
 func addDeployTmpDir(ops *[]operation) {
 	*ops = append(*ops, operation{name: "deploy tmp dir", run: ensureDeployTmpDir})
 }
@@ -882,11 +883,10 @@ func ensureIngressNetwork(apply host.Apply) (bool, error) {
 	return true, nil
 }
 
-// addCaddy installs and starts Caddy as a Podman container on the
-// shared `ingress` network, per ADR-0006 Cut 2. The previous apt-based
-// install + systemd-from-apt path is gone: ship no longer treats
-// Caddy as a host service. App containers join `ingress` and Caddy
-// reaches them by container DNS.
+// addCaddy installs Caddy as a Podman container plus its systemd unit on the
+// shared `ingress` network, per ADR-0006 Cut 2. App containers join `ingress`
+// and Caddy reaches them by container DNS; Caddy is not an apt-installed host
+// service.
 //
 // Ordering matters: the Caddyfile is written before `caddy.service`
 // starts. The Caddy container's ExecStart is `caddy run --config

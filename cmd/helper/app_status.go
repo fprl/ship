@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/names"
@@ -63,17 +64,17 @@ func (c appStatusCmd) runLocked() {
 	release := activeStatusRelease(runningProcesses(processes), static)
 	if pointerErr == nil {
 		if pointer.IsLegacy() {
-			release = &statusRelease{Release: pointer.Release, State: "legacy_activation", Next: "redeploy to heal"}
+			release = &statusRelease{Release: pointer.Release, State: "degraded", Detail: "legacy_activation", Next: "ship"}
 		} else if resolved, resolveErr := resolveArtifact(c.App, c.Env, pointer.Artifact); resolveErr != nil {
-			release = &statusRelease{Release: pointer.Artifact.DisplayIdentity(), Artifact: pointer.Artifact, State: "degraded", Next: "artifact_unavailable; redeploy to heal"}
+			release = &statusRelease{Release: pointer.Artifact.DisplayIdentity(), Artifact: pointer.Artifact, State: "degraded", Detail: "artifact_unavailable", Next: "ship"}
 		} else {
 			static = staticStatusFromResolved(c.App, c.Env, resolved)
-			intended := &statusRelease{Release: pointer.Artifact.DisplayIdentity(), Artifact: pointer.Artifact}
+			intended := statusReleaseFromResolved(resolved)
 			if !activePointerRuntimeConvergedResolved(c.App, c.Env, pointer, resolved, processes, static) {
 				intended.State = committedNotConvergedState
 				intended.Next = convergenceNextStep
 			}
-			release = intended
+			release = &intended
 		}
 	}
 	if c.JSON {
@@ -110,6 +111,14 @@ func staticStatusFromResolved(app, env string, resolved resolvedArtifact) *stati
 		status.Dirty, status.BaseCommit, status.CreatedAt = meta.Dirty, meta.BaseCommit, meta.CreatedAt
 	}
 	return status
+}
+
+func statusReleaseFromResolved(resolved resolvedArtifact) statusRelease {
+	release := statusRelease{Release: resolved.Tuple.DisplayIdentity(), Artifact: resolved.Tuple}
+	if meta, err := releaseMetadataFromEnvelope(resolved.Envelope, resolved.Tuple.Release); err == nil {
+		release.Dirty, release.BaseCommit, release.CreatedAt = meta.Dirty, meta.BaseCommit, meta.CreatedAt
+	}
+	return release
 }
 
 // appLsCmd merges durable env identity anchors with live process labels.
@@ -256,10 +265,13 @@ type appListEnvStatus struct {
 	ExpiresAt      string          `json:"expires_at"`
 	Pinned         bool            `json:"pinned"`
 	Dirty          bool            `json:"dirty"`
+	BaseCommit     string          `json:"base_commit,omitempty"`
+	CreatedAt      string          `json:"created_at,omitempty"`
 	ShippedBy      *deployIdentity `json:"shipped_by,omitempty"`
 	Processes      []processStatus `json:"processes"`
 	Static         *staticStatus   `json:"static,omitempty"`
 	State          string          `json:"state,omitempty"`
+	Detail         string          `json:"detail,omitempty"`
 	Next           string          `json:"next,omitempty"`
 }
 
@@ -271,6 +283,7 @@ type appEnvStatus struct {
 	Processes  []processStatus           `json:"processes"`
 	Static     *staticStatus             `json:"static,omitempty"`
 	State      string                    `json:"state,omitempty"`
+	Detail     string                    `json:"detail,omitempty"`
 	Next       string                    `json:"next,omitempty"`
 	pointer    activation.Pointer        `json:"-"`
 	pointerErr error                     `json:"-"`
@@ -309,6 +322,7 @@ type statusRelease struct {
 	ProcessRelease string `json:"process_release,omitempty"`
 	StaticRelease  string `json:"static_release,omitempty"`
 	State          string `json:"state,omitempty"`
+	Detail         string `json:"detail,omitempty"`
 	Next           string `json:"next,omitempty"`
 	Artifact       Tuple  `json:"-"`
 }
@@ -618,7 +632,14 @@ func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 	currentRelease := ""
 	dirty := false
 	createdAt := ""
-	if release != nil {
+	baseCommit := ""
+	if item.resolved != nil && item.pointerErr == nil && !item.pointer.IsLegacy() {
+		resolvedRelease := statusReleaseFromResolved(*item.resolved)
+		currentRelease = resolvedRelease.Release
+		dirty = resolvedRelease.Dirty
+		baseCommit = resolvedRelease.BaseCommit
+		createdAt = resolvedRelease.CreatedAt
+	} else if release != nil {
 		currentRelease = release.Release
 		if release.Mixed {
 			currentRelease = "mixed"
@@ -647,10 +668,13 @@ func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 		ExpiresAt:      expiresAt,
 		Pinned:         pinned,
 		Dirty:          dirty,
+		BaseCommit:     baseCommit,
+		CreatedAt:      createdAt,
 		ShippedBy:      item.ShippedBy,
 		Processes:      processes,
 		Static:         item.Static,
 		State:          item.State,
+		Detail:         item.Detail,
 		Next:           item.Next,
 	}
 }
@@ -709,8 +733,9 @@ func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 		apps[i].pointer = pointer
 		apps[i].pointerErr = pointerErr
 		if pointerErr == nil && pointer.IsLegacy() {
-			apps[i].State = "legacy_activation"
-			apps[i].Next = "redeploy to heal"
+			apps[i].State = "degraded"
+			apps[i].Detail = "legacy_activation"
+			apps[i].Next = "ship"
 			continue
 		}
 		if errcat.Is(pointerErr, errcat.CodeNoDeploys) {
@@ -726,7 +751,8 @@ func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 		}
 		if pointerErr != nil {
 			apps[i].State = "degraded"
-			apps[i].Next = "artifact_unavailable; redeploy to heal"
+			apps[i].Detail = "artifact_unavailable"
+			apps[i].Next = "ship"
 			continue
 		}
 		static := staticStatusFromResolved(apps[i].App, apps[i].Env, resolved)
@@ -751,16 +777,13 @@ func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 
 const committedNotConvergedState = "committed, not converged"
 
-func activePointerRuntimeConverged(app, env string, pointer activation.Pointer, processes []processStatus, static *staticStatus) bool {
-	resolved, err := resolveArtifact(app, env, pointer.Artifact)
-	if err != nil {
-		return false
-	}
-	return activePointerRuntimeConvergedResolved(app, env, pointer, resolved, processes, static)
-}
-
 func activePointerRuntimeConvergedResolved(app, env string, pointer activation.Pointer, resolved resolvedArtifact, processes []processStatus, static *staticStatus) bool {
-	ctx := resolved.Context
+	ctxValue := *resolved.Context
+	ctxValue.Routes = make(map[string]config.Route, len(resolved.Context.Routes))
+	for name, route := range resolved.Context.Routes {
+		ctxValue.Routes[name] = route
+	}
+	ctx := &ctxValue
 	if env != productionEnvName {
 		token, err := secrets.GetPreviewCapability(app, env)
 		if err != nil {
@@ -920,24 +943,6 @@ func copyStaticReleaseMetadata(static *staticStatus, target *statusRelease) {
 	target.Dirty = static.Dirty
 	target.BaseCommit = static.BaseCommit
 	target.CreatedAt = static.CreatedAt
-}
-
-func activeStaticStatus(app, env string) (*staticStatus, error) {
-	pointer, err := readActive(app, env)
-	if err != nil {
-		if errcat.Is(err, errcat.CodeNoDeploys) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	if pointer.IsLegacy() {
-		return nil, nil
-	}
-	resolved, err := resolveArtifact(app, env, pointer.Artifact)
-	if err != nil {
-		return nil, err
-	}
-	return staticStatusFromResolved(app, env, resolved), nil
 }
 
 // --- podman calls ---

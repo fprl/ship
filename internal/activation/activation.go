@@ -35,8 +35,15 @@ type Pointer struct {
 	EnvelopeHash string `json:"-"`
 }
 
+type ValidationError struct {
+	Err error
+}
+
+func (e *ValidationError) Error() string { return e.Err.Error() }
+func (e *ValidationError) Unwrap() error { return e.Err }
+
 func Validate(pointer Pointer) error {
-	if pointer.Legacy != nil || pointer.Version == 1 || pointer.Version == 0 {
+	if pointer.Legacy != nil || pointer.Version == 1 {
 		return nil
 	}
 	if pointer.Version != Version {
@@ -81,21 +88,21 @@ func Read(app, env string) (Pointer, error) {
 		Version *int `json:"version"`
 	}
 	if err := json.Unmarshal(data, &shape); err != nil {
-		return Pointer{}, fmt.Errorf("invalid active.json: %w", err)
+		return Pointer{}, &ValidationError{Err: fmt.Errorf("invalid active.json: %w", err)}
 	}
 	if shape.Version == nil || *shape.Version == 1 {
 		var legacy LegacyActivation
 		if err := json.Unmarshal(data, &legacy); err != nil {
-			return Pointer{}, fmt.Errorf("invalid legacy active.json: %w", err)
+			return Pointer{}, &ValidationError{Err: fmt.Errorf("invalid legacy active.json: %w", err)}
 		}
 		return Pointer{Version: 1, Release: legacy.Release, Activation: legacy.Activation, EnvelopeHash: legacy.EnvelopeHash, Legacy: &legacy}, nil
 	}
 	var pointer Pointer
 	if err := json.Unmarshal(data, &pointer); err != nil {
-		return Pointer{}, fmt.Errorf("invalid active.json: %w", err)
+		return Pointer{}, &ValidationError{Err: fmt.Errorf("invalid active.json: %w", err)}
 	}
 	if err := Validate(pointer); err != nil {
-		return Pointer{}, err
+		return Pointer{}, &ValidationError{Err: err}
 	}
 	pointer.Release = pointer.Artifact.Release
 	pointer.EnvelopeHash = pointer.Artifact.EnvelopeHash
@@ -122,7 +129,5 @@ func WritePrepared(app, env string, pointer Pointer, prepare func(string) error)
 	return store.AtomicWritePrepared(identity.ActiveFile(app, env), append(data, '\n'), 0644, prepare)
 }
 
-func (p Pointer) Tuple() artifact.Tuple { return p.Artifact }
-
 // Legacy returns whether this pointer predates artifact-keyed trust.
-func (p Pointer) IsLegacy() bool { return p.Legacy != nil || p.Version == 1 || p.Version == 0 }
+func (p Pointer) IsLegacy() bool { return p.Legacy != nil || p.Version == 1 }

@@ -598,11 +598,11 @@ var verbs = []Verb{
 		Usage:   "ship status [--json] [--config <path>]",
 		Flags:   []Flag{configFlag, {Name: "--json", Purpose: "Emit structured JSON instead of the text table."}},
 		JSONSchema: schema(
-			`{"app":"api","envs":[{"class":"preview","branch":"feature/x","url":"https://...","capability_url":"https://...?ship=...","env":"feature-x-ab12","current_release":"abc123","health":"running","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":true,"dirty":true,"shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}],"state":"committed, not converged","next":"ship converge"}]}`,
+			`{"app":"api","envs":[{"class":"preview","branch":"feature/x","url":"https://...","capability_url":"https://...?ship=...","env":"feature-x-ab12","current_release":"abc123","health":"running","ageSeconds":10,"expiresAt":"2026-07-10T10:00:00Z","pinned":true,"dirty":true,"base_commit":"...","created_at":"...","shipped_by":{"ssh_key_comment":"key","git_author":"Name <n@example.com>"},"processes":[{"process":"web","container":"...","state":"running","image":"...","release":"abc123","dirty":false,"base_commit":"...","created_at":"...","status":"Up 1 minute"}],"state":"degraded","detail":"artifact_unavailable","next":"ship"}]}`,
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"manifest_invalid", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
-		Notes:     []string{"capability_url is optional and appears only for Preview environments. pinned and dirty are omitted when false. state and next appear when active.json is committed but runtime has not converged; state is `committed, not converged` and next is `ship converge`. A committed failure is reported as degraded rather than auto-restoring the previous release. envs is always an array; it is [] when nothing is live."},
+		Notes:     []string{"capability_url is optional and appears only for Preview environments. pinned and dirty are omitted when false. base_commit and created_at come from the resolved active artifact, never from container labels. state and next appear when active.json is committed but runtime has not converged; state is `committed, not converged` and next is `ship converge`. Legacy activations and unavailable artifacts use state `degraded`, detail `legacy_activation` or `artifact_unavailable`, and runnable next `ship`. A committed failure is reported as degraded rather than auto-restoring the previous release. envs is always an array; it is [] when nothing is live."},
 	},
 	{
 		Verb:    "logs",

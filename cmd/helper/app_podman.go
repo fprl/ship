@@ -122,10 +122,6 @@ func appendResourceArgs(args []string, resources config.Resources) []string {
 // No --publish: Caddy reaches the process over the shared `ingress`
 // network by container DNS. Manifest-declared memory and CPU limits
 // render to the closed set of runtime flags.
-func buildPodmanRunArgsWithEnvFile(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, containerName string, envFileExists bool, previewEnv bool, envFile string) []string {
-	return buildPodmanRunArgsWithActivation(app, env, processName, proc, imageTag, userID, groupID, release, "", containerName, envFileExists, previewEnv, envFile)
-}
-
 func buildPodmanRunArgsWithActivation(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, activation, containerName string, envFileExists bool, previewEnv bool, envFile string) []string {
 	appNet := identity.Network(app, env)
 	resources := effectiveProcessResources(proc, previewEnv)

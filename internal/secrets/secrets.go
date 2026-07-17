@@ -86,12 +86,16 @@ func Put(app, env, key string, value []byte) error {
 		return err
 	}
 	dir := EnvDir(app, env)
+	return putAtomicEnvFile(dir, key, value)
+}
+
+func putAtomicEnvFile(dir, name string, value []byte) error {
 	// Per-(app, env) dirs are root-only too so non-root accounts on
 	// the box can't enumerate keys or stat individual secrets.
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("create secret dir %s: %w", dir, err)
 	}
-	target := filepath.Join(dir, key)
+	target := filepath.Join(dir, name)
 	tmp, err := os.CreateTemp(dir, ".secret-")
 	if err != nil {
 		return fmt.Errorf("create secret tempfile: %w", err)
@@ -225,30 +229,5 @@ func validateValue(value []byte) error {
 }
 
 func putInternalEnvFile(app, env, name string, value []byte) error {
-	dir := EnvDir(app, env)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("create secret dir %s: %w", dir, err)
-	}
-	target := filepath.Join(dir, name)
-	tmp, err := os.CreateTemp(dir, ".secret-")
-	if err != nil {
-		return fmt.Errorf("create secret tempfile: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := os.Chmod(tmpPath, 0600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod secret tempfile: %w", err)
-	}
-	if _, err := tmp.Write(value); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write secret tempfile: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close secret tempfile: %w", err)
-	}
-	if err := os.Rename(tmpPath, target); err != nil {
-		return fmt.Errorf("rename secret into place: %w", err)
-	}
-	return nil
+	return putAtomicEnvFile(EnvDir(app, env), name, value)
 }

@@ -81,7 +81,7 @@ func (c appConvergeCmd) Run() error {
 		if errors.As(runErr, &pointerErr) {
 			utils.DieError(runErr, 1)
 		}
-		utils.DieError(fmt.Errorf("committed but not converged; %s: %w", convergenceNextStep, runErr), 1)
+		utils.DieError(newDeployCommittedUnconvergedError(runErr), 1)
 	}
 	return nil
 }

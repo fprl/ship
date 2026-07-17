@@ -12,16 +12,6 @@ func isEphemeralProcess(process string) bool {
 	return process == "release" || process == "exec"
 }
 
-type processStartRuntime struct {
-	ScrubValues []string
-	UserID      string
-	GroupID     string
-	ImageID     string
-	Routed      map[string]bool
-	PreviewEnv  bool
-	EnvFile     string
-}
-
 type startReleaseProcessesParams struct {
 	App           string
 	Env           string
@@ -32,7 +22,6 @@ type startReleaseProcessesParams struct {
 	ImageID       string
 	EnvFile       string
 	ScrubValues   []string
-	BeforeStart   func(processStartRuntime) error
 	ContainerName func(processName string, proc config.Process) string
 }
 
@@ -73,23 +62,11 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 	if err != nil {
 		return result, err
 	}
-	runtime := processStartRuntime{
-		ScrubValues: scrubValues,
-		UserID:      userID,
-		GroupID:     groupID,
-		ImageID:     params.ImageID,
-		EnvFile:     envFile,
-		Routed:      routedProcessNames(params.Context.Routes),
-	}
-	runtime.PreviewEnv, err = isPreviewEnv(params.App, params.Env)
+	previewEnv, err := isPreviewEnv(params.App, params.Env)
 	if err != nil {
 		return result, err
 	}
-	if params.BeforeStart != nil {
-		if err := params.BeforeStart(runtime); err != nil {
-			return result, err
-		}
-	}
+	routed := routedProcessNames(params.Context.Routes)
 
 	for _, processName := range sortedKeys(params.Context.Processes) {
 		proc := params.Context.Processes[processName]
@@ -104,7 +81,7 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 		if proc.Port != nil {
 			result.ProcessName[processName] = containerName
 		}
-		if err := startProcessWithActivation(params.App, params.Env, processName, proc, runtime.ImageID, runtime.UserID, runtime.GroupID, params.Release, params.Activation, containerName, processProbe(runtime.Routed, processName, params.Context.Probe), runtime.PreviewEnv, runtime.ScrubValues, runtime.EnvFile); err != nil {
+		if err := startProcessWithActivation(params.App, params.Env, processName, proc, params.ImageID, userID, groupID, params.Release, params.Activation, containerName, processProbe(routed, processName, params.Context.Probe), previewEnv, scrubValues, envFile); err != nil {
 			return result, processStartError{Err: err}
 		}
 	}

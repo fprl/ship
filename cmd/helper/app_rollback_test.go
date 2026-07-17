@@ -26,7 +26,7 @@ func TestRollbackJournalFailureWarnsAfterRollbackSuccess(t *testing.T) {
 	result := rollbackPayload{App: "api", Env: "production", Previous: "3333333", Release: "2222222", Processes: []string{"worker"}}
 	var stdout string
 	stderr := captureStderr(t, func() { stdout = captureApplyStdout(t, func() { cmd.recordRollbackSuccess(result, time.Now().UTC()) }) })
-	if !strings.Contains(stderr, "warning: rollback succeeded but failed to write deploy journal ") || !strings.Contains(stderr, "cleanup/GC were skipped; run ship box doctor") {
+	if !strings.Contains(stderr, "warning: rollback succeeded but failed to write deploy journal ") || !strings.Contains(stderr, "cleanup/GC were skipped; next: ship box doctor") {
 		t.Fatalf("journal warning = %q", stderr)
 	}
 	if !strings.Contains(stdout, "Rolled back api (production) from 3333333 to 2222222") {

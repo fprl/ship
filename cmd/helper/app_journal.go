@@ -18,7 +18,7 @@ import (
 
 const deployJournalSchemaVersion = 2
 
-const tornDeployJournalWarning = "warning: deploy journal has an incomplete final entry (interrupted write); run ship box doctor"
+const tornDeployJournalWarning = "warning: deploy journal has an incomplete final entry (interrupted write); next: ship box doctor"
 
 func warnTornDeployJournal(path string) {
 	fmt.Fprintln(os.Stderr, tornDeployJournalWarning)
@@ -256,6 +256,14 @@ func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease strin
 		Member:           currentServerMemberForJournal(),
 		Probe:            probe,
 	}, scrubValues
+}
+
+func committedOutcomeJournalEntry(app, env, outcome, previousRelease, attemptedRelease string, actor deployIdentity, startedAt time.Time, failingStep string, artifact *artifact.Tuple, err error) (deployJournalEntry, []string) {
+	stepErr := newJournalStepError(failingStep, err, nil, nil)
+	entry, scrubValues := deployJournalFailureEntry(app, env, previousRelease, attemptedRelease, actor, startedAt, stepErr)
+	entry.Outcome = outcome
+	entry.Artifact = artifact
+	return entry, scrubValues
 }
 
 func commandErrorTail(err error) string {

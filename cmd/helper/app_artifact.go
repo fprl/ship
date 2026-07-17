@@ -29,22 +29,31 @@ func (e *artifactAbsentError) Error() string {
 	return fmt.Sprintf("pinned image %s is absent", e.ImageID)
 }
 
+type artifactValidationError struct{ Err error }
+
+func (e *artifactValidationError) Error() string { return e.Err.Error() }
+func (e *artifactValidationError) Unwrap() error { return e.Err }
+
+type artifactPathAbsentError struct {
+	Kind string
+	Err  error
+}
+
+func (e *artifactPathAbsentError) Error() string {
+	return fmt.Sprintf("%s is unavailable: %v", e.Kind, e.Err)
+}
+func (e *artifactPathAbsentError) Unwrap() error { return e.Err }
+
+type artifactEnvelopeHashError struct{ Err error }
+
+func (e *artifactEnvelopeHashError) Error() string { return e.Err.Error() }
+func (e *artifactEnvelopeHashError) Unwrap() error { return e.Err }
+
 type resolvedArtifact struct {
 	Tuple    Tuple
 	Envelope envelope.Envelope
 	Context  *config.AppContext
 	ImageID  string
-}
-
-// CommittedHistory returns the complete, newest-first v2 artifact history.
-// The pointer is a committed root even when its success journal append was
-// lost in the documented pointer/journal crash window.
-func CommittedHistory(app, env string) ([]Tuple, bool, error) {
-	pointer, err := readActive(app, env)
-	if err != nil {
-		return nil, false, err
-	}
-	return committedHistoryWithPointer(app, env, pointer)
 }
 
 func committedHistoryWithPointer(app, env string, pointer activation.Pointer) ([]Tuple, bool, error) {
@@ -131,6 +140,9 @@ func resolveArtifact(app, env string, tuple Tuple) (resolvedArtifact, error) {
 		}
 		data, err := os.ReadFile(staticReleaseEnvelopePathByHash(app, env, tuple.Release, tuple.EnvelopeHash))
 		if err != nil {
+			if os.IsNotExist(err) {
+				return resolvedArtifact{}, &artifactPathAbsentError{Kind: "static artifact envelope", Err: err}
+			}
 			return resolvedArtifact{}, fmt.Errorf("artifact %s envelope is unavailable: %w", tuple.DisplayIdentity(), err)
 		}
 		e, err = envelope.DecodeJSON(data)
@@ -139,7 +151,7 @@ func resolveArtifact(app, env string, tuple Tuple) (resolvedArtifact, error) {
 		}
 		label, err := e.LabelValue()
 		if err != nil || envelope.HashLabel(label) != tuple.EnvelopeHash {
-			return resolvedArtifact{}, fmt.Errorf("static artifact envelope hash does not match %s", tuple.EnvelopeHash)
+			return resolvedArtifact{}, &artifactEnvelopeHashError{Err: fmt.Errorf("static artifact envelope hash does not match %s", tuple.EnvelopeHash)}
 		}
 	}
 	if _, err := releaseMetadataFromEnvelope(e, tuple.Release); err != nil {
@@ -149,6 +161,9 @@ func resolveArtifact(app, env string, tuple Tuple) (resolvedArtifact, error) {
 		path := staticReleasePath(app, env, tuple.Release, tuple.StaticHash)
 		info, err := os.Lstat(path)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return resolvedArtifact{}, &artifactPathAbsentError{Kind: "static artifact tree", Err: err}
+			}
 			return resolvedArtifact{}, fmt.Errorf("artifact %s static tree is unavailable: %w", tuple.DisplayIdentity(), err)
 		}
 		if !info.IsDir() {
@@ -162,35 +177,38 @@ func resolveArtifact(app, env string, tuple Tuple) (resolvedArtifact, error) {
 	if ctx.AppName != app {
 		return resolvedArtifact{}, fmt.Errorf("activation envelope names app %s, expected %s", ctx.AppName, app)
 	}
+	if ctx.HasStaticRoutes != (tuple.StaticHash != "") {
+		return resolvedArtifact{}, &artifactValidationError{Err: fmt.Errorf("artifact static_hash does not match manifest serve routes")}
+	}
 	ctx.StaticHash = tuple.StaticHash
 	return resolvedArtifact{Tuple: tuple, Envelope: e, Context: ctx, ImageID: tuple.ImageID}, nil
 }
 
 func validateArtifactTuple(tuple Tuple) error {
 	if tuple.Release == "" {
-		return errors.New("artifact release is required")
+		return &artifactValidationError{Err: errors.New("artifact release is required")}
 	}
 	if err := validateRelease(tuple.Release); err != nil {
-		return fmt.Errorf("artifact release is invalid: %w", err)
+		return &artifactValidationError{Err: fmt.Errorf("artifact release is invalid: %w", err)}
 	}
 	if tuple.ImageID == "" && tuple.StaticHash == "" {
-		return errors.New("artifact requires image_id or static_hash")
+		return &artifactValidationError{Err: errors.New("artifact requires image_id or static_hash")}
 	}
 	if tuple.ImageID != "" {
 		if !artifact.FullHash(normalizeImageID(tuple.ImageID)) {
-			return errors.New("artifact image_id must be a full image id")
+			return &artifactValidationError{Err: errors.New("artifact image_id must be a full image id")}
 		}
 		if tuple.EnvelopeHash != "" {
-			return errors.New("artifact envelope_hash is only valid for static-only artifacts")
+			return &artifactValidationError{Err: errors.New("artifact envelope_hash is only valid for static-only artifacts")}
 		}
 	}
 	if tuple.ImageID == "" {
 		if !artifact.FullHash(tuple.EnvelopeHash) {
-			return errors.New("static-only artifact envelope_hash must be a full hash")
+			return &artifactValidationError{Err: errors.New("static-only artifact envelope_hash must be a full hash")}
 		}
 	}
 	if tuple.StaticHash != "" && !artifact.FullHash(tuple.StaticHash) {
-		return errors.New("artifact static_hash must be a full hash")
+		return &artifactValidationError{Err: errors.New("artifact static_hash must be a full hash")}
 	}
 	return nil
 }

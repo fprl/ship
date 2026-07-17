@@ -158,6 +158,36 @@ func TestAppStatusJSONArrayFieldsAreNonNilWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestResolvedStatusReleaseCarriesEnvelopeMetadata(t *testing.T) {
+	meta, err := newReleaseMetadata("abc1234", false, "abc1234"+strings.Repeat("a", 33), "2026-07-16T12:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _, err := releaseEnvelope([]byte("name = \"api\"\nbox = \"example.com\"\n"), meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := statusReleaseFromResolved(resolvedArtifact{Tuple: artifact.Tuple{Release: "abc1234"}, Envelope: e})
+	if release.Dirty || release.BaseCommit != meta.BaseCommit || release.CreatedAt != meta.CreatedAt {
+		t.Fatalf("resolved release metadata = %+v, want %+v", release, meta)
+	}
+}
+
+func TestDegradedStatusUsesStableDetailAndRunnableNext(t *testing.T) {
+	for _, release := range []*statusRelease{
+		{State: "degraded", Detail: "legacy_activation", Next: "ship"},
+		{State: "degraded", Detail: "artifact_unavailable", Next: "ship"},
+	} {
+		data, err := json.Marshal(release)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), `"state":"degraded"`) || !strings.Contains(string(data), `"detail":"`) || !strings.Contains(string(data), `"next":"ship"`) {
+			t.Fatalf("degraded status JSON = %s", data)
+		}
+	}
+}
+
 func TestStaticStatusKeepsFullTupleForStaticAndHybridConvergence(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))

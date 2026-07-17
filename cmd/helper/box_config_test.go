@@ -144,7 +144,7 @@ func TestBoxConfigJournalFailureDoesNotFailSuccessfulWrite(t *testing.T) {
 	if got, err := boxConfigValueFor("webhook.url"); err != nil || got != "https://ntfy.example/ship" {
 		t.Fatalf("webhook.url = %q, %v", got, err)
 	}
-	if !strings.Contains(stderr, "warning: failed to write update journal:") || !strings.Contains(stderr, "run ship box doctor") {
+	if !strings.Contains(stderr, "warning: failed to write update journal:") || !strings.Contains(stderr, "next: ship box doctor") {
 		t.Fatalf("journal append warning = %q", stderr)
 	}
 }

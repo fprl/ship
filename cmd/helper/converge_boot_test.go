@@ -55,6 +55,26 @@ func TestBootConvergenceSkipsConfirmedAbsentArtifact(t *testing.T) {
 	}
 }
 
+func TestBootConvergenceRetriesTransientResolveIO(t *testing.T) {
+	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
+	oldEnvs, oldConverge, oldLog := bootEnvs, bootConverge, bootLog
+	t.Cleanup(func() { bootEnvs, bootConverge, bootLog = oldEnvs, oldConverge, oldLog })
+	bootEnvs = func() ([]appEnvStatus, error) {
+		return []appEnvStatus{{App: "api", Env: "production"}}, nil
+	}
+	bootConverge = func(string, string) (convergeResult, error) {
+		return convergeResult{}, &convergeError{Step: "resolve", Err: errors.New("active.json permission denied")}
+	}
+	var log strings.Builder
+	bootLog = func(format string, args ...any) { log.WriteString(fmt.Sprintf(format, args...)) }
+	if err := runBootConvergence(); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("transient resolve failure = %v, want fatal aggregate", err)
+	}
+	if strings.Contains(log.String(), "artifact unavailable") {
+		t.Fatalf("transient resolve failure was treated as permanent: %q", log.String())
+	}
+}
+
 func TestBootConvergenceSkipsNeverDeployedEnvs(t *testing.T) {
 	t.Setenv("SHIP_LOCK_DIR", t.TempDir())
 	oldEnvs, oldConverge, oldLog := bootEnvs, bootConverge, bootLog

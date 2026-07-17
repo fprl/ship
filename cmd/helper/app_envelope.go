@@ -3,7 +3,6 @@ package helper
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/fprl/ship/internal/envelope"
@@ -41,26 +40,6 @@ func writeStaticReleaseEnvelope(app, env, release string, e envelope.Envelope) e
 
 func staticReleaseEnvelopePath(app, env, release, envelopeHash string) string {
 	return filepath.Join(identity.StaticDir(app, env), "releases", ".ship-release-"+envelopeHash)
-}
-
-func readStaticReleaseEnvelopeByHash(app, env, release, envelopeHash string) (envelope.Envelope, error) {
-	if len(envelopeHash) != 64 {
-		return envelope.Envelope{}, fmt.Errorf("invalid release envelope hash")
-	}
-	path := staticReleaseEnvelopePath(app, env, release, envelopeHash)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return envelope.Envelope{}, fmt.Errorf("read static release envelope %s: %w", envelopeHash, err)
-	}
-	e, err := envelope.DecodeJSON(data)
-	if err != nil {
-		return envelope.Envelope{}, err
-	}
-	label, err := e.LabelValue()
-	if err != nil || envelope.HashLabel(label) != envelopeHash {
-		return envelope.Envelope{}, fmt.Errorf("static release envelope hash does not match %s", envelopeHash)
-	}
-	return e, nil
 }
 
 func releaseMetadataFromEnvelope(e envelope.Envelope, release string) (releaseMetadata, error) {

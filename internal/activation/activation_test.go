@@ -42,3 +42,13 @@ func TestPointerRoundTripsAtActivePath(t *testing.T) {
 		t.Fatalf("active.json mode = %o, want 644", info.Mode().Perm())
 	}
 }
+
+func TestVersionZeroPointerIsUnsupported(t *testing.T) {
+	err := Validate(Pointer{Version: 0})
+	if err == nil || err.Error() != "unsupported active.json version 0" {
+		t.Fatalf("Validate(v0) = %v, want unsupported-version error", err)
+	}
+	if (Pointer{Version: 0}).IsLegacy() {
+		t.Fatal("version 0 must not be treated as legacy")
+	}
+}

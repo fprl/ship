@@ -35,10 +35,13 @@ type appListEnvJSON struct {
 	ExpiresAt      string              `json:"expires_at"`
 	Pinned         bool                `json:"pinned"`
 	Dirty          bool                `json:"dirty"`
+	BaseCommit     string              `json:"base_commit,omitempty"`
+	CreatedAt      string              `json:"created_at,omitempty"`
 	ShippedBy      *deployIdentityJSON `json:"shipped_by,omitempty"`
 	Processes      []processJSON       `json:"processes"`
 	Static         *staticJSON         `json:"static,omitempty"`
 	State          string              `json:"state,omitempty"`
+	Detail         string              `json:"detail,omitempty"`
 	Next           string              `json:"next,omitempty"`
 }
 
@@ -79,9 +82,12 @@ type statusEnvJSON struct {
 	ExpiresAt     string              `json:"expiresAt,omitempty"`
 	Pinned        bool                `json:"pinned,omitempty"`
 	Dirty         bool                `json:"dirty,omitempty"`
+	BaseCommit    string              `json:"base_commit,omitempty"`
+	CreatedAt     string              `json:"created_at,omitempty"`
 	ShippedBy     *deployIdentityJSON `json:"shipped_by,omitempty"`
 	Processes     []processJSON       `json:"processes"`
 	State         string              `json:"state,omitempty"`
+	Detail        string              `json:"detail,omitempty"`
 	Next          string              `json:"next,omitempty"`
 }
 
@@ -318,9 +324,12 @@ func statusEnvFromAppListItem(ctx *config.AppContext, item appListEnvJSON) statu
 		ExpiresAt:     item.ExpiresAt,
 		Pinned:        item.Pinned,
 		Dirty:         item.Dirty,
+		BaseCommit:    item.BaseCommit,
+		CreatedAt:     item.CreatedAt,
 		ShippedBy:     item.ShippedBy,
 		Processes:     item.Processes,
 		State:         item.State,
+		Detail:        item.Detail,
 		Next:          item.Next,
 	}
 }

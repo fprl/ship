@@ -140,7 +140,7 @@ func setBoxConfig(key, rawValue, summary string) error {
 		return err
 	}
 	if err := appendUpdateJournal(updateJournalEntry{Event: "config_set", Key: key, Actor: currentServerMemberForJournal()}); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to write update journal: %v; run ship box doctor\n", err)
+		fmt.Fprintf(os.Stderr, "warning: failed to write update journal: %v; next: ship box doctor\n", err)
 	}
 	return nil
 }
@@ -168,7 +168,7 @@ func unsetBoxConfig(key, summary string) error {
 		return err
 	}
 	if err := appendUpdateJournal(updateJournalEntry{Event: "config_unset", Key: key, Actor: currentServerMemberForJournal()}); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to write update journal: %v; run ship box doctor\n", err)
+		fmt.Fprintf(os.Stderr, "warning: failed to write update journal: %v; next: ship box doctor\n", err)
 	}
 	return nil
 }

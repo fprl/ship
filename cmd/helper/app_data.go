@@ -518,18 +518,11 @@ func sweepDataSnapshotStaging(app, env string) error {
 }
 
 func currentDataRelease(app, env string) (string, error) {
-	ctx, _, err := resolveActiveContext(app, env)
+	_, tuple, err := resolveActiveContext(app, env)
 	if err != nil {
 		return "", err
 	}
-	if ctx.NeedsImage {
-		containers, err := podmanPSContainers(app, env)
-		if err != nil {
-			return "", err
-		}
-		return currentRelease(runningProcesses(containersToProcesses(containers)))
-	}
-	return currentStaticRelease(app, env)
+	return tuple.Release, nil
 }
 
 func writeDataSnapshotTar(out io.Writer, work string, meta dataSnapshotMetadata) error {

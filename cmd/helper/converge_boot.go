@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/errcat"
-	"github.com/fprl/ship/internal/utils"
 )
 
 type convergeBootCmd struct{}
@@ -51,8 +51,7 @@ func runBootConvergence() error {
 			continue
 		}
 		var stepErr *convergeError
-		var commandErr *utils.CommandError
-		if errors.As(convergeErr, &stepErr) && stepErr.Step == "resolve" && !errors.As(convergeErr, &commandErr) {
+		if errors.As(convergeErr, &stepErr) && stepErr.Step == "resolve" && isPermanentArtifactResolutionError(stepErr.Err) {
 			bootLog("boot convergence skipped for %s (%s): artifact unavailable; redeploy to heal", item.App, item.Env)
 			continue
 		}
@@ -72,4 +71,17 @@ func runBootConvergence() error {
 		return fmt.Errorf("boot convergence failed for %d environment(s): %w", len(failures), errors.Join(failures...))
 	}
 	return nil
+}
+
+func isPermanentArtifactResolutionError(err error) bool {
+	var absent *artifactAbsentError
+	var tupleErr *artifactValidationError
+	var pointerErr *activation.ValidationError
+	var pathAbsent *artifactPathAbsentError
+	var hashErr *artifactEnvelopeHashError
+	return errors.As(err, &absent) ||
+		errors.As(err, &tupleErr) ||
+		errors.As(err, &pointerErr) ||
+		errors.As(err, &pathAbsent) ||
+		errors.As(err, &hashErr)
 }

@@ -150,7 +150,7 @@ func TestRecordDeployFailureKeepsProbeErrorWhenJournalAppendFails(t *testing.T) 
 	if !errcat.Is(applyExitError(got), errcat.CodeProbeFailed) {
 		t.Fatalf("apply exit error = %v, want probe_failed", applyExitError(got))
 	}
-	if !strings.Contains(stderr, "warning: failed to write deploy journal:") || !strings.Contains(stderr, "run ship box doctor") {
+	if !strings.Contains(stderr, "warning: failed to write deploy journal:") || !strings.Contains(stderr, "next: ship box doctor") {
 		t.Fatalf("journal append warning = %q", stderr)
 	}
 }
@@ -226,7 +226,7 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 	if !strings.Contains(stdout, "Deployed api (production) at new222\n") {
 		t.Fatalf("stdout = %q", stdout)
 	}
-	if !strings.Contains(stderr, "warning: deployed but failed to write deploy journal ") || !strings.Contains(stderr, "cleanup/GC were skipped; run ship box doctor") {
+	if !strings.Contains(stderr, "warning: deployed but failed to write deploy journal ") || !strings.Contains(stderr, "cleanup/GC were skipped; next: ship box doctor") {
 		t.Fatalf("stderr = %q", stderr)
 	}
 	entries, err := readDeployJournalEntries("api", "production")
@@ -520,7 +520,7 @@ func TestBuildPodmanRunArgsEmitsHardeningDataMountResourcesAndLabels(t *testing.
 	}
 	containerName := identity.ContainerName("api", "production", "web", "abc123")
 	envFile := identity.ActivationEnvFile("api", "production", "abc123-00112233")
-	args := buildPodmanRunArgsWithEnvFile("api", "production", "web", proc, identity.ImageTag("api", "production", "abc123"), "999", "988", "abc123", containerName, true, false, envFile)
+	args := buildPodmanRunArgsWithActivation("api", "production", "web", proc, identity.ImageTag("api", "production", "abc123"), "999", "988", "abc123", "", containerName, true, false, envFile)
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"--cap-drop ALL",
@@ -556,7 +556,7 @@ func TestBuildPodmanRunArgsMatchesActivationShape(t *testing.T) {
 }
 
 func TestBuildPodmanRunArgsSkipsEnvFileWhenAbsent(t *testing.T) {
-	args := buildPodmanRunArgsWithEnvFile("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "production", "web", "abc123"), false, false, "")
+	args := buildPodmanRunArgsWithActivation("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", "", identity.ContainerName("api", "production", "web", "abc123"), false, false, "")
 	for _, a := range args {
 		if a == "--env-file" {
 			t.Fatalf("did not expect --env-file when env file is absent, args:\n%s", strings.Join(args, " "))
@@ -565,7 +565,7 @@ func TestBuildPodmanRunArgsSkipsEnvFileWhenAbsent(t *testing.T) {
 }
 
 func TestBuildPodmanRunArgsAppliesDefaultPreviewResourceCaps(t *testing.T) {
-	args := buildPodmanRunArgsWithEnvFile("api", "feat-x-ab12", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "feat-x-ab12", "web", "abc123"), false, true, "")
+	args := buildPodmanRunArgsWithActivation("api", "feat-x-ab12", "web", config.Process{}, "img:tag", "999", "988", "abc123", "", identity.ContainerName("api", "feat-x-ab12", "web", "abc123"), false, true, "")
 	joined := strings.Join(args, " ")
 	for _, want := range []string{"--memory 512m", "--cpus 0.5"} {
 		if !strings.Contains(joined, want) {
@@ -575,7 +575,7 @@ func TestBuildPodmanRunArgsAppliesDefaultPreviewResourceCaps(t *testing.T) {
 }
 
 func TestBuildPodmanRunArgsLeavesProdUncappedByDefault(t *testing.T) {
-	args := buildPodmanRunArgsWithEnvFile("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", identity.ContainerName("api", "production", "web", "abc123"), false, false, "")
+	args := buildPodmanRunArgsWithActivation("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", "", identity.ContainerName("api", "production", "web", "abc123"), false, false, "")
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "--memory") || strings.Contains(joined, "--cpus") {
 		t.Fatalf("production args should not get default resource caps:\n%s", joined)
@@ -586,7 +586,7 @@ func TestBuildPodmanExecRunArgsTTYOnlyWhenRequested(t *testing.T) {
 	command := []string{"env"}
 	injected := map[string]string{"SHIP_RELEASE": "abc123"}
 	envFile := identity.ActivationEnvFile("api", "feat-x", "abc123-00112233")
-	base := buildPodmanExecRunArgsWithEnvFile("api", "feat-x", "exec-name", identity.ImageTag("api", "feat-x", "abc123"), "999", "988", "abc123", command, injected, true, true, false, envFile)
+	base := buildPodmanExecRunArgsWithActivation("api", "feat-x", "exec-name", identity.ImageTag("api", "feat-x", "abc123"), "999", "988", "abc123", "", command, injected, true, true, false, envFile)
 	joined := strings.Join(base, " ")
 	if strings.Contains(joined, " -t ") {
 		t.Fatalf("non-tty exec args should not request a tty: %s", joined)
@@ -601,7 +601,7 @@ func TestBuildPodmanExecRunArgsTTYOnlyWhenRequested(t *testing.T) {
 		t.Fatalf("exec args should include the runtime env file: %s", joined)
 	}
 
-	withTTY := buildPodmanExecRunArgsWithEnvFile("api", "feat-x", "exec-name", identity.ImageTag("api", "feat-x", "abc123"), "999", "988", "abc123", command, injected, true, true, true, "")
+	withTTY := buildPodmanExecRunArgsWithActivation("api", "feat-x", "exec-name", identity.ImageTag("api", "feat-x", "abc123"), "999", "988", "abc123", "", command, injected, true, true, true, "")
 	joinedTTY := strings.Join(withTTY, " ")
 	if !strings.Contains(joinedTTY, " -t ") {
 		t.Fatalf("tty exec args should request a tty: %s", joinedTTY)
@@ -719,6 +719,7 @@ func TestRenderAppCaddyfileCanUseSpecificProcessContainerName(t *testing.T) {
 
 func TestRenderAppCaddyfileStaticPathUsesHandlePath(t *testing.T) {
 	ctx := &config.AppContext{
+		StaticHash: strings.Repeat("a", 64),
 		Routes: map[string]config.Route{
 			"docs": {Host: "example.com", Path: "/docs", Serve: "docs-dist"},
 		},
@@ -730,7 +731,7 @@ func TestRenderAppCaddyfileStaticPathUsesHandlePath(t *testing.T) {
 	if !strings.Contains(got, "handle_path /docs/*") {
 		t.Fatalf("expected handle_path for static prefix, got:\n%s", got)
 	}
-	if !strings.Contains(got, `root * "/var/apps/site.production/static/releases/abc123/docs"`) {
+	if !strings.Contains(got, `root * "/var/apps/site.production/static/releases/abc123-`+strings.Repeat("a", 64)+`/docs"`) {
 		t.Fatalf("expected static route root, got:\n%s", got)
 	}
 	if !strings.Contains(got, "file_server") {
@@ -766,7 +767,8 @@ func TestRenderAppCaddyfileOrdersLongestPathFirst(t *testing.T) {
 func TestRenderAppCaddyfileMixedRoutesUseOneRelease(t *testing.T) {
 	port := 3000
 	ctx := &config.AppContext{
-		Processes: map[string]config.Process{"web": {Port: &port}},
+		StaticHash: strings.Repeat("a", 64),
+		Processes:  map[string]config.Process{"web": {Port: &port}},
 		Routes: map[string]config.Route{
 			"app":  {Host: "example.com", Process: "web"},
 			"docs": {Host: "example.com", Path: "/docs", Serve: "docs-dist"},
@@ -779,7 +781,7 @@ func TestRenderAppCaddyfileMixedRoutesUseOneRelease(t *testing.T) {
 	if !strings.Contains(got, "reverse_proxy http://"+identity.ContainerName("api", productionEnvName, "web", "abc123")+":3000") {
 		t.Fatalf("expected process route to use release container:\n%s", got)
 	}
-	if !strings.Contains(got, `root * "/var/apps/api.production/static/releases/abc123/docs"`) {
+	if !strings.Contains(got, `root * "/var/apps/api.production/static/releases/abc123-`+strings.Repeat("a", 64)+`/docs"`) {
 		t.Fatalf("expected static route to use release-pinned root:\n%s", got)
 	}
 }
@@ -787,7 +789,8 @@ func TestRenderAppCaddyfileMixedRoutesUseOneRelease(t *testing.T) {
 func TestRenderAppCaddyfileGroupsEmptyTLSWithAuto(t *testing.T) {
 	port := 3000
 	ctx := &config.AppContext{
-		Processes: map[string]config.Process{"web": {Port: &port}},
+		StaticHash: strings.Repeat("a", 64),
+		Processes:  map[string]config.Process{"web": {Port: &port}},
 		Routes: map[string]config.Route{
 			"app":  {Host: "example.com", Process: "web"},
 			"docs": {Host: "example.com", Path: "/docs", Serve: "docs-dist", TLS: "auto"},
