@@ -63,6 +63,7 @@ COPY tests/fake-vps/fake-install-apt-get /usr/local/bin/apt-get
 COPY tests/fake-vps/fake-install-dpkg-query /usr/local/bin/dpkg-query
 COPY tests/fake-vps/fake-install-localectl /usr/local/bin/localectl
 COPY tests/fake-vps/fake-install-systemctl /usr/local/bin/systemctl
+COPY tests/fake-vps/fake-install-systemd-tmpfiles /usr/local/bin/systemd-tmpfiles
 COPY tests/fake-vps/fake-install-timedatectl /usr/local/bin/timedatectl
 COPY tests/fake-vps/fake-install-ufw /usr/local/bin/ufw
 # fake-podman stands in for the real binary because fake-apt-get does
@@ -78,6 +79,7 @@ RUN chmod 0755 \
     /usr/local/bin/dpkg-query \
     /usr/local/bin/localectl \
     /usr/local/bin/systemctl \
+    /usr/local/bin/systemd-tmpfiles \
     /usr/local/bin/timedatectl \
     /usr/local/bin/ufw \
     /usr/local/bin/podman

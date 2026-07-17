@@ -961,7 +961,7 @@ func hostInstallApplyError(plan Plan, err error) error {
 		return coded
 	}
 	if tool, ok := missingExecutable(err); ok {
-		if tool == "apt-get" || tool == "dpkg-query" {
+		if tool == "apt-get" || tool == "dpkg-query" || tool == "systemd-tmpfiles" {
 			return errcat.New(errcat.CodeHostInstallUnsupportedOS, errcat.Fields{"tool": tool})
 		}
 		return errcat.New(errcat.CodeHostInstallMissingTool, errcat.Fields{"tool": tool})

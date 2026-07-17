@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Test stand-in for systemd-tmpfiles. Supports the one invocation ship's
+# provisioner makes: `systemd-tmpfiles --create <conf-file>` — applying
+# `d <path> <mode> <user> <group> <age>` lines immediately, exactly like
+# the real tool's --create pass (aging is the clean timer's job).
+set -euo pipefail
+
+state_dir=/run/ship-fresh-host
+mkdir -p "$state_dir"
+printf 'systemd-tmpfiles %s\n' "$*" >> "$state_dir/systemd-tmpfiles.log"
+
+conf=""
+for arg in "$@"; do
+  case "$arg" in
+    --create) ;;
+    *) conf="$arg" ;;
+  esac
+done
+[[ -n "$conf" && -f "$conf" ]] || exit 0
+while read -r kind path mode _user _group _age; do
+  [[ "$kind" == "d" && -n "$path" ]] || continue
+  mkdir -p "$path"
+  [[ -n "$mode" ]] && chmod "$mode" "$path"
+done < "$conf"
+exit 0
