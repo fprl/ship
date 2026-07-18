@@ -1,5 +1,7 @@
 FROM ubuntu:24.04
 
+ARG TARGETARCH
+
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
@@ -57,7 +59,7 @@ RUN printf '%s\n' \
     'DEFAULT_FORWARD_POLICY="DROP"' \
     > /etc/default/ufw
 
-COPY .fake-vps-bin/ship-linux-amd64 /usr/local/bin/ship
+COPY .fake-vps-bin/ship-linux-${TARGETARCH} /usr/local/bin/ship
 COPY tests/fake-vps/fake-caddy /usr/local/bin/caddy
 COPY tests/fake-vps/fake-install-apt-get /usr/local/bin/apt-get
 COPY tests/fake-vps/fake-install-dpkg-query /usr/local/bin/dpkg-query

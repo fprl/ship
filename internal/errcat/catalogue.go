@@ -418,8 +418,8 @@ var catalogue = map[Code]Entry{
 	CodeDotenvRejected: {
 		Code:                CodeDotenvRejected,
 		MessageTemplate:     "deploy artifact contains dotenv files",
-		CauseTemplate:       "refusing to deploy dotenv file: {files}; import it with ship secret set --from {file}, then remove it; allowed names: .env.example, .env.sample, .env.defaults",
-		RemediationTemplate: "ship secret set --from {file}",
+		CauseTemplate:       "refusing to deploy dotenv file included in the artifact: {files}; tracked and other non-ignored dotenv files are deploy content; Git-ignored local dotenv files stay on your machine unless they are inside a declared static directory; allowed template names: .env.example, .env.sample, .env.defaults",
+		RemediationTemplate: "exclude {file} from deploy content or rename it to an allowed template, then ship",
 		Defaults:            Fields{"file": ".env"},
 	},
 	CodeDotenvMalformed: {

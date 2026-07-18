@@ -63,7 +63,6 @@ type evalSuite struct {
 	hostBinDir string
 	shipBin    string
 	binDir     string
-	linuxBin   string
 }
 
 func TestAgentEvalScenarios(t *testing.T) {
@@ -113,7 +112,6 @@ func newEvalSuite(t *testing.T, ctx context.Context) *evalSuite {
 		hostBinDir: filepath.Join(tmp, "host-bin"),
 		shipBin:    filepath.Join(tmp, "host-bin", "ship"),
 		binDir:     filepath.Join(repoRoot, "tests/agent-evals/.fake-vps-bin"),
-		linuxBin:   filepath.Join(repoRoot, "tests/agent-evals/.fake-vps-bin/ship-linux-amd64"),
 	}
 	t.Cleanup(func() {
 		if os.Getenv("KEEP_FAKE_VPS") == "1" {
@@ -127,7 +125,7 @@ func newEvalSuite(t *testing.T, ctx context.Context) *evalSuite {
 
 func (s *evalSuite) buildBinaries(t *testing.T) {
 	t.Helper()
-	h.BuildBinaries(t, s.ctx, s.repoRoot, s.binDir, s.shipBin, s.linuxBin)
+	h.BuildBinaries(t, s.ctx, s.repoRoot, s.binDir, s.shipBin)
 }
 
 func (s *evalSuite) buildImage(t *testing.T) {

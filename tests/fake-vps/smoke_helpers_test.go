@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -91,7 +92,7 @@ func newSmokeEnvWithImage(t *testing.T, ctx context.Context, image string, docke
 		shipHome:   filepath.Join(tmp, "ship-home"),
 		binDir:     filepath.Join(repoRoot, ".fake-vps-bin"),
 		goBin:      filepath.Join(tmp, "ship"),
-		linuxBin:   filepath.Join(repoRoot, ".fake-vps-bin", "ship-linux-amd64"),
+		linuxBin:   filepath.Join(repoRoot, ".fake-vps-bin", "ship-linux-"+runtime.GOARCH),
 	}
 	t.Cleanup(func() {
 		if os.Getenv("KEEP_FAKE_VPS") == "1" {
@@ -110,7 +111,7 @@ func newSmokeEnvWithImage(t *testing.T, ctx context.Context, image string, docke
 
 func (e *smokeEnv) buildBinaries(t *testing.T) {
 	t.Helper()
-	h.BuildBinaries(t, e.ctx, e.repoRoot, e.binDir, e.goBin, e.linuxBin)
+	h.BuildBinaries(t, e.ctx, e.repoRoot, e.binDir, e.goBin)
 }
 
 func (e *smokeEnv) buildImage(t *testing.T) {

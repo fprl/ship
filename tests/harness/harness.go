@@ -35,7 +35,7 @@ func RepoRootForTest(t *testing.T) string {
 	return repoRoot
 }
 
-func BuildBinaries(t *testing.T, ctx context.Context, repoRoot, binDir, hostBin, linuxBin string) {
+func BuildBinaries(t *testing.T, ctx context.Context, repoRoot, binDir, hostBin string) {
 	t.Helper()
 	if err := os.RemoveAll(binDir); err != nil {
 		t.Fatal(err)
@@ -51,9 +51,8 @@ func BuildBinaries(t *testing.T, ctx context.Context, repoRoot, binDir, hostBin,
 		goCmd = "go"
 	}
 	MustRun(t, ctx, repoRoot, nil, nil, goCmd, "build", "-trimpath", "-o", hostBin, ".")
-	linuxDir := filepath.Dir(linuxBin)
-	MustRun(t, ctx, repoRoot, []string{"CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64"}, nil, goCmd, "build", "-trimpath", "-ldflags=-s -w", "-o", filepath.Join(linuxDir, "ship-linux-amd64"), ".")
-	MustRun(t, ctx, repoRoot, []string{"CGO_ENABLED=0", "GOOS=linux", "GOARCH=arm64"}, nil, goCmd, "build", "-trimpath", "-ldflags=-s -w", "-o", filepath.Join(linuxDir, "ship-linux-arm64"), ".")
+	MustRun(t, ctx, repoRoot, []string{"CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64"}, nil, goCmd, "build", "-trimpath", "-ldflags=-s -w", "-o", filepath.Join(binDir, "ship-linux-amd64"), ".")
+	MustRun(t, ctx, repoRoot, []string{"CGO_ENABLED=0", "GOOS=linux", "GOARCH=arm64"}, nil, goCmd, "build", "-trimpath", "-ldflags=-s -w", "-o", filepath.Join(binDir, "ship-linux-arm64"), ".")
 }
 
 func BuildImage(t *testing.T, ctx context.Context, repoRoot, dockerfile, image string) {

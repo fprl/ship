@@ -596,7 +596,7 @@ aliases = true
 - `dirty_worktree`: Production ship failed; cause: production branch {branch} has uncommitted changes; remediation: `git add . && git commit -m "<message>"`.
 - `dockerfile_missing`: Dockerfile is missing; cause: the declared processes need a Dockerfile to build; remediation: `write a Dockerfile, or declare a [routes] static route in ship.toml`.
 - `dotenv_malformed`: dotenv import failed; cause: {detail}; remediation: `{command}`; defaults: `command="ship secret set --from path/to/.env"`.
-- `dotenv_rejected`: deploy artifact contains dotenv files; cause: refusing to deploy dotenv file: {files}; import it with ship secret set --from {file}, then remove it; allowed names: .env.example, .env.sample, .env.defaults; remediation: `ship secret set --from {file}`; defaults: `file=".env"`.
+- `dotenv_rejected`: deploy artifact contains dotenv files; cause: refusing to deploy dotenv file included in the artifact: {files}; tracked and other non-ignored dotenv files are deploy content; Git-ignored local dotenv files stay on your machine unless they are inside a declared static directory; allowed template names: .env.example, .env.sample, .env.defaults; remediation: `exclude {file} from deploy content or rename it to an allowed template, then ship`; defaults: `file=".env"`.
 - `env_invalid`: app environment preflight failed; cause: {detail}; remediation: `ship box doctor`.
 - `env_missing`: app environment preflight failed; cause: {detail}; remediation: `ship`.
 - `host_helper_download_failed`: host install helper download failed; cause: {detail}; remediation: `{command}`; defaults: `command="SHIP_REPO_ROOT=<path-to-ship-checkout> ship box setup <ssh-target>"`.

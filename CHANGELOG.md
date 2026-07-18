@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.9.1
+
+Dirty Preview deploys now use Git's deployment boundary instead of archiving
+the whole working directory. Tracked modifications and non-ignored untracked
+files still ship, deleted tracked files stay deleted, and ignored local files
+such as `.env` remain on the developer's machine. Declared static serve
+directories keep shipping generated output even when ignored, with their
+dotenv guard intact.
+
+### Fixed
+
+- `ship secret set --from .env` no longer leads to an instruction to delete the
+  local development file. Ignored dotenv files are excluded automatically;
+  tracked, non-ignored, or explicitly served dotenv files are rejected with an
+  error that describes the actual deploy boundary.
+- Dirty Preview archives preserve monorepo app-root scoping and no longer pick
+  up unrelated ignored directories such as dependency caches or local output.
+
 ## v0.9.0
 
 One trust check for release artifacts. Every old release ship runs,

@@ -1044,6 +1044,8 @@ func (e *smokeEnv) testBranchEnvironmentGuards(t *testing.T) {
 
 	e.mustRun(t, app, nil, "git", "checkout", "-B", "feat/x")
 	mustWrite(t, filepath.Join(app, "preview-dirty.txt"), "dirty preview payload")
+	mustWrite(t, filepath.Join(app, ".gitignore"), ".env\n")
+	mustWrite(t, filepath.Join(app, ".env"), "SHIP_FAKE_SECRET=must-not-ship\n")
 	e.ship(t, app, nil)
 	featEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "branchapi", "feat/x")
 	assertPreviewEnvName(t, featEnv, "feat-x")

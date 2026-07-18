@@ -1,5 +1,7 @@
 FROM ubuntu:24.04
 
+ARG TARGETARCH
+
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
@@ -23,7 +25,7 @@ RUN useradd -m -s /bin/bash -g operator operator \
   && chown deploy:deploy /home/deploy/.ssh \
   && chmod 700 /home/deploy/.ssh
 
-COPY tests/agent-evals/.fake-vps-bin/ship-linux-amd64 /usr/local/bin/ship
+COPY tests/agent-evals/.fake-vps-bin/ship-linux-${TARGETARCH} /usr/local/bin/ship
 COPY --from=docker.io/library/caddy:2-alpine /usr/bin/caddy /usr/local/bin/caddy-real
 COPY tests/fake-vps/fake-systemctl /usr/local/bin/systemctl
 COPY tests/fake-vps/fake-caddy /usr/local/bin/caddy

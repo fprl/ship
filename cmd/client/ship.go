@@ -329,7 +329,7 @@ func localDeployRemediation(items []diagnostic) string {
 		case diagnosticKindGitNoCommits:
 			return "git add . && git commit -m \"initial ship app\""
 		case diagnosticKindDotenv:
-			return "ship secret set --from .env"
+			return "exclude the dotenv file from deploy content or rename it to an allowed template, then ship"
 		case diagnosticKindStaticHash:
 			return "<build command> && ship"
 		}
@@ -406,21 +406,51 @@ func deploymentURLForBoxIP(ctx *config.AppContext, envName string, boxIP string)
 
 func writeSourceTar(root string, dest string, dirty bool, staticDirs []string) error {
 	if dirty {
-		cmd := exec.Command("sh", "-c", fmt.Sprintf(
-			"tar -C %s --exclude .git --exclude node_modules -cf %s .",
-			utils.ShellEscape(root), utils.ShellEscape(dest),
-		))
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
+		if err := writeDirtySourceTar(root, dest); err != nil {
 			return err
 		}
 	} else if err := writeCleanSourceTar(root, dest); err != nil {
 		return err
 	}
-	if !dirty && len(staticDirs) > 0 {
+	if len(staticDirs) > 0 {
 		return appendStaticDirsToTar(root, dest, staticDirs)
 	}
 	return nil
+}
+
+func writeDirtySourceTar(root, dest string) error {
+	files, err := dirtyArtifactFiles(root)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("tar", "-C", root, "--null", "-T", "-", "-cf", dest)
+	cmd.Stdin = strings.NewReader(strings.Join(files, "\x00") + "\x00")
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func dirtyArtifactFiles(root string) ([]string, error) {
+	out, stderr, code, _ := runCommand("git", []string{"ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "."}, root)
+	if code != 0 {
+		detail := strings.TrimSpace(stderr)
+		if detail == "" {
+			detail = "git ls-files failed"
+		}
+		return nil, errors.New(detail)
+	}
+	var files []string
+	for _, rel := range strings.Split(out, "\x00") {
+		if rel == "" {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel))); errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		files = append(files, rel)
+	}
+	return files, nil
 }
 
 func writeCleanSourceTar(root string, dest string) error {
@@ -556,15 +586,18 @@ func copyFile(src, dst string) error {
 }
 
 func validateDeployArtifactDotenv(root string, dirty bool, staticDirs []string) error {
+	var artifactFiles []string
+	var err error
 	if dirty {
-		return validateArtifactDotenv(root)
+		artifactFiles, err = dirtyArtifactFiles(root)
+	} else {
+		artifactFiles, err = cleanArtifactFiles(root)
 	}
-	var dotenvs []string
-	tracked, err := cleanArtifactFiles(root)
 	if err != nil {
 		return err
 	}
-	for _, rel := range tracked {
+	var dotenvs []string
+	for _, rel := range artifactFiles {
 		if blockedDotenv(rel) {
 			dotenvs = append(dotenvs, rel)
 		}
@@ -627,35 +660,6 @@ func dotenvsInStaticDirs(root string, dirs []string) ([]string, error) {
 		}
 	}
 	return dotenvs, nil
-}
-
-func validateArtifactDotenv(artifactDir string) error {
-	var dotenvs []string
-	err := filepath.Walk(artifactDir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			switch info.Name() {
-			case ".git", "node_modules":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		name := filepath.Base(path)
-		if strings.HasPrefix(name, ".env") && !allowedDotenvName(name) {
-			rel, relErr := filepath.Rel(artifactDir, path)
-			if relErr != nil {
-				return relErr
-			}
-			dotenvs = append(dotenvs, filepath.ToSlash(rel))
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	return dotenvError(dotenvs)
 }
 
 func blockedDotenv(rel string) bool {

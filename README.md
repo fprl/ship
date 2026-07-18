@@ -430,6 +430,11 @@ ship secret set --from .env --preview
 ship secret set --from .env --branch staging --replace
 ```
 
+The local dotenv file stays on your machine. Dirty Preview deploys respect
+`.gitignore`, so ignored files such as `.env` are excluded from the deploy
+artifact. A tracked or otherwise non-ignored dotenv file is refused; the safe
+template names are `.env.example`, `.env.sample`, and `.env.defaults`.
+
 List and remove keys, never values:
 
 ```bash

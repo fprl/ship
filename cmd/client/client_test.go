@@ -1,6 +1,7 @@
 package client
 
 import (
+	"archive/tar"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -368,42 +369,6 @@ func TestNormalizeAppNameReturnsValidManifestName(t *testing.T) {
 		if got := normalizeAppName(input); got != want {
 			t.Fatalf("normalizeAppName(%q) = %q, want %q", input, got, want)
 		}
-	}
-}
-
-func TestValidateArtifactDotenvRejectsSecretsButAllowsExamples(t *testing.T) {
-	root := t.TempDir()
-	for _, name := range []string{".env.example", ".env.sample", ".env.defaults"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte("KEY=value\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := validateArtifactDotenv(root); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := os.WriteFile(filepath.Join(root, ".env.production"), []byte("SECRET=1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	err := validateArtifactDotenv(root)
-	if err == nil || !strings.Contains(err.Error(), ".env.production") {
-		t.Fatalf("expected dotenv rejection, got %v", err)
-	}
-}
-
-func TestValidateArtifactDotenvIgnoresUndeployedDirs(t *testing.T) {
-	root := t.TempDir()
-	for _, dir := range []string{".git", "node_modules"} {
-		path := filepath.Join(root, dir)
-		if err := os.Mkdir(path, 0755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(path, ".env"), []byte("SECRET=ignored\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := validateArtifactDotenv(root); err != nil {
-		t.Fatalf("dotenv scan should ignore undeployed dirs, got %v", err)
 	}
 }
 
@@ -1115,6 +1080,11 @@ func TestBuildLocalDeployPlanAllowsIgnoredDotenvOutsideCleanArtifact(t *testing.
 	root := t.TempDir()
 	writeClientDockerfile(t, root)
 	writeClientManifest(t, root, clientContainerManifest())
+	for _, name := range []string{".env.example", ".env.sample", ".env.defaults"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("KEY=template\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".env\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1131,6 +1101,38 @@ func TestBuildLocalDeployPlanAllowsIgnoredDotenvOutsideCleanArtifact(t *testing.
 	}
 	if diags.hasErrors() {
 		t.Fatalf("ignored local dotenv should not block clean deploy artifact, got %+v", diags)
+	}
+}
+
+func TestBuildLocalDeployPlanAllowsIgnoredDotenvDuringDirtyPreview(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, clientContainerManifest())
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".env\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte("committed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte("dirty preview\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("SECRET=local-only\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, diags, err := buildLocalDeployPlan(root, "preview", localDeployOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Dirty {
+		t.Fatal("working tree change should produce a dirty Preview plan")
+	}
+	if diags.hasErrors() {
+		t.Fatalf("ignored local dotenv should not block dirty Preview deploy, got %+v", diags)
 	}
 }
 
@@ -1151,6 +1153,44 @@ func TestBuildLocalDeployPlanRejectsTrackedDotenv(t *testing.T) {
 	}
 	if errors := diags.errorMessages(); len(errors) != 1 || !strings.Contains(errors[0], ".env") {
 		t.Fatalf("tracked dotenv must reject the deploy artifact, got %+v", diags)
+	}
+}
+
+func TestDirtyPreviewExplainsTrackedDotenvWithoutTellingUserToDeleteLocalFiles(t *testing.T) {
+	root := t.TempDir()
+	writeClientDockerfile(t, root)
+	writeClientManifest(t, root, clientContainerManifest())
+	if err := os.WriteFile(filepath.Join(root, ".env.test"), []byte("SECRET=test-only\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte("committed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte("dirty preview\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, diags, err := buildLocalDeployPlan(root, "preview", localDeployOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployErr := deployDiagnosticsError(diags)
+	for _, want := range []string{
+		"dotenv file included in the artifact",
+		".env.test",
+		"tracked and other non-ignored dotenv files are deploy content",
+		"Git-ignored local dotenv files stay on your machine",
+		"next: exclude the dotenv file from deploy content or rename it to an allowed template, then ship",
+	} {
+		if !strings.Contains(deployErr.Error(), want) {
+			t.Fatalf("deploy error missing %q:\n%s", want, deployErr)
+		}
+	}
+	if strings.Contains(deployErr.Error(), "then remove it") {
+		t.Fatalf("deploy error still tells the user to delete a local dotenv file:\n%s", deployErr)
 	}
 }
 
@@ -1193,10 +1233,16 @@ func TestBuildLocalDeployPlanRejectsDotenvInsideServeDir(t *testing.T) {
 	runGit(t, root, "init")
 	runGit(t, root, "add", "Dockerfile", "ship.toml")
 	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+	if err := os.WriteFile(filepath.Join(root, "Dockerfile"), []byte("FROM scratch\n# dirty preview\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
-	_, diags, err := buildLocalDeployPlan(root, "production", localDeployOptions{})
+	plan, diags, err := buildLocalDeployPlan(root, "preview", localDeployOptions{})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !plan.Dirty {
+		t.Fatal("test requires a dirty Preview deploy plan")
 	}
 	errors := diags.errorMessages()
 	if len(errors) != 1 || !strings.Contains(errors[0], "dist/.env") {
@@ -1293,6 +1339,133 @@ func TestWriteSourceTarUsesAppRootInMonorepo(t *testing.T) {
 	}
 }
 
+func TestDirtyPreviewArchiveUsesAppRootInMonorepo(t *testing.T) {
+	repo := t.TempDir()
+	appRoot := filepath.Join(repo, "apps", "api")
+	if err := os.MkdirAll(appRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, "app.js"), []byte("committed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "root-only.txt"), []byte("committed sibling\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "init")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+	if err := os.WriteFile(filepath.Join(appRoot, "app.js"), []byte("dirty app\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(appRoot, "new.js"), []byte("new app file\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "root-new.txt"), []byte("new sibling\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tarPath := filepath.Join(t.TempDir(), "source.tar")
+	if err := writeSourceTar(appRoot, tarPath, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	entries := readTarEntries(t, tarPath)
+	if got := string(entries["app.js"]); got != "dirty app\n" {
+		t.Fatalf("archive app.js = %q, want dirty app contents", got)
+	}
+	if got := string(entries["new.js"]); got != "new app file\n" {
+		t.Fatalf("archive new.js = %q, want untracked app file", got)
+	}
+	for _, sibling := range []string{"root-only.txt", "root-new.txt", "apps/api/app.js"} {
+		if _, ok := entries[sibling]; ok {
+			t.Fatalf("dirty app archive contains repository-relative sibling %q", sibling)
+		}
+	}
+}
+
+func TestDirtyPreviewArchiveExcludesIgnoredFilesAndKeepsWorkingTreeChanges(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte(".env\nignored/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte("committed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "deleted.txt"), []byte("delete me\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte("modified\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "new.js"), []byte("untracked\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("SECRET=must-not-ship\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "ignored"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ignored", "payload.txt"), []byte("must-not-ship\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "deleted.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	tarPath := filepath.Join(t.TempDir(), "source.tar")
+	if err := writeSourceTar(root, tarPath, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	entries := readTarEntries(t, tarPath)
+	for name, want := range map[string]string{
+		"app.js": "modified\n",
+		"new.js": "untracked\n",
+	} {
+		if got := string(entries[name]); got != want {
+			t.Fatalf("archive %s = %q, want %q", name, got, want)
+		}
+	}
+	for _, excluded := range []string{".env", ".git/config", "ignored/payload.txt", "deleted.txt"} {
+		if _, ok := entries[excluded]; ok {
+			t.Fatalf("dirty preview archive contains excluded file %q", excluded)
+		}
+	}
+}
+
+func TestDirtyPreviewArchiveIncludesIgnoredDeclaredStaticDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("dist/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte("committed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "init")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-m", "init")
+	if err := os.WriteFile(filepath.Join(root, "app.js"), []byte("dirty preview\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "dist"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dist", "index.html"), []byte("generated preview\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tarPath := filepath.Join(t.TempDir(), "source.tar")
+	if err := writeSourceTar(root, tarPath, true, []string{"dist"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(readTarEntries(t, tarPath)["dist/index.html"]); got != "generated preview\n" {
+		t.Fatalf("archive dist/index.html = %q, want generated Preview output", got)
+	}
+}
+
 func TestWriteSourceTarAppendsIgnoredStaticDirsForCleanArchive(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("dist/\n"), 0644); err != nil {
@@ -1332,6 +1505,35 @@ func runGit(t *testing.T, root string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, out)
 	}
+}
+
+func readTarEntries(t *testing.T, path string) map[string][]byte {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	entries := map[string][]byte{}
+	tr := tar.NewReader(f)
+	for {
+		header, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !header.FileInfo().Mode().IsRegular() {
+			continue
+		}
+		data, err := io.ReadAll(tr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[strings.TrimPrefix(header.Name, "./")] = data
+	}
+	return entries
 }
 
 func initCommittedGitApp(t *testing.T, root, branch string) {

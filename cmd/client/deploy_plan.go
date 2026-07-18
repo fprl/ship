@@ -127,7 +127,7 @@ func buildLocalDeployPlanForManifest(root, envName string, manifest *config.Mani
 			Kind:    diagnosticKindDotenv,
 			Level:   diagnosticError,
 			Message: err.Error(),
-			Hint:    "Import secrets with ship secret set --from .env, then remove the dotenv file from the artifact.",
+			Hint:    "Import needed secrets with ship secret set --from <file>. Keep local dotenv files ignored by Git; untrack committed dotenv files, and keep dotenv files outside declared static directories.",
 		})
 	}
 

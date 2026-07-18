@@ -119,7 +119,7 @@ func TestOutputContractRemediationTexts(t *testing.T) {
 		{name: "manifest", code: CodeManifestInvalid, fields: Fields{"details": "invalid"}, want: "edit ship.toml to fix the validation error above, then ship"},
 		{name: "dockerfile", code: CodeDockerfileMissing, want: "write a Dockerfile, or declare a [routes] static route in ship.toml"},
 		{name: "approval expired", code: CodeApprovalExpired, fields: Fields{"id": "abc123xy", "summary": "ship app=api", "box": "203.0.113.7"}, want: "ship box approval ls 203.0.113.7"},
-		{name: "dotenv", code: CodeDotenvRejected, fields: Fields{"files": ".env.production", "file": ".env.production"}, want: "ship secret set --from .env.production"},
+		{name: "dotenv", code: CodeDotenvRejected, fields: Fields{"files": ".env.production", "file": ".env.production"}, want: "exclude .env.production from deploy content or rename it to an allowed template, then ship"},
 		{name: "host label", code: CodeHostLabelConflict, fields: Fields{"app": "api", "label": "api", "existing_app": "other", "existing_env": "production"}, want: "change the top-level name in ship.toml, then ship"},
 	}
 

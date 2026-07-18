@@ -170,8 +170,12 @@ The new surface has no `--env`. Resolution rule, implemented client-side:
   anywhere.
 - Dirty worktree: the production branch **refuses to ship** (code
   `dirty_worktree`, remediation `git commit`; no override flag). Preview
-  branches ship the working tree as-is; dirty state is flagged in
-  `ship status` and in the release id (existing `-dirty-` id scheme).
+  branches ship tracked working-tree files plus non-ignored untracked files;
+  deleted tracked files and Git-ignored local files are absent. Declared static
+  serve directories remain an explicit exception: Ship appends their generated
+  output even when ignored, while still refusing dotenv files inside them.
+  Dirty state is flagged in `ship status` and in the release id (existing
+  `-dirty-` id scheme).
 - Stale checkout: a prod ship requires the currently deployed commit to
   be an ancestor of HEAD (code `behind_production`, remediation
   `git pull`; deploying older code on purpose is what `ship rollback`
@@ -1101,9 +1105,11 @@ inverse of §6's old test); bare set on the production branch sets
 prod. `ship` on a repo with no Dockerfile and no static route →
 `dockerfile_missing` with both remediations; `ship init` writes only
 `ship.toml`. `box setup --ingress`/`--admin`/`--litestream` → usage
-error (flags gone). `--include-dotenv` → usage error; a `.env` in the
-worktree never appears in the uploaded artifact (assert
-archive contents). `@secret:NAME` in a manifest → manifest error
+error (flags gone). `--include-dotenv` → usage error; a Git-ignored local
+`.env` may remain in the worktree but never appears in the uploaded artifact;
+a tracked or non-ignored dotenv blocks before upload, as does one inside an
+explicitly deployed static serve directory (assert archive contents).
+`@secret:NAME` in a manifest → manifest error
 naming the bare-form rule. `box app ls` serves the old `box ls` table;
 `box ls` → usage error suggesting `box app ls`. §15 acceptance runs as
 written. AGENT.md regenerated; error catalogue drift test green
