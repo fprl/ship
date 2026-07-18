@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/deployevent"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/utils"
 	"io"
@@ -26,34 +27,17 @@ type ShipResult struct {
 	DurationMs int64    `json:"durationMs"`
 }
 
-type shipProgress struct {
-	last time.Time
-}
-
-func newShipProgress() shipProgress {
-	return shipProgress{last: time.Now()}
-}
-
-func (p *shipProgress) timed(name string) {
-	now := time.Now()
-	fmt.Fprintf(os.Stderr, "%s %s\n", name, formatPhaseDuration(now.Sub(p.last)))
-	p.last = now
-}
-
-func (p *shipProgress) line(line string) {
-	fmt.Fprintln(os.Stderr, line)
-	p.last = time.Now()
-}
-
 func formatPhaseDuration(d time.Duration) string {
 	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
-func CmdShip(root string, branchName string, tlsMode string, jsonFlag bool, rebuild bool) {
+func CmdShip(root string, branchName string, tlsMode string, jsonFlag bool, rebuild bool, logs bool) {
 	start := time.Now()
-	progress := newShipProgress()
-	result, err := runShip(root, branchName, tlsMode, rebuild, &progress)
+	progress := newShipProgress(logs)
+	defer progress.close()
+	result, err := runShip(root, branchName, tlsMode, rebuild, logs, progress)
 	if err != nil {
+		progress.close()
 		utils.DieError(err, 1)
 	}
 	result.DurationMs = time.Since(start).Milliseconds()
@@ -72,7 +56,7 @@ func writeShipResult(result ShipResult, jsonFlag bool) {
 	fmt.Println(result.URL)
 }
 
-func runShip(root string, branchName string, tlsMode string, rebuild bool, progress *shipProgress) (ShipResult, error) {
+func runShip(root string, branchName string, tlsMode string, rebuild bool, logs bool, progress *shipProgress) (ShipResult, error) {
 	state, err := shipAddressPhase(root, branchName)
 	if err != nil {
 		return ShipResult{}, err
@@ -81,28 +65,27 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, progr
 	if err := shipPreflightPhase(&state); err != nil {
 		return ShipResult{}, err
 	}
-	progress.timed("preflight")
 	if err := shipPlanPhase(&state); err != nil {
 		return ShipResult{}, err
 	}
 	if err := shipRoutesPhase(&state, tlsMode); err != nil {
 		return ShipResult{}, err
 	}
+	progress.timed("Preflight")
 	if err := shipTarPhase(&state); err != nil {
 		return ShipResult{}, err
 	}
+	progress.timed("Package")
 	defer os.RemoveAll(state.TarDir)
 	if err := shipUploadPhase(&state); err != nil {
 		return failDeployAfterRemoteDir(state.CleanupRemoteDir, err)
 	}
-	progress.timed("build")
-	if err := shipApplyPhase(&state, rebuild, tlsMode); err != nil {
+	progress.timed("Upload")
+	if err := shipApplyPhase(&state, rebuild, tlsMode, logs, progress); err != nil {
 		return failDeployAfterRemoteDir(state.CleanupRemoteDir, err)
 	}
-	progress.timed("release")
-	progress.line("probe ok")
 	state.CleanupRemoteDir()
-	progress.line("live")
+	progress.line("Live")
 	if state.Address.ProductionBranch && state.RoutePlan.NoConfiguredDomain {
 		progress.line(prodNoDomainNextLine(state.BoxIP))
 	}
@@ -253,18 +236,31 @@ func shipUploadPhase(state *shipRunState) error {
 	return nil
 }
 
-func shipApplyPhase(state *shipRunState, rebuild bool, tlsMode string) error {
+func shipApplyPhase(state *shipRunState, rebuild bool, tlsMode string, logs bool, progress *shipProgress) error {
 	applyCmd := serverAppApplyCommand(state.Context.AppName, state.Address.EnvName,
 		state.RemoteDir+"/source.tar",
 		state.RemoteDir+"/ship.toml",
 		state.Plan,
 		deployIdentity(state.Root, state.Runner, state.Context.Server),
 		rebuild,
+		logs,
 		tlsMode,
 		state.RoutePlan.PreviewAlias,
 	)
-	_, err := runSSHRequired(state.Runner, state.Context.Server, applyCmd, "deploy failed", "ship")
-	return err
+	stdout, stderr, code, runErr := state.Runner.RunSSHStreaming(state.Context.Server, applyCmd, func(line string) bool {
+		event, ok := deployevent.Parse(line)
+		if ok {
+			progress.event(event)
+		}
+		return ok
+	})
+	if runErr != nil || code != 0 {
+		return sshResultError(state.Context.Server, stdout, stderr, code, runErr, "deploy failed", "deploy failed", "ship")
+	}
+	if strings.TrimSpace(stderr) != "" {
+		fmt.Fprint(os.Stderr, stderr)
+	}
+	return nil
 }
 
 func shipOutputPhase(state shipRunState) (ShipResult, error) {

@@ -216,7 +216,7 @@ the env identity file (extend the existing identity storage).
 ship                      deploy current branch; stdout = URL (see §5;
                           for previews, the URL carries the capability,
                           §15)
-                          flags: --tls internal (§8), --rebuild,
+                          flags: --tls internal (§8), --rebuild, --logs/-l,
                           --branch (detached HEAD only, §3), --json (§5),
                           --config <path>
                           (--include-dotenv removed July 13 — D6, §18:
@@ -484,9 +484,14 @@ positional env args, `--server` on app commands (comes from `ship.toml`).
 6. Surface language mirrors Vercel: **Production** / **Preview** plus the
    branch name — never internal env slugs (`feat-x-x7q2`), which appear
    only inside URLs and `--json` fields.
-7. During `ship`, stderr streams one line per phase with timing
-   (`build 6.2s`, `release 1.1s`, `probe ok`, `live`); spinner on a TTY,
-   plain lines when piped.
+7. During `ship`, stderr names the actual work with timings: local
+   `Preflight`, `Package`, and `Upload`, followed by helper-emitted
+   `Prepare release`, `Build image`, `Prepare runtime`, process start/probe,
+   release command, route preparation, traffic switch, then `Live`. The active
+   stage updates once a second on a TTY; piped output receives a heartbeat
+   every 15 seconds. `ship --logs`/`-l` streams scrubbed build and release
+   output. Default output stays concise, while failures automatically include
+   the scrubbed final 40 command lines.
 8. Successes also guide: when a natural next step exists, the last
    stderr line is `next: <command>` — `ship init` ends with `next: ship`;
    the first prod ship without a domain ends with the exact DNS record

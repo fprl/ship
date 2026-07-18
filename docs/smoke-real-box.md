@@ -158,11 +158,17 @@ SHIP_SSH_KEY="$(cat /tmp/ship-smoke-keys/deploy)" \
 Expected stderr shape:
 
 ```text
-preflight 0.4s
-build 6.2s
-release 1.1s
-probe ok
-live
+✓ Preflight 0.4s
+✓ Package 0.8s
+✓ Upload 5.3s
+✓ Prepare release 0.2s
+✓ Build image 6.2s
+✓ Prepare runtime 0.1s
+✓ Start web 0.8s
+✓ Probe web · GET /health 0.7s
+✓ Prepare routes 0.1s
+✓ Switch traffic 0.3s
+Live
 ```
 
 Expected stdout shape:

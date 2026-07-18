@@ -504,7 +504,19 @@ func (e *smokeEnv) testContainerAppLifecycle(t *testing.T) {
 	if firstDeploy.stdout != "https://api.example.com\n" {
 		t.Fatalf("deploy stdout = %q, want only deployment URL", firstDeploy.stdout)
 	}
-	for _, want := range []string{"preflight ", "build ", "release ", "probe ok", "live"} {
+	for _, want := range []string{
+		"✓ Preflight ",
+		"✓ Package ",
+		"✓ Upload ",
+		"Prepare release",
+		"Build image",
+		"Prepare runtime",
+		"Start web",
+		"Probe web · GET /health",
+		"Prepare routes",
+		"Switch traffic",
+		"Live",
+	} {
 		assertContains(t, firstDeploy.stderr, want)
 	}
 

@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
@@ -251,6 +252,55 @@ func (r *CommandRunner) RunSSH(server string, command string) (string, string, i
 	args = append(args, deploySSHTarget(server), command)
 	stdout, stderr, code, err := runCommand("ssh", args, "")
 	return stdout, stderr, code, mapSSHTransportError(server, stderr, code, err)
+}
+
+// RunSSHStreaming preserves stdout for the helper's success/error contract
+// while delivering complete stderr lines as they arrive. Lines consumed by
+// onStderrLine are omitted from returned stderr; ordinary warnings and SSH
+// diagnostics remain available to the normal error mapper.
+func (r *CommandRunner) RunSSHStreaming(server string, command string, onStderrLine func(string) bool) (string, string, int, error) {
+	var args []string
+	if len(r.SshOptions) > 0 {
+		args = append(args, r.SshOptions...)
+	}
+	command = r.withMemberFingerprint(command)
+	args = append(args, deploySSHTarget(server), command)
+	cmd := exec.Command("ssh", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return "", "", 1, err
+	}
+	if err := cmd.Start(); err != nil {
+		return "", "", 1, mapSSHTransportError(server, "", 1, err)
+	}
+	scanner := bufio.NewScanner(stderrPipe)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if onStderrLine != nil && onStderrLine(line) {
+			continue
+		}
+		stderr.WriteString(line)
+		stderr.WriteByte('\n')
+	}
+	scanErr := scanner.Err()
+	runErr := cmd.Wait()
+	if scanErr != nil && runErr == nil {
+		runErr = scanErr
+	}
+	code := 0
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			code = exitErr.ExitCode()
+		} else {
+			code = 1
+		}
+	}
+	stderrText := stderr.String()
+	return stdout.String(), stderrText, code, mapSSHTransportError(server, stderrText, code, runErr)
 }
 
 // RunSSHToFile streams remote stdout directly to path. On failure it returns

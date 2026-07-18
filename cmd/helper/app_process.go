@@ -22,6 +22,7 @@ type startReleaseProcessesParams struct {
 	ImageID       string
 	EnvFile       string
 	ScrubValues   []string
+	Progress      *deployProgressEmitter
 	ContainerName func(processName string, proc config.Process) string
 }
 
@@ -81,7 +82,7 @@ func startReleaseProcesses(params startReleaseProcessesParams) (startReleaseProc
 		if proc.Port != nil {
 			result.ProcessName[processName] = containerName
 		}
-		if err := startProcessWithActivation(params.App, params.Env, processName, proc, params.ImageID, userID, groupID, params.Release, params.Activation, containerName, processProbe(routed, processName, params.Context.Probe), previewEnv, scrubValues, envFile); err != nil {
+		if err := startProcessWithActivation(params.App, params.Env, processName, proc, params.ImageID, userID, groupID, params.Release, params.Activation, containerName, processProbe(routed, processName, params.Context.Probe), previewEnv, scrubValues, envFile, params.Progress); err != nil {
 			return result, processStartError{Err: err}
 		}
 	}

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/deployevent"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/knownhosts"
 )
@@ -517,6 +518,88 @@ func TestWriteShipResultOutputContracts(t *testing.T) {
 	}
 	if payload.URL != result.URL || payload.Env != result.Env || payload.Release != result.Release || payload.DurationMs != result.DurationMs || len(payload.Processes) != 1 || payload.Processes[0] != "web" {
 		t.Fatalf("unexpected ship --json payload: %+v", payload)
+	}
+}
+
+func TestShipProgressReportsTruthfulDeployStages(t *testing.T) {
+	var out strings.Builder
+	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
+	progress := newShipProgressRenderer(&out, false, false, func() time.Time { return now }, 0)
+
+	progress.complete("Preflight", time.Second)
+	progress.complete("Package", 800*time.Millisecond)
+	progress.complete("Upload", 5300*time.Millisecond)
+	progress.event(deployevent.Event{Kind: deployevent.KindStart, Phase: "build", Detail: "Build image"})
+	now = now.Add(186400 * time.Millisecond)
+	progress.event(deployevent.Event{Kind: deployevent.KindDone, Phase: "build", Detail: "Build image", DurationMS: 186400})
+	progress.event(deployevent.Event{Kind: deployevent.KindStart, Phase: "release", Detail: "Run release · node dist/migrate.js"})
+	now = now.Add(17200 * time.Millisecond)
+	progress.event(deployevent.Event{Kind: deployevent.KindDone, Phase: "release", Detail: "Run release · node dist/migrate.js", DurationMS: 17200})
+	progress.line("Live")
+	progress.close()
+
+	got := out.String()
+	for _, want := range []string{
+		"✓ Preflight 1.0s",
+		"✓ Package 0.8s",
+		"✓ Upload 5.3s",
+		"… Build image",
+		"✓ Build image 186.4s",
+		"… Run release · node dist/migrate.js",
+		"✓ Run release · node dist/migrate.js 17.2s",
+		"Live",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("progress missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "release 203.6s") {
+		t.Fatalf("progress collapsed remote work into an opaque release phase:\n%s", got)
+	}
+}
+
+func TestShipProgressStreamsDetailedLogsOnlyWhenRequested(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		logs bool
+		want bool
+	}{
+		{name: "default stays concise", logs: false, want: false},
+		{name: "logs flag streams detail", logs: true, want: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var out strings.Builder
+			now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
+			progress := newShipProgressRenderer(&out, false, tt.logs, func() time.Time { return now }, 0)
+			progress.event(deployevent.Event{Kind: deployevent.KindStart, Phase: "build", Detail: "Build image"})
+			progress.event(deployevent.Event{Kind: deployevent.KindLog, Phase: "build", Message: "STEP 1/4 npm ci"})
+			progress.event(deployevent.Event{Kind: deployevent.KindDone, Phase: "build", Detail: "Build image", DurationMS: 1200})
+			progress.close()
+			if got := strings.Contains(out.String(), "[build] STEP 1/4 npm ci"); got != tt.want {
+				t.Fatalf("log visibility = %v, want %v:\n%s", got, tt.want, out.String())
+			}
+		})
+	}
+}
+
+func TestShipProgressEmitsHeartbeatWhenOutputIsPiped(t *testing.T) {
+	var out strings.Builder
+	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
+	progress := newShipProgressRenderer(&out, false, false, func() time.Time { return now }, 0)
+	progress.event(deployevent.Event{Kind: deployevent.KindStart, Phase: "build", Detail: "Build image"})
+	now = now.Add(15 * time.Second)
+	progress.heartbeatTick(progress.active.generation, 15*time.Second)
+	progress.close()
+
+	if !strings.Contains(out.String(), "… Build image 15.0s") {
+		t.Fatalf("piped deploy did not emit its heartbeat:\n%s", out.String())
+	}
+}
+
+func TestServerAppApplyCommandEnablesDetailedLogsExplicitly(t *testing.T) {
+	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", testLocalDeployPlan("abc1234", false), testDeployIdentity(), false, true, "", "")
+	if !strings.Contains(got, "app apply --progress --logs") {
+		t.Fatalf("ship --logs did not enable remote log events: %s", got)
 	}
 }
 
@@ -1623,8 +1706,8 @@ func captureClientStderr(t *testing.T, fn func()) string {
 func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", false)
 	actor := testDeployIdentity()
-	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, false, "internal", "")
-	want := "sudo -n /usr/local/bin/ship server app apply --tls internal --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
+	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, false, false, "internal", "")
+	want := "sudo -n /usr/local/bin/ship server app apply --progress --tls internal --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1633,8 +1716,8 @@ func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 func TestServerAppApplyCommandSupportsRebuild(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", true)
 	actor := testDeployIdentity()
-	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, "", "")
-	want := "sudo -n /usr/local/bin/ship server app apply --rebuild --dirty --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
+	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, false, "", "")
+	want := "sudo -n /usr/local/bin/ship server app apply --progress --rebuild --dirty --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1642,7 +1725,7 @@ func TestServerAppApplyCommandSupportsRebuild(t *testing.T) {
 
 func TestServerAppApplyCommandPassesPreviewAlias(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", false)
-	got := serverAppApplyCommand("api", "feat-x-ab12", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, testDeployIdentity(), false, "", "feat-x.preview.example.com")
+	got := serverAppApplyCommand("api", "feat-x-ab12", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, testDeployIdentity(), false, false, "", "feat-x.preview.example.com")
 	if !strings.Contains(got, "--preview-alias feat-x.preview.example.com") {
 		t.Fatalf("apply command did not include preview alias: %s", got)
 	}
@@ -1672,7 +1755,7 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "doctor json", command: serverDoctorCommand("example.com", true)},
 		{name: "setup env", command: serverAppSetupEnvCommand("api", "production")},
 		{name: "preflight json", command: serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})},
-		{name: "apply", command: serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, "auto", "")},
+		{name: "apply", command: serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, false, "auto", "")},
 		{name: "status json", command: serverAppStatusCommand("api", "production")},
 		{name: "ls text", command: serverAppLsCommand(false)},
 		{name: "ls json", command: serverAppLsCommand(true)},

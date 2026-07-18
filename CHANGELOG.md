@@ -9,6 +9,17 @@ such as `.env` remain on the developer's machine. Declared static serve
 directories keep shipping generated output even when ignored, with their
 dotenv guard intact.
 
+### Changed
+
+- Deploy output now reports the work Ship is actually doing: packaging and
+  upload are separate from the remote image build, process start, probe,
+  release command, route preparation, and traffic switch. The active stage
+  updates on a TTY and piped output gets a 15-second heartbeat, so a long build
+  no longer looks hung.
+- `ship --logs` (`-l`) streams scrubbed build and release-command output.
+  Default deploys stay concise, while failures automatically show the scrubbed
+  final command tail.
+
 ### Fixed
 
 - `ship secret set --from .env` no longer leads to an instruction to delete the

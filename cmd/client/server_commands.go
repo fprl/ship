@@ -56,10 +56,13 @@ type deployIdentityJSON struct {
 	GitAuthor     string `json:"git_author"`
 }
 
-func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, plan localDeployPlan, actor deployIdentityJSON, rebuild bool, tlsMode string, previewAlias string) string {
-	args := []string{"app", "apply"}
+func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, plan localDeployPlan, actor deployIdentityJSON, rebuild bool, logs bool, tlsMode string, previewAlias string) string {
+	args := []string{"app", "apply", "--progress"}
 	if rebuild {
 		args = append(args, "--rebuild")
+	}
+	if logs {
+		args = append(args, "--logs")
 	}
 	if tlsMode != "" {
 		args = append(args, "--tls", tlsMode)

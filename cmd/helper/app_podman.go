@@ -182,19 +182,25 @@ func effectiveProcessResources(proc config.Process, previewEnv bool) config.Reso
 	return resources
 }
 
-func startProcessWithActivation(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, activation, containerName string, probe string, previewEnv bool, scrubValues []string, envFile string) error {
+func startProcessWithActivation(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, activation, containerName string, probe string, previewEnv bool, scrubValues []string, envFile string, progress *deployProgressEmitter) error {
 	envFileExists := envFile != ""
 	args := buildPodmanRunArgsWithActivation(app, env, processName, proc, imageTag, userID, groupID, release, activation, containerName, envFileExists, previewEnv, envFile)
-	if _, err := utils.RunChecked("podman", args, ""); err != nil {
-		return fmt.Errorf("podman run %s: %v", containerName, err)
+	finishStart := progress.start("start-"+processName, "Start "+processName)
+	_, startErr := utils.RunChecked("podman", args, "")
+	finishStart(startErr)
+	if startErr != nil {
+		return fmt.Errorf("podman run %s: %v", containerName, startErr)
 	}
 
 	if proc.Port != nil && probe != "" {
-		if err := waitHealthy(containerName, *proc.Port, probe, 30*time.Second); err != nil {
+		finishProbe := progress.start("probe-"+processName, "Probe "+processName+" · GET "+probe)
+		probeErr := waitHealthy(containerName, *proc.Port, probe, 30*time.Second)
+		finishProbe(probeErr)
+		if probeErr != nil {
 			// Surface logs on failure so the user can see why.
 			out, _ := exec.Command("podman", "logs", "--tail", "50", containerName).CombinedOutput()
 			_, _ = os.Stderr.Write([]byte(scrubText(string(out), scrubValues)))
-			return fmt.Errorf("health check failed for %s: %w", processName, err)
+			return fmt.Errorf("health check failed for %s: %w", processName, probeErr)
 		}
 	}
 	return nil
@@ -255,7 +261,7 @@ func probeStatusFromDetail(detail string) int {
 
 const releaseCommandTimeout = 10 * time.Minute
 
-func runReleaseCommandWithActivation(app, env, command, imageTag, userID, groupID, release, activation, envFile string) error {
+func runReleaseCommandWithActivation(app, env, command, imageTag, userID, groupID, release, activation, envFile string, progress *deployProgressEmitter, scrubValues []string) error {
 	name := identity.ContainerName(app, env, "release", release)
 	_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
 	args := []string{
@@ -279,7 +285,7 @@ func runReleaseCommandWithActivation(app, env, command, imageTag, userID, groupI
 		args = append(args, "--env-file", envFile)
 	}
 	args = append(args, imageTag, "/bin/sh", "-c", command)
-	if _, err := utils.RunCheckedWithTimeout("podman", args, "", releaseCommandTimeout); err != nil {
+	if _, err := runDeployCommand(progress, "release", scrubValues, releaseCommandTimeout, "podman", args, ""); err != nil {
 		_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
 		return fmt.Errorf("release command %q failed before traffic switch: %w", command, err)
 	}

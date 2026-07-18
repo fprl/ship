@@ -32,6 +32,17 @@ func TestCommandErrorRedactsReleaseEnvelopeFromDisplayAndOutput(t *testing.T) {
 	}
 }
 
+func TestRedactCommandOutputProtectsStreamedBuildLogs(t *testing.T) {
+	value := "YWJjMTIzNGRhdGE="
+	got := RedactCommandOutput("STEP label ship.release_envelope=" + value)
+	if strings.Contains(got, value) {
+		t.Fatalf("streamed build output leaked release envelope: %s", got)
+	}
+	if !strings.Contains(got, "ship.release_envelope=<redacted, 16 bytes>") {
+		t.Fatalf("streamed build output missing redaction marker: %s", got)
+	}
+}
+
 func TestNormalizeRawErrorsDoesNotStringMatchManifestText(t *testing.T) {
 	coded := normalizeExitError(errors.New("ship.toml not found"), 1)
 	if coded.Code() != errcat.CodeOperationFailed {

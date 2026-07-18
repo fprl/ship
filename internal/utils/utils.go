@@ -97,6 +97,12 @@ func redactEnvelopeText(text string) string {
 	}
 }
 
+// RedactCommandOutput applies Ship's transport-safe redactions to command
+// output before it is streamed to a client.
+func RedactCommandOutput(text string) string {
+	return redactEnvelopeText(text)
+}
+
 var errorJSON bool
 
 func SetErrorJSON(enabled bool) bool {

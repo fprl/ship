@@ -29,25 +29,28 @@ import (
 //  5. Synthesizes a Caddyfile fragment, validates, reloads, and only
 //     then removes old routed containers.
 type appApplyCmd struct {
-	App           string            `arg:"" help:"App name."`
-	Env           string            `arg:"" help:"Env name."`
-	Tarball       string            `name:"tarball" required:"" help:"Path to the streamed source tarball."`
-	Manifest      string            `name:"manifest" required:"" help:"Path to the uploaded ship.toml."`
-	SHA           string            `name:"sha" required:"" help:"Release identifier."`
-	Dirty         bool              `name:"dirty" help:"Mark this release as built from a dirty worktree snapshot."`
-	BaseCommit    string            `name:"base-commit" required:"" help:"Git commit the release is based on."`
-	CreatedAt     string            `name:"created-at" required:"" help:"Release creation time in RFC3339."`
-	Rebuild       bool              `name:"rebuild" help:"Pass --no-cache --pull=always to podman build."`
-	TLS           string            `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode stamped by the client for this deploy."`
-	PreviewAlias  string            `name:"preview-alias" hidden:"" help:"Preview branch alias host derived by the client."`
-	SSHKeyComment string            `name:"ssh-key-comment" help:"SSH public key comment for the deploying key."`
-	GitAuthor     string            `name:"git-author" help:"Git author configured by the deploying client."`
-	ActivationID  string            `kong:"-"`
-	Envelope      envelope.Envelope `kong:"-"`
-	EnvelopeLabel string            `kong:"-"`
-	ImageID       string            `kong:"-"`
-	StaticHash    string            `kong:"-"`
-	ScrubValues   []string          `kong:"-"`
+	App           string                 `arg:"" help:"App name."`
+	Env           string                 `arg:"" help:"Env name."`
+	Tarball       string                 `name:"tarball" required:"" help:"Path to the streamed source tarball."`
+	Manifest      string                 `name:"manifest" required:"" help:"Path to the uploaded ship.toml."`
+	SHA           string                 `name:"sha" required:"" help:"Release identifier."`
+	Dirty         bool                   `name:"dirty" help:"Mark this release as built from a dirty worktree snapshot."`
+	BaseCommit    string                 `name:"base-commit" required:"" help:"Git commit the release is based on."`
+	CreatedAt     string                 `name:"created-at" required:"" help:"Release creation time in RFC3339."`
+	Rebuild       bool                   `name:"rebuild" help:"Pass --no-cache --pull=always to podman build."`
+	Progress      bool                   `name:"progress" hidden:"" help:"Emit structured deploy progress events."`
+	Logs          bool                   `name:"logs" hidden:"" help:"Emit build and release-command log events."`
+	TLS           string                 `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode stamped by the client for this deploy."`
+	PreviewAlias  string                 `name:"preview-alias" hidden:"" help:"Preview branch alias host derived by the client."`
+	SSHKeyComment string                 `name:"ssh-key-comment" help:"SSH public key comment for the deploying key."`
+	GitAuthor     string                 `name:"git-author" help:"Git author configured by the deploying client."`
+	ActivationID  string                 `kong:"-"`
+	Envelope      envelope.Envelope      `kong:"-"`
+	EnvelopeLabel string                 `kong:"-"`
+	ImageID       string                 `kong:"-"`
+	StaticHash    string                 `kong:"-"`
+	ScrubValues   []string               `kong:"-"`
+	ProgressOut   *deployProgressEmitter `kong:"-"`
 }
 
 type applyReleaseResult struct {
@@ -60,6 +63,7 @@ var (
 )
 
 func (c *appApplyCmd) Run() error {
+	c.ProgressOut = newDeployProgressEmitter(c.Progress, c.Logs, os.Stderr)
 	if err := validateAppEnv(c.App, c.Env); err != nil {
 		utils.DieError(err, 1)
 	}
@@ -170,6 +174,9 @@ func (c *appApplyCmd) committedArtifact() *artifact.Tuple {
 }
 
 func (c *appApplyCmd) runLockedE() (err error) {
+	if c.ProgressOut == nil {
+		c.ProgressOut = newDeployProgressEmitter(false, false, os.Stderr)
+	}
 	startedAt := time.Now().UTC()
 	previousPointer, pointerErr := readActive(c.App, c.Env)
 	if pointerErr != nil && !errcat.Is(pointerErr, errcat.CodeNoDeploys) {
@@ -198,60 +205,79 @@ func (c *appApplyCmd) runLockedE() (err error) {
 		err = c.recordDeployFailure(app, previousRelease, startedAt, fmt.Errorf("nothing changed: %w", err))
 	}()
 
-	ctxDir, err := c.prepareApplyContext()
+	var ctxDir string
+	finishPrepare := c.ProgressOut.start("prepare", "Prepare release")
+	err = func() error {
+		var prepareErr error
+		ctxDir, prepareErr = c.prepareApplyContext()
+		if prepareErr != nil {
+			return prepareErr
+		}
+		app, prepareErr = c.loadApplyContext(ctxDir)
+		if prepareErr != nil {
+			return prepareErr
+		}
+		if prepareErr = attachPreviewProtection(c.App, c.Env, app); prepareErr != nil {
+			return prepareErr
+		}
+		applyRouteTLS(app, c.TLS)
+
+		meta, prepareErr := c.releaseMetadata()
+		if prepareErr != nil {
+			return prepareErr
+		}
+		manifestData, prepareErr := os.ReadFile(filepath.Join(ctxDir, "ship.toml"))
+		if prepareErr != nil {
+			return fmt.Errorf("read effective manifest: %v", prepareErr)
+		}
+		manifestData, prepareErr = effectiveManifestText(manifestData, app)
+		if prepareErr != nil {
+			return prepareErr
+		}
+		if app.NeedsImage {
+			c.ActivationID, prepareErr = newActivationID(c.App, c.Env, c.SHA)
+			if prepareErr != nil {
+				return prepareErr
+			}
+		}
+		c.Envelope, c.EnvelopeLabel, prepareErr = releaseEnvelope(manifestData, meta)
+		return prepareErr
+	}()
+	finishPrepare(err)
 	if err != nil {
+		if ctxDir != "" {
+			_ = os.RemoveAll(ctxDir)
+		}
 		return err
 	}
 	defer os.RemoveAll(ctxDir)
 
-	app, err = c.loadApplyContext(ctxDir)
-	if err != nil {
-		return err
-	}
-	if err := attachPreviewProtection(c.App, c.Env, app); err != nil {
-		return err
-	}
-	applyRouteTLS(app, c.TLS)
-
-	meta, err := c.releaseMetadata()
-	if err != nil {
-		return err
-	}
-	manifestData, err := os.ReadFile(filepath.Join(ctxDir, "ship.toml"))
-	if err != nil {
-		return fmt.Errorf("read effective manifest: %v", err)
-	}
-	manifestData, err = effectiveManifestText(manifestData, app)
-	if err != nil {
-		return err
-	}
 	if app.NeedsImage {
-		c.ActivationID, err = newActivationID(c.App, c.Env, c.SHA)
-		if err != nil {
-			return err
+		finishBuild := c.ProgressOut.start("build", "Build image")
+		buildErr := c.prepareContainerArtifact(ctxDir, previousPointer, pointerErr == nil)
+		finishBuild(buildErr)
+		if buildErr != nil {
+			return buildErr
 		}
 	}
-	c.Envelope, c.EnvelopeLabel, err = releaseEnvelope(manifestData, meta)
-	if err != nil {
-		return err
-	}
-	if app.NeedsImage {
-		if err := c.prepareContainerArtifact(ctxDir, previousPointer, pointerErr == nil); err != nil {
-			return err
+	finishRuntime := c.ProgressOut.start("runtime", "Prepare runtime")
+	runtimeErr := func() error {
+		resolved, resolveErr := resolveEnv(c.App, c.Env, app.Vars, app.SecretRefs)
+		if resolveErr != nil {
+			return resolveErr
 		}
-	}
-	resolved, err := resolveEnv(c.App, c.Env, app.Vars, app.SecretRefs)
-	if err != nil {
-		return err
-	}
-	for key, value := range shipInjectedEnv(c.App, c.Env, c.SHA, app) {
-		resolved[key] = value
-	}
-	c.ScrubValues = collectEnvValues(resolved)
-	if app.NeedsImage {
-		if _, err := writeActivationEnvFile(c.App, c.Env, c.ActivationID, resolved); err != nil {
-			return err
+		for key, value := range shipInjectedEnv(c.App, c.Env, c.SHA, app) {
+			resolved[key] = value
 		}
+		c.ScrubValues = collectEnvValues(resolved)
+		if app.NeedsImage {
+			_, resolveErr = writeActivationEnvFile(c.App, c.Env, c.ActivationID, resolved)
+		}
+		return resolveErr
+	}()
+	finishRuntime(runtimeErr)
+	if runtimeErr != nil {
+		return runtimeErr
 	}
 
 	result, err := c.applyRelease(ctxDir, app)
@@ -260,9 +286,13 @@ func (c *appApplyCmd) runLockedE() (err error) {
 	}
 
 	app.StaticHash = c.StaticHash
-	if err := c.prepareCaddy(app, result); err != nil {
-		return err
+	finishRoutes := c.ProgressOut.start("routes", "Prepare routes")
+	routesErr := c.prepareCaddy(app, result)
+	finishRoutes(routesErr)
+	if routesErr != nil {
+		return routesErr
 	}
+	finishTraffic := c.ProgressOut.start("traffic", "Switch traffic")
 	committed, err = commitAndConverge(c.App, c.Env, activation.Pointer{
 		Version: 2, Activation: c.ActivationID,
 		Artifact: artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash, EnvelopeHash: func() string {
@@ -276,6 +306,7 @@ func (c *appApplyCmd) runLockedE() (err error) {
 	}, func() error {
 		return c.completeCommittedDeploy(app, previousRelease, startedAt, result)
 	})
+	finishTraffic(err)
 	return err
 }
 
@@ -429,7 +460,9 @@ func (c *appApplyCmd) applyRelease(ctxDir string, app *config.AppContext) (apply
 	var result applyReleaseResult
 
 	if app.HasStaticRoutes {
+		finishStatic := c.ProgressOut.start("static", "Publish static assets")
 		_, _, err := c.applyStatic(ctxDir, app)
+		finishStatic(err)
 		if err != nil {
 			return applyReleaseResult{}, err
 		}
@@ -491,7 +524,7 @@ func (c *appApplyCmd) prepareContainerArtifact(ctxDir string, previousPointer ac
 	}
 	buildRef := identity.ImageTag(c.App, c.Env, "build-"+c.ActivationID)
 	args := podmanBuildArgsWithEnvelope(c.App, c.Env, buildRef, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild, c.EnvelopeLabel)
-	if _, err := utils.RunChecked("podman", args, ""); err != nil {
+	if _, err := runDeployCommand(c.ProgressOut, "build", nil, 0, "podman", args, ""); err != nil {
 		return newJournalStepError("build", fmt.Errorf("podman build: %w", err), nil, nil)
 	}
 	entry, err := inspectExactImage(buildRef)
@@ -589,6 +622,7 @@ func (c *appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exis
 		ImageID:     c.ImageID,
 		EnvFile:     identity.ActivationEnvFile(c.App, c.Env, c.ActivationID),
 		ScrubValues: c.ScrubValues,
+		Progress:    c.ProgressOut,
 		ContainerName: func(processName string, proc config.Process) string {
 			return nextProcessContainerName(existing, c.App, c.Env, processName, c.SHA, startedAt)
 		},
@@ -620,7 +654,10 @@ func (c *appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exis
 		if idErr != nil {
 			return containerApplyResult{}, idErr
 		}
-		if releaseErr := runReleaseCommandWithActivation(c.App, c.Env, app.Release, c.ImageID, userID, groupID, c.SHA, c.ActivationID, identity.ActivationEnvFile(c.App, c.Env, c.ActivationID)); releaseErr != nil {
+		finishRelease := c.ProgressOut.start("release", "Run release · "+app.Release)
+		releaseErr := runReleaseCommandWithActivation(c.App, c.Env, app.Release, c.ImageID, userID, groupID, c.SHA, c.ActivationID, identity.ActivationEnvFile(c.App, c.Env, c.ActivationID), c.ProgressOut, c.ScrubValues)
+		finishRelease(releaseErr)
+		if releaseErr != nil {
 			return containerApplyResult{}, newJournalStepError("release", releaseErr, started.ScrubValues, nil)
 		}
 	}

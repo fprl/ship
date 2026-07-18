@@ -74,13 +74,25 @@ ship
 Deployment progress goes to stderr:
 
 ```text
-preflight 0.4s
-build 6.2s
-release 1.1s
-probe ok
-live
+✓ Preflight 0.4s
+✓ Package 0.8s
+✓ Upload 5.3s
+✓ Prepare release 0.2s
+✓ Build image 46.2s
+✓ Prepare runtime 0.1s
+✓ Start web 0.8s
+✓ Probe web · GET /api/ready 0.7s
+✓ Run release · node dist/migrate.js 1.1s
+✓ Prepare routes 0.1s
+✓ Switch traffic 0.3s
+Live
 next: add DNS A <your-domain> → 203.0.113.7 and add it under [routes]
 ```
+
+The active stage updates in place on a terminal, and piped output gets a
+heartbeat every 15 seconds. Use `ship --logs` to stream scrubbed image-build
+and release-command output; failures show the relevant scrubbed tail
+automatically.
 
 Stdout is only the URL — app-first, no env words:
 

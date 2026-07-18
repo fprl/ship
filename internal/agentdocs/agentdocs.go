@@ -552,10 +552,11 @@ var verbs = []Verb{
 	{
 		Verb:    "ship",
 		Purpose: "Deploy the current branch and print the deployment URL.",
-		Usage:   "ship [--json] [--branch <name>] [--tls auto|internal] [--rebuild] [--config <path>]",
+		Usage:   "ship [--json] [-l|--logs] [--branch <name>] [--tls auto|internal] [--rebuild] [--config <path>]",
 		Flags: []Flag{
 			configFlag,
 			{Name: "--json", Purpose: "Emit the mutation object instead of stdout-is-URL."},
+			{Name: "-l / --logs", Purpose: "Stream scrubbed build and release-command logs while deploying."},
 			{Name: "--branch", Value: "<name>", Purpose: "Detached HEAD only; supplies the branch used for branch=env resolution."},
 			{Name: "--tls", Value: "auto|internal", Default: "auto", Purpose: "Select automatic public TLS or internal TLS for synthesized routes."},
 			{Name: "--rebuild", Purpose: "Refresh base images and bypass the container build cache."},
@@ -572,7 +573,7 @@ var verbs = []Verb{
 			"probe_failed", "dotenv_rejected", "host_key_changed",
 		},
 		Notes: []string{
-			"Successful non-JSON stdout is exactly one URL plus a trailing newline; all phase lines go to stderr.",
+			"Successful non-JSON stdout is exactly one URL plus a trailing newline; live phase lines and optional --logs output go to stderr.",
 			"Production refuses dirty worktrees and stale checkouts; Preview accepts dirty worktrees and creates the preview mapping if needed.",
 			"The crash-only lifecycle prepares beside the serving release, commits active.json, then converges. A crash after the commit never auto-restores the previous release: the journal outcome is `committed_unconverged` or `committed_degraded`, and the next step is `ship converge`.",
 			"Release commands may run more than once across retries and recovery; make them at-least-once safe and idempotent.",
@@ -1323,7 +1324,8 @@ const outputAndDataContracts = `
 - Successful ` + "`ship`" + ` without ` + "`--json`" + ` writes exactly the deployment URL to stdout.
 - All progress, warnings, timings, and next steps go to stderr.
 - ` + "`ship --json`" + ` writes the mutation object to stdout instead of the URL.
-- During deploy, stderr has phase lines such as ` + "`preflight 0.4s`" + `, ` + "`build 6.2s`" + `, ` + "`release 1.1s`" + `, ` + "`probe ok`" + `, and ` + "`live`" + `.
+- During deploy, stderr reports truthful stages such as ` + "`✓ Preflight 0.4s`" + `, ` + "`✓ Package 0.8s`" + `, ` + "`✓ Upload 5.3s`" + `, ` + "`✓ Build image 186.4s`" + `, ` + "`✓ Run release · node dist/migrate.js 17.2s`" + `, ` + "`✓ Probe web · GET /api/ready 0.7s`" + `, and ` + "`Live`" + `. The active stage updates once a second on a TTY and emits a heartbeat every 15 seconds when piped.
+- ` + "`ship --logs`" + ` streams scrubbed build and release-command lines beneath the active stage. Without it, deploy output stays concise; failures still print a scrubbed 40-line command tail.
 - Human errors are exactly: what failed, cause, then ` + "`next: <action>`" + `. ` + "`next:`" + ` is the next action: a runnable command when one can make progress, or edit guidance when the fix is a file edit.
 - JSON errors are ` + "`{\"error\":{\"code\":\"...\",\"message\":\"...\",\"cause\":\"...\",\"remediation\":\"...\"}}`" + `.
 - Exit codes are ` + "`0`" + ` success, ` + "`1`" + ` operation failed, ` + "`2`" + ` usage or manifest error, except ` + "`ship exec`" + ` passes through the remote command exit status after setup.

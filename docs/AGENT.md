@@ -108,7 +108,8 @@ Secret scoping:
 - Successful `ship` without `--json` writes exactly the deployment URL to stdout.
 - All progress, warnings, timings, and next steps go to stderr.
 - `ship --json` writes the mutation object to stdout instead of the URL.
-- During deploy, stderr has phase lines such as `preflight 0.4s`, `build 6.2s`, `release 1.1s`, `probe ok`, and `live`.
+- During deploy, stderr reports truthful stages such as `✓ Preflight 0.4s`, `✓ Package 0.8s`, `✓ Upload 5.3s`, `✓ Build image 186.4s`, `✓ Run release · node dist/migrate.js 17.2s`, `✓ Probe web · GET /api/ready 0.7s`, and `Live`. The active stage updates once a second on a TTY and emits a heartbeat every 15 seconds when piped.
+- `ship --logs` streams scrubbed build and release-command lines beneath the active stage. Without it, deploy output stays concise; failures still print a scrubbed 40-line command tail.
 - Human errors are exactly: what failed, cause, then `next: <action>`. `next:` is the next action: a runnable command when one can make progress, or edit guidance when the fix is a file edit.
 - JSON errors are `{"error":{"code":"...","message":"...","cause":"...","remediation":"..."}}`.
 - Exit codes are `0` success, `1` operation failed, `2` usage or manifest error, except `ship exec` passes through the remote command exit status after setup.
@@ -224,10 +225,10 @@ aliases = true
 <!-- BEGIN VERBS -->
 ### `ship`
 - Purpose: Deploy the current branch and print the deployment URL.
-- Usage: `ship [--json] [--branch <name>] [--tls auto|internal] [--rebuild] [--config <path>]`
-- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--json`: Emit the mutation object instead of stdout-is-URL; `--branch <name>`: Detached HEAD only; supplies the branch used for branch=env resolution; `--tls auto|internal` default `auto`: Select automatic public TLS or internal TLS for synthesized routes; `--rebuild`: Refresh base images and bypass the container build cache.
+- Usage: `ship [--json] [-l|--logs] [--branch <name>] [--tls auto|internal] [--rebuild] [--config <path>]`
+- Arguments and flags: `--config <path>` default `ship.toml`: Path to the app manifest; `--json`: Emit the mutation object instead of stdout-is-URL; `-l / --logs`: Stream scrubbed build and release-command logs while deploying; `--branch <name>`: Detached HEAD only; supplies the branch used for branch=env resolution; `--tls auto|internal` default `auto`: Select automatic public TLS or internal TLS for synthesized routes; `--rebuild`: Refresh base images and bypass the container build cache.
 - `--json` stdout schema: `{"url":"https://...","env":"production","release":"abc123","processes":["web"],"durationMs":1234}`
-- Notes: Successful non-JSON stdout is exactly one URL plus a trailing newline; all phase lines go to stderr. Production refuses dirty worktrees and stale checkouts; Preview accepts dirty worktrees and creates the preview mapping if needed. The crash-only lifecycle prepares beside the serving release, commits active.json, then converges. A crash after the commit never auto-restores the previous release: the journal outcome is `committed_unconverged` or `committed_degraded`, and the next step is `ship converge`. Release commands may run more than once across retries and recovery; make them at-least-once safe and idempotent.
+- Notes: Successful non-JSON stdout is exactly one URL plus a trailing newline; live phase lines and optional --logs output go to stderr. Production refuses dirty worktrees and stale checkouts; Preview accepts dirty worktrees and creates the preview mapping if needed. The crash-only lifecycle prepares beside the serving release, commits active.json, then converges. A crash after the commit never auto-restores the previous release: the journal outcome is `committed_unconverged` or `committed_degraded`, and the next step is `ship converge`. Release commands may run more than once across retries and recovery; make them at-least-once safe and idempotent.
 - Exit codes: 0 success; 1 operation failed with an error object when available; 2 usage or manifest error.
 - Common error codes: `not_a_git_repo`, `detached_head_requires_branch`, `branch_flag_requires_detached_head`, `unmappable_branch_name`, `dirty_worktree`, `behind_production`, `manifest_invalid`, `dockerfile_missing`, `multi_process_no_web_route`, `secret_missing`, `remote_preflight_failed`, `remote_preflight_after_prepare_failed`, `deploy_blocked_local_checks`, `release_command_failed`, `probe_failed`, `dotenv_rejected`, `host_key_changed`
 

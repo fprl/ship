@@ -127,6 +127,7 @@ type shipCmd struct {
 	Branch  string `name:"branch" hidden:"" help:"Branch name to use when HEAD is detached."`
 	TLS     string `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode for this deploy."`
 	JSON    bool   `name:"json" help:"Emit structured deployment JSON instead of the URL."`
+	Logs    bool   `name:"logs" short:"l" help:"Stream build and release-command logs while deploying."`
 	Rebuild bool   `name:"rebuild" hidden:"" help:"Refresh base images and bypass Podman's build cache."`
 }
 
@@ -135,7 +136,7 @@ func (c shipCmd) Run() error {
 	if err != nil {
 		return err
 	}
-	client.CmdShip(root, c.Branch, c.TLS, c.JSON, c.Rebuild)
+	client.CmdShip(root, c.Branch, c.TLS, c.JSON, c.Rebuild, c.Logs)
 	return nil
 }
 
