@@ -481,7 +481,7 @@ func previewReaperServiceUnit() string {
 		"",
 		"[Service]",
 		"Type=oneshot",
-		"ExecStart=/usr/local/bin/ship server env reap",
+		"ExecStart=/usr/local/bin/ship server --internal env reap",
 		"",
 	}, "\n")
 }
@@ -544,7 +544,7 @@ func bootConvergeServiceUnit() string {
 		"",
 		"[Service]",
 		"Type=oneshot",
-		"ExecStart=/usr/local/bin/ship server converge-boot",
+		"ExecStart=/usr/local/bin/ship server --internal converge-boot",
 		"Restart=on-failure",
 		"RestartSec=30s",
 		"",
@@ -580,7 +580,7 @@ func gcServiceUnit() string {
 		"",
 		"[Service]",
 		"Type=oneshot",
-		"ExecStart=/usr/local/bin/ship server gc",
+		"ExecStart=/usr/local/bin/ship server --internal gc",
 		"",
 	}, "\n")
 }
@@ -608,7 +608,7 @@ func doctorServiceUnit() string {
 		"",
 		"[Service]",
 		"Type=oneshot",
-		"ExecStart=/usr/local/bin/ship server doctor record",
+		"ExecStart=/usr/local/bin/ship server --internal doctor record",
 		"",
 	}, "\n")
 }

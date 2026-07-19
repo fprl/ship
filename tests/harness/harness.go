@@ -199,7 +199,7 @@ func SetEnv(env []string, key string, value string) []string {
 
 func PreviewEnvForBranch(t *testing.T, ssh func(string) string, app, branch string) string {
 	t.Helper()
-	out := ssh("sudo -n /usr/local/bin/ship server app preview resolve " + app + " " + ShellQuote(branch))
+	out := ssh("sudo -n /usr/local/bin/ship server --client-version dev app preview resolve " + app + " " + ShellQuote(branch))
 	return strings.TrimSpace(out)
 }
 

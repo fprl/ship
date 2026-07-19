@@ -12,6 +12,7 @@ import (
 	"github.com/fprl/ship/cmd/hostinstall"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/knownhosts"
+	"github.com/fprl/ship/internal/remoteprotocol"
 	"github.com/fprl/ship/internal/shipidentity"
 	"github.com/fprl/ship/internal/utils"
 	"github.com/fprl/ship/internal/version"
@@ -996,10 +997,7 @@ func main() {
 	}
 	ctx, err := parser.Parse(args)
 	if err != nil {
-		utils.DieError(errcat.New(errcat.CodeUsageError, errcat.Fields{
-			"detail":  err.Error(),
-			"command": "ship help",
-		}), 2)
+		utils.DieError(cliParseError(err), 2)
 	}
 	if err := ctx.Run(); err != nil {
 		if wantsServerAppExecError(args) {
@@ -1007,6 +1005,16 @@ func main() {
 		}
 		utils.DieError(err, 1)
 	}
+}
+
+func cliParseError(err error) error {
+	if coded, ok := errcat.As(err); ok {
+		return coded
+	}
+	return errcat.New(errcat.CodeUsageError, errcat.Fields{
+		"detail":  err.Error(),
+		"command": "ship help",
+	})
 }
 
 func wantsJSONError(args []string) bool {
@@ -1026,14 +1034,19 @@ func wantsServerJSONError(args []string) bool {
 }
 
 func wantsServerAppExecError(args []string) bool {
-	if len(args) < 3 || args[0] != "server" || args[1] != "app" {
+	if len(args) < 5 || args[0] != "server" {
 		return false
 	}
-	i := 2
-	for i < len(args) && args[i] == "--member-fingerprint" {
+	serverArgs := args[1:]
+	invocation, err := remoteprotocol.ParseClientArgs(serverArgs)
+	if err != nil || invocation.Namespace != "app" {
+		return false
+	}
+	i := invocation.NamespaceIndex + 1
+	for i < len(serverArgs) && serverArgs[i] == "--member-fingerprint" {
 		i += 2
 	}
-	return i < len(args) && args[i] == "exec"
+	return i < len(serverArgs) && serverArgs[i] == "exec"
 }
 
 func dieServerAppExecError(err error) {

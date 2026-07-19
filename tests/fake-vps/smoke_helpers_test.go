@@ -249,20 +249,20 @@ func (e *smokeEnv) withOwnerMemberFingerprint(command string) string {
 	if strings.Contains(rest, "--member-fingerprint") {
 		return command
 	}
-	namespace, tail, ok := strings.Cut(rest, " ")
-	if !ok || !smokeServerNamespaceAcceptsMemberFingerprint(namespace) {
+	parts := strings.SplitN(rest, " ", 4)
+	if len(parts) < 3 || parts[0] != "--client-version" || !smokeServerNamespaceAcceptsMemberFingerprint(parts[2]) {
 		return command
 	}
-	inserted := smokeRemoteServerCommandPrefix + namespace + " --member-fingerprint " + h.ShellQuote(fingerprint)
-	if tail != "" {
-		inserted += " " + tail
+	inserted := smokeRemoteServerCommandPrefix + strings.Join(parts[:3], " ") + " --member-fingerprint " + h.ShellQuote(fingerprint)
+	if len(parts) == 4 {
+		inserted += " " + parts[3]
 	}
 	return leading + inserted
 }
 
 func smokeServerNamespaceAcceptsMemberFingerprint(namespace string) bool {
 	switch namespace {
-	case "app", "approval", "doctor", "key", "webhook", "version", "update":
+	case "app", "approval", "config", "doctor", "gc", "key", "webhook":
 		return true
 	default:
 		return false

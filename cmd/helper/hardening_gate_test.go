@@ -73,7 +73,7 @@ func TestDataSavePreviewRemainsUngatedAndAgentShellUsesSameDispatch(t *testing.T
 	if _, err := authorizeHelper(helperVerbDataSave, authTargetForAppEnv("api", "preview-abcd", "save", "data=save")); err != nil {
 		t.Fatalf("preview data-save authorization = %v", err)
 	}
-	action, err := agentShellActionFor("sudo -n /usr/local/bin/ship server app data save api production", "SHA256:agent")
+	action, err := agentShellActionFor("sudo -n /usr/local/bin/ship server --client-version dev app data save api production", "SHA256:agent")
 	if err != nil || action.Kind != agentShellActionExec {
 		t.Fatalf("agent data-save dispatch = %+v, err=%v", action, err)
 	}

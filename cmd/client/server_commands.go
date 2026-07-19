@@ -4,10 +4,21 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/fprl/ship/internal/deploybundle"
+	"github.com/fprl/ship/internal/remoteprotocol"
 	"github.com/fprl/ship/internal/utils"
+	"github.com/fprl/ship/internal/version"
 )
 
 func serverCommand(args ...string) string {
+	return renderServerCommand(remoteprotocol.ClientArgs(version.Version, args...)...)
+}
+
+func serverRepairCommand(args ...string) string {
+	return renderServerCommand(args...)
+}
+
+func renderServerCommand(args ...string) string {
 	parts := []string{"sudo", "-n", "/usr/local/bin/ship", "server"}
 	for _, arg := range args {
 		parts = append(parts, utils.ShellEscape(arg))
@@ -25,17 +36,17 @@ func serverDoctorCommand(server string, jsonFlag bool) string {
 
 func serverVersionCommand(jsonFlag bool) string {
 	if jsonFlag {
-		return serverCommand("version", "--json")
+		return serverRepairCommand("version", "--json")
 	}
-	return serverCommand("version")
+	return serverRepairCommand("version")
 }
 
 func serverBoxStatusCommand() string {
-	return serverCommand("version", "--json", "--summary")
+	return serverRepairCommand("version", "--json", "--summary")
 }
 
 func serverUpdateCommand(version string) string {
-	return serverCommand("update", "--version", version)
+	return serverRepairCommand("update", "--version", version)
 }
 
 func serverAppSetupEnvCommand(appName string, envName string) string {
@@ -56,7 +67,7 @@ type deployIdentityJSON struct {
 	GitAuthor     string `json:"git_author"`
 }
 
-func serverAppApplyCommand(appName string, envName string, tarballPath string, manifestPath string, plan localDeployPlan, actor deployIdentityJSON, rebuild bool, logs bool, tlsMode string, previewAlias string) string {
+func serverAppApplyCommand(appName string, envName string, bundle deploybundle.Metadata, plan localDeployPlan, actor deployIdentityJSON, rebuild bool, logs bool, tlsMode string, previewAlias string) string {
 	args := []string{"app", "apply", "--progress"}
 	if rebuild {
 		args = append(args, "--rebuild")
@@ -74,8 +85,8 @@ func serverAppApplyCommand(appName string, envName string, tarballPath string, m
 		args = append(args, "--dirty")
 	}
 	args = append(args,
-		"--tarball", tarballPath,
-		"--manifest", manifestPath,
+		"--bundle-size", fmt.Sprintf("%d", bundle.Size),
+		"--bundle-sha256", bundle.SHA256,
 		"--sha", plan.Release,
 		"--base-commit", plan.BaseCommit,
 		"--created-at", plan.CreatedAt.Format(timeRFC3339UTC),

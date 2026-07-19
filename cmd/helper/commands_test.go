@@ -8,6 +8,9 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/fprl/ship/internal/cliargs"
+	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/remoteprotocol"
+	"github.com/fprl/ship/internal/version"
 )
 
 func parseServerCommand(t *testing.T, args ...string) *ServerCmd {
@@ -21,10 +24,58 @@ func parseServerCommand(t *testing.T, args ...string) *ServerCmd {
 	if err != nil {
 		t.Fatalf("parser setup failed: %v", err)
 	}
+	args = testServerProtocolArgs(args)
 	if _, err := parser.Parse(args); err != nil {
 		t.Fatalf("parse %v failed: %v", args, err)
 	}
 	return cli
+}
+
+func testServerProtocolArgs(args []string) []string {
+	if len(args) == 0 || remoteprotocol.RepairNamespaceAllowed(args[0]) {
+		return args
+	}
+	if args[0] == "env" || args[0] == "converge-boot" || (args[0] == "doctor" && len(args) > 1 && args[1] == "record") {
+		return append([]string{"--internal"}, args...)
+	}
+	if remoteprotocol.ClientNamespaceAllowed(args[0]) {
+		return remoteprotocol.ClientArgs(version.Version, args...)
+	}
+	return args
+}
+
+func TestServerCLIEnforcesExactClientVersion(t *testing.T) {
+	previousRequireRoot := requireRoot
+	requireRoot = func() error { return nil }
+	t.Cleanup(func() { requireRoot = previousRequireRoot })
+	previous := version.Version
+	version.Version = "v0.9.2"
+	t.Cleanup(func() { version.Version = previous })
+
+	for _, tt := range []struct {
+		name string
+		args []string
+		code errcat.Code
+	}{
+		{name: "missing", args: []string{"app", "ls"}, code: errcat.CodeClientBehindHelper},
+		{name: "helper behind", args: []string{"--client-version", "v0.9.3", "app", "ls"}, code: errcat.CodeBoxHelperBehind},
+		{name: "client behind", args: []string{"--client-version", "v0.9.1", "app", "ls"}, code: errcat.CodeClientBehindHelper},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cli := &ServerCmd{}
+			parser, err := kong.New(cli, kong.Name("ship"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parser.Parse(tt.args); !errcat.Is(err, tt.code) {
+				t.Fatalf("parse %v = %v, want %s", tt.args, err, tt.code)
+			}
+		})
+	}
+
+	parseServerCommand(t, "app", "ls")
+	parseServerCommand(t, "version", "--json")
+	parseServerCommand(t, "--internal", "gc")
 }
 
 func TestServerAppExecPassthroughParserShapes(t *testing.T) {
@@ -64,7 +115,7 @@ func TestServerCLIParsesPrivilegedCommands(t *testing.T) {
 		{"app", "destroy", "api"},
 		{"app", "destroy-env", "api", "production"},
 		{"app", "destroy-env", "--purge", "api", "production"},
-		{"app", "apply", "--tarball", "/tmp/ship-deploy/x.tar", "--manifest", "/tmp/ship-deploy/x.toml", "--sha", "deadbeef", "--base-commit", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "--created-at", "2026-05-30T14:30:12Z", "api", "production"},
+		{"app", "apply", "--bundle-size", "1024", "--bundle-sha256", strings.Repeat("a", 64), "--sha", "deadbeef", "--base-commit", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "--created-at", "2026-05-30T14:30:12Z", "api", "production"},
 		{"app", "preview", "resolve-or-create", "api", "feat/x"},
 		{"app", "preview", "resolve", "api", "feat/x"},
 		{"app", "preview", "pin", "api", "feat/x"},

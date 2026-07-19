@@ -1081,3 +1081,22 @@ func TestProjectAppRootRejectsManifestDirectory(t *testing.T) {
 		t.Fatalf("expected directory error, got %v", err)
 	}
 }
+
+func TestServerAppExecErrorRecognizesVersionedProtocolHeader(t *testing.T) {
+	if !wantsServerAppExecError([]string{"server", "--client-version", "v0.9.2", "app", "--member-fingerprint", "SHA256:test", "exec", "api", "production", "env"}) {
+		t.Fatal("versioned app exec was not recognized")
+	}
+	if wantsServerAppExecError([]string{"server", "--client-version", "v0.9.2", "app", "status", "api", "production"}) {
+		t.Fatal("non-exec app command was recognized as exec")
+	}
+}
+
+func TestCLIParseErrorPreservesProtocolErrorCode(t *testing.T) {
+	original := errcat.New(errcat.CodeBoxHelperBehind, errcat.Fields{
+		"client_version": "v0.9.2", "helper_version": "v0.9.1", "server": "<box>",
+	})
+	got, ok := errcat.As(cliParseError(original))
+	if !ok || got.Code() != errcat.CodeBoxHelperBehind {
+		t.Fatalf("cliParseError() = %v, want %s", got, errcat.CodeBoxHelperBehind)
+	}
+}

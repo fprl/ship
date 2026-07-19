@@ -9,8 +9,10 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/knownhosts"
 	"github.com/fprl/ship/internal/memberkeys"
+	"github.com/fprl/ship/internal/remoteprotocol"
 	"github.com/fprl/ship/internal/shipidentity"
 	"github.com/fprl/ship/internal/utils"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -259,6 +261,21 @@ func (r *CommandRunner) RunSSH(server string, command string) (string, string, i
 // onStderrLine are omitted from returned stderr; ordinary warnings and SSH
 // diagnostics remain available to the normal error mapper.
 func (r *CommandRunner) RunSSHStreaming(server string, command string, onStderrLine func(string) bool) (string, string, int, error) {
+	return r.runSSHStreaming(server, command, nil, onStderrLine)
+}
+
+// RunSSHStreamingFile streams path as the remote command's stdin while
+// preserving the helper progress and error contracts.
+func (r *CommandRunner) RunSSHStreamingFile(server string, command string, path string, onStderrLine func(string) bool) (string, string, int, error) {
+	input, err := os.Open(path)
+	if err != nil {
+		return "", "", 1, err
+	}
+	defer input.Close()
+	return r.runSSHStreaming(server, command, input, onStderrLine)
+}
+
+func (r *CommandRunner) runSSHStreaming(server string, command string, input io.Reader, onStderrLine func(string) bool) (string, string, int, error) {
 	var args []string
 	if len(r.SshOptions) > 0 {
 		args = append(args, r.SshOptions...)
@@ -266,6 +283,7 @@ func (r *CommandRunner) RunSSHStreaming(server string, command string, onStderrL
 	command = r.withMemberFingerprint(command)
 	args = append(args, deploySSHTarget(server), command)
 	cmd := exec.Command("ssh", args...)
+	cmd.Stdin = input
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	stderrPipe, err := cmd.StderrPipe()
@@ -451,6 +469,17 @@ func (r *CommandRunner) withMemberFingerprint(command string) string {
 	rest := strings.TrimPrefix(serverCommand, remoteServerCommandPrefix)
 	if strings.Contains(rest, "--member-fingerprint") {
 		return command
+	}
+	parts := strings.SplitN(rest, " ", 4)
+	if len(parts) >= 3 {
+		if invocation, err := remoteprotocol.ParseClientArgs(parts[:3]); err == nil {
+			head := strings.Join(parts[:invocation.NamespaceIndex+1], " ")
+			injected := head + " --member-fingerprint " + utils.ShellEscape(fingerprint)
+			if len(parts) == 4 {
+				injected += " " + parts[3]
+			}
+			return prefix + remoteServerCommandPrefix + injected
+		}
 	}
 	namespace, tail, ok := strings.Cut(rest, " ")
 	if !ok {

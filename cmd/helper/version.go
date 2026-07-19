@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"sort"
 
+	"github.com/fprl/ship/internal/remoteprotocol"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 	"github.com/fprl/ship/internal/version"
@@ -62,11 +63,7 @@ func (c versionHelperCmd) Run() error {
 	if err != nil && !os.IsNotExist(err) {
 		utils.DieError(err, 1)
 	}
-	payload := struct {
-		Version      string `json:"version"`
-		ShipVersion  string `json:"ship_version"`
-		Architecture string `json:"architecture"`
-	}{Version: version.Version, ShipVersion: lastUpdate, Architecture: runtime.GOARCH}
+	payload := remoteprotocol.VersionResponse{Version: version.Version, ShipVersion: lastUpdate, Architecture: runtime.GOARCH}
 	if !c.Summary {
 		return json.NewEncoder(os.Stdout).Encode(payload)
 	}
@@ -75,10 +72,8 @@ func (c versionHelperCmd) Run() error {
 		utils.DieError(err, 1)
 	}
 	return json.NewEncoder(os.Stdout).Encode(struct {
-		Version      string `json:"version"`
-		ShipVersion  string `json:"ship_version"`
-		Architecture string `json:"architecture"`
-		Disk         struct {
+		remoteprotocol.VersionResponse
+		Disk struct {
 			Status   string `json:"status"`
 			Evidence string `json:"evidence"`
 		} `json:"disk"`
@@ -86,7 +81,7 @@ func (c versionHelperCmd) Run() error {
 		Members          *boxStatusMembersSummary `json:"members,omitempty"`
 		PendingApprovals int                      `json:"pending_approvals"`
 		Doctor           *boxStatusDoctorSummary  `json:"doctor,omitempty"`
-	}{Version: payload.Version, ShipVersion: payload.ShipVersion, Architecture: payload.Architecture, Disk: summary.Disk, Apps: summary.Apps, Members: summary.Members, PendingApprovals: summary.PendingApprovals, Doctor: summary.Doctor})
+	}{VersionResponse: payload, Disk: summary.Disk, Apps: summary.Apps, Members: summary.Members, PendingApprovals: summary.PendingApprovals, Doctor: summary.Doctor})
 }
 
 func readBoxStatusSummary() (boxStatusSummary, error) {

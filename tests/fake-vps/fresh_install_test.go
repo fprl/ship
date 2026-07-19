@@ -197,7 +197,7 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	e.ssh(t, "getent passwd deploy >/dev/null")
 	assertContains(t, e.ssh(t, "id -nG operator"), "sudo")
 	e.ssh(t, "grep -q 'operator ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/operator")
-	e.ssh(t, "grep -Fq 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server app *, /usr/local/bin/ship server doctor, /usr/local/bin/ship server doctor *, /usr/local/bin/ship server key *, /usr/local/bin/ship server approval *, /usr/local/bin/ship server config *, /usr/local/bin/ship server webhook *, /usr/local/bin/ship server gc *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *' /etc/sudoers.d/ship")
+	e.ssh(t, "grep -Fq 'deploy ALL=(root) NOPASSWD: /usr/local/bin/ship server --client-version * app *, /usr/local/bin/ship server --client-version * approval *, /usr/local/bin/ship server --client-version * config *, /usr/local/bin/ship server --client-version * doctor, /usr/local/bin/ship server --client-version * doctor *, /usr/local/bin/ship server --client-version * gc *, /usr/local/bin/ship server --client-version * key *, /usr/local/bin/ship server --client-version * webhook *, /usr/local/bin/ship server version, /usr/local/bin/ship server version *, /usr/local/bin/ship server update *' /etc/sudoers.d/ship")
 	e.ssh(t, "grep -q 'fake-vps-smoke' /home/operator/.ssh/authorized_keys")
 	e.ssh(t, "grep -q 'fake-vps-smoke' /home/deploy/.ssh/authorized_keys")
 	e.ssh(t, "test -d /etc/ship/secrets && test ! -e /etc/ship/providers && test ! -e /etc/ship/backups")
@@ -231,9 +231,9 @@ func (e *smokeEnv) assertFreshHostInstalled(t *testing.T) {
 	assertContains(t, systemctlLog, "enable ship-preview-reaper.timer")
 	assertContains(t, systemctlLog, "start ship-doctor.timer")
 	assertContains(t, systemctlLog, "enable ship-doctor.timer")
-	e.ssh(t, "grep -Fq 'ExecStart=/usr/local/bin/ship server env reap' /etc/systemd/system/ship-preview-reaper.service")
+	e.ssh(t, "grep -Fq 'ExecStart=/usr/local/bin/ship server --internal env reap' /etc/systemd/system/ship-preview-reaper.service")
 	e.ssh(t, "grep -Fq 'OnUnitActiveSec=1h' /etc/systemd/system/ship-preview-reaper.timer")
-	e.ssh(t, "grep -Fq 'ExecStart=/usr/local/bin/ship server doctor record' /etc/systemd/system/ship-doctor.service")
+	e.ssh(t, "grep -Fq 'ExecStart=/usr/local/bin/ship server --internal doctor record' /etc/systemd/system/ship-doctor.service")
 	e.ssh(t, "grep -Fq 'OnUnitActiveSec=24h' /etc/systemd/system/ship-doctor.timer")
 
 	ufwLog := e.ssh(t, "cat /run/ship-fresh-host/ufw.log")
@@ -417,7 +417,7 @@ func (e *smokeEnv) assertHostDoctorHealthy(t *testing.T) {
 
 func (e *smokeEnv) assertDoctorRecordingDeltaForStoppedReaper(t *testing.T) {
 	t.Helper()
-	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
+	e.dockerExec(t, "/usr/local/bin/ship server --internal doctor record")
 	state := readDoctorState(t, e)
 
 	e.ssh(t, "systemctl stop ship-preview-reaper.timer")
@@ -434,13 +434,13 @@ func (e *smokeEnv) assertDoctorRecordingDeltaForStoppedReaper(t *testing.T) {
 		t.Fatalf("unexpected reaper degraded check: %+v", reaper)
 	}
 
-	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
+	e.dockerExec(t, "/usr/local/bin/ship server --internal doctor record")
 	state = readDoctorState(t, e)
 	if findDoctorCheck(t, state.Checks, "reaper_timer").Status != "degraded" {
 		t.Fatalf("recorded checks did not reflect degraded reaper: %+v", state.Checks)
 	}
 
-	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
+	e.dockerExec(t, "/usr/local/bin/ship server --internal doctor record")
 	_ = readDoctorState(t, e)
 }
 

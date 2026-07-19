@@ -16,6 +16,7 @@ import (
 
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/memberkeys"
+	"github.com/fprl/ship/internal/remoteprotocol"
 	"github.com/fprl/ship/internal/store"
 	h "github.com/fprl/ship/tests/harness"
 )
@@ -299,24 +300,20 @@ func (e *evalCase) withOwnerMemberFingerprint(command string) string {
 	if strings.Contains(rest, "--member-fingerprint") {
 		return command
 	}
-	namespace, tail, ok := strings.Cut(rest, " ")
-	if !ok || !evalServerNamespaceAcceptsMemberFingerprint(namespace) {
+	parts := strings.SplitN(rest, " ", 4)
+	if len(parts) < 3 {
 		return command
 	}
-	inserted := evalRemoteServerCommandPrefix + namespace + " --member-fingerprint " + h.ShellQuote(fingerprint)
-	if tail != "" {
-		inserted += " " + tail
+	invocation, err := remoteprotocol.ParseClientArgs(parts[:3])
+	if err != nil || !remoteprotocol.ClientNamespaceAllowed(invocation.Namespace) {
+		return command
 	}
-	return leading + inserted
-}
-
-func evalServerNamespaceAcceptsMemberFingerprint(namespace string) bool {
-	switch namespace {
-	case "app", "approval", "doctor", "key":
-		return true
-	default:
-		return false
+	head := strings.Join(parts[:invocation.NamespaceIndex+1], " ")
+	inserted := head + " --member-fingerprint " + h.ShellQuote(fingerprint)
+	if len(parts) == 4 {
+		inserted += " " + parts[3]
 	}
+	return leading + evalRemoteServerCommandPrefix + inserted
 }
 
 func (e *evalCase) mustRun(t *testing.T, dir string, extraEnv []string, stdin []byte, name string, args ...string) string {
@@ -541,7 +538,7 @@ func setupExpiredPreviewReferenced(t *testing.T, e *evalCase) *evalProject {
 	e.mustRun(t, app, nil, nil, e.suite.shipBin)
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "evalpreview", "feature/expired")
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "evalpreview", previewEnv)
-	e.dockerExec(t, "/usr/local/bin/ship server env reap")
+	e.dockerExec(t, "/usr/local/bin/ship server --internal env reap")
 	checkoutBranch(t, e, app, "main")
 	return &evalProject{Dir: app, App: "evalpreview", Host: "eval-preview.example.com", Branch: "feature/expired"}
 }

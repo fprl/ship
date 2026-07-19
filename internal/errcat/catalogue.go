@@ -87,6 +87,7 @@ const (
 	CodeHostInstallPermissionDenied       Code = "host_install_permission_denied"
 	CodeHostInstallApplyFailed            Code = "host_install_apply_failed"
 	CodeDataSnapshotInvalid               Code = "data_snapshot_invalid"
+	CodeBoxHelperBehind                   Code = "box_helper_behind"
 	CodeClientBehindHelper                Code = "client_behind_helper"
 	CodeBoxVersionAmbiguous               Code = "box_version_ambiguous"
 	CodeBoxSetupRequired                  Code = "box_setup_required"
@@ -585,6 +586,12 @@ var catalogue = map[Code]Entry{
 		CauseTemplate:       "{detail}",
 		RemediationTemplate: "ship data ls",
 		Defaults:            Fields{"detail": "snapshot metadata or data payload is invalid"},
+	},
+	CodeBoxHelperBehind: {
+		Code:                CodeBoxHelperBehind,
+		MessageTemplate:     "box helper is out of date",
+		CauseTemplate:       "helper version {helper_version} does not match client version {client_version}",
+		RemediationTemplate: "ship box update {server}",
 	},
 	CodeClientBehindHelper: {
 		Code:                CodeClientBehindHelper,

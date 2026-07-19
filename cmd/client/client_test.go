@@ -2,6 +2,7 @@ package client
 
 import (
 	"archive/tar"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,9 +17,11 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/deploybundle"
 	"github.com/fprl/ship/internal/deployevent"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/knownhosts"
+	"github.com/fprl/ship/internal/remoteprotocol"
 )
 
 const clientAlicePublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK5lsspZV02+XPTr8x9fKLEByOHASzHLlF0+dvc+acJ/ ignored"
@@ -274,6 +277,20 @@ func TestRemoteCodedRemediationUsesLiteralTargetWhenBoxAddressIsUnknown(t *testi
 	}
 	if got, want := remote.Remediation(), "ship box member add <https-url|key|path> 203.0.113.44 --name <name>"; got != want {
 		t.Fatalf("remediation = %q, want %q", got, want)
+	}
+}
+
+func TestRemoteVersionMismatchBindsBoxUpdateTarget(t *testing.T) {
+	coded := errcat.New(errcat.CodeBoxHelperBehind, errcat.Fields{
+		"client_version": "v0.9.2", "helper_version": "v0.9.1", "server": "<box>",
+	})
+	err := sshResultError("fake-vps", coded.JSONLine(), "", 1, nil, "", "command failed", "ship")
+	remote, ok := errcat.As(err)
+	if !ok || remote.Code() != errcat.CodeBoxHelperBehind {
+		t.Fatalf("error = %v, want %s", err, errcat.CodeBoxHelperBehind)
+	}
+	if got := remote.Remediation(); got != "ship box update fake-vps" {
+		t.Fatalf("remediation = %q", got)
 	}
 }
 
@@ -597,7 +614,7 @@ func TestShipProgressEmitsHeartbeatWhenOutputIsPiped(t *testing.T) {
 }
 
 func TestServerAppApplyCommandEnablesDetailedLogsExplicitly(t *testing.T) {
-	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", testLocalDeployPlan("abc1234", false), testDeployIdentity(), false, true, "", "")
+	got := serverAppApplyCommand("api", "production", testDeployBundle(), testLocalDeployPlan("abc1234", false), testDeployIdentity(), false, true, "", "")
 	if !strings.Contains(got, "app apply --progress --logs") {
 		t.Fatalf("ship --logs did not enable remote log events: %s", got)
 	}
@@ -1019,6 +1036,37 @@ func TestSSHHostKeyFailureDoesNotScanStdout(t *testing.T) {
 	}
 }
 
+func TestRunSSHStreamingFileSendsBundleOnStdin(t *testing.T) {
+	bin := t.TempDir()
+	ssh := filepath.Join(bin, "ssh")
+	captured := filepath.Join(bin, "captured")
+	script := "#!/bin/sh\ncat > \"$CAPTURED_STDIN\"\nprintf 'remote warning\\n' >&2\n"
+	if err := os.WriteFile(ssh, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(bin, "deploy.tar")
+	want := []byte("one framed deploy bundle")
+	if err := os.WriteFile(bundle, want, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CAPTURED_STDIN", captured)
+	_, stderr, code, err := (&CommandRunner{}).RunSSHStreamingFile("203.0.113.7", "apply", bundle, nil)
+	if err != nil || code != 0 {
+		t.Fatalf("RunSSHStreamingFile(): code=%d stderr=%q err=%v", code, stderr, err)
+	}
+	got, err := os.ReadFile(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("remote stdin = %q, want %q", got, want)
+	}
+	if stderr != "remote warning\n" {
+		t.Fatalf("stderr = %q", stderr)
+	}
+}
+
 func TestReadBoxVersionPreservesTransportCodedError(t *testing.T) {
 	bin := t.TempDir()
 	ssh := filepath.Join(bin, "ssh")
@@ -1073,23 +1121,23 @@ func TestCommandRunnerInjectsMemberFingerprintAfterServerNamespace(t *testing.T)
 	}{
 		{
 			name: "app",
-			in:   "sudo -n /usr/local/bin/ship server app apply api production",
-			want: "sudo -n /usr/local/bin/ship server app --member-fingerprint SHA256:abc+/123 apply api production",
+			in:   "sudo -n /usr/local/bin/ship server --client-version dev app apply api production",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app --member-fingerprint SHA256:abc+/123 apply api production",
 		},
 		{
 			name: "doctor",
-			in:   "sudo -n /usr/local/bin/ship server doctor --json",
-			want: "sudo -n /usr/local/bin/ship server doctor --member-fingerprint SHA256:abc+/123 --json",
+			in:   "sudo -n /usr/local/bin/ship server --client-version dev doctor --json",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev doctor --member-fingerprint SHA256:abc+/123 --json",
 		},
 		{
 			name: "approval",
-			in:   "sudo -n /usr/local/bin/ship server approval ls --json",
-			want: "sudo -n /usr/local/bin/ship server approval --member-fingerprint SHA256:abc+/123 ls --json",
+			in:   "sudo -n /usr/local/bin/ship server --client-version dev approval ls --json",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev approval --member-fingerprint SHA256:abc+/123 ls --json",
 		},
 		{
 			name: "env prefix",
-			in:   "SHIP_ERROR_JSON=1 sudo -n /usr/local/bin/ship server app secret set api production KEY",
-			want: "SHIP_ERROR_JSON=1 sudo -n /usr/local/bin/ship server app --member-fingerprint SHA256:abc+/123 secret set api production KEY",
+			in:   "SHIP_ERROR_JSON=1 sudo -n /usr/local/bin/ship server --client-version dev app secret set api production KEY",
+			want: "SHIP_ERROR_JSON=1 sudo -n /usr/local/bin/ship server --client-version dev app --member-fingerprint SHA256:abc+/123 secret set api production KEY",
 		},
 		{
 			name: "non server",
@@ -1706,8 +1754,8 @@ func captureClientStderr(t *testing.T, fn func()) string {
 func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", false)
 	actor := testDeployIdentity()
-	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, false, false, "internal", "")
-	want := "sudo -n /usr/local/bin/ship server app apply --progress --tls internal --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
+	got := serverAppApplyCommand("api", "production", testDeployBundle(), plan, actor, false, false, "internal", "")
+	want := "sudo -n /usr/local/bin/ship server --client-version dev app apply --progress --tls internal --bundle-size 2048 --bundle-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1716,8 +1764,8 @@ func TestServerAppApplyCommandPutsTypedFlagsBeforePositional(t *testing.T) {
 func TestServerAppApplyCommandSupportsRebuild(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", true)
 	actor := testDeployIdentity()
-	got := serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, false, "", "")
-	want := "sudo -n /usr/local/bin/ship server app apply --progress --rebuild --dirty --tarball /tmp/ship-deploy/x.tar --manifest /tmp/ship-deploy/x.toml --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
+	got := serverAppApplyCommand("api", "production", testDeployBundle(), plan, actor, true, false, "", "")
+	want := "sudo -n /usr/local/bin/ship server --client-version dev app apply --progress --rebuild --dirty --bundle-size 2048 --bundle-sha256 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --sha abc1234 --base-commit abc1234abc1234abc1234abc1234abc1234abc1234 --created-at 2026-05-30T14:30:12Z --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1725,7 +1773,7 @@ func TestServerAppApplyCommandSupportsRebuild(t *testing.T) {
 
 func TestServerAppApplyCommandPassesPreviewAlias(t *testing.T) {
 	plan := testLocalDeployPlan("abc1234", false)
-	got := serverAppApplyCommand("api", "feat-x-ab12", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, testDeployIdentity(), false, false, "", "feat-x.preview.example.com")
+	got := serverAppApplyCommand("api", "feat-x-ab12", testDeployBundle(), plan, testDeployIdentity(), false, false, "", "feat-x.preview.example.com")
 	if !strings.Contains(got, "--preview-alias feat-x.preview.example.com") {
 		t.Fatalf("apply command did not include preview alias: %s", got)
 	}
@@ -1733,6 +1781,10 @@ func TestServerAppApplyCommandPassesPreviewAlias(t *testing.T) {
 
 func testDeployIdentity() deployIdentityJSON {
 	return deployIdentityJSON{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"}
+}
+
+func testDeployBundle() deploybundle.Metadata {
+	return deploybundle.Metadata{Size: 2048, SHA256: strings.Repeat("a", 64)}
 }
 
 func testLocalDeployPlan(release string, dirty bool) localDeployPlan {
@@ -1755,7 +1807,7 @@ func TestServerCommandBuildersMatchSudoersShape(t *testing.T) {
 		{name: "doctor json", command: serverDoctorCommand("example.com", true)},
 		{name: "setup env", command: serverAppSetupEnvCommand("api", "production")},
 		{name: "preflight json", command: serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL"})},
-		{name: "apply", command: serverAppApplyCommand("api", "production", "/tmp/ship-deploy/x.tar", "/tmp/ship-deploy/x.toml", plan, actor, true, false, "auto", "")},
+		{name: "apply", command: serverAppApplyCommand("api", "production", testDeployBundle(), plan, actor, true, false, "auto", "")},
 		{name: "status json", command: serverAppStatusCommand("api", "production")},
 		{name: "ls text", command: serverAppLsCommand(false)},
 		{name: "ls json", command: serverAppLsCommand(true)},
@@ -1813,18 +1865,18 @@ func TestServerAppLogsCommandTail(t *testing.T) {
 	}{
 		{
 			name: "unset omits tail flag",
-			want: "sudo -n /usr/local/bin/ship server app logs api production",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app logs api production",
 		},
 		{
 			name:   "zero includes tail flag",
 			follow: true,
 			tail:   intPtr(0),
-			want:   "sudo -n /usr/local/bin/ship server app logs --follow --tail=0 api production",
+			want:   "sudo -n /usr/local/bin/ship server --client-version dev app logs --follow --tail=0 api production",
 		},
 		{
 			name: "positive includes tail flag",
 			tail: intPtr(50),
-			want: "sudo -n /usr/local/bin/ship server app logs --tail=50 api production",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app logs --tail=50 api production",
 		},
 	}
 
@@ -1877,18 +1929,13 @@ func assertServerCommandCoveredBySudoers(t *testing.T, command string) {
 }
 
 func serverSubcommandCoveredBySudoers(subcommand string) bool {
-	return strings.HasPrefix(subcommand, "app ") ||
-		subcommand == "doctor" ||
-		strings.HasPrefix(subcommand, "doctor ") ||
-		strings.HasPrefix(subcommand, "key ") ||
-		strings.HasPrefix(subcommand, "approval ") ||
-		strings.HasPrefix(subcommand, "config ") ||
-		strings.HasPrefix(subcommand, "webhook ")
+	invocation, err := remoteprotocol.ParseClientArgs(strings.Fields(subcommand))
+	return err == nil && remoteprotocol.ClientNamespaceAllowed(invocation.Namespace)
 }
 
 func TestServerAppSetupEnvCommand(t *testing.T) {
 	got := serverAppSetupEnvCommand("api", "production")
-	want := "sudo -n /usr/local/bin/ship server app setup-env api production"
+	want := "sudo -n /usr/local/bin/ship server --client-version dev app setup-env api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1896,7 +1943,7 @@ func TestServerAppSetupEnvCommand(t *testing.T) {
 
 func TestServerAppPreflightJSONCommandIncludesRequiredSecrets(t *testing.T) {
 	got := serverAppPreflightJSONCommand("api", "production", []string{"DATABASE_URL", "API_KEY"})
-	want := "sudo -n /usr/local/bin/ship server app preflight --json --secret DATABASE_URL --secret API_KEY api production"
+	want := "sudo -n /usr/local/bin/ship server --client-version dev app preflight --json --secret DATABASE_URL --secret API_KEY api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1904,13 +1951,13 @@ func TestServerAppPreflightJSONCommandIncludesRequiredSecrets(t *testing.T) {
 
 func TestServerAppLsCommandSupportsJSON(t *testing.T) {
 	got := serverAppLsCommand(false)
-	want := "sudo -n /usr/local/bin/ship server app ls"
+	want := "sudo -n /usr/local/bin/ship server --client-version dev app ls"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppLsCommand(true)
-	want = "sudo -n /usr/local/bin/ship server app ls --json"
+	want = "sudo -n /usr/local/bin/ship server --client-version dev app ls --json"
 	if got != want {
 		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1927,7 +1974,7 @@ func TestServerBoxStatusCommandUsesCompactVersionSummary(t *testing.T) {
 func TestServerAppWhyCommand(t *testing.T) {
 	// The helper always emits journal JSON; the command carries no flag.
 	got := serverAppWhyCommand("api", "production")
-	want := "sudo -n /usr/local/bin/ship server app why api production"
+	want := "sudo -n /usr/local/bin/ship server --client-version dev app why api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1935,13 +1982,13 @@ func TestServerAppWhyCommand(t *testing.T) {
 
 func TestServerAppExecCommand(t *testing.T) {
 	got := serverAppExecCommand("api", "production", false, []string{"sh", "-c", "exit 7"})
-	want := "sudo -n /usr/local/bin/ship server app exec api production -- sh -c 'exit 7'"
+	want := "sudo -n /usr/local/bin/ship server --client-version dev app exec api production -- sh -c 'exit 7'"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppExecCommand("api", "production", true, []string{"env"})
-	want = "sudo -n /usr/local/bin/ship server app exec --tty api production -- env"
+	want = "sudo -n /usr/local/bin/ship server --client-version dev app exec --tty api production -- env"
 	if got != want {
 		t.Fatalf("unexpected tty command:\nwant: %s\n got: %s", want, got)
 	}
@@ -1950,13 +1997,13 @@ func TestServerAppExecCommand(t *testing.T) {
 func TestServerAppRollbackCommandSupportsRelease(t *testing.T) {
 	actor := testDeployIdentity()
 	got := serverAppRollbackCommand("api", "production", "", actor)
-	want := "sudo -n /usr/local/bin/ship server app rollback --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
+	want := "sudo -n /usr/local/bin/ship server --client-version dev app rollback --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppRollbackCommand("api", "production", "abc1234", actor)
-	want = "sudo -n /usr/local/bin/ship server app rollback --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production abc1234"
+	want = "sudo -n /usr/local/bin/ship server --client-version dev app rollback --ssh-key-comment fake-vps-smoke --git-author 'Smoke <smoke@example.com>' api production abc1234"
 	if got != want {
 		t.Fatalf("unexpected release command:\nwant: %s\n got: %s", want, got)
 	}
@@ -2091,26 +2138,6 @@ func TestRenderWhyProbeFailure(t *testing.T) {
 	}
 }
 
-func TestFailDeployAfterRemoteDirPreservesSingleCodedErrorShape(t *testing.T) {
-	cleaned := false
-	_, err := failDeployAfterRemoteDir(func() { cleaned = true }, errcat.New(errcat.CodeProbeFailed, errcat.Fields{
-		"detail": "health check failed for web",
-	}))
-	if !cleaned {
-		t.Fatal("cleanup was not called")
-	}
-	if !errcat.Is(err, errcat.CodeProbeFailed) {
-		t.Fatalf("expected probe_failed to survive cleanup, got %v", err)
-	}
-	text := err.Error()
-	if count := strings.Count(text, "next:"); count != 1 {
-		t.Fatalf("expected exactly one next line, got %d:\n%s", count, text)
-	}
-	if strings.Contains(text, "operation failed\noperation failed") {
-		t.Fatalf("coded deploy error was double-wrapped:\n%s", text)
-	}
-}
-
 func TestStatusFromAppListIncludesShippedBy(t *testing.T) {
 	ctx := &config.AppContext{
 		AppName:          "api",
@@ -2182,12 +2209,12 @@ func TestServerAppDataSnapshotCommands(t *testing.T) {
 		{
 			name: "save",
 			got:  serverAppDataSaveCommand("api", "production"),
-			want: "sudo -n /usr/local/bin/ship server app data save api production",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app data save api production",
 		},
 		{
 			name: "restore",
 			got:  serverAppDataRestoreCommand("api", "production", "/tmp/ship-deploy/snapshot.data.tar.gz"),
-			want: "sudo -n /usr/local/bin/ship server app data restore --archive /tmp/ship-deploy/snapshot.data.tar.gz api production",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app data restore --archive /tmp/ship-deploy/snapshot.data.tar.gz api production",
 		},
 	}
 	for _, tt := range tests {
@@ -2201,7 +2228,7 @@ func TestServerAppDataSnapshotCommands(t *testing.T) {
 
 func TestServerAppDestroyEnvCommand(t *testing.T) {
 	got := serverAppDestroyEnvCommand("api", "production")
-	want := "sudo -n /usr/local/bin/ship server app destroy-env --purge api production"
+	want := "sudo -n /usr/local/bin/ship server --client-version dev app destroy-env --purge api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
@@ -2216,32 +2243,32 @@ func TestServerAppPreviewCommands(t *testing.T) {
 		{
 			name: "resolve or create",
 			got:  serverAppPreviewResolveOrCreateCommand("api", "feat/x"),
-			want: "sudo -n /usr/local/bin/ship server app preview resolve-or-create api feat/x",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app preview resolve-or-create api feat/x",
 		},
 		{
 			name: "resolve",
 			got:  serverAppPreviewResolveCommand("api", "feat/x"),
-			want: "sudo -n /usr/local/bin/ship server app preview resolve api feat/x",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app preview resolve api feat/x",
 		},
 		{
 			name: "pin",
 			got:  serverAppPreviewPinCommand("api", "feat/x"),
-			want: "sudo -n /usr/local/bin/ship server app preview pin api feat/x",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app preview pin api feat/x",
 		},
 		{
 			name: "unpin",
 			got:  serverAppPreviewUnpinCommand("api", "feat/x"),
-			want: "sudo -n /usr/local/bin/ship server app preview unpin api feat/x",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app preview unpin api feat/x",
 		},
 		{
 			name: "preview share",
 			got:  serverAppPreviewShareCommand("api", "feat-x-abcd", false),
-			want: "sudo -n /usr/local/bin/ship server app preview share api feat-x-abcd",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app preview share api feat-x-abcd",
 		},
 		{
 			name: "preview share rotate",
 			got:  serverAppPreviewShareCommand("api", "feat-x-abcd", true),
-			want: "sudo -n /usr/local/bin/ship server app preview share --rotate api feat-x-abcd",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app preview share --rotate api feat-x-abcd",
 		},
 	}
 	for _, tt := range tests {
@@ -2262,12 +2289,12 @@ func TestServerAppDataCommands(t *testing.T) {
 		{
 			name: "fork",
 			got:  serverAppDataForkCommand("api", "feat-x-abcd"),
-			want: "sudo -n /usr/local/bin/ship server app data fork api feat-x-abcd",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app data fork api feat-x-abcd",
 		},
 		{
 			name: "reset",
 			got:  serverAppDataResetCommand("api", "feat-x-abcd"),
-			want: "sudo -n /usr/local/bin/ship server app data reset api feat-x-abcd",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev app data reset api feat-x-abcd",
 		},
 	}
 	for _, tt := range tests {
@@ -2346,12 +2373,12 @@ func TestServerDoctorCommandSupportsJSON(t *testing.T) {
 		{
 			name: "doctor text",
 			got:  serverDoctorCommand("example.com", false),
-			want: "sudo -n /usr/local/bin/ship server doctor --box-target example.com",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev doctor --box-target example.com",
 		},
 		{
 			name: "doctor json",
 			got:  serverDoctorCommand("example.com", true),
-			want: "sudo -n /usr/local/bin/ship server doctor --box-target example.com --json",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev doctor --box-target example.com --json",
 		},
 	}
 
@@ -2373,17 +2400,17 @@ func TestServerApprovalCommands(t *testing.T) {
 		{
 			name: "list text",
 			got:  serverApprovalLsCommand(false),
-			want: "sudo -n /usr/local/bin/ship server approval ls",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev approval ls",
 		},
 		{
 			name: "list json",
 			got:  serverApprovalLsCommand(true),
-			want: "sudo -n /usr/local/bin/ship server approval ls --json",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev approval ls --json",
 		},
 		{
 			name: "grant",
 			got:  serverApprovalGrantCommand("abc123xy"),
-			want: "sudo -n /usr/local/bin/ship server approval grant abc123xy",
+			want: "sudo -n /usr/local/bin/ship server --client-version dev approval grant abc123xy",
 		},
 	}
 	for _, tt := range tests {
@@ -2397,13 +2424,13 @@ func TestServerApprovalCommands(t *testing.T) {
 
 func TestServerAppSecretListCommandSupportsJSON(t *testing.T) {
 	got := serverAppSecretListCommand("api", "production", false)
-	want := "sudo -n /usr/local/bin/ship server app secret list api production"
+	want := "sudo -n /usr/local/bin/ship server --client-version dev app secret list api production"
 	if got != want {
 		t.Fatalf("unexpected command:\nwant: %s\n got: %s", want, got)
 	}
 
 	got = serverAppSecretListCommand("api", "production", true)
-	want = "sudo -n /usr/local/bin/ship server app secret list --json api production"
+	want = "sudo -n /usr/local/bin/ship server --client-version dev app secret list --json api production"
 	if got != want {
 		t.Fatalf("unexpected json command:\nwant: %s\n got: %s", want, got)
 	}

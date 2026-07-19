@@ -577,6 +577,7 @@ aliases = true
 - `box_app_rm_confirmation_required`: box app rm confirmation failed; cause: box app rm requires --confirm {app}; remediation: `ship box app rm {app} {box} --confirm {app}`; defaults: `box="<box>"`.
 - `box_config_key_unknown`: box config key is unknown; cause: {key} is not a valid box config key; valid keys: {valid}; remediation: `{command}`.
 - `box_config_value_invalid`: box config value is invalid; cause: {key}: {detail}; remediation: `{command}`.
+- `box_helper_behind`: box helper is out of date; cause: helper version {helper_version} does not match client version {client_version}; remediation: `ship box update {server}`.
 - `box_missing_tool`: box preflight failed; cause: required server tool is missing on {target}: {tool}; remediation: `ship box setup {target}`.
 - `box_not_initialized`: box preflight failed; cause: ship server API is missing at /usr/local/bin/ship on {target}; remediation: `ship box setup {target}`.
 - `box_setup_required`: box is not set up for ship; cause: the ship helper (or its sudo rules) is missing or stale on this box; remediation: `ship box setup {server}`.

@@ -8,10 +8,10 @@ import (
 )
 
 func TestStage5ClientCommandsAndRemediation(t *testing.T) {
-	if got := serverAppConvergeCommand("api", "production", true); !strings.Contains(got, "server app converge --json api production") {
+	if got := serverAppConvergeCommand("api", "production", true); !strings.Contains(got, "server --client-version dev app converge --json api production") {
 		t.Fatalf("app converge command=%q", got)
 	}
-	if got := serverGCCommand(true); got != "sudo -n /usr/local/bin/ship server gc --json" {
+	if got := serverGCCommand(true); got != "sudo -n /usr/local/bin/ship server --client-version dev gc --json" {
 		t.Fatalf("GC command=%q", got)
 	}
 	if convergenceNextStep != "ship converge" {

@@ -16,6 +16,7 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/sourcearchive"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -51,6 +52,7 @@ type appApplyCmd struct {
 	StaticHash    string                 `kong:"-"`
 	ScrubValues   []string               `kong:"-"`
 	ProgressOut   *deployProgressEmitter `kong:"-"`
+	PrivateDir    string                 `kong:"-"`
 }
 
 type applyReleaseResult struct {
@@ -60,30 +62,51 @@ type applyReleaseResult struct {
 
 var (
 	appendSanitizedDeployJournal = appendSanitizedDeployJournalEntry
+	authorizeAppApply            = authorizeHelper
 )
 
 func (c *appApplyCmd) Run() error {
-	c.ProgressOut = newDeployProgressEmitter(c.Progress, c.Logs, os.Stderr)
+	if c.ProgressOut == nil {
+		c.ProgressOut = newDeployProgressEmitter(c.Progress, c.Logs, os.Stderr)
+	}
+	if err := c.validateRequest(); err != nil {
+		return err
+	}
+	if err := c.authorize(); err != nil {
+		return err
+	}
+	return c.runAuthorized()
+}
+
+func (c *appApplyCmd) validateRequest() error {
 	if err := validateAppEnv(c.App, c.Env); err != nil {
-		utils.DieError(err, 1)
+		return err
 	}
 	if err := validateRelease(c.SHA); err != nil {
-		utils.DieError(err, 1)
+		return err
 	}
 	if _, err := c.releaseMetadata(); err != nil {
-		utils.DieError(err, 1)
+		return err
 	}
-	authorizeOrDie(helperVerbShip, authTargetForAppEnv(c.App, c.Env, "ship", "release="+c.SHA))
-	withAppEnvLock(c.App, c.Env, func() {
-		c.runLocked()
-	})
 	return nil
 }
 
-func (c *appApplyCmd) runLocked() {
-	if err := c.runLockedE(); err != nil {
-		utils.DieError(applyExitError(err), 1)
+func (c *appApplyCmd) authorize() error {
+	_, err := authorizeAppApply(helperVerbShip, authTargetForAppEnv(c.App, c.Env, "ship", "release="+c.SHA))
+	return err
+}
+
+func (c *appApplyCmd) runAuthorized() (err error) {
+	lock, err := acquireAppEnvLock(c.App, c.Env)
+	if err != nil {
+		return err
 	}
+	defer func() {
+		if releaseErr := lock.Release(); err == nil && releaseErr != nil {
+			err = fmt.Errorf("release lock for %s (%s): %w", c.App, c.Env, releaseErr)
+		}
+	}()
+	return applyExitError(c.runLockedE())
 }
 
 func applyExitError(err error) error {
@@ -399,34 +422,34 @@ func (c *appApplyCmd) releaseMetadata() (releaseMetadata, error) {
 }
 
 func (c *appApplyCmd) prepareApplyContext() (string, error) {
-	// host.ValidateDeployTmpSource resolves symlinks, ensures the
-	// path is a regular file under the deploy tmp root, and (if invoked
-	// via sudo) verifies the file is owned by the deploying user — so a
-	// malicious local user can't leave a file behind for the helper to
-	// pick up.
-	tarball, err := host.ValidateDeployTmpSource(c.Tarball)
+	// The public ingest interface created these files inside its private,
+	// helper-owned directory. Revalidate containment and file type at the
+	// internal apply seam before using either path.
+	if c.PrivateDir == "" {
+		return "", fmt.Errorf("deploy source is missing its private ingest directory")
+	}
+	tarball, err := host.ValidatePrivateDeploySource(c.Tarball, c.PrivateDir)
 	if err != nil {
 		return "", err
 	}
-	manifestPath, err := host.ValidateDeployTmpSource(c.Manifest)
+	manifestPath, err := host.ValidatePrivateDeploySource(c.Manifest, c.PrivateDir)
 	if err != nil {
 		return "", err
 	}
 
-	// Manifest sits in a temp dir created by the client; CheckManifest
-	// reads the rest of the working tree it expects (Dockerfile) from
-	// the SAME directory. So we extract the tarball alongside the
-	// uploaded manifest into a context dir and run the validator there.
+	// CheckManifest reads the Dockerfile and source tree beside ship.toml,
+	// so build one isolated context and install the framed manifest over
+	// any copy that may also exist in the source archive.
 	ctxDir, err := os.MkdirTemp(host.DeployTmpDir(), "ctx-")
 	if err != nil {
 		return "", err
 	}
 
-	if _, err := utils.RunChecked("tar", []string{"-xf", tarball, "-C", ctxDir}, ""); err != nil {
+	if err := sourcearchive.Extract(tarball, ctxDir); err != nil {
 		_ = os.RemoveAll(ctxDir)
 		return "", fmt.Errorf("extract tarball: %v", err)
 	}
-	// The uploaded manifest is authoritative — overwrite any manifest
+	// The framed manifest is authoritative — overwrite any manifest
 	// that might have been in the tarball.
 	if _, err := utils.RunChecked("install", []string{"-m", "0644", manifestPath, filepath.Join(ctxDir, "ship.toml")}, ""); err != nil {
 		_ = os.RemoveAll(ctxDir)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/deploybundle"
 	"github.com/fprl/ship/internal/deployevent"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/utils"
@@ -77,14 +78,9 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, logs 
 	}
 	progress.timed("Package")
 	defer os.RemoveAll(state.TarDir)
-	if err := shipUploadPhase(&state); err != nil {
-		return failDeployAfterRemoteDir(state.CleanupRemoteDir, err)
-	}
-	progress.timed("Upload")
 	if err := shipApplyPhase(&state, rebuild, tlsMode, logs, progress); err != nil {
-		return failDeployAfterRemoteDir(state.CleanupRemoteDir, err)
+		return ShipResult{}, err
 	}
-	state.CleanupRemoteDir()
 	progress.line("Live")
 	if state.Address.ProductionBranch && state.RoutePlan.NoConfiguredDomain {
 		progress.line(prodNoDomainNextLine(state.BoxIP))
@@ -97,19 +93,19 @@ func runShip(root string, branchName string, tlsMode string, rebuild bool, logs 
 }
 
 type shipRunState struct {
-	Root             string
-	Manifest         *config.Manifest
-	Address          deployAddress
-	Context          *config.AppContext
-	Runner           *CommandRunner
-	BoxIP            string
-	Plan             localDeployPlan
-	RoutePlan        deployRoutePlan
-	TarDir           string
-	LocalTar         string
-	LocalManifest    string
-	RemoteDir        string
-	CleanupRemoteDir func()
+	Root          string
+	Manifest      *config.Manifest
+	Address       deployAddress
+	Context       *config.AppContext
+	Runner        *CommandRunner
+	BoxIP         string
+	Plan          localDeployPlan
+	RoutePlan     deployRoutePlan
+	TarDir        string
+	LocalTar      string
+	LocalManifest string
+	LocalBundle   string
+	Bundle        deploybundle.Metadata
 }
 
 func shipAddressPhase(root, branchName string) (shipRunState, error) {
@@ -204,6 +200,7 @@ func shipTarPhase(state *shipRunState) error {
 	state.TarDir = tarDir
 	state.LocalTar = filepath.Join(tarDir, "source.tar")
 	state.LocalManifest = filepath.Join(tarDir, "ship.toml")
+	state.LocalBundle = filepath.Join(tarDir, "deploy.tar")
 	if err := writeSourceTar(state.Root, state.LocalTar, state.Plan.Dirty, state.Plan.ServeDirs); err != nil {
 		return err
 	}
@@ -211,35 +208,20 @@ func shipTarPhase(state *shipRunState) error {
 		if err := writeDeployManifest(filepath.Join(state.Root, ManifestFile), state.LocalManifest, state.Context.Routes); err != nil {
 			return operationError(fmt.Sprintf("write deploy manifest: %v", err), "ship")
 		}
-		return nil
-	}
-	if err := copyFile(filepath.Join(state.Root, ManifestFile), state.LocalManifest); err != nil {
+	} else if err := copyFile(filepath.Join(state.Root, ManifestFile), state.LocalManifest); err != nil {
 		return operationError(fmt.Sprintf("copy manifest: %v", err), "ship")
 	}
-	return nil
-}
-
-func shipUploadPhase(state *shipRunState) error {
-	state.RemoteDir = fmt.Sprintf("%s/%s-%s-%s", RemoteDeployTmpDir, state.Context.AppName, state.Address.EnvName, state.Plan.Release)
-	state.CleanupRemoteDir = func() {
-		_, _, _, _ = state.Runner.RunSSH(state.Context.Server, fmt.Sprintf("rm -rf %s", utils.ShellEscape(state.RemoteDir)))
+	metadata, err := deploybundle.Write(state.LocalBundle, state.LocalTar, state.LocalManifest)
+	if err != nil {
+		return operationError(fmt.Sprintf("package deploy bundle: %v", err), "ship")
 	}
-	if _, err := runSSHRequired(state.Runner, state.Context.Server, fmt.Sprintf("mkdir -p %s && chmod 0700 %s", utils.ShellEscape(state.RemoteDir), utils.ShellEscape(state.RemoteDir)), "failed to create remote deploy dir", "ship"); err != nil {
-		return err
-	}
-	if err := state.Runner.Upload(state.LocalTar, state.RemoteDir+"/source.tar", state.Context.Server); err != nil {
-		return operationError(fmt.Sprintf("failed to upload source: %v", err), "ship")
-	}
-	if err := state.Runner.Upload(state.LocalManifest, state.RemoteDir+"/ship.toml", state.Context.Server); err != nil {
-		return operationError(fmt.Sprintf("failed to upload manifest: %v", err), "ship")
-	}
+	state.Bundle = metadata
 	return nil
 }
 
 func shipApplyPhase(state *shipRunState, rebuild bool, tlsMode string, logs bool, progress *shipProgress) error {
 	applyCmd := serverAppApplyCommand(state.Context.AppName, state.Address.EnvName,
-		state.RemoteDir+"/source.tar",
-		state.RemoteDir+"/ship.toml",
+		state.Bundle,
 		state.Plan,
 		deployIdentity(state.Root, state.Runner, state.Context.Server),
 		rebuild,
@@ -247,7 +229,7 @@ func shipApplyPhase(state *shipRunState, rebuild bool, tlsMode string, logs bool
 		tlsMode,
 		state.RoutePlan.PreviewAlias,
 	)
-	stdout, stderr, code, runErr := state.Runner.RunSSHStreaming(state.Context.Server, applyCmd, func(line string) bool {
+	stdout, stderr, code, runErr := state.Runner.RunSSHStreamingFile(state.Context.Server, applyCmd, state.LocalBundle, func(line string) bool {
 		event, ok := deployevent.Parse(line)
 		if ok {
 			progress.event(event)
@@ -281,13 +263,6 @@ func shipOutputPhase(state shipRunState) (ShipResult, error) {
 		Release:   state.Plan.Release,
 		Processes: processNames(state.Plan.Context.Processes),
 	}, nil
-}
-
-func failDeployAfterRemoteDir(cleanup func(), err error) (ShipResult, error) {
-	if cleanup != nil {
-		cleanup()
-	}
-	return ShipResult{}, err
 }
 
 func deployDiagnosticsError(diags diagnostics) error {

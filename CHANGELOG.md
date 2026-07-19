@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.9.2
+
+Ship's local CLI and box helper now speak one explicit, lockstep remote
+protocol. Normal commands carry the exact client version and the box rejects
+version skew before running them; `ship box update` remains available as the
+repair path. There is no compatibility layer and no extra version-probe round
+trip on healthy commands.
+
+### Changed
+
+- A deploy is one SSH request. The client streams a size- and SHA-256-framed
+  bundle containing only `source.tar` and the authoritative `ship.toml`; the
+  helper owns a random private `0700` directory for the request and removes it
+  on both success and failure.
+- Deploy upload progress now comes from the same live request as build,
+  release, probe, and traffic-switch progress. `ship --logs` keeps streaming
+  scrubbed build and release-command output.
+- Sudoers, the forced agent shell, the client renderer, and helper validation
+  share one remote command vocabulary. Box-owned timers use an explicit
+  internal interface; normal members cannot invoke it.
+
+### Fixed
+
+- Client-chosen deploy staging directories and the two-step rsync/apply gap are
+  gone. The remaining rsync allowlist is limited to the existing data-restore
+  snapshot path.
+- Source archives are extracted by a confined reader that rejects path
+  escapes, unsafe symlinks, devices, and entry-type changes while preserving
+  normal Git/GNU tar metadata and repeated generated static files.
+- Failed bundle receipt, build, release, or probe paths return through the
+  ingest owner, so private deploy state is cleaned up reliably instead of
+  being skipped by a deep process exit.
+
 ## v0.9.1
 
 Dirty Preview deploys now use Git's deployment boundary instead of archiving

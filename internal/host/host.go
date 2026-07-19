@@ -87,6 +87,32 @@ func DeployUserFromSudo() (string, error) {
 // is owned by SUDO_UID. This closes the door on a local user seeding
 // files into /tmp/ship-deploy for the helper to act on.
 func ValidateDeployTmpSource(path string) (string, error) {
+	resolved, err := validateRegularFileWithin(path, DeployTmpDir())
+	if err != nil {
+		return "", err
+	}
+
+	sudoUid := os.Getenv("SUDO_UID")
+	if sudoUid != "" {
+		expectedUid, err := strconv.Atoi(sudoUid)
+		if err != nil {
+			return "", fmt.Errorf("invalid SUDO_UID")
+		}
+		if err := verifyFileOwner(resolved, expectedUid); err != nil {
+			return "", err
+		}
+	}
+	return resolved, nil
+}
+
+// ValidatePrivateDeploySource validates a helper-owned ingest file. Unlike
+// ValidateDeployTmpSource it deliberately has no SUDO_UID ownership contract:
+// the privileged helper created both the private directory and the file.
+func ValidatePrivateDeploySource(path, privateDir string) (string, error) {
+	return validateRegularFileWithin(path, privateDir)
+}
+
+func validateRegularFileWithin(path, base string) (string, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
@@ -95,9 +121,9 @@ func ValidateDeployTmpSource(path string) (string, error) {
 	if err != nil {
 		resolved = absPath // best effort if doesn't exist
 	}
-	tmpRoot, err := filepath.EvalSymlinks(DeployTmpDir())
+	tmpRoot, err := filepath.EvalSymlinks(base)
 	if err != nil {
-		tmpRoot = DeployTmpDir()
+		tmpRoot = base
 	}
 	if !PathIsRelativeTo(resolved, tmpRoot) {
 		return "", fmt.Errorf("source file must live under %s", tmpRoot)
@@ -111,16 +137,6 @@ func ValidateDeployTmpSource(path string) (string, error) {
 		return "", fmt.Errorf("source path is not a regular file: %s", path)
 	}
 
-	sudoUid := os.Getenv("SUDO_UID")
-	if sudoUid != "" {
-		expectedUid, err := strconv.Atoi(sudoUid)
-		if err != nil {
-			return "", fmt.Errorf("invalid SUDO_UID")
-		}
-		if err := verifyFileOwner(resolved, expectedUid); err != nil {
-			return "", err
-		}
-	}
 	return resolved, nil
 }
 

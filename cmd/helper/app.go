@@ -8,7 +8,7 @@ type appCmd struct {
 	Preflight         appPreflightCmd  `cmd:"preflight" help:"Run read-only deploy preflight checks for one app env."`
 	Destroy           appDestroyCmd    `cmd:"destroy" help:"Tear down every environment for one app."`
 	DestroyEnv        appDestroyEnvCmd `cmd:"destroy-env" help:"Tear down one env: containers, files, user, network."`
-	Apply             appApplyCmd      `cmd:"apply" help:"Build the image, start processes, and apply the Caddy fragment from an uploaded manifest."`
+	Apply             appIngestCmd     `cmd:"apply" help:"Receive one deploy bundle, build the image, start processes, and apply routes."`
 	Converge          appConvergeCmd   `cmd:"converge" help:"Make the runtime match active.json without source files."`
 	Ls                appLsCmd         `cmd:"ls" help:"List app environments visible on this host."`
 	Status            appStatusCmd     `cmd:"status" help:"Show running processes for one (app, env) pair."`

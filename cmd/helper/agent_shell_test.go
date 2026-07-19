@@ -15,44 +15,44 @@ func TestAgentShellAllowsHelperProtocolAndForcesPinnedFingerprint(t *testing.T) 
 	}{
 		{
 			name:     "plain helper",
-			original: "sudo -n /usr/local/bin/ship server app ls --json",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "ls", "--json"},
+			original: "sudo -n /usr/local/bin/ship server --client-version dev app ls --json",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "--client-version", "dev", "app", "--member-fingerprint", "SHA256:agent", "ls", "--json"},
 		},
 		{
 			name:     "lying fingerprint",
-			original: "sudo -n /usr/local/bin/ship server app --member-fingerprint SHA256:owner ls --json",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "ls", "--json"},
+			original: "sudo -n /usr/local/bin/ship server --client-version dev app --member-fingerprint SHA256:owner ls --json",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "--client-version", "dev", "app", "--member-fingerprint", "SHA256:agent", "ls", "--json"},
 		},
 		{
 			// box webhook must reach the helper so its role check can
 			// return approval_required — the agent-shell is the transport
 			// gate, not the authorization boundary (§17).
 			name:     "webhook passes to helper role check",
-			original: "sudo -n /usr/local/bin/ship server webhook set https://example.com/hook",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "webhook", "--member-fingerprint", "SHA256:agent", "set", "https://example.com/hook"},
+			original: "sudo -n /usr/local/bin/ship server --client-version dev webhook set https://example.com/hook",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "--client-version", "dev", "webhook", "--member-fingerprint", "SHA256:agent", "set", "https://example.com/hook"},
 		},
 		{
 			name:     "config passes to helper role check",
-			original: "sudo -n /usr/local/bin/ship server config set webhook.url https://example.com/hook",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "config", "--member-fingerprint", "SHA256:agent", "set", "webhook.url", "https://example.com/hook"},
+			original: "sudo -n /usr/local/bin/ship server --client-version dev config set webhook.url https://example.com/hook",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "--client-version", "dev", "config", "--member-fingerprint", "SHA256:agent", "set", "webhook.url", "https://example.com/hook"},
 		},
 		{
 			name:     "quoted helper arg",
-			original: "sudo -n /usr/local/bin/ship server app apply --git-author 'Smoke <smoke@example.com>' api production",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "apply", "--git-author", "Smoke <smoke@example.com>", "api", "production"},
+			original: "sudo -n /usr/local/bin/ship server --client-version dev app apply --git-author 'Smoke <smoke@example.com>' api production",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "--client-version", "dev", "app", "--member-fingerprint", "SHA256:agent", "apply", "--git-author", "Smoke <smoke@example.com>", "api", "production"},
 		},
 		{
 			// Kong applies last-value-wins, so an inline `=value` form left
 			// in the tail would override the pinned fingerprint and let an
 			// agent key authorize as an arbitrary owner. It must be stripped.
 			name:     "lying fingerprint inline equals form",
-			original: "sudo -n /usr/local/bin/ship server app destroy api --member-fingerprint=SHA256:owner",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "destroy", "api"},
+			original: "sudo -n /usr/local/bin/ship server --client-version dev app destroy api --member-fingerprint=SHA256:owner",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "--client-version", "dev", "app", "--member-fingerprint", "SHA256:agent", "destroy", "api"},
 		},
 		{
 			name:     "lying fingerprint after literal separator stays positional",
-			original: "sudo -n /usr/local/bin/ship server app destroy api -- --member-fingerprint=SHA256:owner",
-			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "app", "--member-fingerprint", "SHA256:agent", "destroy", "api", "--", "--member-fingerprint=SHA256:owner"},
+			original: "sudo -n /usr/local/bin/ship server --client-version dev app destroy api -- --member-fingerprint=SHA256:owner",
+			want:     []string{"sudo", "-n", "/usr/local/bin/ship", "server", "--client-version", "dev", "app", "--member-fingerprint", "SHA256:agent", "destroy", "api", "--", "--member-fingerprint=SHA256:owner"},
 		},
 	}
 	for _, tt := range tests {
@@ -71,7 +71,7 @@ func TestAgentShellAllowsHelperProtocolAndForcesPinnedFingerprint(t *testing.T) 
 	}
 }
 
-func TestAgentShellAllowsDeployUploadShapes(t *testing.T) {
+func TestAgentShellAllowsDataRestoreUploadShapes(t *testing.T) {
 	tests := []struct {
 		name     string
 		original string
@@ -80,19 +80,19 @@ func TestAgentShellAllowsDeployUploadShapes(t *testing.T) {
 	}{
 		{
 			name:     "prepare remote dir",
-			original: "mkdir -p /tmp/ship-deploy/api-production-abc123 && chmod 0700 /tmp/ship-deploy/api-production-abc123",
+			original: "mkdir -p /tmp/ship-deploy/data-restore-production-123 && chmod 0700 /tmp/ship-deploy/data-restore-production-123",
 			kind:     agentShellActionPrepareUpload,
-			path:     "/tmp/ship-deploy/api-production-abc123",
+			path:     "/tmp/ship-deploy/data-restore-production-123",
 		},
 		{
 			name:     "cleanup remote dir",
-			original: "rm -rf /tmp/ship-deploy/api-production-abc123",
+			original: "rm -rf /tmp/ship-deploy/data-restore-production-123",
 			kind:     agentShellActionCleanupUpload,
-			path:     "/tmp/ship-deploy/api-production-abc123",
+			path:     "/tmp/ship-deploy/data-restore-production-123",
 		},
 		{
 			name:     "rsync receiver",
-			original: "rsync --server -vlogDtprze.iLsfxCIvu . /tmp/ship-deploy/api-production-abc123/source.tar",
+			original: "rsync --server -vlogDtprze.iLsfxCIvu . /tmp/ship-deploy/data-restore-production-123/snapshot.data.tar.gz",
 			kind:     agentShellActionExec,
 		},
 	}
@@ -111,15 +111,16 @@ func TestAgentShellAllowsDeployUploadShapes(t *testing.T) {
 
 func TestAgentShellRefusesInteractiveArbitraryAndInjectionCommands(t *testing.T) {
 	tests := map[string]string{
-		"interactive":       "",
-		"arbitrary command": "ls",
-		"unallowed helper":  "sudo -n /usr/local/bin/ship server env reap",
-		"semicolon":         "sudo -n /usr/local/bin/ship server app ls ; rm -rf /",
-		"subshell":          "sudo -n /usr/local/bin/ship server app ls $(rm -rf /)",
-		"newline":           "sudo -n /usr/local/bin/ship server app ls\nrm -rf /",
-		"bad prepare path":  "mkdir -p /tmp/not-ship && chmod 0700 /tmp/not-ship",
-		"bad cleanup path":  "rm -rf /tmp/ship-deploy/../../etc",
-		"bad rsync path":    "rsync --server -vlogDtprze.iLsfxCIvu . /etc/passwd",
+		"interactive":        "",
+		"arbitrary command":  "ls",
+		"unallowed helper":   "sudo -n /usr/local/bin/ship server env reap",
+		"semicolon":          "sudo -n /usr/local/bin/ship server --client-version dev app ls ; rm -rf /",
+		"subshell":           "sudo -n /usr/local/bin/ship server --client-version dev app ls $(rm -rf /)",
+		"newline":            "sudo -n /usr/local/bin/ship server --client-version dev app ls\nrm -rf /",
+		"bad prepare path":   "mkdir -p /tmp/not-ship && chmod 0700 /tmp/not-ship",
+		"bad cleanup path":   "rm -rf /tmp/ship-deploy/../../etc",
+		"bad rsync path":     "rsync --server -vlogDtprze.iLsfxCIvu . /etc/passwd",
+		"old deploy staging": "mkdir -p /tmp/ship-deploy/api-production-abc123 && chmod 0700 /tmp/ship-deploy/api-production-abc123",
 	}
 	for name, original := range tests {
 		t.Run(name, func(t *testing.T) {

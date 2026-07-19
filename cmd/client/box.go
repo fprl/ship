@@ -11,6 +11,7 @@ import (
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/names"
 	"github.com/fprl/ship/internal/release"
+	"github.com/fprl/ship/internal/remoteprotocol"
 	"github.com/fprl/ship/internal/utils"
 	"github.com/fprl/ship/internal/version"
 	"io"
@@ -46,9 +47,7 @@ func CmdBoxAppLs(server string, jsonFlag bool) {
 	fmt.Print(out)
 }
 
-type boxVersionPayload struct {
-	Version string `json:"version"`
-}
+type boxVersionPayload = remoteprotocol.VersionResponse
 
 type boxStatusSummaryPayload struct {
 	Version     string `json:"version"`

@@ -121,6 +121,9 @@ func (e *smokeEnv) testCaddyValidationRejectsMalformedFragment(t *testing.T) {
 
 func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
 	e.ensureSmokeHostSeed(t)
+	t.Cleanup(func() {
+		e.mustRun(t, e.repoRoot, nil, "docker", "cp", e.linuxBin, e.container+":/usr/local/bin/ship")
+	})
 	const oldVersion = "v0.4.0"
 	const currentVersion = "v0.4.1"
 	const newerVersion = "v0.4.2"
@@ -133,13 +136,13 @@ func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
 	mustMkdir(t, recordApp)
 	writeBoxVersionFixture(t, recordApp)
 	e.commitFixture(t, recordApp)
-	e.mustRun(t, e.repoRoot, nil, "docker", "cp", oldHelper, e.container+":/usr/local/bin/ship")
-
 	clientEnv := []string{"SHIP_LINUX_HELPER=" + currentHelper}
+	e.mustRun(t, e.repoRoot, nil, "docker", "cp", currentHelper, e.container+":/usr/local/bin/ship")
 	recorded := e.runCommand(t, recordApp, clientEnv, nil, clientBinary, "--tls", "internal")
 	if recorded.err != nil {
 		t.Fatalf("client deploy to record version failed: %v\nstdout:\n%s\nstderr:\n%s", recorded.err, recorded.stdout, recorded.stderr)
 	}
+	e.mustRun(t, e.repoRoot, nil, "docker", "cp", oldHelper, e.container+":/usr/local/bin/ship")
 	status := e.runCommand(t, e.repoRoot, clientEnv, nil, clientBinary, "box", "status", "fake-vps")
 	if status.err != nil {
 		t.Fatalf("stale helper status failed: %v\nstdout:\n%s\nstderr:\n%s", status.err, status.stdout, status.stderr)
@@ -164,10 +167,8 @@ func (e *smokeEnv) testBoxStatusAndUpdate(t *testing.T) {
 	if doctor.err == nil {
 		t.Fatal("doctor should remain non-green for unrelated box checks")
 	}
-	// Legacy host metadata no longer stores last-client data. With no completed
-	// update journal yet, helper_version is informationally OK while other
-	// doctor checks remain degraded/failed.
-	assertHelperVersionCheck(t, doctor.stdout, "ok")
+	assertContains(t, doctor.stdout+doctor.stderr, "box helper is out of date")
+	assertContains(t, doctor.stdout+doctor.stderr, `"remediation":"ship box update fake-vps"`)
 
 	updated := e.runCommand(t, e.repoRoot, clientEnv, nil, clientBinary, "box", "update", "fake-vps")
 	if updated.err != nil {
@@ -292,9 +293,9 @@ func (e *smokeEnv) buildStampedShip(t *testing.T, name, goos, stampedVersion str
 
 func (e *smokeEnv) assertShipSudoersMatchesRealHelperShape(t *testing.T) {
 	t.Helper()
-	e.ssh(t, "sudo -n /usr/local/bin/ship server app ls --json >/dev/null")
+	e.ssh(t, "sudo -n /usr/local/bin/ship server --client-version dev app ls --json >/dev/null")
 
-	result := e.run(t, e.repoRoot, nil, e.sshBin(), "fake-vps", "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server app ls --json")
+	result := e.run(t, e.repoRoot, nil, e.sshBin(), "fake-vps", "sudo -n env SHIP_ERROR_JSON=1 /usr/local/bin/ship server --client-version dev app ls --json")
 	if result.err == nil {
 		t.Fatalf("sudo accepted env-prefixed helper command; stdout:\n%s\nstderr:\n%s", result.stdout, result.stderr)
 	}
@@ -415,7 +416,7 @@ func (e *smokeEnv) testWebhookEvents(t *testing.T) {
 	e.ship(t, app, nil, "--tls", "internal")
 	previewEnv := h.PreviewEnvForBranch(t, func(command string) string { return e.ssh(t, command) }, "webhookapi", "feature/webhook")
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "webhookapi", previewEnv)
-	e.dockerExec(t, "/usr/local/bin/ship server env reap")
+	e.dockerExec(t, "/usr/local/bin/ship server --internal env reap")
 	reaped := sink.waitForEvent(t, webhookEventPreviewReaped)
 	assertWebhookSmokeField(t, reaped, "env", "Preview feature/webhook")
 	assertWebhookSmokeNested(t, reaped, "why.branch", "feature/webhook")
@@ -426,10 +427,10 @@ func (e *smokeEnv) testWebhookEvents(t *testing.T) {
 	// check (e.g. tls_certs for internal-cert routes) counts as newly
 	// degraded. Clearing the sink isolates the reaper_timer transition
 	// we actually induce next.
-	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
+	e.dockerExec(t, "/usr/local/bin/ship server --internal doctor record")
 	e.dockerExec(t, "rm -f "+sink.eventsPath)
 	e.dockerExec(t, "systemctl stop ship-preview-reaper.timer")
-	e.dockerExec(t, "/usr/local/bin/ship server doctor record")
+	e.dockerExec(t, "/usr/local/bin/ship server --internal doctor record")
 	doctor := sink.waitForEvent(t, webhookEventDoctorDegraded)
 	assertWebhookSmokeField(t, doctor, "_sink_path", "/box")
 	if box, _ := doctor["box"].(string); box == "" {
@@ -1194,7 +1195,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 	if pinned.Preview == nil || pinned.Preview.ExpiresAt != nil {
 		t.Fatalf("pin should clear expiry: %+v", pinned.Preview)
 	}
-	e.dockerExec(t, "/usr/local/bin/ship server env reap")
+	e.dockerExec(t, "/usr/local/bin/ship server --internal env reap")
 	e.dockerExec(t, "test -d "+identity.EnvRoot("previewapi", previewEnv))
 
 	e.ship(t, app, nil, "preview", "unpin", "feature/lifecycle")
@@ -1212,7 +1213,7 @@ func (e *smokeEnv) testPreviewLifecycle(t *testing.T) {
 		t.Fatalf("preview app ls summary missing fields: %+v", previewAppListEnv)
 	}
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "previewapi", previewEnv)
-	reapOutput := e.dockerExec(t, "/usr/local/bin/ship server env reap")
+	reapOutput := e.dockerExec(t, "/usr/local/bin/ship server --internal env reap")
 	assertContains(t, reapOutput, "Reaped preview previewapi ("+previewEnv+") branch=feature/lifecycle")
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("previewapi", previewEnv))
 	e.dockerExec(t, "test ! -e /etc/ship/secrets/previewapi/"+previewEnv)
@@ -1359,7 +1360,7 @@ func (e *smokeEnv) testPreviewProtection(t *testing.T) {
 	agentToken := agentParsed.Query().Get("ship")
 	e.dockerExec(t, "test -f "+capabilityFile)
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "guardapi", protectedEnv)
-	e.dockerExec(t, "/usr/local/bin/ship server env reap")
+	e.dockerExec(t, "/usr/local/bin/ship server --internal env reap")
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("guardapi", protectedEnv))
 	e.dockerExec(t, "test ! -e "+capabilityFile)
 	// Recreate the branch to obtain a live protected vhost after reap; its
@@ -1720,7 +1721,7 @@ func (e *smokeEnv) testAgentRoleApprovalFlow(t *testing.T) {
 		t.Fatalf("agent second preview ship should be allowed: %v\nstdout:\n%s\nstderr:\n%s", secondPreview.err, secondPreview.stdout, secondPreview.stderr)
 	}
 	lyingRollback := e.run(t, e.repoRoot, nil, e.sshBin(), "fake-vps",
-		"sudo -n /usr/local/bin/ship server app --member-fingerprint "+e.ownerFingerprint+
+		"sudo -n /usr/local/bin/ship server --client-version dev app --member-fingerprint "+e.ownerFingerprint+
 			" rollback --ssh-key-comment liar --git-author liar roleapi "+previewEnv+" "+firstPreviewRelease)
 	if lyingRollback.err != nil {
 		t.Fatalf("agent helper call with lying fingerprint should be pinned and allowed: %v\nstdout:\n%s\nstderr:\n%s", lyingRollback.err, lyingRollback.stdout, lyingRollback.stderr)
@@ -2160,7 +2161,7 @@ func (e *smokeEnv) testImagePruning(t *testing.T) {
 	assertFakeImageAbsentArtifact(t, e, "imgprune", previewEnv, previewArtifacts[0])
 
 	h.ForcePreviewExpired(t, func(command string) string { return e.dockerExec(t, command) }, "imgprune", previewEnv)
-	e.dockerExec(t, "/usr/local/bin/ship server env reap")
+	e.dockerExec(t, "/usr/local/bin/ship server --internal env reap")
 	assertFakeImageArtifacts(t, e, "imgprune", previewEnv)
 	e.dockerExec(t, "test ! -e "+identity.EnvRoot("imgprune", previewEnv))
 	e.dockerExec(t, "test ! -e /etc/ship/secrets/imgprune/"+previewEnv)

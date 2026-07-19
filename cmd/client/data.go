@@ -231,9 +231,8 @@ func runDataRestore(data dataRestoreContext, idOrPath, confirm string) error {
 	if _, err := os.Stat(path); err != nil {
 		return operationError(fmt.Sprintf("read snapshot %s: %v", path, err), "ship data ls")
 	}
-	// Stage under a unique subdir with the same mkdir+chmod+rm-rf shape the
-	// deploy path uses, so an agent member's forced shell allows it (a bare
-	// mkdir on the parent, or rm -f on a file, is outside the agent allowlist).
+	// Data restore retains a narrowly named rsync staging shape. Normal deploys
+	// use the framed stdin ingest protocol and never create client-chosen dirs.
 	remoteDir := fmt.Sprintf("%s/data-restore-%s-%d", RemoteDeployTmpDir, data.EnvName, time.Now().UnixNano())
 	remote := remoteDir + "/snapshot.data.tar.gz"
 	mkdirCmd := fmt.Sprintf("mkdir -p %s && chmod 0700 %s", utils.ShellEscape(remoteDir), utils.ShellEscape(remoteDir))

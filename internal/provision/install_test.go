@@ -609,7 +609,7 @@ func TestRunInstallWritesPreviewReaperAndDoctorTimers(t *testing.T) {
 	if !ok {
 		t.Fatal("expected preview reaper service")
 	}
-	if !strings.Contains(string(service.Content), "ExecStart=/usr/local/bin/ship server env reap") {
+	if !strings.Contains(string(service.Content), "ExecStart=/usr/local/bin/ship server --internal env reap") {
 		t.Fatalf("unexpected reaper service:\n%s", service.Content)
 	}
 	timer, ok := runner.files["/etc/systemd/system/ship-preview-reaper.timer"]
@@ -627,7 +627,7 @@ func TestRunInstallWritesPreviewReaperAndDoctorTimers(t *testing.T) {
 	if !ok {
 		t.Fatal("expected doctor service")
 	}
-	if !strings.Contains(string(doctorService.Content), "ExecStart=/usr/local/bin/ship server doctor record") {
+	if !strings.Contains(string(doctorService.Content), "ExecStart=/usr/local/bin/ship server --internal doctor record") {
 		t.Fatalf("unexpected doctor service:\n%s", doctorService.Content)
 	}
 	doctorTimer, ok := runner.files["/etc/systemd/system/ship-doctor.timer"]

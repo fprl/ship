@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/fprl/ship/internal/errcat"
+	"github.com/fprl/ship/internal/remoteprotocol"
 )
 
 type agentShellCmd struct {
@@ -82,22 +83,24 @@ func agentShellActionFor(original, fingerprint string) (agentShellAction, error)
 }
 
 func isAgentHelperCommand(argv []string) bool {
-	return len(argv) >= 5 &&
-		argv[0] == "sudo" &&
-		argv[1] == "-n" &&
-		argv[2] == "/usr/local/bin/ship" &&
-		argv[3] == "server" &&
-		agentHelperNamespaceAllowed(argv[4]) &&
-		!hasShellControlToken(argv)
+	_, ok := agentHelperNamespaceIndex(argv)
+	return ok && !hasShellControlToken(argv)
 }
 
-func agentHelperNamespaceAllowed(namespace string) bool {
-	switch namespace {
-	case "app", "approval", "config", "doctor", "gc", "key", "webhook", "version", "update":
-		return true
-	default:
-		return false
+func agentHelperNamespaceIndex(argv []string) (int, bool) {
+	if len(argv) < 5 || argv[0] != "sudo" || argv[1] != "-n" || argv[2] != "/usr/local/bin/ship" || argv[3] != "server" {
+		return 0, false
 	}
+	if invocation, err := remoteprotocol.ParseClientArgs(argv[4:]); err == nil {
+		if remoteprotocol.ClientNamespaceAllowed(invocation.Namespace) {
+			return 4 + invocation.NamespaceIndex, true
+		}
+		return 0, false
+	}
+	if argv[4] == "version" || argv[4] == "update" {
+		return 4, true
+	}
+	return 0, false
 }
 
 func hasShellControlToken(argv []string) bool {
@@ -111,9 +114,13 @@ func hasShellControlToken(argv []string) bool {
 }
 
 func forceAgentMemberFingerprint(argv []string, fingerprint string) []string {
-	out := append([]string{}, argv[:5]...)
+	namespaceIndex, ok := agentHelperNamespaceIndex(argv)
+	if !ok {
+		return append([]string{}, argv...)
+	}
+	out := append([]string{}, argv[:namespaceIndex+1]...)
 	out = append(out, "--member-fingerprint", fingerprint)
-	tail := argv[5:]
+	tail := argv[namespaceIndex+1:]
 	for i := 0; i < len(tail); i++ {
 		if tail[i] == "--" {
 			out = append(out, tail[i:]...)
@@ -185,10 +192,14 @@ func validShipUploadPath(path string, dirOnly bool) bool {
 	if rel == "" || rel == "." || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") {
 		return false
 	}
-	if dirOnly {
-		return !strings.Contains(filepath.Base(rel), ".tar") && filepath.Base(rel) != "ship.toml"
+	parts := strings.Split(rel, "/")
+	if !strings.HasPrefix(parts[0], "data-restore-") || len(parts[0]) == len("data-restore-") {
+		return false
 	}
-	return true
+	if dirOnly {
+		return len(parts) == 1
+	}
+	return len(parts) == 2 && parts[1] == "snapshot.data.tar.gz"
 }
 
 func shellFields(s string) ([]string, error) {

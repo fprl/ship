@@ -34,7 +34,7 @@ func TestRunInstallWritesAndEnablesStage5Units(t *testing.T) {
 		t.Fatal(err)
 	}
 	boot, ok := runner.files["/etc/systemd/system/ship-boot-converge.service"]
-	if !ok || !strings.Contains(string(boot.Content), "After=network-online.target podman.socket podman.service caddy.service") || !strings.Contains(string(boot.Content), "Wants=network-online.target podman.service caddy.service") || !strings.Contains(string(boot.Content), "Restart=on-failure") || !strings.Contains(string(boot.Content), "StartLimitBurst=3") || !strings.Contains(string(boot.Content), "ExecStart=/usr/local/bin/ship server converge-boot") || !strings.Contains(string(boot.Content), "WantedBy=multi-user.target") {
+	if !ok || !strings.Contains(string(boot.Content), "After=network-online.target podman.socket podman.service caddy.service") || !strings.Contains(string(boot.Content), "Wants=network-online.target podman.service caddy.service") || !strings.Contains(string(boot.Content), "Restart=on-failure") || !strings.Contains(string(boot.Content), "StartLimitBurst=3") || !strings.Contains(string(boot.Content), "ExecStart=/usr/local/bin/ship server --internal converge-boot") || !strings.Contains(string(boot.Content), "WantedBy=multi-user.target") {
 		t.Fatalf("boot unit=%+v", boot)
 	}
 	timer, ok := runner.files["/etc/systemd/system/ship-gc.timer"]
