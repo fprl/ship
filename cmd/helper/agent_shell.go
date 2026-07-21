@@ -64,7 +64,7 @@ func agentShellActionFor(original, fingerprint string) (agentShellAction, error)
 	if strings.ContainsAny(original, "\r\n") || strings.Contains(original, "$(") || strings.Contains(original, "`") {
 		return agentShellAction{}, agentShellRefused("command contains shell injection syntax")
 	}
-	argv, err := shellFields(original)
+	argv, err := remoteprotocol.ParseShellFields(original)
 	if err != nil {
 		return agentShellAction{}, agentShellRefused(err.Error())
 	}
@@ -83,26 +83,28 @@ func agentShellActionFor(original, fingerprint string) (agentShellAction, error)
 }
 
 func isAgentHelperCommand(argv []string) bool {
-	_, ok := agentHelperNamespaceIndex(argv)
+	_, ok := agentHelperInvocation(argv)
 	return ok && !hasShellControlToken(argv)
 }
 
-func agentHelperNamespaceIndex(argv []string) (int, bool) {
+func agentHelperInvocation(argv []string) (remoteprotocol.Invocation, bool) {
 	if len(argv) < 5 || argv[0] != "sudo" || argv[1] != "-n" || argv[2] != "/usr/local/bin/ship" || argv[3] != "server" {
-		return 0, false
+		return remoteprotocol.Invocation{}, false
 	}
-	if invocation, err := remoteprotocol.ParseClientArgs(argv[4:]); err == nil {
-		if remoteprotocol.ClientNamespaceAllowed(invocation.Namespace) {
-			return 4 + invocation.NamespaceIndex, true
-		}
-		return 0, false
+	invocation, err := remoteprotocol.Parse(argv[4:])
+	if err != nil {
+		return remoteprotocol.Invocation{}, false
 	}
-	if argv[4] == "version" || argv[4] == "update" {
-		return 4, true
+	if invocation.Exposure != remoteprotocol.ExposureClient && invocation.Exposure != remoteprotocol.ExposureRepair {
+		return remoteprotocol.Invocation{}, false
 	}
-	return 0, false
+	return invocation, true
 }
 
+// hasShellControlToken rejects an unquoted shell control operator standing as
+// its own token. ParseShellFields splits unquoted control punctuation into
+// standalone tokens, so an attached form like "ls;rm" surfaces here as a bare
+// ";" while a quoted argument such as "Smoke <x@y>" stays one literal token.
 func hasShellControlToken(argv []string) bool {
 	for _, arg := range argv {
 		switch arg {
@@ -114,42 +116,15 @@ func hasShellControlToken(argv []string) bool {
 }
 
 func forceAgentMemberFingerprint(argv []string, fingerprint string) []string {
-	namespaceIndex, ok := agentHelperNamespaceIndex(argv)
+	invocation, ok := agentHelperInvocation(argv)
 	if !ok {
 		return append([]string{}, argv...)
 	}
-	out := append([]string{}, argv[:namespaceIndex+1]...)
-	out = append(out, "--member-fingerprint", fingerprint)
-	tail := argv[namespaceIndex+1:]
-	for i := 0; i < len(tail); i++ {
-		if tail[i] == "--" {
-			out = append(out, tail[i:]...)
-			break
-		}
-		// Drop every client-supplied member/fingerprint claim in any
-		// spelling. The pinned fingerprint injected above is the only
-		// identity the helper may see; leaving a `--flag=value` form in
-		// the tail lets Kong's last-value-wins override it and lets an
-		// agent key authorize as an arbitrary member.
-		if flag, inlineValue := isForcedMemberClaim(tail[i]); flag {
-			if !inlineValue {
-				i++ // also drop the following value token
-			}
-			continue
-		}
-		out = append(out, tail[i])
+	bound, err := remoteprotocol.BindMember(invocation, fingerprint)
+	if err != nil {
+		return append([]string{}, argv...)
 	}
-	return out
-}
-
-func isForcedMemberClaim(token string) (isFlag bool, hasInlineValue bool) {
-	switch {
-	case token == "--member-fingerprint":
-		return true, false
-	case strings.HasPrefix(token, "--member-fingerprint="):
-		return true, true
-	}
-	return false, false
+	return append(append([]string{}, argv[:4]...), bound.Args...)
 }
 
 func isPrepareUploadCommand(argv []string) bool {
@@ -200,78 +175,6 @@ func validShipUploadPath(path string, dirOnly bool) bool {
 		return len(parts) == 1
 	}
 	return len(parts) == 2 && parts[1] == "snapshot.data.tar.gz"
-}
-
-func shellFields(s string) ([]string, error) {
-	var fields []string
-	var b strings.Builder
-	inSingle := false
-	inDouble := false
-	escaped := false
-	flush := func() {
-		if b.Len() > 0 {
-			fields = append(fields, b.String())
-			b.Reset()
-		}
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if escaped {
-			b.WriteByte(c)
-			escaped = false
-			continue
-		}
-		if inSingle {
-			if c == '\'' {
-				inSingle = false
-			} else {
-				b.WriteByte(c)
-			}
-			continue
-		}
-		if inDouble {
-			switch c {
-			case '"':
-				inDouble = false
-			case '\\':
-				escaped = true
-			default:
-				b.WriteByte(c)
-			}
-			continue
-		}
-		switch c {
-		case ' ', '\t':
-			flush()
-		case '\'':
-			inSingle = true
-		case '"':
-			inDouble = true
-		case '\\':
-			escaped = true
-		case ';', '|', '<', '>':
-			flush()
-			fields = append(fields, string(c))
-		case '&':
-			flush()
-			if i+1 < len(s) && s[i+1] == '&' {
-				fields = append(fields, "&&")
-				i++
-			} else {
-				fields = append(fields, "&")
-			}
-		default:
-			b.WriteByte(c)
-		}
-	}
-	if escaped || inSingle || inDouble {
-		return nil, fmt.Errorf("unterminated shell quoting")
-	}
-	flush()
-	if len(fields) == 0 {
-		return nil, fmt.Errorf("empty command")
-	}
-	return fields, nil
 }
 
 func agentShellRefused(detail string) error {

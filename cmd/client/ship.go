@@ -18,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/fprl/ship/internal/addressing"
 )
 
 type ShipResult struct {
@@ -347,11 +349,8 @@ func deploymentURL(ctx *config.AppContext, envName string) string {
 }
 
 func routedDeploymentURL(ctx *config.AppContext) string {
-	best, ok := bestRankedRoute(ctx.Routes, true)
-	if !ok {
-		return ""
-	}
-	return best.url
+	url, _ := addressing.PrimaryURL(ctx.Routes, true)
+	return url
 }
 
 func boxHost(target string) string {
@@ -365,14 +364,7 @@ func boxHost(target string) string {
 }
 
 func deploymentURLForBoxIP(ctx *config.AppContext, envName string, boxIP string) string {
-	if url := routedDeploymentURL(ctx); url != "" {
-		return url
-	}
-	base := sslipBase(boxIP)
-	if envName != productionEnvName {
-		base = previewHostBase(ctx, boxIP)
-	}
-	return "https://" + synthesizedHost(ctx.AppName, envName, base)
+	return addressing.URL(ctx, envName, boxIP)
 }
 
 func writeSourceTar(root string, dest string, dirty bool, staticDirs []string) error {

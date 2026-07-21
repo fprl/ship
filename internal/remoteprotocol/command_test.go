@@ -57,3 +57,59 @@ func TestSudoersLineAndValidationShareNamespacePolicy(t *testing.T) {
 		t.Fatalf("generated sudoers line does not match validator: %s", line)
 	}
 }
+
+func TestCatalogueClassifiesCompletePathsAndExposure(t *testing.T) {
+	tests := []struct {
+		args     []string
+		exposure Exposure
+	}{
+		{ClientArgs("v1", "app", "preview", "resolve", "api", "branch"), ExposureClient},
+		{ClientArgs("v1", "webhook", "set", "https://example.com"), ExposureClient},
+		{[]string{"version", "--json"}, ExposureRepair},
+		{[]string{"--internal", "doctor", "record"}, ExposureInternal},
+		{[]string{"agent-shell", "--member-fingerprint", "SHA256:key"}, ExposureGateway},
+	}
+	for _, tt := range tests {
+		invocation, err := Parse(tt.args)
+		if err != nil {
+			t.Fatalf("Parse(%v): %v", tt.args, err)
+		}
+		if invocation.Exposure != tt.exposure {
+			t.Fatalf("Parse(%v) exposure = %v", tt.args, invocation.Exposure)
+		}
+	}
+	for _, args := range [][]string{
+		ClientArgs("v1", "app", "removed-verb"),
+		{"--internal", "app", "ls"},
+	} {
+		if _, err := Parse(args); err == nil {
+			t.Fatalf("Parse(%v) allowed an invalid exposure/path", args)
+		}
+	}
+}
+
+func TestBindMemberReplacesEveryUntrustedClaim(t *testing.T) {
+	invocation, err := Parse(ClientArgs("v1", "app", "--member-fingerprint=SHA256:lie", "status", "api", "production", "--member-fingerprint", "SHA256:other"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := BindMember(invocation, " SHA256:pinned ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--client-version", "v1", "app", "--member-fingerprint", "SHA256:pinned", "status", "api", "production"}
+	if !reflect.DeepEqual(bound.Args, want) {
+		t.Fatalf("bound args = %#v, want %#v", bound.Args, want)
+	}
+}
+
+func TestShellFieldsPreserveEmptyAndQuotedArguments(t *testing.T) {
+	args := []string{"sudo", "", "a b", "it's", "plain"}
+	parsed, err := ParseShellFields(RenderShellFields(args))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(parsed, args) {
+		t.Fatalf("round trip = %#v, want %#v", parsed, args)
+	}
+}

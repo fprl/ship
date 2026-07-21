@@ -296,24 +296,19 @@ func (e *evalCase) withOwnerMemberFingerprint(command string) string {
 	}
 	leading := command[:index]
 	serverCommand := command[index:]
-	rest := strings.TrimPrefix(serverCommand, evalRemoteServerCommandPrefix)
-	if strings.Contains(rest, "--member-fingerprint") {
+	argv, err := remoteprotocol.ParseShellFields(serverCommand)
+	if err != nil || len(argv) < 3 || argv[0] != "/usr/local/bin/ship" || argv[1] != "server" {
 		return command
 	}
-	parts := strings.SplitN(rest, " ", 4)
-	if len(parts) < 3 {
+	invocation, err := remoteprotocol.Parse(argv[2:])
+	if err != nil || invocation.Exposure != remoteprotocol.ExposureClient {
 		return command
 	}
-	invocation, err := remoteprotocol.ParseClientArgs(parts[:3])
-	if err != nil || !remoteprotocol.ClientNamespaceAllowed(invocation.Namespace) {
+	bound, err := remoteprotocol.BindMember(invocation, fingerprint)
+	if err != nil {
 		return command
 	}
-	head := strings.Join(parts[:invocation.NamespaceIndex+1], " ")
-	inserted := head + " --member-fingerprint " + h.ShellQuote(fingerprint)
-	if len(parts) == 4 {
-		inserted += " " + parts[3]
-	}
-	return leading + evalRemoteServerCommandPrefix + inserted
+	return leading + remoteprotocol.RenderShellFields(append(argv[:2], bound.Args...))
 }
 
 func (e *evalCase) mustRun(t *testing.T, dir string, extraEnv []string, stdin []byte, name string, args ...string) string {

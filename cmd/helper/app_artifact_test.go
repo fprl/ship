@@ -10,6 +10,7 @@ import (
 
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/internal/deployoutcome"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/identity"
 )
@@ -121,11 +122,11 @@ func TestCommittedHistoryIncludesPostCommitArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, item := range []struct {
-		outcome string
+		outcome deployoutcome.Kind
 		tuple   artifact.Tuple
 	}{
-		{"committed_unconverged", unconverged},
-		{"committed_degraded", degraded},
+		{deployoutcome.CommittedUnconverged, unconverged},
+		{deployoutcome.CommittedDegraded, degraded},
 	} {
 		tuple := item.tuple
 		if err := appendDeployJournalEntry("api", "production", deployJournalEntry{Outcome: item.outcome, Artifact: &tuple}, nil); err != nil {

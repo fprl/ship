@@ -10,23 +10,13 @@ import (
 
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/podmanruntime"
 	"github.com/fprl/ship/internal/utils"
 )
 
-const (
-	previewDefaultMemory = "512m"
-	previewDefaultCPUs   = 0.5
-)
-
 type podmanBaseRunOptions struct {
-	App         string
-	Env         string
-	ProcessName string
-	UserID      string
-	GroupID     string
-	Release     string
-	Activation  string
-	Networks    []string
+	App, Env, ProcessName, UserID, GroupID, Release, Activation string
+	Networks                                                    []string
 }
 
 func podmanBuildArgs(app, env, imageTag, release, dockerfile, ctxDir string, rebuild bool) []string {
@@ -34,21 +24,7 @@ func podmanBuildArgs(app, env, imageTag, release, dockerfile, ctxDir string, reb
 }
 
 func podmanBuildArgsWithEnvelope(app, env, imageTag, release, dockerfile, ctxDir string, rebuild bool, envelopeLabel string) []string {
-	args := []string{"build"}
-	if rebuild {
-		args = append(args, "--no-cache", "--pull=always")
-	}
-	args = append(args,
-		"-t", imageTag,
-		"--label", "ship.app="+app,
-		"--label", "ship.env="+env,
-		"--label", "ship.release="+release,
-	)
-	if envelopeLabel != "" {
-		args = append(args, "--label", "ship.release_envelope="+envelopeLabel)
-	}
-	args = append(args, "-f", dockerfile, ctxDir)
-	return args
+	return podmanruntime.BuildArgs(podmanruntime.BuildSpec{App: app, Env: env, ImageTag: imageTag, Release: release, Dockerfile: dockerfile, ContextDir: ctxDir, Rebuild: rebuild, EnvelopeLabel: envelopeLabel})
 }
 
 // hostUserIDs looks up the uid:gid for the per-env Linux account. We
@@ -69,47 +45,15 @@ func hostUserIDs(name string) (string, string, error) {
 }
 
 func podmanBaseRunArgs(opts podmanBaseRunOptions) []string {
-	args := []string{
-		"--user", opts.UserID + ":" + opts.GroupID,
-		"--cap-drop", "ALL",
-		"--security-opt", "no-new-privileges",
-		"--pids-limit", "512",
-	}
-	for _, network := range opts.Networks {
-		args = append(args, "--network", network)
-	}
-	args = append(args,
-		"-v", identity.DataDir(opts.App, opts.Env)+":/data:Z",
-		"--label", "ship.app="+opts.App,
-		"--label", "ship.env="+opts.Env,
-		"--label", "ship.process="+opts.ProcessName,
-		"--label", "ship.release="+opts.Release,
-	)
-	if opts.Activation != "" {
-		args = append(args, "--label", "ship.activation="+opts.Activation)
-	}
-	return args
+	return podmanruntime.BaseRunArgs(podmanruntime.ContainerSpec{App: opts.App, Env: opts.Env, Process: opts.ProcessName, UserID: opts.UserID, GroupID: opts.GroupID, Release: opts.Release, Activation: opts.Activation, Networks: opts.Networks})
 }
 
 func appendReadOnlyRuntimeArgs(args []string) []string {
-	return append(args,
-		"--read-only",
-		// mode=1777 (sticky world-writable) so the per-env container
-		// user (--user above) can actually write here. Without it,
-		// the tmpfs is owned by root and the unprivileged container
-		// process fails with EACCES.
-		"--tmpfs", "/tmp:size=64m,mode=1777",
-	)
+	return podmanruntime.WithReadOnlyRoot(args)
 }
 
 func appendResourceArgs(args []string, resources config.Resources) []string {
-	if resources.Memory != nil {
-		args = append(args, "--memory", *resources.Memory)
-	}
-	if resources.CPUs != nil {
-		args = append(args, "--cpus", strconv.FormatFloat(*resources.CPUs, 'f', -1, 64))
-	}
-	return args
+	return podmanruntime.WithResources(args, resources)
 }
 
 // buildPodmanRunArgs is the pure-function core of startProcess:
@@ -123,73 +67,23 @@ func appendResourceArgs(args []string, resources config.Resources) []string {
 // network by container DNS. Manifest-declared memory and CPU limits
 // render to the closed set of runtime flags.
 func buildPodmanRunArgsWithActivation(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, activation, containerName string, envFileExists bool, previewEnv bool, envFile string) []string {
-	appNet := identity.Network(app, env)
-	resources := effectiveProcessResources(proc, previewEnv)
-
-	args := []string{
-		"run", "--replace", "-d",
-		"--name", containerName,
-		// Long-running app processes should come back after host or
-		// Podman restarts. Release and exec containers are one-shot and
-		// intentionally do not set a restart policy.
-		"--restart", "unless-stopped",
+	if !envFileExists {
+		envFile = ""
 	}
-	args = append(args, podmanBaseRunArgs(podmanBaseRunOptions{
-		App:         app,
-		Env:         env,
-		ProcessName: processName,
-		UserID:      userID,
-		GroupID:     groupID,
-		Release:     release,
-		Activation:  activation,
-		// App processes join ingress so Caddy can reach them by
-		// container DNS. Release and exec commands stay off ingress.
-		Networks: []string{appNet, "ingress"},
-	})...)
-	// App processes and exec commands keep a read-only rootfs with a
-	// writable /tmp. Release commands preserve today's looser rootfs
-	// behavior for migrations that write inside image-provided paths.
-	args = appendReadOnlyRuntimeArgs(args)
-	if proc.Port != nil {
-		args = append(args, "--label", "ship.port="+strconv.Itoa(*proc.Port))
-	}
-	args = appendResourceArgs(args, resources)
-	if envFileExists && envFile != "" {
-		args = append(args, "--env-file", envFile)
-	}
-	args = append(args, imageTag)
-	if proc.Command != "" {
-		// Override the image CMD via /bin/sh -c so users can write the
-		// command as a single string (ADR-0005 §13).
-		args = append(args, "/bin/sh", "-c", proc.Command)
-	}
-	return args
+	return podmanruntime.ProcessArgs(podmanruntime.ProcessSpec{App: app, Env: env, Process: processName, Definition: proc, Image: imageTag, UserID: userID, GroupID: groupID, Release: release, Activation: activation, Container: containerName, EnvFile: envFile, Preview: previewEnv})
 }
 
 func effectiveProcessResources(proc config.Process, previewEnv bool) config.Resources {
-	resources := proc.Resources
-	if !previewEnv {
-		return resources
-	}
-	if resources.Memory == nil {
-		memory := previewDefaultMemory
-		resources.Memory = &memory
-	}
-	if resources.CPUs == nil {
-		cpus := previewDefaultCPUs
-		resources.CPUs = &cpus
-	}
-	return resources
+	return podmanruntime.EffectiveResources(proc.Resources, previewEnv)
 }
 
 func startProcessWithActivation(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, activation, containerName string, probe string, previewEnv bool, scrubValues []string, envFile string, progress *deployProgressEmitter) error {
-	envFileExists := envFile != ""
-	args := buildPodmanRunArgsWithActivation(app, env, processName, proc, imageTag, userID, groupID, release, activation, containerName, envFileExists, previewEnv, envFile)
+	spec := podmanruntime.ProcessSpec{App: app, Env: env, Process: processName, Definition: proc, Image: imageTag, UserID: userID, GroupID: groupID, Release: release, Activation: activation, Container: containerName, EnvFile: envFile, Preview: previewEnv}
 	finishStart := progress.start("start-"+processName, "Start "+processName)
-	_, startErr := utils.RunChecked("podman", args, "")
+	startErr := podmanruntime.CLI().StartProcess(spec)
 	finishStart(startErr)
 	if startErr != nil {
-		return fmt.Errorf("podman run %s: %v", containerName, startErr)
+		return startErr
 	}
 
 	if proc.Port != nil && probe != "" {
@@ -263,7 +157,7 @@ const releaseCommandTimeout = 10 * time.Minute
 
 func runReleaseCommandWithActivation(app, env, command, imageTag, userID, groupID, release, activation, envFile string, progress *deployProgressEmitter, scrubValues []string) error {
 	name := identity.ContainerName(app, env, "release", release)
-	_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
+	_ = podmanruntime.CLI().RemoveContainer(name)
 	args := []string{
 		"run", "--replace", "--rm",
 		"--name", name,
@@ -286,7 +180,7 @@ func runReleaseCommandWithActivation(app, env, command, imageTag, userID, groupI
 	}
 	args = append(args, imageTag, "/bin/sh", "-c", command)
 	if _, err := runDeployCommand(progress, "release", scrubValues, releaseCommandTimeout, "podman", args, ""); err != nil {
-		_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
+		_ = podmanruntime.CLI().RemoveContainer(name)
 		return fmt.Errorf("release command %q failed before traffic switch: %w", command, err)
 	}
 	return nil

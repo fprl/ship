@@ -260,10 +260,6 @@ func latestSuccessfulRelease(app, env string) string {
 	return entry.AttemptedRelease
 }
 
-func isFailedJournalOutcome(outcome string) bool {
-	return outcome == "failed"
-}
-
 func postWebhook(url string, payload webhookPayload) {
 	if strings.TrimSpace(url) == "" {
 		return

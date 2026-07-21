@@ -12,10 +12,13 @@ import (
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/artifact"
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/deployoutcome"
+	"github.com/fprl/ship/internal/deployrequest"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/podmanruntime"
 	"github.com/fprl/ship/internal/sourcearchive"
 	"github.com/fprl/ship/internal/utils"
 )
@@ -30,21 +33,9 @@ import (
 //  5. Synthesizes a Caddyfile fragment, validates, reloads, and only
 //     then removes old routed containers.
 type appApplyCmd struct {
-	App           string                 `arg:"" help:"App name."`
-	Env           string                 `arg:"" help:"Env name."`
+	deployrequest.Request
 	Tarball       string                 `name:"tarball" required:"" help:"Path to the streamed source tarball."`
 	Manifest      string                 `name:"manifest" required:"" help:"Path to the uploaded ship.toml."`
-	SHA           string                 `name:"sha" required:"" help:"Release identifier."`
-	Dirty         bool                   `name:"dirty" help:"Mark this release as built from a dirty worktree snapshot."`
-	BaseCommit    string                 `name:"base-commit" required:"" help:"Git commit the release is based on."`
-	CreatedAt     string                 `name:"created-at" required:"" help:"Release creation time in RFC3339."`
-	Rebuild       bool                   `name:"rebuild" help:"Pass --no-cache --pull=always to podman build."`
-	Progress      bool                   `name:"progress" hidden:"" help:"Emit structured deploy progress events."`
-	Logs          bool                   `name:"logs" hidden:"" help:"Emit build and release-command log events."`
-	TLS           string                 `name:"tls" enum:"auto,internal" default:"auto" hidden:"" help:"TLS mode stamped by the client for this deploy."`
-	PreviewAlias  string                 `name:"preview-alias" hidden:"" help:"Preview branch alias host derived by the client."`
-	SSHKeyComment string                 `name:"ssh-key-comment" help:"SSH public key comment for the deploying key."`
-	GitAuthor     string                 `name:"git-author" help:"Git author configured by the deploying client."`
 	ActivationID  string                 `kong:"-"`
 	Envelope      envelope.Envelope      `kong:"-"`
 	EnvelopeLabel string                 `kong:"-"`
@@ -79,10 +70,7 @@ func (c *appApplyCmd) Run() error {
 }
 
 func (c *appApplyCmd) validateRequest() error {
-	if err := validateAppEnv(c.App, c.Env); err != nil {
-		return err
-	}
-	if err := validateRelease(c.SHA); err != nil {
+	if err := c.Request.Validate(); err != nil {
 		return err
 	}
 	if _, err := c.releaseMetadata(); err != nil {
@@ -130,14 +118,14 @@ func (c *appApplyCmd) recordDeployFailure(app *config.AppContext, previousReleas
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
 	}
-	if app != nil && isFailedJournalOutcome(entry.Outcome) {
+	if app != nil && entry.Outcome.FailedBeforeCommit() {
 		webhookDeployAborted(app.Webhook, app, entry, time.Now().UTC())
 	}
 	return err
 }
 
 func (c *appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
-	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, "committed_unconverged", previousRelease, c.SHA, c.actor(), startedAt, committedFailureStep(err, "converge"), c.committedArtifact(), err)
+	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, deployoutcome.CommittedUnconverged, previousRelease, c.SHA, c.actor(), startedAt, committedFailureStep(err, "converge"), c.committedArtifact(), err)
 	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
@@ -146,7 +134,7 @@ func (c *appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previou
 }
 
 func (c *appApplyCmd) recordCommittedDegraded(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
-	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, "committed_degraded", previousRelease, c.SHA, c.actor(), startedAt, "durability", c.committedArtifact(), err)
+	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, deployoutcome.CommittedDegraded, previousRelease, c.SHA, c.actor(), startedAt, "durability", c.committedArtifact(), err)
 	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
@@ -373,7 +361,7 @@ func (c *appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRe
 		warnTornDeployJournal(identity.DeployJournalFile(c.App, c.Env))
 	}
 	entry := sanitizeDeployJournalEntry(c.App, c.Env, deployJournalEntry{
-		Outcome:          "deployed",
+		Outcome:          deployoutcome.Deployed,
 		StartedAt:        startedAt.Format(time.RFC3339Nano),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
 		PreviousRelease:  previousRelease,
@@ -395,7 +383,7 @@ func (c *appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRe
 	}
 	removeContainers(result.containersToRemove)
 	bestEffortGCAfterLifecycle(c.App, c.Env)
-	if previousJournalErr == nil && isFailedJournalOutcome(previousJournal.Outcome) {
+	if previousJournalErr == nil && previousJournal.Outcome.FailedBeforeCommit() {
 		webhookDeployRecovered(app.Webhook, app, previousJournal, entry, time.Now().UTC())
 	}
 
@@ -414,7 +402,7 @@ func applyRouteTLS(app *config.AppContext, tlsMode string) {
 }
 
 func (c *appApplyCmd) actor() deployIdentity {
-	return deployActor(c.SSHKeyComment, c.GitAuthor)
+	return deployActor(c.Actor.SSHKeyComment, c.Actor.GitAuthor)
 }
 
 func (c *appApplyCmd) releaseMetadata() (releaseMetadata, error) {
@@ -559,13 +547,13 @@ func (c *appApplyCmd) prepareContainerArtifact(ctxDir string, previousPointer ac
 	}
 	c.ImageID = entry.ID
 	committedTag := identity.ImageTag(c.App, c.Env, "img-"+normalizeImageID(c.ImageID))
-	if _, err := utils.RunChecked("podman", []string{"tag", buildRef, committedTag}, ""); err != nil {
+	if err := podmanruntime.CLI().Tag(buildRef, committedTag); err != nil {
 		return fmt.Errorf("tag built image %s: %w", c.ImageID, err)
 	}
 	// With the committed tag in place, dropping the build tag only untags;
 	// leaving it would later block GC's remove-by-ID (podman refuses while
 	// any tag remains). Best-effort: a leftover build tag is GC-able debris.
-	if _, err := utils.RunChecked("podman", []string{"rmi", buildRef}, ""); err != nil {
+	if err := podmanruntime.CLI().RemoveImage(buildRef); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not drop build tag %s: %v; next: ship box gc\n", buildRef, err)
 	}
 	return nil
@@ -573,7 +561,7 @@ func (c *appApplyCmd) prepareContainerArtifact(ctxDir string, previousPointer ac
 
 func removeContainers(names []string) {
 	for _, name := range names {
-		_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
+		_ = podmanruntime.CLI().RemoveContainer(name)
 	}
 }
 
@@ -599,7 +587,7 @@ func removePreparedCandidates(app, env, activationID string) {
 func stopContainers(names []string) ([]string, error) {
 	var stopped []string
 	for _, name := range names {
-		if _, err := utils.RunChecked("podman", []string{"stop", name}, ""); err != nil {
+		if err := podmanruntime.CLI().Stop(name); err != nil {
 			return stopped, fmt.Errorf("stop %s: %v", name, err)
 		}
 		stopped = append(stopped, name)
@@ -610,7 +598,7 @@ func stopContainers(names []string) ([]string, error) {
 func startContainers(names []string) error {
 	var failed []string
 	for _, name := range names {
-		if _, err := utils.RunChecked("podman", []string{"start", name}, ""); err != nil {
+		if err := podmanruntime.CLI().Start(name); err != nil {
 			failed = append(failed, name)
 		}
 	}

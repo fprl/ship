@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/deployrequest"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/secrets"
@@ -139,7 +140,7 @@ func TestRecordDeployFailureKeepsProbeErrorWhenJournalAppendFails(t *testing.T) 
 	}
 
 	probeErr := newJournalStepError("probe", errors.New("health check failed"), nil, nil)
-	cmd := appApplyCmd{App: "api", Env: "production", SHA: "abc1234"}
+	cmd := appApplyCmd{Request: deployrequest.Request{App: "api", Env: "production", SHA: "abc1234"}}
 	var got error
 	stderr := captureStderr(t, func() {
 		got = cmd.recordDeployFailure(nil, "", time.Now().UTC(), probeErr)
@@ -156,7 +157,7 @@ func TestRecordDeployFailureKeepsProbeErrorWhenJournalAppendFails(t *testing.T) 
 }
 
 func TestCommittedDeployErrorsCarryStableCodesAndConvergeNextStep(t *testing.T) {
-	cmd := appApplyCmd{App: "api", Env: "production", SHA: "new222"}
+	cmd := appApplyCmd{Request: deployrequest.Request{App: "api", Env: "production", SHA: "new222"}}
 	for _, tt := range []struct {
 		name string
 		code errcat.Code
@@ -213,7 +214,7 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 		appendSanitizedDeployJournal = oldAppend
 	})
 
-	cmd := appApplyCmd{App: "api", Env: "production", SHA: "new222"}
+	cmd := appApplyCmd{Request: deployrequest.Request{App: "api", Env: "production", SHA: "new222"}}
 	app := &config.AppContext{Webhook: sink.URL, ProductionBranch: "main"}
 	var stdout string
 	stderr := captureStderr(t, func() {
@@ -256,7 +257,7 @@ func TestCommittedJournalFailureSkipsCleanup(t *testing.T) {
 	oldAppend := appendSanitizedDeployJournal
 	appendSanitizedDeployJournal = func(string, string, deployJournalEntry) error { return errors.New("journal disk is read-only") }
 	t.Cleanup(func() { appendSanitizedDeployJournal = oldAppend })
-	cmd := appApplyCmd{App: "api", Env: "production", SHA: "new222"}
+	cmd := appApplyCmd{Request: deployrequest.Request{App: "api", Env: "production", SHA: "new222"}}
 	if err := cmd.completeCommittedDeploy(&config.AppContext{}, "old111", time.Now().UTC(), applyReleaseResult{containersToRemove: []string{"old-container"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +414,7 @@ web = { port = 3000 }
 `), 0644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := (&appApplyCmd{App: "api", Env: "production"}).loadApplyContext(root)
+	_, err := (&appApplyCmd{Request: deployrequest.Request{App: "api", Env: "production"}}).loadApplyContext(root)
 	if err == nil || !strings.Contains(err.Error(), "uploaded manifest names app other, expected api") {
 		t.Fatalf("expected app mismatch error, got %v", err)
 	}
@@ -472,7 +473,7 @@ func TestApplyStaticPublishesHashNamedReleaseWithoutTouchingOldBytes(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := appApplyCmd{App: "api", Env: "production", SHA: "abc1234", Envelope: env}
+	cmd := appApplyCmd{Request: deployrequest.Request{App: "api", Env: "production", SHA: "abc1234"}, Envelope: env}
 	_, _, err = cmd.applyStatic(ctxDir, &config.AppContext{
 		Routes: map[string]config.Route{"site": {Serve: "dist"}},
 	})

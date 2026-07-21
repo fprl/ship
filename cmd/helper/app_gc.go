@@ -12,8 +12,10 @@ import (
 
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/internal/deployoutcome"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/podmanruntime"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -207,7 +209,7 @@ func gcEnv(app, env string) (gcSummary, error) {
 	gcRemoveActivations(app, env, pointer, &summary)
 	gcRemoveTempDirs(app, env, &summary)
 	if len(summary.Removed) > 0 {
-		err := appendDeployJournalEntry(app, env, deployJournalEntry{Outcome: "gc", StartedAt: gcNow().UTC().Format(time.RFC3339Nano), EndedAt: gcNow().UTC().Format(time.RFC3339Nano), AttemptedRelease: pointer.Artifact.Release, GC: strings.Join(summary.Removed, ", "), Identity: deployActor("", "")}, nil)
+		err := appendDeployJournalEntry(app, env, deployJournalEntry{Outcome: deployoutcome.GC, StartedAt: gcNow().UTC().Format(time.RFC3339Nano), EndedAt: gcNow().UTC().Format(time.RFC3339Nano), AttemptedRelease: pointer.Artifact.Release, GC: strings.Join(summary.Removed, ", "), Identity: deployActor("", "")}, nil)
 		if err != nil {
 			return summary, err
 		}
@@ -232,7 +234,7 @@ func gcRemoveContainers(app, env string, summary *gcSummary) {
 			continue
 		}
 		name := entry.Names[0]
-		if _, err := utils.RunChecked("podman", []string{"rm", "-f", name}, ""); err != nil {
+		if err := podmanruntime.CLI().RemoveContainer(name); err != nil {
 			summary.Failures = append(summary.Failures, name+": "+err.Error())
 			continue
 		}
@@ -286,7 +288,7 @@ func gcRemoveImages(app, env string, protected map[string]bool, summary *gcSumma
 		removedIDs[id] = true
 		tagFailed := false
 		for _, tag := range image.ShipTags {
-			if _, err := utils.RunChecked("podman", []string{"rmi", tag}, ""); err != nil {
+			if err := podmanruntime.CLI().RemoveImage(tag); err != nil {
 				summary.Failures = append(summary.Failures, "image tag "+tag+": "+err.Error())
 				tagFailed = true
 				break
@@ -295,7 +297,7 @@ func gcRemoveImages(app, env string, protected map[string]bool, summary *gcSumma
 		if tagFailed {
 			continue
 		}
-		if _, err := utils.RunChecked("podman", []string{"rmi", image.ImageID}, ""); err != nil {
+		if err := podmanruntime.CLI().RemoveImage(image.ImageID); err != nil {
 			summary.Failures = append(summary.Failures, "image "+image.ImageID+": "+err.Error())
 			continue
 		}

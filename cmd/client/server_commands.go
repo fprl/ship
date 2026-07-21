@@ -5,16 +5,24 @@ import (
 	"strings"
 
 	"github.com/fprl/ship/internal/deploybundle"
+	"github.com/fprl/ship/internal/deployrequest"
 	"github.com/fprl/ship/internal/remoteprotocol"
 	"github.com/fprl/ship/internal/utils"
 	"github.com/fprl/ship/internal/version"
 )
 
 func serverCommand(args ...string) string {
-	return renderServerCommand(remoteprotocol.ClientArgs(version.Version, args...)...)
+	protocolArgs := remoteprotocol.ClientArgs(version.Version, args...)
+	if _, err := remoteprotocol.Parse(protocolArgs); err != nil {
+		panic("client remote command is absent from the protocol catalogue: " + err.Error())
+	}
+	return renderServerCommand(protocolArgs...)
 }
 
 func serverRepairCommand(args ...string) string {
+	if _, err := remoteprotocol.Parse(args); err != nil {
+		panic("repair command is absent from the protocol catalogue: " + err.Error())
+	}
 	return renderServerCommand(args...)
 }
 
@@ -62,39 +70,17 @@ func serverAppPreflightJSONCommand(appName string, envName string, requiredSecre
 	return serverCommand(args...)
 }
 
-type deployIdentityJSON struct {
-	SSHKeyComment string `json:"ssh_key_comment"`
-	GitAuthor     string `json:"git_author"`
-}
+type deployIdentityJSON = deployrequest.Actor
 
 func serverAppApplyCommand(appName string, envName string, bundle deploybundle.Metadata, plan localDeployPlan, actor deployIdentityJSON, rebuild bool, logs bool, tlsMode string, previewAlias string) string {
-	args := []string{"app", "apply", "--progress"}
-	if rebuild {
-		args = append(args, "--rebuild")
+	request := deployrequest.Request{
+		App: appName, Env: envName, Bundle: bundle, SHA: plan.Release,
+		Dirty: plan.Dirty, BaseCommit: plan.BaseCommit,
+		CreatedAt: plan.CreatedAt.Format(timeRFC3339UTC), Rebuild: rebuild,
+		Progress: true, Logs: logs, TLS: tlsMode, PreviewAlias: previewAlias,
+		Actor: actor,
 	}
-	if logs {
-		args = append(args, "--logs")
-	}
-	if tlsMode != "" {
-		args = append(args, "--tls", tlsMode)
-	}
-	if previewAlias != "" {
-		args = append(args, "--preview-alias", previewAlias)
-	}
-	if plan.Dirty {
-		args = append(args, "--dirty")
-	}
-	args = append(args,
-		"--bundle-size", fmt.Sprintf("%d", bundle.Size),
-		"--bundle-sha256", bundle.SHA256,
-		"--sha", plan.Release,
-		"--base-commit", plan.BaseCommit,
-		"--created-at", plan.CreatedAt.Format(timeRFC3339UTC),
-		"--ssh-key-comment", actor.SSHKeyComment,
-		"--git-author", actor.GitAuthor,
-		appName, envName,
-	)
-	return serverCommand(args...)
+	return serverCommand(request.CommandArgs()...)
 }
 
 func serverAppStatusCommand(appName, envName string) string {

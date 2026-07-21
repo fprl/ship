@@ -10,6 +10,7 @@ import (
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/artifact"
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/deployoutcome"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/utils"
@@ -135,7 +136,7 @@ func (c appConvergeCmd) runLocked() (appConvergeSummary, error) {
 
 func (c appConvergeCmd) appendJournal(startedAt time.Time, summary appConvergeSummary, convergeErr error) error {
 	entry := deployJournalEntry{
-		Outcome:          summary.Outcome,
+		Outcome:          deployoutcome.Kind(summary.Outcome),
 		StartedAt:        startedAt.Format(time.RFC3339Nano),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
 		AttemptedRelease: summary.Release,

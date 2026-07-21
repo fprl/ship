@@ -1,13 +1,10 @@
 package helper
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/artifact"
@@ -15,7 +12,7 @@ import (
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
-	"github.com/fprl/ship/internal/utils"
+	"github.com/fprl/ship/internal/podmanruntime"
 )
 
 // Tuple is the artifact-keyed trust identity used by all helper verbs.
@@ -76,7 +73,7 @@ func committedHistoryWithPointer(app, env string, pointer activation.Pointer) ([
 	appendTuple(pointer.Artifact)
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
-		if entry.Artifact == nil || (entry.Outcome != "deployed" && entry.Outcome != "rolled_back" && entry.Outcome != "committed_unconverged" && entry.Outcome != "committed_degraded") {
+		if entry.Artifact == nil || !entry.Outcome.RetainsArtifact() {
 			continue
 		}
 		appendTuple(*entry.Artifact)
@@ -214,37 +211,16 @@ func validateArtifactTuple(tuple Tuple) error {
 }
 
 func inspectExactImage(imageID string) (imageEntry, error) {
-	out, err := utils.RunChecked("podman", []string{"image", "inspect", "--format", "json", imageID}, "")
-	if err != nil {
-		if _, existsErr := utils.RunChecked("podman", []string{"image", "exists", imageID}, ""); existsErr != nil {
-			var commandErr *utils.CommandError
-			var exitErr *exec.ExitError
-			if errors.As(existsErr, &commandErr) && errors.As(commandErr, &exitErr) && exitErr.ExitCode() == 1 {
-				return imageEntry{}, &artifactAbsentError{ImageID: imageID}
-			}
-		}
-		return imageEntry{}, fmt.Errorf("podman image inspect: %w", err)
+	entry, err := podmanruntime.CLI().InspectImage(imageID)
+	var missing *podmanruntime.MissingImageError
+	if errors.As(err, &missing) {
+		return imageEntry{}, &artifactAbsentError{ImageID: imageID}
 	}
-	data := []byte(strings.TrimSpace(string(out)))
-	if len(data) == 0 {
-		return imageEntry{}, errors.New("podman image inspect returned no image")
-	}
-	var entries []imageEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		var entry imageEntry
-		if singleErr := json.Unmarshal(data, &entry); singleErr != nil {
-			return imageEntry{}, fmt.Errorf("parse podman image inspect json: %w", err)
-		}
-		entries = []imageEntry{entry}
-	}
-	if len(entries) != 1 {
-		return imageEntry{}, fmt.Errorf("podman image inspect returned %d images", len(entries))
-	}
-	return entries[0], nil
+	return entry, err
 }
 
 func normalizeImageID(value string) string {
-	return strings.TrimPrefix(strings.TrimSpace(value), "sha256:")
+	return podmanruntime.NormalizeImageID(value)
 }
 
 func staticReleasePath(app, env, release, staticHash string) string {

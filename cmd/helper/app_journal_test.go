@@ -12,6 +12,8 @@ import (
 
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/internal/deployoutcome"
+	"github.com/fprl/ship/internal/deployrequest"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 )
@@ -25,11 +27,11 @@ func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
 
 	for _, tt := range []struct {
 		step    string
-		outcome string
+		outcome deployoutcome.Kind
 	}{
-		{step: "build", outcome: "failed"},
-		{step: "probe", outcome: "failed"},
-		{step: "release", outcome: "failed"},
+		{step: "build", outcome: deployoutcome.Failed},
+		{step: "probe", outcome: deployoutcome.Failed},
+		{step: "release", outcome: deployoutcome.Failed},
 	} {
 		t.Run(tt.step, func(t *testing.T) {
 			entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", deployIdentity{}, startedAt, newJournalStepError(tt.step, errors.New(tt.step+" failed"), nil, nil))
@@ -48,7 +50,7 @@ func TestCommittedFailuresRecordResolveStepAndCommittedTuple(t *testing.T) {
 		got = entry
 		return nil
 	}
-	c := appApplyCmd{App: "api", Env: "production", SHA: "abc1234", ImageID: strings.Repeat("a", 64), StaticHash: strings.Repeat("b", 64)}
+	c := appApplyCmd{Request: deployrequest.Request{App: "api", Env: "production", SHA: "abc1234"}, ImageID: strings.Repeat("a", 64), StaticHash: strings.Repeat("b", 64)}
 	if err := c.recordCommittedUnconverged(nil, "old", time.Now(), &convergeError{Step: "resolve", Err: errors.New("gone")}); err == nil {
 		t.Fatal("expected committed unconverged error")
 	}

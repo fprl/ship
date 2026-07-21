@@ -27,6 +27,10 @@ type Metadata struct {
 	SHA256 string
 }
 
+func (m Metadata) Validate() error {
+	return validateMetadata(m)
+}
+
 // Write creates the exact two-file bundle accepted by Receive.
 func Write(destination, source, manifest string) (metadata Metadata, err error) {
 	out, err := os.OpenFile(destination, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)

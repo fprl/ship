@@ -44,12 +44,17 @@ func (c *ServerCmd) AfterApply(ctx *kong.Context) error {
 	if len(command) == 0 {
 		return nil
 	}
-	namespace := command[0]
-	if remoteprotocol.RepairNamespaceAllowed(namespace) {
+	// Kong models doctor record as an optional positional action rather
+	// than a nested command. Project the parsed value into the protocol
+	// path before asking the catalogue for its exposure.
+	if command[0] == "doctor" && c.Doctor.Action != "" {
+		command = []string{"doctor", c.Doctor.Action}
+	}
+	if remoteprotocol.CommandAllowed(command, remoteprotocol.ExposureRepair|remoteprotocol.ExposureGateway) {
 		return nil
 	}
 	if c.Internal {
-		if serverInternalCommandAllowed(namespace, c) {
+		if remoteprotocol.CommandAllowed(command, remoteprotocol.ExposureInternal) {
 			return nil
 		}
 		return errcat.New(errcat.CodeUsageError, errcat.Fields{
@@ -57,24 +62,11 @@ func (c *ServerCmd) AfterApply(ctx *kong.Context) error {
 			"command": "ship box doctor",
 		})
 	}
-	if !remoteprotocol.ClientNamespaceAllowed(namespace) {
+	if !remoteprotocol.CommandAllowed(command, remoteprotocol.ExposureClient) {
 		return errcat.New(errcat.CodeUsageError, errcat.Fields{
 			"detail":  "server command is not available to remote clients",
 			"command": "ship help",
 		})
 	}
 	return remoteprotocol.RequireExactVersion(c.ClientVersion, version.Version, "<box>")
-}
-
-func serverInternalCommandAllowed(namespace string, c *ServerCmd) bool {
-	switch namespace {
-	case "converge-boot", "gc":
-		return true
-	case "env":
-		return true
-	case "doctor":
-		return c.Doctor.Action == "record"
-	default:
-		return false
-	}
 }

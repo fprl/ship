@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/internal/deployoutcome"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/journal"
@@ -52,22 +53,22 @@ type journalProbe struct {
 }
 
 type deployJournalEntry struct {
-	SchemaVersion    int             `json:"schema_version"`
-	App              string          `json:"app"`
-	Env              string          `json:"env"`
-	Outcome          string          `json:"outcome"`
-	StartedAt        string          `json:"started_at"`
-	EndedAt          string          `json:"ended_at"`
-	PreviousRelease  string          `json:"previous_release"`
-	AttemptedRelease string          `json:"attempted_release"`
-	Activation       string          `json:"activation,omitempty"`
-	Artifact         *artifact.Tuple `json:"artifact,omitempty"`
-	FailingStep      string          `json:"failing_step"`
-	StderrTail       string          `json:"stderr_tail"`
-	GC               string          `json:"gc,omitempty"`
-	Identity         deployIdentity  `json:"identity"`
-	Member           *journalMember  `json:"member,omitempty"`
-	Probe            *journalProbe   `json:"probe"`
+	SchemaVersion    int                `json:"schema_version"`
+	App              string             `json:"app"`
+	Env              string             `json:"env"`
+	Outcome          deployoutcome.Kind `json:"outcome"`
+	StartedAt        string             `json:"started_at"`
+	EndedAt          string             `json:"ended_at"`
+	PreviousRelease  string             `json:"previous_release"`
+	AttemptedRelease string             `json:"attempted_release"`
+	Activation       string             `json:"activation,omitempty"`
+	Artifact         *artifact.Tuple    `json:"artifact,omitempty"`
+	FailingStep      string             `json:"failing_step"`
+	StderrTail       string             `json:"stderr_tail"`
+	GC               string             `json:"gc,omitempty"`
+	Identity         deployIdentity     `json:"identity"`
+	Member           *journalMember     `json:"member,omitempty"`
+	Probe            *journalProbe      `json:"probe"`
 }
 
 type journalStepError struct {
@@ -152,7 +153,7 @@ func readLatestDeployJournalEntryWithStatus(app, env string) (deployJournalEntry
 		return deployJournalEntry{}, torn, err
 	}
 	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].Outcome == "gc" {
+		if entries[i].Outcome == deployoutcome.GC {
 			continue
 		}
 		return entries[i], torn, nil
@@ -171,7 +172,7 @@ func readLatestSuccessfulDeployJournalEntryWithStatus(app, env string) (deployJo
 		return deployJournalEntry{}, torn, err
 	}
 	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].Outcome == "deployed" || entries[i].Outcome == "rolled_back" {
+		if entries[i].Outcome.CompletedLifecycle() {
 			return entries[i], torn, nil
 		}
 	}
@@ -245,7 +246,7 @@ func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease strin
 		tail = err.Error()
 	}
 	return deployJournalEntry{
-		Outcome:          "failed",
+		Outcome:          deployoutcome.Failed,
 		StartedAt:        startedAt.Format(time.RFC3339Nano),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
 		PreviousRelease:  previousRelease,
@@ -258,7 +259,7 @@ func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease strin
 	}, scrubValues
 }
 
-func committedOutcomeJournalEntry(app, env, outcome, previousRelease, attemptedRelease string, actor deployIdentity, startedAt time.Time, failingStep string, artifact *artifact.Tuple, err error) (deployJournalEntry, []string) {
+func committedOutcomeJournalEntry(app, env string, outcome deployoutcome.Kind, previousRelease, attemptedRelease string, actor deployIdentity, startedAt time.Time, failingStep string, artifact *artifact.Tuple, err error) (deployJournalEntry, []string) {
 	stepErr := newJournalStepError(failingStep, err, nil, nil)
 	entry, scrubValues := deployJournalFailureEntry(app, env, previousRelease, attemptedRelease, actor, startedAt, stepErr)
 	entry.Outcome = outcome

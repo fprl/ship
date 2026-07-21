@@ -11,6 +11,7 @@ import (
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/artifact"
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/deployoutcome"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
@@ -357,9 +358,12 @@ func TestConvergedAliasPreviewReportsConverged(t *testing.T) {
 }
 
 func TestCrashOnlyJournalOutcomeTable(t *testing.T) {
-	for _, tc := range []struct{ name, step, outcome string }{{"before commit", "probe", "failed"}, {"after commit", "converge", "committed_unconverged"}} {
+	for _, tc := range []struct {
+		name, step string
+		outcome    deployoutcome.Kind
+	}{{"before commit", "probe", deployoutcome.Failed}, {"after commit", "converge", deployoutcome.CommittedUnconverged}} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.outcome == "failed" {
+			if tc.outcome == deployoutcome.Failed {
 				entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", deployIdentity{}, time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), newJournalStepError(tc.step, errors.New("boom"), nil, nil))
 				if entry.Outcome != tc.outcome || entry.FailingStep != tc.step {
 					t.Fatalf("entry = %+v", entry)

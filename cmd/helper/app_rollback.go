@@ -10,6 +10,7 @@ import (
 	"github.com/fprl/ship/internal/activation"
 	"github.com/fprl/ship/internal/artifact"
 	"github.com/fprl/ship/internal/config"
+	"github.com/fprl/ship/internal/deployoutcome"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/utils"
 )
@@ -70,7 +71,7 @@ func rollbackCommittedError(err error) error {
 }
 
 func (c appRollbackCmd) recordRollbackDegraded(result rollbackPayload, startedAt time.Time, err error) {
-	entry, _ := committedOutcomeJournalEntry(c.App, c.Env, "committed_degraded", result.Previous, result.Release, c.actor(), startedAt, "durability", &result.Artifact, err)
+	entry, _ := committedOutcomeJournalEntry(c.App, c.Env, deployoutcome.CommittedDegraded, result.Previous, result.Release, c.actor(), startedAt, "durability", &result.Artifact, err)
 	entry.Member = currentServerMemberForJournal()
 	if appendErr := appendRollbackDeployJournal(c.App, c.Env, entry, nil); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
@@ -78,7 +79,7 @@ func (c appRollbackCmd) recordRollbackDegraded(result rollbackPayload, startedAt
 }
 
 func (c appRollbackCmd) recordRollbackFailure(result rollbackPayload, startedAt time.Time, err error) {
-	entry, _ := committedOutcomeJournalEntry(c.App, c.Env, "committed_unconverged", result.Previous, result.Release, c.actor(), startedAt, committedFailureStep(err, "converge"), &result.Artifact, err)
+	entry, _ := committedOutcomeJournalEntry(c.App, c.Env, deployoutcome.CommittedUnconverged, result.Previous, result.Release, c.actor(), startedAt, committedFailureStep(err, "converge"), &result.Artifact, err)
 	entry.Member = currentServerMemberForJournal()
 	if appendErr := appendRollbackDeployJournal(c.App, c.Env, entry, nil); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
@@ -86,7 +87,7 @@ func (c appRollbackCmd) recordRollbackFailure(result rollbackPayload, startedAt 
 }
 
 func (c appRollbackCmd) recordRollbackSuccess(result rollbackPayload, startedAt time.Time) {
-	entry := deployJournalEntry{Outcome: "rolled_back", StartedAt: startedAt.Format(time.RFC3339Nano), EndedAt: time.Now().UTC().Format(time.RFC3339Nano), PreviousRelease: result.Previous, AttemptedRelease: result.Release, Activation: c.ActivationID, Identity: c.actor(), Member: currentServerMemberForJournal(), Artifact: &result.Artifact}
+	entry := deployJournalEntry{Outcome: deployoutcome.RolledBack, StartedAt: startedAt.Format(time.RFC3339Nano), EndedAt: time.Now().UTC().Format(time.RFC3339Nano), PreviousRelease: result.Previous, AttemptedRelease: result.Release, Activation: c.ActivationID, Identity: c.actor(), Member: currentServerMemberForJournal(), Artifact: &result.Artifact}
 	if err := appendRollbackDeployJournal(c.App, c.Env, entry, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: rollback succeeded but failed to write deploy journal %s: %v; cleanup/GC were skipped; next: ship box doctor\n", identity.DeployJournalFile(c.App, c.Env), err)
 	} else {

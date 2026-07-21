@@ -11,6 +11,7 @@ import (
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/names"
+	"github.com/fprl/ship/internal/podmanruntime"
 	"github.com/fprl/ship/internal/releaseid"
 	"github.com/fprl/ship/internal/secrets"
 	"github.com/fprl/ship/internal/store"
@@ -108,7 +109,7 @@ func setupEnv(file identity.EnvIdentity) error {
 	// 4. Ensure the per-env Podman network exists. Containers join this
 	// for intra-app DNS in addition to the shared `ingress` network.
 	if !host.CommandSucceeds("podman", "network", "exists", network) {
-		if _, err := utils.RunChecked("podman", []string{"network", "create", network}, ""); err != nil {
+		if err := podmanruntime.CLI().CreateNetwork(network); err != nil {
 			return fmt.Errorf("podman network create %s: %v", network, err)
 		}
 	}
@@ -266,7 +267,7 @@ func destroyEnv(app, env string, purge bool) (destroySummary, error) {
 	}
 	removedContainers := destroyContainerNames(containersToProcesses(containers))
 	for _, name := range removedContainers {
-		_, _ = utils.RunChecked("podman", []string{"rm", "-f", name}, "")
+		_ = podmanruntime.CLI().RemoveContainer(name)
 	}
 
 	// 3. Drop release images for this exact (app, env). Containers are gone,
@@ -294,7 +295,7 @@ func destroyEnv(app, env string, purge bool) (destroySummary, error) {
 
 	// 6. Drop the per-env Podman network.
 	if host.CommandSucceeds("podman", "network", "exists", network) {
-		_, _ = utils.RunChecked("podman", []string{"network", "rm", network}, "")
+		_ = podmanruntime.CLI().RemoveNetwork(network)
 	}
 
 	secretsPurged, err := cleanupDestroyedEnvCredentials(app, env, purge)

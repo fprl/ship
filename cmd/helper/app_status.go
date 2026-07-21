@@ -18,6 +18,7 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/names"
+	"github.com/fprl/ship/internal/podmanruntime"
 	"github.com/fprl/ship/internal/secrets"
 	"github.com/fprl/ship/internal/utils"
 )
@@ -331,13 +332,7 @@ type statusRelease struct {
 // about. Podman's full schema has dozens of fields; pinning a narrow
 // surface here keeps us from breaking if upstream re-shuffles
 // rarely-used fields.
-type containerEntry struct {
-	Names  []string          `json:"Names"`
-	State  string            `json:"State"`
-	Status string            `json:"Status"`
-	Image  string            `json:"Image"`
-	Labels map[string]string `json:"Labels"`
-}
+type containerEntry = podmanruntime.Container
 
 func containersToProcesses(entries []containerEntry) []processStatus {
 	out := make([]processStatus, 0, len(entries))
@@ -971,73 +966,15 @@ func copyStaticReleaseMetadata(static *staticStatus, target *statusRelease) {
 // --- podman calls ---
 
 func podmanPSContainers(app, env string) ([]containerEntry, error) {
-	// `--format json` returns a JSON array of containers matching
-	// the label filters server-side. Empty array if nothing matches.
-	cmd := exec.Command("podman", "ps", "-a",
-		"--filter", "label=ship.app="+app,
-		"--filter", "label=ship.env="+env,
-		"--format", "json",
-	)
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("podman ps: %v", err)
-	}
-	return parsePodmanPSJSON(out)
+	return podmanruntime.CLI().Containers(app, env)
 }
 
 func podmanPSAllContainers() ([]containerEntry, error) {
-	cmd := exec.Command("podman", "ps", "-a", "--format", "json")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("podman ps: %v", err)
-	}
-	return parsePodmanPSJSON(out)
-}
-
-func parsePodmanPSJSON(out []byte) ([]containerEntry, error) {
-	out = []byte(strings.TrimSpace(string(out)))
-	var entries []containerEntry
-	if err := json.Unmarshal(out, &entries); err != nil {
-		return nil, fmt.Errorf("parse podman ps json: %v", err)
-	}
-	return entries, nil
+	return podmanruntime.CLI().AllContainers()
 }
 
 func podmanContainerImageIDs(entries []containerEntry) (map[string]string, error) {
-	ids := map[string]string{}
-	var names []string
-	for _, entry := range entries {
-		if len(entry.Names) > 0 {
-			names = append(names, entry.Names[0])
-		}
-	}
-	if len(names) == 0 {
-		return ids, nil
-	}
-	args := append([]string{"inspect", "--format", "json"}, names...)
-	out, err := utils.RunChecked("podman", args, "")
-	if err != nil {
-		return nil, fmt.Errorf("podman inspect containers: %w", err)
-	}
-	var inspected []struct {
-		Name   string `json:"Name"`
-		Image  string `json:"Image"`
-		Config struct {
-			Image string `json:"Image"`
-		} `json:"Config"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(string(out))), &inspected); err != nil {
-		return nil, fmt.Errorf("parse podman inspect containers: %w", err)
-	}
-	for _, item := range inspected {
-		name := strings.TrimPrefix(item.Name, "/")
-		image := item.Image
-		if image == "" {
-			image = item.Config.Image
-		}
-		ids[name] = image
-	}
-	return ids, nil
+	return podmanruntime.CLI().ContainerImageIDs(entries)
 }
 
 var envIdentityGlob string

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
 	"time"
 
+	"github.com/fprl/ship/internal/addressing"
 	"github.com/fprl/ship/internal/cliargs"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
@@ -124,36 +124,8 @@ func shipInjectedEnv(app, env, release string, ctx *config.AppContext) map[strin
 }
 
 func execDeploymentURL(ctx *config.AppContext) string {
-	type candidate struct {
-		rank int
-		url  string
-	}
-	var candidates []candidate
-	for _, route := range ctx.Routes {
-		if route.Host == "" {
-			continue
-		}
-		rank := 3
-		switch {
-		case route.Process == "web" && route.Path == "":
-			rank = 0
-		case route.Path == "":
-			rank = 1
-		case route.Process == "web":
-			rank = 2
-		}
-		candidates = append(candidates, candidate{rank: rank, url: "https://" + route.Host + route.Path})
-	}
-	if len(candidates) == 0 {
-		return ""
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].rank != candidates[j].rank {
-			return candidates[i].rank < candidates[j].rank
-		}
-		return candidates[i].url < candidates[j].url
-	})
-	return candidates[0].url
+	url, _ := addressing.PrimaryURL(ctx.Routes, true)
+	return url
 }
 
 func buildPodmanExecRunArgsWithActivation(app, env, containerName, imageTag, userID, groupID, release, activation string, command []string, injected map[string]string, envFileExists, previewEnv, tty bool, envFile string) []string {

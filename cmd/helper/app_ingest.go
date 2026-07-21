@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/fprl/ship/internal/deploybundle"
+	"github.com/fprl/ship/internal/deployrequest"
 	"github.com/fprl/ship/internal/host"
 )
 
@@ -70,10 +71,16 @@ func (c *appIngestCmd) Run() error {
 }
 
 func (c appIngestCmd) applyCommand() appApplyCmd {
-	return appApplyCmd{
-		App: c.App, Env: c.Env, SHA: c.SHA, Dirty: c.Dirty,
-		BaseCommit: c.BaseCommit, CreatedAt: c.CreatedAt, Rebuild: c.Rebuild,
-		Progress: c.Progress, Logs: c.Logs, TLS: c.TLS, PreviewAlias: c.PreviewAlias,
-		SSHKeyComment: c.SSHKeyComment, GitAuthor: c.GitAuthor,
+	return appApplyCmd{Request: c.request()}
+}
+
+func (c appIngestCmd) request() deployrequest.Request {
+	return deployrequest.Request{
+		App: c.App, Env: c.Env,
+		Bundle: deploybundle.Metadata{Size: c.BundleSize, SHA256: c.BundleSHA256},
+		SHA:    c.SHA, Dirty: c.Dirty, BaseCommit: c.BaseCommit, CreatedAt: c.CreatedAt,
+		Rebuild: c.Rebuild, Progress: c.Progress, Logs: c.Logs,
+		TLS: c.TLS, PreviewAlias: c.PreviewAlias,
+		Actor: deployrequest.Actor{SSHKeyComment: c.SSHKeyComment, GitAuthor: c.GitAuthor},
 	}
 }

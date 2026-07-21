@@ -2,9 +2,8 @@ package helper
 
 import (
 	"fmt"
-	"strings"
-	"time"
 
+	"github.com/fprl/ship/internal/deployrequest"
 	"github.com/fprl/ship/internal/releaseid"
 )
 
@@ -40,40 +39,12 @@ func validateReleaseMetadata(meta releaseMetadata) error {
 	if meta.SchemaVersion != 1 {
 		return fmt.Errorf("unsupported release metadata schema version %d", meta.SchemaVersion)
 	}
-	if err := validateRelease(meta.Release); err != nil {
-		return err
-	}
 	info, err := releaseid.Parse(meta.Release)
 	if err != nil {
 		return err
 	}
-	if !releaseid.IsGitCommit(meta.BaseCommit) {
-		return fmt.Errorf("invalid base commit: %q", meta.BaseCommit)
-	}
-	createdAt, err := time.Parse(time.RFC3339, meta.CreatedAt)
-	if err != nil {
-		return fmt.Errorf("invalid release created_at: %v", err)
-	}
 	if meta.StaticHash != info.StaticHash {
 		return fmt.Errorf("release metadata static_hash %q does not match release %q", meta.StaticHash, meta.Release)
 	}
-	if meta.Dirty {
-		if !info.Dirty {
-			return fmt.Errorf("dirty release metadata requires <base-sha>-dirty-<timestamp>, got %q", meta.Release)
-		}
-		if !strings.HasPrefix(meta.BaseCommit, info.Base) {
-			return fmt.Errorf("dirty release %q does not match base commit %q", meta.Release, meta.BaseCommit)
-		}
-		if want := releaseid.DirtyTimestamp(createdAt); info.Timestamp != want {
-			return fmt.Errorf("dirty release timestamp %q does not match created_at %q", info.Timestamp, meta.CreatedAt)
-		}
-	} else {
-		if info.Dirty {
-			return fmt.Errorf("release %q has dirty shape but dirty=false", meta.Release)
-		}
-		if !strings.HasPrefix(meta.BaseCommit, info.Base) {
-			return fmt.Errorf("clean release %q does not match base commit %q", meta.Release, meta.BaseCommit)
-		}
-	}
-	return nil
+	return deployrequest.ValidateReleaseProvenance(meta.Release, meta.Dirty, meta.BaseCommit, meta.CreatedAt)
 }

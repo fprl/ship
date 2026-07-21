@@ -465,27 +465,19 @@ func (r *CommandRunner) withMemberFingerprint(command string) string {
 		return command
 	}
 	prefix := command[:index]
-	serverCommand := command[index:]
-	rest := strings.TrimPrefix(serverCommand, remoteServerCommandPrefix)
-	if strings.Contains(rest, "--member-fingerprint") {
+	argv, err := remoteprotocol.ParseShellFields(command[index:])
+	if err != nil || len(argv) < 5 || argv[0] != "sudo" || argv[1] != "-n" || argv[2] != "/usr/local/bin/ship" || argv[3] != "server" {
 		return command
 	}
-	parts := strings.SplitN(rest, " ", 4)
-	if len(parts) >= 3 {
-		if invocation, err := remoteprotocol.ParseClientArgs(parts[:3]); err == nil {
-			head := strings.Join(parts[:invocation.NamespaceIndex+1], " ")
-			injected := head + " --member-fingerprint " + utils.ShellEscape(fingerprint)
-			if len(parts) == 4 {
-				injected += " " + parts[3]
-			}
-			return prefix + remoteServerCommandPrefix + injected
-		}
+	invocation, err := remoteprotocol.Parse(argv[4:])
+	if err != nil {
+		return command
 	}
-	namespace, tail, ok := strings.Cut(rest, " ")
-	if !ok {
-		return prefix + remoteServerCommandPrefix + namespace + " --member-fingerprint " + utils.ShellEscape(fingerprint)
+	bound, err := remoteprotocol.BindMember(invocation, fingerprint)
+	if err != nil {
+		return command
 	}
-	return prefix + remoteServerCommandPrefix + namespace + " --member-fingerprint " + utils.ShellEscape(fingerprint) + " " + tail
+	return prefix + renderServerCommand(bound.Args...)
 }
 
 func (r *CommandRunner) Upload(local string, remote string, server string) error {
