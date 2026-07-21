@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/fprl/ship/kernel"
 )
 
 func TestClientArgsRoundTrip(t *testing.T) {
@@ -61,13 +63,13 @@ func TestSudoersLineAndValidationShareNamespacePolicy(t *testing.T) {
 func TestCatalogueClassifiesCompletePathsAndExposure(t *testing.T) {
 	tests := []struct {
 		args     []string
-		exposure Exposure
+		exposure kernel.Exposure
 	}{
-		{ClientArgs("v1", "app", "preview", "resolve", "api", "branch"), ExposureClient},
-		{ClientArgs("v1", "webhook", "set", "https://example.com"), ExposureClient},
-		{[]string{"version", "--json"}, ExposureRepair},
-		{[]string{"--internal", "doctor", "record"}, ExposureInternal},
-		{[]string{"agent-shell", "--member-fingerprint", "SHA256:key"}, ExposureGateway},
+		{ClientArgs("v1", "app", "preview", "resolve", "api", "branch"), kernel.ExposureClient},
+		{ClientArgs("v1", "webhook", "set", "https://example.com"), kernel.ExposureClient},
+		{[]string{"version", "--json"}, kernel.ExposureRepair},
+		{[]string{"--internal", "doctor", "record"}, kernel.ExposureInternal},
+		{[]string{"agent-shell", "--member-fingerprint", "SHA256:key"}, kernel.ExposureGateway},
 	}
 	for _, tt := range tests {
 		invocation, err := Parse(tt.args)

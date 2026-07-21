@@ -69,6 +69,9 @@ func Read(app, env string) (Pointer, error) {
 	if err := Validate(result); err != nil {
 		return Pointer{}, &ValidationError{Err: err}
 	}
+	if err := ValidateArtifact(result.Artifact); err != nil {
+		return Pointer{}, &ValidationError{Err: err}
+	}
 	return result, nil
 }
 

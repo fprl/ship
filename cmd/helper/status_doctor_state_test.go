@@ -286,7 +286,7 @@ func TestDoctorDeployJournalCheckReadsEachAppEnv(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(journalPath), 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(journalPath, []byte(`{"schema_version":2,"app":"api","env":"production"}`+"\n"), 0644); err != nil {
+	if err := os.WriteFile(journalPath, []byte(`{"schema_version":2,"app":"api","env":"production","outcome":"deployed"}`+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 

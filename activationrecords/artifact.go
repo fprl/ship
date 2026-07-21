@@ -69,7 +69,7 @@ func ValidateArtifact(tuple Tuple) error {
 	if !releaseIDPattern.MatchString(tuple.Release) {
 		return fmt.Errorf("artifact release is invalid: invalid release id: %q", tuple.Release)
 	}
-	imageID := strings.TrimSpace(tuple.ImageID)
+	imageID := tuple.ImageID
 	if imageID == "" && tuple.StaticHash == "" {
 		return fmt.Errorf("artifact requires image_id or static_hash")
 	}

@@ -1,11 +1,15 @@
 package activationrecords_test
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/activationrecords/contracttest"
+	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/kernel"
 )
 
@@ -52,4 +56,27 @@ func TestDiskImplementationConforms(t *testing.T) {
 	contracttest.AssertCandidatePolicy(t, func(pointer activationrecords.Pointer, verifier activationrecords.ArtifactVerifier, keep int) (activationrecords.CandidateSet, error) {
 		return activationrecords.VerifiedCandidates("api", "production", pointer, verifier, keep)
 	})
+}
+
+func TestReadDeployJournalRejectsUnknownOutcome(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
+	path := identity.DeployJournalFile("api", "production")
+	data, err := json.Marshal(activationrecords.JournalEntry{
+		SchemaVersion: activationrecords.DeployJournalSchemaVersion,
+		Outcome:       activationrecords.Outcome("future_outcome"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = activationrecords.ReadDeployJournal("api", "production")
+	if err == nil || !strings.Contains(err.Error(), "unsupported deploy journal outcome") {
+		t.Fatalf("ReadDeployJournal() error = %v, want unknown-outcome rejection", err)
+	}
 }

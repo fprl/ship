@@ -10,6 +10,7 @@ import (
 
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/remoteprotocol"
+	"github.com/fprl/ship/kernel"
 )
 
 type agentShellCmd struct {
@@ -95,7 +96,7 @@ func agentHelperInvocation(argv []string) (remoteprotocol.Invocation, bool) {
 	if err != nil {
 		return remoteprotocol.Invocation{}, false
 	}
-	if invocation.Exposure != remoteprotocol.ExposureClient && invocation.Exposure != remoteprotocol.ExposureRepair {
+	if invocation.Exposure != kernel.ExposureClient && invocation.Exposure != kernel.ExposureRepair {
 		return remoteprotocol.Invocation{}, false
 	}
 	return invocation, true

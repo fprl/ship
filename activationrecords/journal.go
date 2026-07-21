@@ -113,6 +113,9 @@ func ReadDeployJournal(app, env string) ([]JournalEntry, bool, error) {
 		if entry.SchemaVersion != DeployJournalSchemaVersion {
 			return fmt.Errorf("unsupported deploy journal schema version %d", entry.SchemaVersion)
 		}
+		if !ValidOutcome(entry.Outcome) {
+			return fmt.Errorf("unsupported deploy journal outcome %q", entry.Outcome)
+		}
 		entries = append(entries, entry)
 		return nil
 	})

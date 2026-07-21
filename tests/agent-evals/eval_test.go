@@ -18,6 +18,7 @@ import (
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/remoteprotocol"
 	"github.com/fprl/ship/internal/store"
+	"github.com/fprl/ship/kernel"
 	h "github.com/fprl/ship/tests/harness"
 )
 
@@ -301,7 +302,7 @@ func (e *evalCase) withOwnerMemberFingerprint(command string) string {
 		return command
 	}
 	invocation, err := remoteprotocol.Parse(argv[2:])
-	if err != nil || invocation.Exposure != remoteprotocol.ExposureClient {
+	if err != nil || invocation.Exposure != kernel.ExposureClient {
 		return command
 	}
 	bound, err := remoteprotocol.BindMember(invocation, fingerprint)

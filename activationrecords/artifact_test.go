@@ -27,11 +27,11 @@ func TestTupleDisplayIdentityUsesTheThreeArtifactShapes(t *testing.T) {
 	}
 }
 
-func TestValidateArtifactTrimsImageIDWhitespaceBeforeCheckingItsShape(t *testing.T) {
+func TestValidateArtifactRejectsWhitespacePaddedImageID(t *testing.T) {
 	imageID := strings.Repeat("a", 64)
 	tuple := Tuple{Release: "abcdef1", ImageID: " sha256:" + imageID + " "}
-	if err := ValidateArtifact(tuple); err != nil {
-		t.Fatalf("ValidateArtifact() error = %v, want whitespace-padded image id accepted", err)
+	if err := ValidateArtifact(tuple); err == nil {
+		t.Fatal("ValidateArtifact() accepted a whitespace-padded image id")
 	}
 }
 

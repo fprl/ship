@@ -15,22 +15,11 @@ const (
 	MemberFingerprintFlag = "--member-fingerprint"
 )
 
-// Exposure is a transitional alias of kernel.Exposure; it will be removed
-// when remoteprotocol consumers migrate to kernel directly.
-type Exposure = kernel.Exposure
-
-const (
-	ExposureClient   = kernel.ExposureClient
-	ExposureRepair   = kernel.ExposureRepair
-	ExposureInternal = kernel.ExposureInternal
-	ExposureGateway  = kernel.ExposureGateway
-)
-
 // Command is one closed remote protocol operation. Path contains only Kong
 // command tokens; flags and positional arguments are deliberately excluded.
 type Command struct {
 	Path     []string
-	Exposure Exposure
+	Exposure kernel.Exposure
 }
 
 // catalogueProjection is computed once from the frozen registry, which is
@@ -45,8 +34,9 @@ var catalogueProjection = func() []Command {
 	return out
 }()
 
-// Catalogue is the single command vocabulary shared by client rendering,
-// helper admission, sudoers generation, and the forced-command SSH gate.
+// Catalogue is the single command vocabulary used for helper admission,
+// sudoers generation, and the forced-command SSH gate. Client rendering will
+// join this vocabulary when modules register their ClientAdapter/Docs.
 func Catalogue() []Command {
 	out := make([]Command, len(catalogueProjection))
 	for i, command := range catalogueProjection {
@@ -60,7 +50,7 @@ func Catalogue() []Command {
 type Invocation struct {
 	ClientVersion  string
 	Command        Command
-	Exposure       Exposure
+	Exposure       kernel.Exposure
 	Args           []string
 	NamespaceIndex int
 }
@@ -76,7 +66,7 @@ func Parse(args []string) (Invocation, error) {
 	if len(args) == 0 {
 		return Invocation{}, fmt.Errorf("empty remote request")
 	}
-	exposure := ExposureRepair | ExposureGateway
+	exposure := kernel.ExposureRepair | kernel.ExposureGateway
 	commandArgs := args
 	clientVersion := ""
 	namespaceIndex := 0
@@ -85,7 +75,7 @@ func Parse(args []string) (Invocation, error) {
 		if len(args) < 3 || args[1] == "" {
 			return Invocation{}, fmt.Errorf("remote request requires %s <version> <command>", ClientVersionFlag)
 		}
-		exposure = ExposureClient
+		exposure = kernel.ExposureClient
 		clientVersion = args[1]
 		commandArgs = args[2:]
 		namespaceIndex = 2
@@ -93,7 +83,7 @@ func Parse(args []string) (Invocation, error) {
 		if len(args) < 2 {
 			return Invocation{}, fmt.Errorf("internal remote request requires a command")
 		}
-		exposure = ExposureInternal
+		exposure = kernel.ExposureInternal
 		commandArgs = args[1:]
 		namespaceIndex = 1
 	}
@@ -130,7 +120,7 @@ func withoutMemberClaims(args []string) []string {
 	return out
 }
 
-func lookupCommand(args []string, exposure Exposure) (Command, bool) {
+func lookupCommand(args []string, exposure kernel.Exposure) (Command, bool) {
 	var best Command
 	for _, command := range catalogueProjection {
 		if command.Exposure&exposure == 0 || len(command.Path) > len(args) {
@@ -155,13 +145,13 @@ func lookupCommand(args []string, exposure Exposure) (Command, bool) {
 }
 
 // PathAllowed validates a Kong-resolved command path against the catalogue.
-func PathAllowed(path []string, exposure Exposure) bool {
+func PathAllowed(path []string, exposure kernel.Exposure) bool {
 	return commandRegistry.PathAllowed(path, exposure)
 }
 
 // CommandAllowed accepts a resolved command followed by arguments/placeholders.
 // It is used by parser adapters such as Kong after they resolve the command.
-func CommandAllowed(args []string, exposure Exposure) bool {
+func CommandAllowed(args []string, exposure kernel.Exposure) bool {
 	_, ok := lookupCommand(args, exposure)
 	return ok
 }
@@ -176,7 +166,7 @@ type ClientInvocation struct {
 
 func ParseClientArgs(args []string) (ClientInvocation, error) {
 	invocation, err := Parse(args)
-	if err != nil || invocation.Exposure != ExposureClient {
+	if err != nil || invocation.Exposure != kernel.ExposureClient {
 		if err == nil {
 			err = fmt.Errorf("remote request is not client-exposed")
 		}
@@ -190,14 +180,14 @@ func ParseClientArgs(args []string) (ClientInvocation, error) {
 }
 
 func ClientNamespaceAllowed(namespace string) bool {
-	return namespaceAllowed(namespace, ExposureClient)
+	return namespaceAllowed(namespace, kernel.ExposureClient)
 }
 
 func RepairNamespaceAllowed(namespace string) bool {
-	return namespaceAllowed(namespace, ExposureRepair|ExposureGateway)
+	return namespaceAllowed(namespace, kernel.ExposureRepair|kernel.ExposureGateway)
 }
 
-func namespaceAllowed(namespace string, exposure Exposure) bool {
+func namespaceAllowed(namespace string, exposure kernel.Exposure) bool {
 	for _, command := range catalogueProjection {
 		if command.Exposure&exposure != 0 && command.Path[0] == namespace {
 			return true
@@ -214,7 +204,7 @@ func BindMember(invocation Invocation, fingerprint string) (Invocation, error) {
 	if fingerprint == "" {
 		return Invocation{}, fmt.Errorf("missing pinned member fingerprint")
 	}
-	if invocation.Exposure != ExposureClient && invocation.Exposure != ExposureRepair {
+	if invocation.Exposure != kernel.ExposureClient && invocation.Exposure != kernel.ExposureRepair {
 		return Invocation{}, fmt.Errorf("member identity cannot be bound to this invocation")
 	}
 	index := invocation.NamespaceIndex
@@ -354,7 +344,7 @@ func sudoersCommands() []string {
 	const binary = "/usr/local/bin/ship server "
 	set := map[string]bool{}
 	for _, command := range catalogueProjection {
-		if command.Exposure&ExposureClient != 0 {
+		if command.Exposure&kernel.ExposureClient != 0 {
 			set[command.Path[0]] = true
 		}
 	}

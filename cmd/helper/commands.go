@@ -9,6 +9,7 @@ import (
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/remoteprotocol"
 	"github.com/fprl/ship/internal/version"
+	"github.com/fprl/ship/kernel"
 )
 
 var requireRoot = func() error {
@@ -50,11 +51,11 @@ func (c *ServerCmd) AfterApply(ctx *kong.Context) error {
 	if command[0] == "doctor" && c.Doctor.Action != "" {
 		command = []string{"doctor", c.Doctor.Action}
 	}
-	if remoteprotocol.CommandAllowed(command, remoteprotocol.ExposureRepair|remoteprotocol.ExposureGateway) {
+	if remoteprotocol.CommandAllowed(command, kernel.ExposureRepair|kernel.ExposureGateway) {
 		return nil
 	}
 	if c.Internal {
-		if remoteprotocol.CommandAllowed(command, remoteprotocol.ExposureInternal) {
+		if remoteprotocol.CommandAllowed(command, kernel.ExposureInternal) {
 			return nil
 		}
 		return errcat.New(errcat.CodeUsageError, errcat.Fields{
@@ -62,7 +63,7 @@ func (c *ServerCmd) AfterApply(ctx *kong.Context) error {
 			"command": "ship box doctor",
 		})
 	}
-	if !remoteprotocol.CommandAllowed(command, remoteprotocol.ExposureClient) {
+	if !remoteprotocol.CommandAllowed(command, kernel.ExposureClient) {
 		return errcat.New(errcat.CodeUsageError, errcat.Fields{
 			"detail":  "server command is not available to remote clients",
 			"command": "ship help",
