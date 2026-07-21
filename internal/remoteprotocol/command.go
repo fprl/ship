@@ -33,13 +33,24 @@ type Command struct {
 	Exposure Exposure
 }
 
-// Catalogue is the single command vocabulary shared by client rendering,
-// helper admission, sudoers generation, and the forced-command SSH gate.
-func Catalogue() []Command {
+// catalogueProjection is computed once from the frozen registry, which is
+// immutable after Freeze, so the projection cannot go stale. Package-internal
+// scans iterate it directly; external callers go through Catalogue.
+var catalogueProjection = func() []Command {
 	operations := commandRegistry.Operations()
 	out := make([]Command, len(operations))
 	for i, operation := range operations {
-		out[i] = Command{Path: append([]string(nil), operation.Path...), Exposure: operation.Exposure}
+		out[i] = Command{Path: operation.Path, Exposure: operation.Exposure}
+	}
+	return out
+}()
+
+// Catalogue is the single command vocabulary shared by client rendering,
+// helper admission, sudoers generation, and the forced-command SSH gate.
+func Catalogue() []Command {
+	out := make([]Command, len(catalogueProjection))
+	for i, command := range catalogueProjection {
+		out[i] = Command{Path: append([]string(nil), command.Path...), Exposure: command.Exposure}
 	}
 	return out
 }
@@ -121,7 +132,7 @@ func withoutMemberClaims(args []string) []string {
 
 func lookupCommand(args []string, exposure Exposure) (Command, bool) {
 	var best Command
-	for _, command := range Catalogue() {
+	for _, command := range catalogueProjection {
 		if command.Exposure&exposure == 0 || len(command.Path) > len(args) {
 			continue
 		}
@@ -187,7 +198,7 @@ func RepairNamespaceAllowed(namespace string) bool {
 }
 
 func namespaceAllowed(namespace string, exposure Exposure) bool {
-	for _, command := range Catalogue() {
+	for _, command := range catalogueProjection {
 		if command.Exposure&exposure != 0 && command.Path[0] == namespace {
 			return true
 		}
@@ -342,7 +353,7 @@ func SudoersLineRegexp() *regexp.Regexp {
 func sudoersCommands() []string {
 	const binary = "/usr/local/bin/ship server "
 	set := map[string]bool{}
-	for _, command := range Catalogue() {
+	for _, command := range catalogueProjection {
 		if command.Exposure&ExposureClient != 0 {
 			set[command.Path[0]] = true
 		}

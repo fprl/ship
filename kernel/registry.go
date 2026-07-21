@@ -172,6 +172,9 @@ func validateDefinition(definition Definition) error {
 				return fmt.Errorf("module %q has invalid command path %q", definition.ID, formatPath(operation.Path))
 			}
 		}
+		if operation.Exposure == 0 || operation.Exposure&^exposureMask != 0 {
+			return fmt.Errorf("module %q operation %q has an undefined exposure class", definition.ID, formatPath(operation.Path))
+		}
 		if operation.Exposure&ExposureClient != 0 && (operation.Authorization.Permission == "" || operation.Authorization.Target == nil) {
 			return fmt.Errorf("module %q operation %q is client-exposed but missing authorization metadata", definition.ID, formatPath(operation.Path))
 		}

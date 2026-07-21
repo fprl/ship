@@ -29,6 +29,19 @@ func TestRegistryRejectsPrefixAmbiguousCommandPaths(t *testing.T) {
 	}
 }
 
+func TestRegistryRejectsUndefinedExposureClasses(t *testing.T) {
+	for _, exposure := range []Exposure{0, 1 << 7, ExposureClient | 1 << 6} {
+		operation := testOperation([]string{"app", "apply"})
+		operation.Exposure = exposure
+		registry := NewRegistry([]Definition{{ID: "apps", Operations: []Operation{operation}}})
+
+		err := registry.Freeze()
+		if err == nil || !strings.Contains(err.Error(), "undefined exposure class") {
+			t.Fatalf("Freeze() with exposure %b error = %v, want undefined exposure class rejection", exposure, err)
+		}
+	}
+}
+
 func TestRegistryAllowsPrefixRelatedPathsWithDisjointExposures(t *testing.T) {
 	longer := testOperation([]string{"app", "apply", "extra"})
 	longer.Exposure = ExposureInternal

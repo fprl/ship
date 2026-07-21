@@ -15,6 +15,10 @@ const (
 	ExposureGateway
 )
 
+// exposureMask covers every defined caller class; registration with bits
+// outside it is rejected at registry freeze.
+const exposureMask = ExposureClient | ExposureRepair | ExposureInternal | ExposureGateway
+
 // Permission is an authorization class declared by an operation. The kernel
 // does not interpret its value.
 type Permission string

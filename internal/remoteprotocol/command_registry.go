@@ -16,6 +16,12 @@ func namedTarget(name string) kernel.TargetExtractor {
 	}
 }
 
+// The declared permission is the operation's primary authorization class.
+// A few commands conditionally escalate beyond it today (production data
+// save/restore adds box mutation; share only demands more when rotating);
+// those escalations are policy over (permission, target) and stay enforced
+// in the helper until dispatch is wired, at which point they become the
+// single authorizer's policy — not a second declared class.
 func operation(path []string, exposure kernel.Exposure, permission kernel.Permission, target string) kernel.Operation {
 	return kernel.Operation{
 		Path:     path,
