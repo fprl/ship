@@ -8,10 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/config"
-	"github.com/fprl/ship/internal/deployoutcome"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
@@ -266,7 +264,7 @@ func TestConvergeCaddySecondRunUsesCaddyNoOp(t *testing.T) {
 	if err := writeStaticReleaseEnvelope("api", "production", "abcdef2", e); err != nil {
 		t.Fatal(err)
 	}
-	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "abcdef2-a1b2", Artifact: artifact.Tuple{Release: "abcdef2", StaticHash: staticHash, EnvelopeHash: envelope.HashLabel(label)}}); err != nil {
+	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: "abcdef2-a1b2", Artifact: activationrecords.Tuple{Release: "abcdef2", StaticHash: staticHash, EnvelopeHash: envelope.HashLabel(label)}}); err != nil {
 		t.Fatal(err)
 	}
 	prepareTestActivationEnv(t, "api", "production", "abcdef2-a1b2")
@@ -360,10 +358,10 @@ func TestConvergedAliasPreviewReportsConverged(t *testing.T) {
 func TestCrashOnlyJournalOutcomeTable(t *testing.T) {
 	for _, tc := range []struct {
 		name, step string
-		outcome    deployoutcome.Kind
-	}{{"before commit", "probe", deployoutcome.Failed}, {"after commit", "converge", deployoutcome.CommittedUnconverged}} {
+		outcome    activationrecords.Outcome
+	}{{"before commit", "probe", activationrecords.Failed}, {"after commit", "converge", activationrecords.CommittedUnconverged}} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.outcome == deployoutcome.Failed {
+			if tc.outcome == activationrecords.Failed {
 				entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", deployIdentity{}, time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), newJournalStepError(tc.step, errors.New("boom"), nil, nil))
 				if entry.Outcome != tc.outcome || entry.FailingStep != tc.step {
 					t.Fatalf("entry = %+v", entry)

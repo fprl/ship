@@ -8,9 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
-	"github.com/fprl/ship/internal/deployoutcome"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/identity"
 )
@@ -34,11 +32,11 @@ func writeLegacyPointerForTest(t *testing.T, app, env, release, activationID, en
 	}
 }
 
-func testTuple(release, image, static string) artifact.Tuple {
-	return artifact.Tuple{Release: release, ImageID: image, StaticHash: static}
+func testTuple(release, image, static string) activationrecords.Tuple {
+	return activationrecords.Tuple{Release: release, ImageID: image, StaticHash: static}
 }
 
-func committedHistoryForTest(t *testing.T, app, env string) ([]Tuple, bool, error) {
+func committedHistoryForTest(t *testing.T, app, env string) ([]activationrecords.Tuple, bool, error) {
 	t.Helper()
 	pointer, err := readActive(app, env)
 	if err != nil {
@@ -53,10 +51,10 @@ func TestCommittedHistoryDeduplicatesTuplesKeepsRepeatedReleasesAndReportsTorn(t
 	a := testTuple("release-a", strings.Repeat("a", 64), "")
 	b := testTuple("release-a", strings.Repeat("b", 64), "")
 	c := testTuple("release-c", strings.Repeat("c", 64), "")
-	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "a", Artifact: a}); err != nil {
+	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: "a", Artifact: a}); err != nil {
 		t.Fatal(err)
 	}
-	for _, tuple := range []artifact.Tuple{b, a, c, b} {
+	for _, tuple := range []activationrecords.Tuple{b, a, c, b} {
 		copy := tuple
 		if err := appendDeployJournalEntry("api", "production", deployJournalEntry{Outcome: "deployed", Artifact: &copy}, nil); err != nil {
 			t.Fatal(err)
@@ -66,7 +64,7 @@ func TestCommittedHistoryDeduplicatesTuplesKeepsRepeatedReleasesAndReportsTorn(t
 	if err != nil || torn {
 		t.Fatalf("history=%v torn=%v err=%v", history, torn, err)
 	}
-	want := []artifact.Tuple{a, b, c}
+	want := []activationrecords.Tuple{a, b, c}
 	if len(history) != len(want) {
 		t.Fatalf("history=%v, want=%v", history, want)
 	}
@@ -95,8 +93,8 @@ func TestCommittedHistoryDeduplicatesTuplesKeepsRepeatedReleasesAndReportsTorn(t
 func TestCommittedHistoryIgnoresV1Journal(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	tuple := artifact.Tuple{Release: "release-a", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}
-	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Artifact: tuple}); err != nil {
+	tuple := activationrecords.Tuple{Release: "release-a", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}
+	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Artifact: tuple}); err != nil {
 		t.Fatal(err)
 	}
 	path := identity.LegacyDeployJournalFile("api", "production")
@@ -118,15 +116,15 @@ func TestCommittedHistoryIncludesPostCommitArtifacts(t *testing.T) {
 	active := testTuple("active", strings.Repeat("a", 64), "")
 	unconverged := testTuple("unconverged", strings.Repeat("b", 64), "")
 	degraded := testTuple("degraded", strings.Repeat("c", 64), "")
-	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "active-a1b2", Artifact: active}); err != nil {
+	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: "active-a1b2", Artifact: active}); err != nil {
 		t.Fatal(err)
 	}
 	for _, item := range []struct {
-		outcome deployoutcome.Kind
-		tuple   artifact.Tuple
+		outcome activationrecords.Outcome
+		tuple   activationrecords.Tuple
 	}{
-		{deployoutcome.CommittedUnconverged, unconverged},
-		{deployoutcome.CommittedDegraded, degraded},
+		{activationrecords.CommittedUnconverged, unconverged},
+		{activationrecords.CommittedDegraded, degraded},
 	} {
 		tuple := item.tuple
 		if err := appendDeployJournalEntry("api", "production", deployJournalEntry{Outcome: item.outcome, Artifact: &tuple}, nil); err != nil {
@@ -154,7 +152,7 @@ printf '%s\n' '[{"Id":"sha256-`+inspected+`","Labels":{"ship.app":"api","ship.en
 exit 0
 `)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	wanted := artifact.Tuple{Release: "abcdef1", ImageID: strings.Repeat("a", 64)}
+	wanted := activationrecords.Tuple{Release: "abcdef1", ImageID: strings.Repeat("a", 64)}
 	if _, err := ResolveArtifact("api", "production", wanted); err == nil || !strings.Contains(err.Error(), "identity mismatch") {
 		t.Fatalf("resolve error = %v, want exact-image mismatch", err)
 	}
@@ -179,7 +177,7 @@ func TestResolveArtifactRejectsStaticHashShapeThatDisagreesWithManifest(t *testi
 	if err := os.MkdirAll(staticReleasePath("api", "production", release, staticHash), 0755); err != nil {
 		t.Fatal(err)
 	}
-	_, err = resolveArtifact("api", "production", artifact.Tuple{Release: release, StaticHash: staticHash, EnvelopeHash: envelope.HashLabel(label)})
+	_, err = resolveArtifact("api", "production", activationrecords.Tuple{Release: release, StaticHash: staticHash, EnvelopeHash: envelope.HashLabel(label)})
 	if err == nil || !strings.Contains(err.Error(), "static_hash does not match manifest serve routes") {
 		t.Fatalf("resolve mismatch error = %v", err)
 	}
@@ -217,9 +215,9 @@ if [ "$2" = "exists" ]; then exit 1; fi
 exit 0
 `)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	active := artifact.Tuple{Release: "abc1234", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}
-	missing := artifact.Tuple{Release: "abc1235", ImageID: strings.Repeat("c", 64), StaticHash: strings.Repeat("d", 64)}
-	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "active-a1b2", Artifact: active}); err != nil {
+	active := activationrecords.Tuple{Release: "abc1234", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}
+	missing := activationrecords.Tuple{Release: "abc1235", ImageID: strings.Repeat("c", 64), StaticHash: strings.Repeat("d", 64)}
+	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: "active-a1b2", Artifact: active}); err != nil {
 		t.Fatal(err)
 	}
 	if err := appendDeployJournalEntry("api", "production", deployJournalEntry{Outcome: "deployed", Artifact: &missing}, nil); err != nil {
@@ -230,7 +228,7 @@ exit 0
 	if !errors.As(resolveErr, &absent) || !isMissingPath(staticReleasePath("api", "production", missing.Release, missing.StaticHash)) {
 		t.Fatalf("direct missing classification error=%v absent=%v staticMissing=%v", resolveErr, absent, isMissingPath(staticReleasePath("api", "production", missing.Release, missing.StaticHash)))
 	}
-	set, err := sharedArtifactCandidatesWithPointer("api", "production", activation.Pointer{Version: 2, Artifact: active})
+	set, err := sharedArtifactCandidatesWithPointer("api", "production", activationrecords.Pointer{Version: 2, Artifact: active})
 	if err != nil {
 		t.Fatal(err)
 	}

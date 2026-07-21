@@ -1,5 +1,3 @@
-// Package journal provides the shared crash semantics for append-only JSONL
-// journals.
 package journal
 
 import (
@@ -10,17 +8,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/fprl/ship/internal/identity"
 )
 
-// Append writes one committed JSON record and waits for it to reach the file
-// system before returning successfully.
+func DeployPath(app, env string) string { return identity.DeployJournalFile(app, env) }
+
+func LegacyDeployPath(app, env string) string { return identity.LegacyDeployJournalFile(app, env) }
+
 func Append(path string, entry any) error {
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("marshal journal entry: %w", err)
 	}
 	data = append(data, '\n')
-
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("create journal directory: %w", err)
 	}
@@ -41,9 +42,6 @@ func Append(path string, entry any) error {
 	return nil
 }
 
-// truncateTornTail removes the uncommitted final record before appending.
-// O_APPEND would otherwise concatenate the next record onto that tail and
-// turn a recoverable crash into a permanently malformed terminated line.
 func truncateTornTail(file *os.File) error {
 	info, err := file.Stat()
 	if err != nil {
@@ -79,9 +77,7 @@ func truncateTornTail(file *os.File) error {
 	return file.Truncate(0)
 }
 
-// Read visits every committed record in order. An unterminated final segment
-// is deliberately not decoded: it is a torn write, even if it is valid JSON.
-func Read(path string, decode func([]byte) error) (torn bool, err error) {
+func Read(path string, decode func([]byte) error) (bool, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -90,7 +86,6 @@ func Read(path string, decode func([]byte) error) (torn bool, err error) {
 		return false, fmt.Errorf("open journal: %w", err)
 	}
 	defer func() { _ = file.Close() }()
-
 	reader := bufio.NewReader(file)
 	lineNumber := 0
 	for {

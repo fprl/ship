@@ -7,8 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/identity"
 )
 
@@ -33,8 +32,8 @@ esac
 exit 0
 `)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	activeTuple := artifact.Tuple{Release: "abcdef1", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}
-	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "abcdef1-a1b2", Artifact: activeTuple}); err != nil {
+	activeTuple := activationrecords.Tuple{Release: "abcdef1", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}
+	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: "abcdef1-a1b2", Artifact: activeTuple}); err != nil {
 		t.Fatal(err)
 	}
 	activeDir := staticReleasePath("api", "production", activeTuple.Release, activeTuple.StaticHash)
@@ -127,11 +126,11 @@ esac
 exit 0
 `)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	activeTuple := artifact.Tuple{Release: "abcdef1", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}
-	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "abcdef1-a1b2", Artifact: activeTuple}); err != nil {
+	activeTuple := activationrecords.Tuple{Release: "abcdef1", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}
+	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: "abcdef1-a1b2", Artifact: activeTuple}); err != nil {
 		t.Fatal(err)
 	}
-	oldTuple := artifact.Tuple{Release: "bad1111", StaticHash: strings.Repeat("c", 64), EnvelopeHash: strings.Repeat("d", 64)}
+	oldTuple := activationrecords.Tuple{Release: "bad1111", StaticHash: strings.Repeat("c", 64), EnvelopeHash: strings.Repeat("d", 64)}
 	oldDir := staticReleasePath("api", "production", oldTuple.Release, oldTuple.StaticHash)
 	if err := os.MkdirAll(oldDir, 0755); err != nil {
 		t.Fatal(err)
@@ -200,7 +199,7 @@ func TestGCSkipsEnvOnTornJournal(t *testing.T) {
 	}
 	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "abcdef1-a1b2", Artifact: artifact.Tuple{Release: "abcdef1", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}}); err != nil {
+	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: "abcdef1-a1b2", Artifact: activationrecords.Tuple{Release: "abcdef1", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := appendDeployJournalEntry("api", "production", deployJournalEntry{
@@ -293,7 +292,7 @@ func TestGCRemovesOnlyShipOwnedTempDirectories(t *testing.T) {
 func TestGCProtectsCommittedStaticTreeThatChangedBeforeDelete(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	tuple := artifact.Tuple{Release: "old", StaticHash: strings.Repeat("a", 64)}
+	tuple := activationrecords.Tuple{Release: "old", StaticHash: strings.Repeat("a", 64)}
 	path := staticReleasePath("api", "production", tuple.Release, tuple.StaticHash)
 	if err := os.MkdirAll(path, 0755); err != nil {
 		t.Fatal(err)
@@ -306,7 +305,7 @@ func TestGCProtectsCommittedStaticTreeThatChangedBeforeDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	summary := gcSummary{}
-	gcRemoveStatic("api", "production", map[artifact.Tuple]bool{}, []artifactCandidate{{Tuple: tuple}}, &summary)
+	gcRemoveStatic("api", "production", map[activationrecords.Tuple]bool{}, []artifactCandidate{{Tuple: tuple}}, &summary)
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("changed committed static tree was deleted: %v", err)
 	}

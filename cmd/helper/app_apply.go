@@ -9,10 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/config"
-	"github.com/fprl/ship/internal/deployoutcome"
 	"github.com/fprl/ship/internal/deployrequest"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
@@ -52,8 +50,7 @@ type applyReleaseResult struct {
 }
 
 var (
-	appendSanitizedDeployJournal = appendSanitizedDeployJournalEntry
-	authorizeAppApply            = authorizeHelper
+	authorizeAppApply = authorizeHelper
 )
 
 func (c *appApplyCmd) Run() error {
@@ -125,7 +122,7 @@ func (c *appApplyCmd) recordDeployFailure(app *config.AppContext, previousReleas
 }
 
 func (c *appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
-	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, deployoutcome.CommittedUnconverged, previousRelease, c.SHA, c.actor(), startedAt, committedFailureStep(err, "converge"), c.committedArtifact(), err)
+	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, activationrecords.CommittedUnconverged, previousRelease, c.SHA, c.actor(), startedAt, committedFailureStep(err, "converge"), c.committedArtifact(), err)
 	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
@@ -134,7 +131,7 @@ func (c *appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previou
 }
 
 func (c *appApplyCmd) recordCommittedDegraded(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
-	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, deployoutcome.CommittedDegraded, previousRelease, c.SHA, c.actor(), startedAt, "durability", c.committedArtifact(), err)
+	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, activationrecords.CommittedDegraded, previousRelease, c.SHA, c.actor(), startedAt, "durability", c.committedArtifact(), err)
 	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
 	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
@@ -176,8 +173,8 @@ func committedFailureStep(err error, fallback string) string {
 	return fallback
 }
 
-func (c *appApplyCmd) committedArtifact() *artifact.Tuple {
-	tuple := artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash}
+func (c *appApplyCmd) committedArtifact() *activationrecords.Tuple {
+	tuple := activationrecords.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash}
 	if c.ImageID == "" {
 		tuple.EnvelopeHash = envelope.HashLabel(c.EnvelopeLabel)
 	}
@@ -304,9 +301,9 @@ func (c *appApplyCmd) runLockedE() (err error) {
 		return routesErr
 	}
 	finishTraffic := c.ProgressOut.start("traffic", "Switch traffic")
-	committed, err = commitAndConverge(c.App, c.Env, activation.Pointer{
+	committed, err = commitAndConverge(c.App, c.Env, activationrecords.Pointer{
 		Version: 2, Activation: c.ActivationID,
-		Artifact: artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash, EnvelopeHash: func() string {
+		Artifact: activationrecords.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash, EnvelopeHash: func() string {
 			if c.ImageID == "" {
 				return envelope.HashLabel(c.EnvelopeLabel)
 			}
@@ -361,7 +358,7 @@ func (c *appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRe
 		warnTornDeployJournal(identity.DeployJournalFile(c.App, c.Env))
 	}
 	entry := sanitizeDeployJournalEntry(c.App, c.Env, deployJournalEntry{
-		Outcome:          deployoutcome.Deployed,
+		Outcome:          activationrecords.Deployed,
 		StartedAt:        startedAt.Format(time.RFC3339Nano),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
 		PreviousRelease:  previousRelease,
@@ -369,7 +366,7 @@ func (c *appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRe
 		Activation:       c.ActivationID,
 		Identity:         c.actor(),
 		Member:           currentServerMemberForJournal(),
-		Artifact: &artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash, EnvelopeHash: func() string {
+		Artifact: &activationrecords.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash, EnvelopeHash: func() string {
 			if c.ImageID == "" {
 				return envelope.HashLabel(c.EnvelopeLabel)
 			}
@@ -378,7 +375,7 @@ func (c *appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRe
 	}, nil)
 	if err := appendSanitizedDeployJournal(c.App, c.Env, entry); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: deployed but failed to write deploy journal %s: %v; cleanup/GC were skipped; next: ship box doctor\n", identity.DeployJournalFile(c.App, c.Env), err)
-		fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash}.DisplayIdentity())
+		fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, activationrecords.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash}.DisplayIdentity())
 		return nil
 	}
 	removeContainers(result.containersToRemove)
@@ -387,7 +384,7 @@ func (c *appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRe
 		webhookDeployRecovered(app.Webhook, app, previousJournal, entry, time.Now().UTC())
 	}
 
-	fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, artifact.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash}.DisplayIdentity())
+	fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, activationrecords.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash}.DisplayIdentity())
 	return nil
 }
 
@@ -500,13 +497,13 @@ func (c *appApplyCmd) applyRelease(ctxDir string, app *config.AppContext) (apply
 // prepareContainerArtifact builds a fresh image or adopts an exact committed
 // artifact whose envelope has the same configuration identity. The release
 // name is only metadata; the runtime reference is the inspected ImageID.
-func (c *appApplyCmd) prepareContainerArtifact(ctxDir string, previousPointer activation.Pointer, hasPreviousPointer bool) error {
+func (c *appApplyCmd) prepareContainerArtifact(ctxDir string, previousPointer activationrecords.Pointer, hasPreviousPointer bool) error {
 	incomingMeta, err := releaseMetadataFromEnvelope(c.Envelope, c.SHA)
 	if err != nil {
 		return err
 	}
 	if !c.Rebuild {
-		var history []artifact.Tuple
+		var history []activationrecords.Tuple
 		var historyErr error
 		if hasPreviousPointer {
 			history, _, historyErr = committedHistoryWithPointer(c.App, c.Env, previousPointer)
@@ -753,7 +750,7 @@ func (c *appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string
 	if err := normalizeStaticTree(stageDir); err != nil {
 		return "", false, err
 	}
-	staticHash, err := artifact.StaticTreeHash(stageDir)
+	staticHash, err := activationrecords.StaticTreeHash(stageDir)
 	if err != nil {
 		return "", false, err
 	}
@@ -765,7 +762,7 @@ func (c *appApplyCmd) applyStatic(ctxDir string, app *config.AppContext) (string
 		if !info.IsDir() {
 			return "", false, fmt.Errorf("static artifact path %s is not a directory", releaseDir)
 		}
-		if existingHash, hashErr := artifact.StaticTreeHash(releaseDir); hashErr != nil || existingHash != staticHash {
+		if existingHash, hashErr := activationrecords.StaticTreeHash(releaseDir); hashErr != nil || existingHash != staticHash {
 			return "", false, fmt.Errorf("static artifact %s does not match its directory hash", releaseDir)
 		}
 		_ = os.RemoveAll(stageDir)

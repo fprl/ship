@@ -1,6 +1,4 @@
-// Package activation owns the small durable activation pointer and the
-// validation rules for its versioned shape.
-package activation
+package activationrecords
 
 import (
 	"encoding/json"
@@ -8,9 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/fprl/ship/internal/artifact"
-	"github.com/fprl/ship/internal/identity"
-	"github.com/fprl/ship/internal/store"
+	"github.com/fprl/ship/activationrecords/internal/pointer"
 )
 
 const Version = 2
@@ -27,13 +23,11 @@ type LegacyActivation struct {
 type Pointer struct {
 	Version    int               `json:"version"`
 	Activation string            `json:"activation"`
-	Artifact   artifact.Tuple    `json:"artifact"`
+	Artifact   Tuple             `json:"artifact"`
 	Legacy     *LegacyActivation `json:"-"`
 }
 
-type ValidationError struct {
-	Err error
-}
+type ValidationError struct{ Err error }
 
 func (e *ValidationError) Error() string { return e.Err.Error() }
 func (e *ValidationError) Unwrap() error { return e.Err }
@@ -63,20 +57,21 @@ func Validate(pointer Pointer) error {
 	if pointer.Artifact.ImageID == "" && pointer.Artifact.EnvelopeHash == "" {
 		return fmt.Errorf("active.json static-only artifact requires envelope_hash")
 	}
-	if pointer.Artifact.StaticHash != "" && !artifact.FullHash(pointer.Artifact.StaticHash) {
+	if pointer.Artifact.StaticHash != "" && !FullHash(pointer.Artifact.StaticHash) {
 		return fmt.Errorf("active.json static_hash must be sha256")
 	}
-	if pointer.Artifact.EnvelopeHash != "" && !artifact.FullHash(pointer.Artifact.EnvelopeHash) {
+	if pointer.Artifact.EnvelopeHash != "" && !FullHash(pointer.Artifact.EnvelopeHash) {
 		return fmt.Errorf("active.json envelope_hash must be sha256")
 	}
-	if pointer.Artifact.ImageID != "" && !artifact.FullHash(strings.TrimPrefix(pointer.Artifact.ImageID, "sha256:")) {
+	if pointer.Artifact.ImageID != "" && !FullHash(strings.TrimPrefix(pointer.Artifact.ImageID, "sha256:")) {
 		return fmt.Errorf("active.json image_id must be a full image id")
 	}
 	return nil
 }
 
 func Read(app, env string) (Pointer, error) {
-	data, err := os.ReadFile(identity.ActiveFile(app, env))
+	path := pointer.Path(app, env)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return Pointer{}, err
 	}
@@ -93,35 +88,28 @@ func Read(app, env string) (Pointer, error) {
 		}
 		return Pointer{Version: 1, Activation: legacy.Activation, Legacy: &legacy}, nil
 	}
-	var pointer Pointer
-	if err := json.Unmarshal(data, &pointer); err != nil {
+	var result Pointer
+	if err := pointer.Read(path, &result); err != nil {
 		return Pointer{}, &ValidationError{Err: fmt.Errorf("invalid active.json: %w", err)}
 	}
-	if err := Validate(pointer); err != nil {
+	if err := Validate(result); err != nil {
 		return Pointer{}, &ValidationError{Err: err}
 	}
-	return pointer, nil
+	return result, nil
 }
 
-func Write(app, env string, pointer Pointer) error {
-	return WritePrepared(app, env, pointer, nil)
-}
+func Publish(app, env string, value Pointer) error { return PublishPrepared(app, env, value, nil) }
 
-// WritePrepared publishes active.json only after prepare has completed on
-// the fully written, final-mode temporary inode.
-func WritePrepared(app, env string, pointer Pointer, prepare func(string) error) error {
-	if pointer.IsLegacy() {
+// PublishPrepared is the publish API for activation pointers. The hook is
+// used only for pre-rename preparation and failure-injection conformance tests.
+func PublishPrepared(app, env string, value Pointer, prepare func(string) error) error {
+	if value.IsLegacy() {
 		return fmt.Errorf("cannot write legacy activation; redeploy to heal")
 	}
-	if err := Validate(pointer); err != nil {
+	if err := Validate(value); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(pointer, "", "  ")
-	if err != nil {
-		return err
-	}
-	return store.AtomicWritePrepared(identity.ActiveFile(app, env), append(data, '\n'), 0644, prepare)
+	return pointer.Publish(pointer.Path(app, env), value, prepare)
 }
 
-// Legacy returns whether this pointer predates artifact-keyed trust.
 func (p Pointer) IsLegacy() bool { return p.Legacy != nil || p.Version == 1 }

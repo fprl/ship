@@ -1,4 +1,4 @@
-package artifact
+package activationrecords
 
 import (
 	"os"

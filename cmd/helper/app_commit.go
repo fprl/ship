@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/store"
 )
 
 // commitAndConverge publishes the activation pointer and brings runtime into
 // line with it. The completion callback owns the operation-specific success
 // journal and post-journal cleanup.
-func commitAndConverge(app, env string, pointer activation.Pointer, addStale func([]string), complete func() error) (bool, error) {
+func commitAndConverge(app, env string, pointer activationrecords.Pointer, addStale func([]string), complete func() error) (bool, error) {
 	activeErr := writeActive(app, env, pointer)
 	if activeErr != nil {
 		var published store.PublishedWriteError

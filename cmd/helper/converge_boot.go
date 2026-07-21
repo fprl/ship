@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/errcat"
 )
 
@@ -76,7 +76,7 @@ func runBootConvergence() error {
 func isPermanentArtifactResolutionError(err error) bool {
 	var absent *artifactAbsentError
 	var tupleErr *artifactValidationError
-	var pointerErr *activation.ValidationError
+	var pointerErr *activationrecords.ValidationError
 	var pathAbsent *artifactPathAbsentError
 	var hashErr *artifactEnvelopeHashError
 	return errors.As(err, &absent) ||

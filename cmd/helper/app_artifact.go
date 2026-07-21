@@ -6,17 +6,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/podmanruntime"
 )
-
-// Tuple is the artifact-keyed trust identity used by all helper verbs.
-type Tuple = artifact.Tuple
 
 type artifactAbsentError struct {
 	ImageID string
@@ -47,43 +43,22 @@ func (e *artifactEnvelopeHashError) Error() string { return e.Err.Error() }
 func (e *artifactEnvelopeHashError) Unwrap() error { return e.Err }
 
 type resolvedArtifact struct {
-	Tuple    Tuple
+	Tuple    activationrecords.Tuple
 	Envelope envelope.Envelope
 	Context  *config.AppContext
 	ImageID  string
 }
 
-func committedHistoryWithPointer(app, env string, pointer activation.Pointer) ([]Tuple, bool, error) {
+func committedHistoryWithPointer(app, env string, pointer activationrecords.Pointer) ([]activationrecords.Tuple, bool, error) {
 	if pointer.IsLegacy() {
 		return nil, false, nil
 	}
-	entries, torn, journalErr := readDeployJournalEntriesWithStatus(app, env)
-	if journalErr != nil && !errcat.Is(journalErr, errcat.CodeNoDeploys) {
-		return nil, torn, journalErr
-	}
-	seen := map[Tuple]bool{}
-	history := []Tuple{}
-	appendTuple := func(tuple Tuple) {
-		if tuple.Release == "" || seen[tuple] {
-			return
-		}
-		seen[tuple] = true
-		history = append(history, tuple)
-	}
-	appendTuple(pointer.Artifact)
-	for i := len(entries) - 1; i >= 0; i-- {
-		entry := entries[i]
-		if entry.Artifact == nil || !entry.Outcome.RetainsArtifact() {
-			continue
-		}
-		appendTuple(*entry.Artifact)
-	}
-	return history, torn, nil
+	return activationrecords.CommittedHistory(app, env, pointer)
 }
 
 // ResolveArtifact verifies exactly tuple. It never searches by release,
 // mutable tag, or an unqualified sidecar.
-func ResolveArtifact(app, env string, tuple Tuple) (*config.AppContext, error) {
+func ResolveArtifact(app, env string, tuple activationrecords.Tuple) (*config.AppContext, error) {
 	resolved, err := resolveArtifact(app, env, tuple)
 	if err != nil {
 		return nil, err
@@ -91,22 +66,22 @@ func ResolveArtifact(app, env string, tuple Tuple) (*config.AppContext, error) {
 	return resolved.Context, nil
 }
 
-func resolveActiveContext(app, env string) (*config.AppContext, Tuple, error) {
+func resolveActiveContext(app, env string) (*config.AppContext, activationrecords.Tuple, error) {
 	pointer, err := readActive(app, env)
 	if err != nil {
-		return nil, Tuple{}, err
+		return nil, activationrecords.Tuple{}, err
 	}
 	if err := requireV2Pointer(pointer); err != nil {
-		return nil, Tuple{}, err
+		return nil, activationrecords.Tuple{}, err
 	}
 	resolved, err := resolveArtifact(app, env, pointer.Artifact)
 	if err != nil {
-		return nil, Tuple{}, err
+		return nil, activationrecords.Tuple{}, err
 	}
 	return resolved.Context, pointer.Artifact, nil
 }
 
-func resolveArtifact(app, env string, tuple Tuple) (resolvedArtifact, error) {
+func resolveArtifact(app, env string, tuple activationrecords.Tuple) (resolvedArtifact, error) {
 	if err := validateArtifactTuple(tuple); err != nil {
 		return resolvedArtifact{}, err
 	}
@@ -181,31 +156,12 @@ func resolveArtifact(app, env string, tuple Tuple) (resolvedArtifact, error) {
 	return resolvedArtifact{Tuple: tuple, Envelope: e, Context: ctx, ImageID: tuple.ImageID}, nil
 }
 
-func validateArtifactTuple(tuple Tuple) error {
-	if tuple.Release == "" {
-		return &artifactValidationError{Err: errors.New("artifact release is required")}
-	}
+func validateArtifactTuple(tuple activationrecords.Tuple) error {
 	if err := validateRelease(tuple.Release); err != nil {
 		return &artifactValidationError{Err: fmt.Errorf("artifact release is invalid: %w", err)}
 	}
-	if tuple.ImageID == "" && tuple.StaticHash == "" {
-		return &artifactValidationError{Err: errors.New("artifact requires image_id or static_hash")}
-	}
-	if tuple.ImageID != "" {
-		if !artifact.FullHash(normalizeImageID(tuple.ImageID)) {
-			return &artifactValidationError{Err: errors.New("artifact image_id must be a full image id")}
-		}
-		if tuple.EnvelopeHash != "" {
-			return &artifactValidationError{Err: errors.New("artifact envelope_hash is only valid for static-only artifacts")}
-		}
-	}
-	if tuple.ImageID == "" {
-		if !artifact.FullHash(tuple.EnvelopeHash) {
-			return &artifactValidationError{Err: errors.New("static-only artifact envelope_hash must be a full hash")}
-		}
-	}
-	if tuple.StaticHash != "" && !artifact.FullHash(tuple.StaticHash) {
-		return &artifactValidationError{Err: errors.New("artifact static_hash must be a full hash")}
+	if err := activationrecords.ValidateArtifact(tuple); err != nil {
+		return &artifactValidationError{Err: err}
 	}
 	return nil
 }
@@ -238,7 +194,7 @@ func activationLegacyError() error {
 	})
 }
 
-func requireV2Pointer(pointer activation.Pointer) error {
+func requireV2Pointer(pointer activationrecords.Pointer) error {
 	if pointer.IsLegacy() {
 		return activationLegacyError()
 	}

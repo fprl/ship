@@ -7,10 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/config"
-	"github.com/fprl/ship/internal/deployoutcome"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/utils"
 )
@@ -71,7 +69,7 @@ func rollbackCommittedError(err error) error {
 }
 
 func (c appRollbackCmd) recordRollbackDegraded(result rollbackPayload, startedAt time.Time, err error) {
-	entry, _ := committedOutcomeJournalEntry(c.App, c.Env, deployoutcome.CommittedDegraded, result.Previous, result.Release, c.actor(), startedAt, "durability", &result.Artifact, err)
+	entry, _ := committedOutcomeJournalEntry(c.App, c.Env, activationrecords.CommittedDegraded, result.Previous, result.Release, c.actor(), startedAt, "durability", &result.Artifact, err)
 	entry.Member = currentServerMemberForJournal()
 	if appendErr := appendRollbackDeployJournal(c.App, c.Env, entry, nil); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
@@ -79,7 +77,7 @@ func (c appRollbackCmd) recordRollbackDegraded(result rollbackPayload, startedAt
 }
 
 func (c appRollbackCmd) recordRollbackFailure(result rollbackPayload, startedAt time.Time, err error) {
-	entry, _ := committedOutcomeJournalEntry(c.App, c.Env, deployoutcome.CommittedUnconverged, result.Previous, result.Release, c.actor(), startedAt, committedFailureStep(err, "converge"), &result.Artifact, err)
+	entry, _ := committedOutcomeJournalEntry(c.App, c.Env, activationrecords.CommittedUnconverged, result.Previous, result.Release, c.actor(), startedAt, committedFailureStep(err, "converge"), &result.Artifact, err)
 	entry.Member = currentServerMemberForJournal()
 	if appendErr := appendRollbackDeployJournal(c.App, c.Env, entry, nil); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
@@ -87,7 +85,7 @@ func (c appRollbackCmd) recordRollbackFailure(result rollbackPayload, startedAt 
 }
 
 func (c appRollbackCmd) recordRollbackSuccess(result rollbackPayload, startedAt time.Time) {
-	entry := deployJournalEntry{Outcome: deployoutcome.RolledBack, StartedAt: startedAt.Format(time.RFC3339Nano), EndedAt: time.Now().UTC().Format(time.RFC3339Nano), PreviousRelease: result.Previous, AttemptedRelease: result.Release, Activation: c.ActivationID, Identity: c.actor(), Member: currentServerMemberForJournal(), Artifact: &result.Artifact}
+	entry := deployJournalEntry{Outcome: activationrecords.RolledBack, StartedAt: startedAt.Format(time.RFC3339Nano), EndedAt: time.Now().UTC().Format(time.RFC3339Nano), PreviousRelease: result.Previous, AttemptedRelease: result.Release, Activation: c.ActivationID, Identity: c.actor(), Member: currentServerMemberForJournal(), Artifact: &result.Artifact}
 	if err := appendRollbackDeployJournal(c.App, c.Env, entry, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: rollback succeeded but failed to write deploy journal %s: %v; cleanup/GC were skipped; next: ship box doctor\n", identity.DeployJournalFile(c.App, c.Env), err)
 	} else {
@@ -115,7 +113,7 @@ func (c *appRollbackCmd) rollbackRelease(startedAt time.Time) (rollbackPayload, 
 		return rollbackPayload{}, fmt.Errorf("%s is already active", target.Tuple.DisplayIdentity())
 	}
 	if target.Tuple.StaticHash != "" {
-		hash, hashErr := artifact.StaticTreeHash(staticReleasePath(c.App, c.Env, target.Tuple.Release, target.Tuple.StaticHash))
+		hash, hashErr := activationrecords.StaticTreeHash(staticReleasePath(c.App, c.Env, target.Tuple.Release, target.Tuple.StaticHash))
 		if hashErr != nil || hash != target.Tuple.StaticHash {
 			return rollbackPayload{}, fmt.Errorf("rollback target %s changed on disk", target.Tuple.DisplayIdentity())
 		}
@@ -161,20 +159,20 @@ func (c *appRollbackCmd) rollbackRelease(startedAt time.Time) (rollbackPayload, 
 	}
 	payload := rollbackPayload{App: c.App, Env: c.Env, Previous: pointer.Artifact.Release, Release: target.Tuple.Release, Identity: target.Tuple.DisplayIdentity(), Artifact: target.Tuple, Processes: processNames(app.Processes)}
 	fmt.Printf("Rollback target: %s\n", payload.Identity)
-	payload.Committed, err = commitAndConverge(c.App, c.Env, activation.Pointer{Version: 2, Activation: c.ActivationID, Artifact: target.Tuple}, func(stale []string) { payload.StaleContainers = uniqueContainerNames(stale) }, func() error { c.recordRollbackSuccess(payload, startedAt); return nil })
+	payload.Committed, err = commitAndConverge(c.App, c.Env, activationrecords.Pointer{Version: 2, Activation: c.ActivationID, Artifact: target.Tuple}, func(stale []string) { payload.StaleContainers = uniqueContainerNames(stale) }, func() error { c.recordRollbackSuccess(payload, startedAt); return nil })
 	return payload, err
 }
 
 type rollbackPayload struct {
-	App             string         `json:"app"`
-	Env             string         `json:"env"`
-	Previous        string         `json:"previous"`
-	Release         string         `json:"release"`
-	Identity        string         `json:"identity"`
-	Artifact        artifact.Tuple `json:"artifact"`
-	Processes       []string       `json:"processes"`
-	Committed       bool           `json:"-"`
-	StaleContainers []string       `json:"-"`
+	App             string                  `json:"app"`
+	Env             string                  `json:"env"`
+	Previous        string                  `json:"previous"`
+	Release         string                  `json:"release"`
+	Identity        string                  `json:"identity"`
+	Artifact        activationrecords.Tuple `json:"artifact"`
+	Processes       []string                `json:"processes"`
+	Committed       bool                    `json:"-"`
+	StaleContainers []string                `json:"-"`
 }
 
 func processNames(processes map[string]config.Process) []string { return sortedKeys(processes) }

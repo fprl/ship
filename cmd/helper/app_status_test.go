@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/identity"
 )
@@ -25,13 +24,13 @@ func TestAttachProcessReleaseMetadataToleratesEnvelopelessRelease(t *testing.T) 
 	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nprintf '[]\\n'\nexit 0\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	processes := []processStatus{{Process: "web", State: "running", Release: "92eb1d95075f"}}
-	attachProcessReleaseMetadata("probe", "production", processes, activation.Pointer{})
+	attachProcessReleaseMetadata("probe", "production", processes, activationrecords.Pointer{})
 	if processes[0].Dirty || processes[0].BaseCommit != "" || processes[0].CreatedAt != "" {
 		t.Fatalf("undecorated process = %+v", processes[0])
 	}
 
 	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nexit 1\n")
-	attachProcessReleaseMetadata("probe", "production", processes, activation.Pointer{})
+	attachProcessReleaseMetadata("probe", "production", processes, activationrecords.Pointer{})
 }
 
 func TestContainersToProcessesFiltersUnlabelledAndSorts(t *testing.T) {
@@ -167,7 +166,7 @@ func TestResolvedStatusReleaseCarriesEnvelopeMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	release := statusReleaseFromResolved(resolvedArtifact{Tuple: artifact.Tuple{Release: "abc1234"}, Envelope: e})
+	release := statusReleaseFromResolved(resolvedArtifact{Tuple: activationrecords.Tuple{Release: "abc1234"}, Envelope: e})
 	if release.Dirty || release.BaseCommit != meta.BaseCommit || release.CreatedAt != meta.CreatedAt {
 		t.Fatalf("resolved release metadata = %+v, want %+v", release, meta)
 	}
@@ -191,7 +190,7 @@ func TestDegradedStatusUsesStableDetailAndRunnableNext(t *testing.T) {
 func TestStaticStatusKeepsFullTupleForStaticAndHybridConvergence(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	for _, tuple := range []artifact.Tuple{
+	for _, tuple := range []activationrecords.Tuple{
 		{Release: "static-release", StaticHash: strings.Repeat("a", 64)},
 		{Release: "hybrid-release", ImageID: strings.Repeat("b", 64), StaticHash: strings.Repeat("c", 64)},
 	} {
@@ -229,8 +228,8 @@ func TestHybridStatusReadsFullyConvergedWithExactTuple(t *testing.T) {
 	}
 	writeFakeCommand(t, bin, "podman", fmt.Sprintf("#!/usr/bin/env sh\nprintf '%%s\\n' '[{\"Id\":\"sha256:%s\",\"Labels\":{\"ship.app\":\"api\",\"ship.env\":\"production\",\"ship.release_envelope\":\"%s\"}}]'\n", imageID, label))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	tuple := artifact.Tuple{Release: release, ImageID: imageID, StaticHash: staticHash}
-	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: activationID, Artifact: tuple}); err != nil {
+	tuple := activationrecords.Tuple{Release: release, ImageID: imageID, StaticHash: staticHash}
+	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: activationID, Artifact: tuple}); err != nil {
 		t.Fatal(err)
 	}
 	prepareTestActivationEnv(t, "api", "production", activationID)
@@ -254,7 +253,7 @@ func TestHybridStatusReadsFullyConvergedWithExactTuple(t *testing.T) {
 		t.Fatal(err)
 	}
 	processes := []processStatus{{Process: "web", Container: container, State: "running", Image: imageID, Release: release, Activation: activationID}}
-	if !activePointerRuntimeConvergedResolved("api", "production", activation.Pointer{Version: 2, Activation: activationID, Artifact: tuple}, resolved, processes, static) {
+	if !activePointerRuntimeConvergedResolved("api", "production", activationrecords.Pointer{Version: 2, Activation: activationID, Artifact: tuple}, resolved, processes, static) {
 		t.Fatalf("fully converged hybrid was reported as not converged: static=%+v", static)
 	}
 }

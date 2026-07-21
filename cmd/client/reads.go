@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/fprl/ship/internal/config"
-	"github.com/fprl/ship/internal/deployoutcome"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/utils"
 )
@@ -127,7 +127,7 @@ type whyJournalEntry struct {
 	SchemaVersion    int                `json:"schema_version"`
 	App              string             `json:"app"`
 	Env              string             `json:"env"`
-	Outcome          deployoutcome.Kind `json:"outcome"`
+	Outcome          activationrecords.Outcome `json:"outcome"`
 	StartedAt        string             `json:"started_at"`
 	EndedAt          string             `json:"ended_at"`
 	PreviousRelease  string             `json:"previous_release"`
@@ -173,12 +173,12 @@ func renderWhy(entry whyJournalEntry, read readContext) string {
 	}
 	var b strings.Builder
 	switch entry.Outcome {
-	case deployoutcome.Converged:
+	case activationrecords.Converged:
 		fmt.Fprintf(&b, "Convergence completed for %s %s at %s.\n", kind, branch, when)
 		fmt.Fprintf(&b, "release: %s\n", dashIfEmpty(entry.AttemptedRelease))
 		fmt.Fprintf(&b, "traffic: release %s is live.\n", dashIfEmpty(entry.AttemptedRelease))
 		b.WriteString("next: ship status\n")
-	case deployoutcome.Deployed:
+	case activationrecords.Deployed:
 		fmt.Fprintf(&b, "Deploy succeeded for %s %s at %s.\n", kind, branch, when)
 		fmt.Fprintf(&b, "release: %s", dashIfEmpty(entry.AttemptedRelease))
 		if entry.PreviousRelease != "" {
@@ -188,18 +188,18 @@ func renderWhy(entry whyJournalEntry, read readContext) string {
 		fmt.Fprintf(&b, "traffic: release %s is live.\n", dashIfEmpty(entry.AttemptedRelease))
 		fmt.Fprintf(&b, "shipped by: %s (ssh key: %s)\n", entry.Identity.GitAuthor, entry.Identity.SSHKeyComment)
 		b.WriteString("next: ship status\n")
-	case deployoutcome.RolledBack:
+	case activationrecords.RolledBack:
 		fmt.Fprintf(&b, "Rollback completed for %s %s at %s.\n", kind, branch, when)
 		fmt.Fprintf(&b, "release: %s (from %s)\n", dashIfEmpty(entry.AttemptedRelease), dashIfEmpty(entry.PreviousRelease))
 		fmt.Fprintf(&b, "traffic: release %s is live.\n", dashIfEmpty(entry.AttemptedRelease))
 		fmt.Fprintf(&b, "shipped by: %s (ssh key: %s)\n", entry.Identity.GitAuthor, entry.Identity.SSHKeyComment)
 		b.WriteString("next: ship status\n")
-	case deployoutcome.CommittedUnconverged:
+	case activationrecords.CommittedUnconverged:
 		fmt.Fprintf(&b, "Deploy committed but not converged for %s %s at %s.\n", kind, branch, when)
 		fmt.Fprintf(&b, "release: %s\n", dashIfEmpty(entry.AttemptedRelease))
 		b.WriteString("traffic: intent is committed; runtime may still be on the previous release.\n")
 		fmt.Fprintf(&b, "next: %s\n", convergenceNextStep)
-	case deployoutcome.CommittedDegraded:
+	case activationrecords.CommittedDegraded:
 		fmt.Fprintf(&b, "Deploy committed but degraded for %s %s at %s.\n", kind, branch, when)
 		fmt.Fprintf(&b, "release: %s\n", dashIfEmpty(entry.AttemptedRelease))
 		b.WriteString("traffic: the active release may be live, but runtime durability needs repair.\n")
@@ -224,7 +224,7 @@ func renderWhy(entry whyJournalEntry, read readContext) string {
 
 func whyRemediation(entry whyJournalEntry) string {
 	switch entry.Outcome {
-	case deployoutcome.Failed:
+	case activationrecords.Failed:
 		if entry.FailingStep == "probe" {
 			return "fix the process port or probe path in ship.toml, then ship"
 		}
@@ -239,7 +239,7 @@ func whyRemediation(entry whyJournalEntry) string {
 
 func probableCause(entry whyJournalEntry) string {
 	switch entry.Outcome {
-	case deployoutcome.Failed:
+	case activationrecords.Failed:
 		switch entry.FailingStep {
 		case "build":
 			return "image build failed."

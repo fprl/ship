@@ -5,70 +5,69 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/activationrecords"
 )
 
 type artifactCandidate struct {
-	Tuple    artifact.Tuple
+	Tuple    activationrecords.Tuple
 	Resolved resolvedArtifact
 }
 
 type candidateSet struct {
-	Active    artifact.Tuple
+	Active    activationrecords.Tuple
 	All       []artifactCandidate
 	Verified  []artifactCandidate
-	Protected []artifact.Tuple
-	Absent    []artifact.Tuple
+	Protected []activationrecords.Tuple
+	Absent    []activationrecords.Tuple
 	Torn      bool
+}
+
+type artifactCandidateVerifier struct{}
+
+func (artifactCandidateVerifier) Verify(app, env string, tuple activationrecords.Tuple) error {
+	_, err := resolveArtifact(app, env, tuple)
+	return err
+}
+
+func (artifactCandidateVerifier) StaticPath(app, env string, tuple activationrecords.Tuple) string {
+	return staticReleasePath(app, env, tuple.Release, tuple.StaticHash)
+}
+
+func (artifactCandidateVerifier) IsAbsent(err error) bool {
+	var absent *artifactAbsentError
+	return errors.As(err, &absent)
 }
 
 // sharedArtifactCandidates is the only retention/rollback candidate policy.
 // It verifies before applying the existing N limit, so broken newest history
 // cannot consume quota.
-func sharedArtifactCandidatesWithPointer(app, env string, pointer activation.Pointer) (candidateSet, error) {
+func sharedArtifactCandidatesWithPointer(app, env string, pointer activationrecords.Pointer) (candidateSet, error) {
 	if pointer.IsLegacy() {
 		return candidateSet{}, nil
 	}
-	history, torn, err := committedHistoryWithPointer(app, env, pointer)
+	policy, err := activationrecords.VerifiedCandidates(app, env, pointer, artifactCandidateVerifier{}, releaseImageKeepLimit(env))
 	if err != nil {
 		return candidateSet{}, err
 	}
-	set := candidateSet{Active: pointer.Artifact, Torn: torn}
-	for _, tuple := range history {
-		if tuple == pointer.Artifact {
-			continue
-		}
-		resolved, resolveErr := resolveArtifact(app, env, tuple)
-		if resolveErr == nil && tuple.StaticHash != "" {
-			path := staticReleasePath(app, env, tuple.Release, tuple.StaticHash)
-			hash, hashErr := artifact.StaticTreeHash(path)
-			if hashErr != nil || hash != tuple.StaticHash {
-				resolveErr = fmt.Errorf("static artifact %s hash does not match", tuple.DisplayIdentity())
-			}
-		}
+	set := candidateSet{Active: policy.Active, Torn: policy.Torn, Protected: policy.Protected, Absent: policy.Absent}
+	for _, candidate := range policy.All {
+		resolved, resolveErr := resolveArtifact(app, env, candidate.Tuple)
 		if resolveErr != nil {
-			var absentErr *artifactAbsentError
-			staticMissing := tuple.StaticHash == "" || isMissingPath(staticReleasePath(app, env, tuple.Release, tuple.StaticHash))
-			if errors.As(resolveErr, &absentErr) && staticMissing {
-				set.Absent = append(set.Absent, tuple)
-				continue
-			}
-			set.Protected = append(set.Protected, tuple)
-			continue
+			return candidateSet{}, fmt.Errorf("candidate verification changed during policy evaluation: %w", resolveErr)
 		}
-		candidate := artifactCandidate{Tuple: tuple, Resolved: resolved}
-		set.All = append(set.All, candidate)
-		set.Verified = append(set.Verified, candidate)
+		set.All = append(set.All, artifactCandidate{Tuple: candidate.Tuple, Resolved: resolved})
 	}
-	limit := releaseImageKeepLimit(env)
-	if len(set.Verified) > limit {
-		set.Verified = set.Verified[:limit]
+	for _, candidate := range policy.Verified {
+		resolved, resolveErr := resolveArtifact(app, env, candidate.Tuple)
+		if resolveErr != nil {
+			return candidateSet{}, fmt.Errorf("candidate verification changed during policy evaluation: %w", resolveErr)
+		}
+		set.Verified = append(set.Verified, artifactCandidate{Tuple: candidate.Tuple, Resolved: resolved})
 	}
 	return set, nil
 }
 
-func retainedArtifactForRollback(app, env, requested string, pointer activation.Pointer) (artifactCandidate, error) {
+func retainedArtifactForRollback(app, env, requested string, pointer activationrecords.Pointer) (artifactCandidate, error) {
 	set, err := sharedArtifactCandidatesWithPointer(app, env, pointer)
 	if err != nil {
 		return artifactCandidate{}, err

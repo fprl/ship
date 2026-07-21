@@ -7,8 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/identity"
 )
 
@@ -113,7 +112,7 @@ func TestExecReportsMissingFrozenEnvironment(t *testing.T) {
 	payload := fmt.Sprintf(`[{"Id":"sha256:%s","Labels":{"ship.app":"api","ship.env":"production","ship.release_envelope":"%s"}}]`, imageID, label)
 	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nprintf '%s\\n' '"+payload+"'\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: release + "-activation", Artifact: artifact.Tuple{Release: release, ImageID: imageID}}); err != nil {
+	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: release + "-activation", Artifact: activationrecords.Tuple{Release: release, ImageID: imageID}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := resolveExecTarget("api", "production"); err == nil || !strings.Contains(err.Error(), "frozen environment for active activation") {

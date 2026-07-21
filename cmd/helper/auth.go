@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/errcat"
-	"github.com/fprl/ship/internal/journal"
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
@@ -661,7 +661,7 @@ func appendApprovalJournalEntry(event string, request store.ApprovalRequest, act
 		TS:     approvalNow().Format(time.RFC3339Nano),
 	}
 	path := store.Default().ApprovalsJournalPath()
-	return journal.Append(path, entry)
+	return activationrecords.AppendJournal(path, entry)
 }
 
 func recordApprovalJournalEntry(event string, request store.ApprovalRequest, actor serverMember) {

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/host"
-	"github.com/fprl/ship/internal/journal"
 	"github.com/fprl/ship/internal/provision"
 	"github.com/fprl/ship/internal/provision/local"
 	"github.com/fprl/ship/internal/release"
@@ -160,12 +160,12 @@ func appendUpdateJournal(entry updateJournalEntry) error {
 	entry.SchemaVersion = 1
 	entry.At = time.Now().UTC().Format(time.RFC3339Nano)
 	path := store.Default().UpdatesJournalPath()
-	return journal.Append(path, entry)
+	return activationrecords.AppendJournal(path, entry)
 }
 
 func lastCompletedUpdateVersion(path string) (string, error) {
 	last := ""
-	_, err := journal.Read(path, func(line []byte) error {
+	_, err := activationrecords.ReadJournal(path, func(line []byte) error {
 		var entry updateJournalEntry
 		if err := json.Unmarshal(line, &entry); err != nil {
 			return err

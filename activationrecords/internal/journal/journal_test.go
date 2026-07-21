@@ -12,11 +12,9 @@ import (
 func TestAppendAndReadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "journal.jsonl")
 	want := map[string]any{"event": "deployed", "sequence": float64(1)}
-
 	if err := Append(path, want); err != nil {
 		t.Fatalf("Append() error = %v", err)
 	}
-
 	var got []map[string]any
 	torn, err := Read(path, func(line []byte) error {
 		var entry map[string]any
@@ -35,7 +33,6 @@ func TestAppendAndReadRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(got, []map[string]any{want}) {
 		t.Fatalf("records = %#v, want %#v", got, []map[string]any{want})
 	}
-
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +49,6 @@ func TestAppendPreservesEarlierRecords(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-
 	var got []string
 	if torn, err := Read(path, func(line []byte) error {
 		var entry map[string]string
@@ -74,12 +70,8 @@ func TestReadDiscardsOneTornTailExactlyOnce(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{\"event\":\"complete\"}\n{\"event\":"), 0644); err != nil {
 		t.Fatal(err)
 	}
-
 	var lines [][]byte
-	torn, err := Read(path, func(line []byte) error {
-		lines = append(lines, append([]byte(nil), line...))
-		return nil
-	})
+	torn, err := Read(path, func(line []byte) error { lines = append(lines, append([]byte(nil), line...)); return nil })
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
@@ -96,13 +88,8 @@ func TestReadDiscardsValidJSONTornTail(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{\"event\":\"complete\"}\n{\"event\":\"valid-but-torn\"}"), 0644); err != nil {
 		t.Fatal(err)
 	}
-
 	count := 0
-	torn, err := Read(path, func(line []byte) error {
-		count++
-		var value map[string]string
-		return json.Unmarshal(line, &value)
-	})
+	torn, err := Read(path, func(line []byte) error { count++; var value map[string]string; return json.Unmarshal(line, &value) })
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
@@ -157,10 +144,7 @@ func TestAppendToEmptyFile(t *testing.T) {
 	if err := Append(path, map[string]string{"event": "one"}); err != nil {
 		t.Fatal(err)
 	}
-	if torn, err := Read(path, func(line []byte) error {
-		var entry map[string]string
-		return json.Unmarshal(line, &entry)
-	}); err != nil || torn {
+	if torn, err := Read(path, func(line []byte) error { var entry map[string]string; return json.Unmarshal(line, &entry) }); err != nil || torn {
 		t.Fatalf("Read() = torn %v, err %v", torn, err)
 	}
 }
@@ -170,11 +154,7 @@ func TestReadMalformedTerminatedLineIncludesLineNumber(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{}\nnot-json\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-
-	_, err := Read(path, func(line []byte) error {
-		var value map[string]any
-		return json.Unmarshal(line, &value)
-	})
+	_, err := Read(path, func(line []byte) error { var value map[string]any; return json.Unmarshal(line, &value) })
 	if err == nil || !strings.Contains(err.Error(), "line 2") {
 		t.Fatalf("error = %v, want line number", err)
 	}
@@ -189,10 +169,7 @@ func TestReadEmptyAndMissingFiles(t *testing.T) {
 			}
 		}
 		called := false
-		torn, err := Read(path, func([]byte) error {
-			called = true
-			return nil
-		})
+		torn, err := Read(path, func([]byte) error { called = true; return nil })
 		if err != nil || torn || called {
 			t.Fatalf("Read(%s) = torn %v, err %v, called %v", name, torn, err, called)
 		}
@@ -204,7 +181,6 @@ func TestReadCallbackErrorIncludesLineNumber(t *testing.T) {
 	if err := os.WriteFile(path, []byte("one\ntwo\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-
 	_, err := Read(path, func(line []byte) error {
 		if string(line) == "two" {
 			return os.ErrInvalid

@@ -1,7 +1,6 @@
 package helper
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -9,15 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/ship/internal/artifact"
-	"github.com/fprl/ship/internal/deployoutcome"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
-	"github.com/fprl/ship/internal/journal"
 	"github.com/fprl/ship/internal/utils"
 )
 
-const deployJournalSchemaVersion = 2
+const deployJournalSchemaVersion = activationrecords.DeployJournalSchemaVersion
 
 const tornDeployJournalWarning = "warning: deploy journal has an incomplete final entry (interrupted write); next: ship box doctor"
 
@@ -25,16 +22,8 @@ func warnTornDeployJournal(path string) {
 	fmt.Fprintln(os.Stderr, tornDeployJournalWarning)
 }
 
-type deployIdentity struct {
-	SSHKeyComment string `json:"ssh_key_comment"`
-	GitAuthor     string `json:"git_author"`
-}
-
-type journalMember struct {
-	Fingerprint string `json:"fingerprint,omitempty"`
-	Name        string `json:"name"`
-	Role        string `json:"role"`
-}
+type deployIdentity = activationrecords.Identity
+type journalMember = activationrecords.Member
 
 func deployActor(sshKeyComment, gitAuthor string) deployIdentity {
 	actor := deployIdentity{SSHKeyComment: sshKeyComment, GitAuthor: gitAuthor}
@@ -47,29 +36,8 @@ func deployActor(sshKeyComment, gitAuthor string) deployIdentity {
 	return actor
 }
 
-type journalProbe struct {
-	Status      int    `json:"status"`
-	BodySnippet string `json:"body_snippet"`
-}
-
-type deployJournalEntry struct {
-	SchemaVersion    int                `json:"schema_version"`
-	App              string             `json:"app"`
-	Env              string             `json:"env"`
-	Outcome          deployoutcome.Kind `json:"outcome"`
-	StartedAt        string             `json:"started_at"`
-	EndedAt          string             `json:"ended_at"`
-	PreviousRelease  string             `json:"previous_release"`
-	AttemptedRelease string             `json:"attempted_release"`
-	Activation       string             `json:"activation,omitempty"`
-	Artifact         *artifact.Tuple    `json:"artifact,omitempty"`
-	FailingStep      string             `json:"failing_step"`
-	StderrTail       string             `json:"stderr_tail"`
-	GC               string             `json:"gc,omitempty"`
-	Identity         deployIdentity     `json:"identity"`
-	Member           *journalMember     `json:"member,omitempty"`
-	Probe            *journalProbe      `json:"probe"`
-}
+type journalProbe = activationrecords.Probe
+type deployJournalEntry = activationrecords.JournalEntry
 
 type journalStepError struct {
 	Step        string
@@ -104,6 +72,20 @@ func newJournalStepError(step string, err error, scrubValues []string, probe *jo
 	}
 }
 
+func appendDeployJournalEntry(app, env string, entry deployJournalEntry, scrubValues []string) error {
+	if err := validateAppEnv(app, env); err != nil {
+		return err
+	}
+	if err := activationrecords.AppendDeployJournal(app, env, entry, scrubValues); err != nil {
+		return fmt.Errorf("append deploy journal: %w", err)
+	}
+	return nil
+}
+
+var appendSanitizedDeployJournal = func(app, env string, entry deployJournalEntry) error {
+	return activationrecords.AppendDeployJournal(app, env, entry, nil)
+}
+
 func sanitizeDeployJournalEntry(app, env string, entry deployJournalEntry, scrubValues []string) deployJournalEntry {
 	entry.SchemaVersion = deployJournalSchemaVersion
 	entry.App = app
@@ -115,30 +97,14 @@ func sanitizeDeployJournalEntry(app, env string, entry deployJournalEntry, scrub
 	return entry
 }
 
-func appendDeployJournalEntry(app, env string, entry deployJournalEntry, scrubValues []string) error {
-	entry = sanitizeDeployJournalEntry(app, env, entry, scrubValues)
-	return appendSanitizedDeployJournalEntry(app, env, entry)
-}
-
-func appendSanitizedDeployJournalEntry(app, env string, entry deployJournalEntry) error {
-	if err := validateAppEnv(app, env); err != nil {
-		return err
-	}
-	path := identity.DeployJournalFile(app, env)
-	if err := journal.Append(path, entry); err != nil {
-		return fmt.Errorf("append deploy journal: %w", err)
-	}
-	return nil
-}
-
 func resetLegacyDeployJournalForV2(app, env string) error {
-	path := identity.LegacyDeployJournalFile(app, env)
-	if err := os.Remove(path); os.IsNotExist(err) {
-		return nil
-	} else if err != nil {
+	removed, err := activationrecords.ResetLegacyJournal(app, env)
+	if err != nil {
 		return err
 	}
-	fmt.Printf("Deleted v1 deploy journal; starting fresh v2 history\n")
+	if removed {
+		fmt.Printf("Deleted v1 deploy journal; starting fresh v2 history\n")
+	}
 	return nil
 }
 
@@ -153,7 +119,7 @@ func readLatestDeployJournalEntryWithStatus(app, env string) (deployJournalEntry
 		return deployJournalEntry{}, torn, err
 	}
 	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].Outcome == deployoutcome.GC {
+		if entries[i].Outcome == activationrecords.GC {
 			continue
 		}
 		return entries[i], torn, nil
@@ -201,20 +167,9 @@ func readDeployJournalEntriesWithStatus(app, env string) ([]deployJournalEntry, 
 		}
 		return nil, false, fmt.Errorf("stat deploy journal %s: %w", path, err)
 	}
-	var entries []deployJournalEntry
-	torn, err := journal.Read(path, func(line []byte) error {
-		var entry deployJournalEntry
-		if err := json.Unmarshal(line, &entry); err != nil {
-			return err
-		}
-		if entry.SchemaVersion != deployJournalSchemaVersion {
-			return fmt.Errorf("unsupported deploy journal schema version %d", entry.SchemaVersion)
-		}
-		entries = append(entries, entry)
-		return nil
-	})
+	entries, torn, err := activationrecords.ReadDeployJournal(app, env)
 	if err != nil {
-		return nil, torn, fmt.Errorf("read deploy journal %s: %w", path, err)
+		return nil, torn, err
 	}
 	return entries, torn, nil
 }
@@ -246,7 +201,7 @@ func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease strin
 		tail = err.Error()
 	}
 	return deployJournalEntry{
-		Outcome:          deployoutcome.Failed,
+		Outcome:          activationrecords.Failed,
 		StartedAt:        startedAt.Format(time.RFC3339Nano),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
 		PreviousRelease:  previousRelease,
@@ -259,7 +214,7 @@ func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease strin
 	}, scrubValues
 }
 
-func committedOutcomeJournalEntry(app, env string, outcome deployoutcome.Kind, previousRelease, attemptedRelease string, actor deployIdentity, startedAt time.Time, failingStep string, artifact *artifact.Tuple, err error) (deployJournalEntry, []string) {
+func committedOutcomeJournalEntry(app, env string, outcome activationrecords.Outcome, previousRelease, attemptedRelease string, actor deployIdentity, startedAt time.Time, failingStep string, artifact *activationrecords.Tuple, err error) (deployJournalEntry, []string) {
 	stepErr := newJournalStepError(failingStep, err, nil, nil)
 	entry, scrubValues := deployJournalFailureEntry(app, env, previousRelease, attemptedRelease, actor, startedAt, stepErr)
 	entry.Outcome = outcome

@@ -6,8 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
@@ -60,9 +59,9 @@ func TestWriteActivePreparesOwnershipBeforePublishing(t *testing.T) {
 	}
 	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 1\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	old := activation.LegacyActivation{Release: "old1234", Activation: "old1234-old", EnvelopeHash: strings.Repeat("a", 64)}
+	old := activationrecords.LegacyActivation{Release: "old1234", Activation: "old1234-old", EnvelopeHash: strings.Repeat("a", 64)}
 	writeLegacyPointerForTest(t, "api", "production", old.Release, old.Activation, old.EnvelopeHash)
-	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: "new1234-new", Artifact: artifact.Tuple{Release: "new1234", StaticHash: strings.Repeat("b", 64), EnvelopeHash: strings.Repeat("c", 64)}}); err != nil {
+	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: "new1234-new", Artifact: activationrecords.Tuple{Release: "new1234", StaticHash: strings.Repeat("b", 64), EnvelopeHash: strings.Repeat("c", 64)}}); err != nil {
 		t.Fatalf("writeActive should not invoke root chown: %v", err)
 	}
 	got, err := readActive("api", "production")

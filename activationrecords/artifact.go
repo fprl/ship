@@ -1,7 +1,5 @@
-// Package artifact owns the immutable identity and hashing rules for release
-// artifacts.  Runtime verbs must compare these values as a tuple; no
-// release-derived name is a trust reference.
-package artifact
+// Package activationrecords owns the durable memory of deployed activations.
+package activationrecords
 
 import (
 	"crypto/sha256"
@@ -12,13 +10,16 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
 )
 
-// Tuple is the exact artifact identity persisted by the v2 pointer and
-// journal. EnvelopeHash is used only by static-only artifacts.
+var releaseIDPattern = regexp.MustCompile(`^(?:[a-f0-9]{7,64}|[a-f0-9]{7,64}-dirty-[0-9]{8}t[0-9]{15}z)(?:-s[0-9a-f]{12})?$`)
+
+// Tuple is the exact immutable identity persisted by the activation pointer
+// and deploy journal. EnvelopeHash is used only by static-only artifacts.
 type Tuple struct {
 	Release      string `json:"release"`
 	ImageID      string `json:"image_id,omitempty"`
@@ -45,10 +46,7 @@ func (t Tuple) DisplayIdentity() string {
 	}
 }
 
-func imagePrefix(value string) string {
-	value = strings.TrimPrefix(value, "sha256:")
-	return hashPrefix(value)
-}
+func imagePrefix(value string) string { return hashPrefix(strings.TrimPrefix(value, "sha256:")) }
 
 func hashPrefix(value string) string {
 	if len(value) < 12 {
@@ -57,12 +55,42 @@ func hashPrefix(value string) string {
 	return value[:12]
 }
 
+// FullHash reports whether value is a complete hexadecimal SHA-256 digest.
 func FullHash(value string) bool {
 	if len(value) != 64 {
 		return false
 	}
 	_, err := hex.DecodeString(value)
 	return err == nil
+}
+
+// ValidateArtifact checks the trust identity without consulting runtime
+// state. Runtime-specific verification is supplied through ArtifactVerifier.
+func ValidateArtifact(tuple Tuple) error {
+	if tuple.Release == "" {
+		return fmt.Errorf("artifact release is required")
+	}
+	if !releaseIDPattern.MatchString(tuple.Release) {
+		return fmt.Errorf("artifact release is invalid: invalid release id: %q", tuple.Release)
+	}
+	if tuple.ImageID == "" && tuple.StaticHash == "" {
+		return fmt.Errorf("artifact requires image_id or static_hash")
+	}
+	if tuple.ImageID != "" {
+		if !FullHash(strings.TrimPrefix(tuple.ImageID, "sha256:")) {
+			return fmt.Errorf("artifact image_id must be a full image id")
+		}
+		if tuple.EnvelopeHash != "" {
+			return fmt.Errorf("artifact envelope_hash is only valid for static-only artifacts")
+		}
+	}
+	if tuple.ImageID == "" && !FullHash(tuple.EnvelopeHash) {
+		return fmt.Errorf("static-only artifact envelope_hash must be a full hash")
+	}
+	if tuple.StaticHash != "" && !FullHash(tuple.StaticHash) {
+		return fmt.Errorf("artifact static_hash must be a full hash")
+	}
+	return nil
 }
 
 // StaticTreeHash hashes the tree as a length-delimited, sorted listing.
@@ -133,6 +161,17 @@ func StaticTreeHash(root string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+func VerifyStaticTree(path, expected string) error {
+	hash, err := StaticTreeHash(path)
+	if err != nil {
+		return err
+	}
+	if hash != expected {
+		return fmt.Errorf("static artifact hash does not match %s", expected)
+	}
+	return nil
+}
+
 type treeRecord struct {
 	path   string
 	kind   byte
@@ -141,7 +180,7 @@ type treeRecord struct {
 	digest [32]byte
 }
 
-func writeField(w interface{ Write([]byte) (int, error) }, value []byte) {
+func writeField(w io.Writer, value []byte) {
 	var length [8]byte
 	binary.BigEndian.PutUint64(length[:], uint64(len(value)))
 	_, _ = w.Write(length[:])

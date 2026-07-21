@@ -16,11 +16,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/caddy"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
 	"github.com/fprl/ship/internal/identity"
-	"github.com/fprl/ship/internal/journal"
 	"github.com/fprl/ship/internal/provision"
 	"github.com/fprl/ship/internal/remoteprotocol"
 	"github.com/fprl/ship/internal/secrets"
@@ -343,7 +343,7 @@ func doctorChecksFor(opts doctorOptions) []store.DoctorCheck {
 
 func doctorBoxUpdateCheck(stateStore store.Store, boxTarget string) store.DoctorCheck {
 	pending := make(map[string]bool)
-	torn, err := journal.Read(stateStore.UpdatesJournalPath(), func(line []byte) error {
+	torn, err := activationrecords.ReadJournal(stateStore.UpdatesJournalPath(), func(line []byte) error {
 		var entry updateJournalEntry
 		if err := json.Unmarshal(line, &entry); err != nil {
 			return fmt.Errorf("invalid update journal entry: %w", err)

@@ -6,22 +6,22 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/utils"
 )
 
-func readActive(app, env string) (activation.Pointer, error) {
-	pointer, err := activation.Read(app, env)
+func readActive(app, env string) (activationrecords.Pointer, error) {
+	pointer, err := activationrecords.Read(app, env)
 	if err != nil && os.IsNotExist(err) {
-		return activation.Pointer{}, errcat.WithCause(noDeployJournalError(app, env), "nothing deployed yet")
+		return activationrecords.Pointer{}, errcat.WithCause(noDeployJournalError(app, env), "nothing deployed yet")
 	}
 	return pointer, err
 }
 
-func writeActive(app, env string, pointer activation.Pointer) error {
-	return activation.WritePrepared(app, env, pointer, nil)
+func writeActive(app, env string, pointer activationrecords.Pointer) error {
+	return activationrecords.Publish(app, env, pointer)
 }
 
 func writeActivationEnvFile(app, env, activationID string, values map[string]string) (string, error) {

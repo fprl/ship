@@ -7,10 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/config"
-	"github.com/fprl/ship/internal/deployoutcome"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/utils"
@@ -46,7 +44,7 @@ type appConvergeSummary struct {
 	Outcome         string   `json:"outcome"`
 	StaleContainers []string `json:"stale_containers,omitempty"`
 	Error           string   `json:"error,omitempty"`
-	pointerArtifact *artifact.Tuple
+	pointerArtifact *activationrecords.Tuple
 }
 
 var appendConvergeJournal = appendDeployJournalEntry
@@ -136,7 +134,7 @@ func (c appConvergeCmd) runLocked() (appConvergeSummary, error) {
 
 func (c appConvergeCmd) appendJournal(startedAt time.Time, summary appConvergeSummary, convergeErr error) error {
 	entry := deployJournalEntry{
-		Outcome:          deployoutcome.Kind(summary.Outcome),
+		Outcome:          activationrecords.Outcome(summary.Outcome),
 		StartedAt:        startedAt.Format(time.RFC3339Nano),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
 		AttemptedRelease: summary.Release,
@@ -169,7 +167,7 @@ func convergeActive(app, env string) (convergeResult, error) {
 	return convergeActiveWithPointer(app, env, pointer)
 }
 
-func convergeActiveWithPointer(app, env string, pointer activation.Pointer) (convergeResult, error) {
+func convergeActiveWithPointer(app, env string, pointer activationrecords.Pointer) (convergeResult, error) {
 	if err := requireV2Pointer(pointer); err != nil {
 		return convergeResult{}, err
 	}

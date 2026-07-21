@@ -9,8 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/envelope"
 	"github.com/fprl/ship/internal/errcat"
@@ -628,7 +627,7 @@ func writeActiveEnvelopeForPreviewAliasTest(t *testing.T, app, env, body string)
 		t.Fatal(err)
 	}
 	staticHash := strings.Repeat("a", 64)
-	if err := activation.Write(app, env, activation.Pointer{Version: 2, Activation: release + "-activation", Artifact: artifact.Tuple{Release: release, StaticHash: staticHash, EnvelopeHash: envelope.HashLabel(label)}}); err != nil {
+	if err := activationrecords.Publish(app, env, activationrecords.Pointer{Version: 2, Activation: release + "-activation", Artifact: activationrecords.Tuple{Release: release, StaticHash: staticHash, EnvelopeHash: envelope.HashLabel(label)}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(staticReleasePath(app, env, release, staticHash), 0755); err != nil {

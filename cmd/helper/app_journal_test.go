@@ -10,9 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
-	"github.com/fprl/ship/internal/deployoutcome"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/deployrequest"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
@@ -27,11 +25,11 @@ func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
 
 	for _, tt := range []struct {
 		step    string
-		outcome deployoutcome.Kind
+		outcome activationrecords.Outcome
 	}{
-		{step: "build", outcome: deployoutcome.Failed},
-		{step: "probe", outcome: deployoutcome.Failed},
-		{step: "release", outcome: deployoutcome.Failed},
+		{step: "build", outcome: activationrecords.Failed},
+		{step: "probe", outcome: activationrecords.Failed},
+		{step: "release", outcome: activationrecords.Failed},
 	} {
 		t.Run(tt.step, func(t *testing.T) {
 			entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", deployIdentity{}, startedAt, newJournalStepError(tt.step, errors.New(tt.step+" failed"), nil, nil))
@@ -64,7 +62,7 @@ func TestCommittedFailuresRecordResolveStepAndCommittedTuple(t *testing.T) {
 		got = entry
 		return nil
 	}
-	result := rollbackPayload{Previous: "old", Release: "abc1234", Artifact: artifact.Tuple{Release: "abc1234", ImageID: strings.Repeat("c", 64)}}
+	result := rollbackPayload{Previous: "old", Release: "abc1234", Artifact: activationrecords.Tuple{Release: "abc1234", ImageID: strings.Repeat("c", 64)}}
 	(appRollbackCmd{}).recordRollbackFailure(result, time.Now(), &convergeError{Step: "resolve", Err: errors.New("gone")})
 	if got.FailingStep != "resolve" {
 		t.Fatalf("rollback journal entry=%+v, want resolve", got)
@@ -209,7 +207,7 @@ func TestExecReleaseSelectionUsesActivePointerDespiteTornDeployJournalTail(t *te
 		t.Fatal(err)
 	}
 	imageID := strings.Repeat("a", 64)
-	if err := activation.Write("api", "production", activation.Pointer{Version: 2, Activation: release + "-activation", Artifact: artifact.Tuple{Release: release, ImageID: imageID}}); err != nil {
+	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: release + "-activation", Artifact: activationrecords.Tuple{Release: release, ImageID: imageID}}); err != nil {
 		t.Fatal(err)
 	}
 	prepareTestActivationEnv(t, "api", "production", release+"-activation")

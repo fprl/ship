@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/ship/internal/activation"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
@@ -286,7 +286,7 @@ type appEnvStatus struct {
 	State      string                    `json:"state,omitempty"`
 	Detail     string                    `json:"detail,omitempty"`
 	Next       string                    `json:"next,omitempty"`
-	pointer    activation.Pointer        `json:"-"`
+	pointer    activationrecords.Pointer `json:"-"`
 	pointerErr error                     `json:"-"`
 	resolved   *resolvedArtifact         `json:"-"`
 }
@@ -311,7 +311,7 @@ type staticStatus struct {
 	BaseCommit string   `json:"base_commit,omitempty"`
 	CreatedAt  string   `json:"created_at,omitempty"`
 	RawRelease string   `json:"-"`
-	Artifact   Tuple    `json:"-"`
+	Artifact   activationrecords.Tuple `json:"-"`
 }
 
 type statusRelease struct {
@@ -325,7 +325,7 @@ type statusRelease struct {
 	State          string `json:"state,omitempty"`
 	Detail         string `json:"detail,omitempty"`
 	Next           string `json:"next,omitempty"`
-	Artifact       Tuple  `json:"-"`
+	Artifact       activationrecords.Tuple `json:"-"`
 }
 
 // containerEntry is the slice of `podman ps --format json` we care
@@ -413,7 +413,7 @@ func containersToAppEnvs(entries []containerEntry) []appEnvStatus {
 	return out
 }
 
-func attachProcessReleaseMetadata(app, env string, processes []processStatus, pointer activation.Pointer) {
+func attachProcessReleaseMetadata(app, env string, processes []processStatus, pointer activationrecords.Pointer) {
 	if pointer.IsLegacy() || pointer.Artifact.ImageID == "" {
 		return
 	}
@@ -424,7 +424,7 @@ func attachProcessReleaseMetadata(app, env string, processes []processStatus, po
 	attachProcessReleaseMetadataResolved(processes, pointer, resolved)
 }
 
-func attachProcessReleaseMetadataResolved(processes []processStatus, pointer activation.Pointer, resolved resolvedArtifact) {
+func attachProcessReleaseMetadataResolved(processes []processStatus, pointer activationrecords.Pointer, resolved resolvedArtifact) {
 	meta, err := releaseMetadataFromEnvelope(resolved.Envelope, pointer.Artifact.Release)
 	if err != nil {
 		return
@@ -772,7 +772,7 @@ func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 
 const committedNotConvergedState = "committed, not converged"
 
-func activePointerRuntimeConvergedResolved(app, env string, pointer activation.Pointer, resolved resolvedArtifact, processes []processStatus, static *staticStatus) bool {
+func activePointerRuntimeConvergedResolved(app, env string, pointer activationrecords.Pointer, resolved resolvedArtifact, processes []processStatus, static *staticStatus) bool {
 	ctxValue := *resolved.Context
 	ctxValue.Routes = make(map[string]config.Route, len(resolved.Context.Routes))
 	for name, route := range resolved.Context.Routes {

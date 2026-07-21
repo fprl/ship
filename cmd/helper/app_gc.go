@@ -10,9 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fprl/ship/internal/activation"
-	"github.com/fprl/ship/internal/artifact"
-	"github.com/fprl/ship/internal/deployoutcome"
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/podmanruntime"
@@ -183,7 +181,7 @@ func gcEnv(app, env string) (gcSummary, error) {
 		summary.Failures = append(summary.Failures, "deploy journal has an incomplete final entry")
 		return summary, fmt.Errorf("deploy journal is incomplete")
 	}
-	kept := map[artifact.Tuple]bool{pointer.Artifact: true}
+	kept := map[activationrecords.Tuple]bool{pointer.Artifact: true}
 	for _, candidate := range set.Verified {
 		kept[candidate.Tuple] = true
 		summary.KeptReleases = append(summary.KeptReleases, candidate.Tuple.DisplayIdentity())
@@ -209,7 +207,7 @@ func gcEnv(app, env string) (gcSummary, error) {
 	gcRemoveActivations(app, env, pointer, &summary)
 	gcRemoveTempDirs(app, env, &summary)
 	if len(summary.Removed) > 0 {
-		err := appendDeployJournalEntry(app, env, deployJournalEntry{Outcome: deployoutcome.GC, StartedAt: gcNow().UTC().Format(time.RFC3339Nano), EndedAt: gcNow().UTC().Format(time.RFC3339Nano), AttemptedRelease: pointer.Artifact.Release, GC: strings.Join(summary.Removed, ", "), Identity: deployActor("", "")}, nil)
+		err := appendDeployJournalEntry(app, env, deployJournalEntry{Outcome: activationrecords.GC, StartedAt: gcNow().UTC().Format(time.RFC3339Nano), EndedAt: gcNow().UTC().Format(time.RFC3339Nano), AttemptedRelease: pointer.Artifact.Release, GC: strings.Join(summary.Removed, ", "), Identity: deployActor("", "")}, nil)
 		if err != nil {
 			return summary, err
 		}
@@ -309,7 +307,7 @@ func freshAt(createdAt time.Time) bool {
 	return !createdAt.IsZero() && gcNow().Sub(createdAt) < gcGracePeriod
 }
 
-func gcRemoveStatic(app, env string, kept map[artifact.Tuple]bool, all []artifactCandidate, summary *gcSummary) {
+func gcRemoveStatic(app, env string, kept map[activationrecords.Tuple]bool, all []artifactCandidate, summary *gcSummary) {
 	root := filepath.Join(identity.StaticDir(app, env), "releases")
 	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) {
@@ -362,7 +360,7 @@ func gcRemoveStatic(app, env string, kept map[artifact.Tuple]bool, all []artifac
 			}
 		}
 		if committed {
-			hash, hashErr := artifact.StaticTreeHash(path)
+			hash, hashErr := activationrecords.StaticTreeHash(path)
 			if hashErr != nil || !strings.HasSuffix(entry.Name(), "-"+hash) {
 				summary.Skipped = append(summary.Skipped, "protected static "+path)
 				continue
@@ -376,7 +374,7 @@ func gcRemoveStatic(app, env string, kept map[artifact.Tuple]bool, all []artifac
 	}
 }
 
-func gcRemoveActivations(app, env string, pointer activation.Pointer, summary *gcSummary) {
+func gcRemoveActivations(app, env string, pointer activationrecords.Pointer, summary *gcSummary) {
 	root := identity.ActivationsDir(app, env)
 	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) {
