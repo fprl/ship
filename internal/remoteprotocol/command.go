@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/fprl/ship/kernel"
 )
 
 const (
@@ -13,15 +15,15 @@ const (
 	MemberFingerprintFlag = "--member-fingerprint"
 )
 
-// Exposure says who may invoke a remote protocol command. A command may have
-// more than one exposure (gc is both a client command and a box timer).
-type Exposure uint8
+// Exposure is a transitional alias of kernel.Exposure; it will be removed
+// when remoteprotocol consumers migrate to kernel directly.
+type Exposure = kernel.Exposure
 
 const (
-	ExposureClient Exposure = 1 << iota
-	ExposureRepair
-	ExposureInternal
-	ExposureGateway
+	ExposureClient   = kernel.ExposureClient
+	ExposureRepair   = kernel.ExposureRepair
+	ExposureInternal = kernel.ExposureInternal
+	ExposureGateway  = kernel.ExposureGateway
 )
 
 // Command is one closed remote protocol operation. Path contains only Kong
@@ -34,60 +36,12 @@ type Command struct {
 // Catalogue is the single command vocabulary shared by client rendering,
 // helper admission, sudoers generation, and the forced-command SSH gate.
 func Catalogue() []Command {
-	out := make([]Command, len(commandCatalogue))
-	for i, command := range commandCatalogue {
-		out[i] = Command{Path: append([]string(nil), command.Path...), Exposure: command.Exposure}
+	operations := commandRegistry.Operations()
+	out := make([]Command, len(operations))
+	for i, operation := range operations {
+		out[i] = Command{Path: append([]string(nil), operation.Path...), Exposure: operation.Exposure}
 	}
 	return out
-}
-
-var commandCatalogue = []Command{
-	{[]string{"app", "apply"}, ExposureClient},
-	{[]string{"app", "converge"}, ExposureClient},
-	{[]string{"app", "data", "fork"}, ExposureClient},
-	{[]string{"app", "data", "reset"}, ExposureClient},
-	{[]string{"app", "data", "restore"}, ExposureClient},
-	{[]string{"app", "data", "save"}, ExposureClient},
-	{[]string{"app", "destroy"}, ExposureClient},
-	{[]string{"app", "destroy-env"}, ExposureClient},
-	{[]string{"app", "exec"}, ExposureClient},
-	{[]string{"app", "logs"}, ExposureClient},
-	{[]string{"app", "ls"}, ExposureClient},
-	{[]string{"app", "preflight"}, ExposureClient},
-	{[]string{"app", "preview", "pin"}, ExposureClient},
-	{[]string{"app", "preview", "resolve"}, ExposureClient},
-	{[]string{"app", "preview", "resolve-or-create"}, ExposureClient},
-	{[]string{"app", "preview", "share"}, ExposureClient},
-	{[]string{"app", "preview", "unpin"}, ExposureClient},
-	{[]string{"app", "rollback"}, ExposureClient},
-	{[]string{"app", "secret", "list"}, ExposureClient},
-	{[]string{"app", "secret", "rm"}, ExposureClient},
-	{[]string{"app", "secret", "set"}, ExposureClient},
-	{[]string{"app", "setup-env"}, ExposureClient},
-	{[]string{"app", "status"}, ExposureClient},
-	{[]string{"app", "why"}, ExposureClient},
-	{[]string{"approval", "grant"}, ExposureClient},
-	{[]string{"approval", "ls"}, ExposureClient},
-	{[]string{"config", "get"}, ExposureClient},
-	{[]string{"config", "set"}, ExposureClient},
-	{[]string{"config", "unset"}, ExposureClient},
-	{[]string{"doctor"}, ExposureClient},
-	{[]string{"gc"}, ExposureClient | ExposureInternal},
-	{[]string{"key", "add"}, ExposureClient},
-	{[]string{"key", "ls"}, ExposureClient},
-	{[]string{"key", "rename"}, ExposureClient},
-	{[]string{"key", "rm"}, ExposureClient},
-	{[]string{"key", "role"}, ExposureClient},
-	{[]string{"webhook", "clear"}, ExposureClient},
-	{[]string{"webhook", "get"}, ExposureClient},
-	{[]string{"webhook", "set"}, ExposureClient},
-	{[]string{"version"}, ExposureRepair},
-	{[]string{"update"}, ExposureRepair},
-	{[]string{"converge-boot"}, ExposureInternal},
-	{[]string{"doctor", "record"}, ExposureInternal},
-	{[]string{"env", "reap"}, ExposureInternal},
-	{[]string{"agent-shell"}, ExposureGateway},
-	{[]string{"update-local"}, ExposureGateway},
 }
 
 // Invocation is a classified request after its fixed protocol header has been
@@ -167,7 +121,7 @@ func withoutMemberClaims(args []string) []string {
 
 func lookupCommand(args []string, exposure Exposure) (Command, bool) {
 	var best Command
-	for _, command := range commandCatalogue {
+	for _, command := range Catalogue() {
 		if command.Exposure&exposure == 0 || len(command.Path) > len(args) {
 			continue
 		}
@@ -191,8 +145,7 @@ func lookupCommand(args []string, exposure Exposure) (Command, bool) {
 
 // PathAllowed validates a Kong-resolved command path against the catalogue.
 func PathAllowed(path []string, exposure Exposure) bool {
-	command, ok := lookupCommand(path, exposure)
-	return ok && len(command.Path) == len(path)
+	return commandRegistry.PathAllowed(path, exposure)
 }
 
 // CommandAllowed accepts a resolved command followed by arguments/placeholders.
@@ -234,7 +187,7 @@ func RepairNamespaceAllowed(namespace string) bool {
 }
 
 func namespaceAllowed(namespace string, exposure Exposure) bool {
-	for _, command := range commandCatalogue {
+	for _, command := range Catalogue() {
 		if command.Exposure&exposure != 0 && command.Path[0] == namespace {
 			return true
 		}
@@ -389,7 +342,7 @@ func SudoersLineRegexp() *regexp.Regexp {
 func sudoersCommands() []string {
 	const binary = "/usr/local/bin/ship server "
 	set := map[string]bool{}
-	for _, command := range commandCatalogue {
+	for _, command := range Catalogue() {
 		if command.Exposure&ExposureClient != 0 {
 			set[command.Path[0]] = true
 		}

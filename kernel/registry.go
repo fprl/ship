@@ -139,7 +139,7 @@ func validateDefinitions(definitions []Definition) error {
 			}
 			current := registeredOperation{moduleID: definition.ID, operation: operation}
 			for _, previous := range registered {
-				if strictPathPrefix(previous.operation.Path, operation.Path) || strictPathPrefix(operation.Path, previous.operation.Path) {
+				if previous.operation.Exposure&operation.Exposure != 0 && (strictPathPrefix(previous.operation.Path, operation.Path) || strictPathPrefix(operation.Path, previous.operation.Path)) {
 					return fmt.Errorf("prefix-ambiguous command path %q in module %q conflicts with %q in module %q", formatPath(operation.Path), definition.ID, formatPath(previous.operation.Path), previous.moduleID)
 				}
 			}

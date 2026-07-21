@@ -29,6 +29,20 @@ func TestRegistryRejectsPrefixAmbiguousCommandPaths(t *testing.T) {
 	}
 }
 
+func TestRegistryAllowsPrefixRelatedPathsWithDisjointExposures(t *testing.T) {
+	longer := testOperation([]string{"app", "apply", "extra"})
+	longer.Exposure = ExposureInternal
+	longer.Authorization = Authorization{}
+	registry := NewRegistry([]Definition{
+		{ID: "first", Operations: []Operation{testOperation([]string{"app", "apply"})}},
+		{ID: "second", Operations: []Operation{longer}},
+	})
+
+	if err := registry.Freeze(); err != nil {
+		t.Fatalf("Freeze() error = %v, want prefix-related paths with disjoint exposures accepted", err)
+	}
+}
+
 func TestRegistryRejectsClientOperationWithoutAuthorization(t *testing.T) {
 	tests := []struct {
 		name          string
