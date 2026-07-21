@@ -27,9 +27,6 @@ type Tuple struct {
 	StaticHash   string `json:"static_hash,omitempty"`
 }
 
-func (t Tuple) IsStaticOnly() bool { return t.ImageID == "" && t.StaticHash != "" }
-func (t Tuple) HasImage() bool     { return t.ImageID != "" }
-
 // DisplayIdentity is deliberately the only place that truncates hashes.
 func (t Tuple) DisplayIdentity() string {
 	image := imagePrefix(t.ImageID)
@@ -55,8 +52,7 @@ func hashPrefix(value string) string {
 	return value[:12]
 }
 
-// FullHash reports whether value is a complete hexadecimal SHA-256 digest.
-func FullHash(value string) bool {
+func fullHash(value string) bool {
 	if len(value) != 64 {
 		return false
 	}
@@ -73,21 +69,22 @@ func ValidateArtifact(tuple Tuple) error {
 	if !releaseIDPattern.MatchString(tuple.Release) {
 		return fmt.Errorf("artifact release is invalid: invalid release id: %q", tuple.Release)
 	}
-	if tuple.ImageID == "" && tuple.StaticHash == "" {
+	imageID := strings.TrimSpace(tuple.ImageID)
+	if imageID == "" && tuple.StaticHash == "" {
 		return fmt.Errorf("artifact requires image_id or static_hash")
 	}
-	if tuple.ImageID != "" {
-		if !FullHash(strings.TrimPrefix(tuple.ImageID, "sha256:")) {
+	if imageID != "" {
+		if !fullHash(strings.TrimPrefix(imageID, "sha256:")) {
 			return fmt.Errorf("artifact image_id must be a full image id")
 		}
 		if tuple.EnvelopeHash != "" {
 			return fmt.Errorf("artifact envelope_hash is only valid for static-only artifacts")
 		}
 	}
-	if tuple.ImageID == "" && !FullHash(tuple.EnvelopeHash) {
+	if imageID == "" && !fullHash(tuple.EnvelopeHash) {
 		return fmt.Errorf("static-only artifact envelope_hash must be a full hash")
 	}
-	if tuple.StaticHash != "" && !FullHash(tuple.StaticHash) {
+	if tuple.StaticHash != "" && !fullHash(tuple.StaticHash) {
 		return fmt.Errorf("artifact static_hash must be a full hash")
 	}
 	return nil
@@ -161,7 +158,7 @@ func StaticTreeHash(root string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func VerifyStaticTree(path, expected string) error {
+func verifyStaticTree(path, expected string) error {
 	hash, err := StaticTreeHash(path)
 	if err != nil {
 		return err

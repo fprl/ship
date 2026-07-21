@@ -49,11 +49,7 @@ func fetchDeployedCommit(runner sshRunner, ctx *config.AppContext) (string, bool
 		return "", false, nil
 	}
 	if status.Release.BaseCommit == "" {
-		// A legacy (pre-v2) or unresolvable active artifact has no readable
-		// base commit by design, and redeploying is exactly the documented
-		// heal. The ancestry guard protects a readable base, never blocks
-		// the healing deploy.
-		if status.Release.Detail == "legacy_activation" || status.Release.Detail == "artifact_unavailable" {
+		if status.Release.Detail == "artifact_unavailable" {
 			return "", false, nil
 		}
 		return "", false, operationError(fmt.Sprintf("read deployed release failed: active release %s has no base_commit", status.Release.Release), "ship status")

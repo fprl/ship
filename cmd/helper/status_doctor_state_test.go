@@ -305,26 +305,6 @@ func TestDoctorDeployJournalCheckReadsEachAppEnv(t *testing.T) {
 	}
 }
 
-func TestDoctorDeployJournalV1IsIgnored(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	path := identity.LegacyDeployJournalFile("api", "production")
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatal(err)
-	}
-	data := []byte(`{"schema_version":1,"app":"api","env":"production"}` + "\n" + `{"schema_version":1,"app":"api"`)
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	check := doctorDeployJournalsCheck(func() ([]appEnvStatus, error) {
-		return []appEnvStatus{{App: "api", Env: "production"}}, nil
-	}, "fake-vps")
-	if check.Status != doctorStatusOK {
-		t.Fatalf("status = %q, want ok: %+v", check.Status, check)
-	}
-}
-
 func TestDoctorDeltaTracksSeverityIncreasesOnly(t *testing.T) {
 	previous := []store.DoctorCheck{{ID: doctorCheckReaperTimer, Status: doctorStatusDegraded}}
 	if delta := doctorDelta(previous, []store.DoctorCheck{{ID: doctorCheckReaperTimer, Status: doctorStatusDegraded}}); len(delta) != 0 {

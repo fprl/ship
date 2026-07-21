@@ -19,6 +19,7 @@ import (
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 	"github.com/fprl/ship/internal/version"
+	"github.com/fprl/ship/kernel"
 )
 
 type updateHelperCmd struct {
@@ -147,25 +148,25 @@ func validUpdateBinary(path string) bool {
 }
 
 type updateJournalEntry struct {
-	SchemaVersion int            `json:"schema_version"`
-	Event         string         `json:"event"`
-	At            string         `json:"at"`
-	Version       string         `json:"version"`
-	Changes       int            `json:"changes"`
-	Key           string         `json:"key,omitempty"`
-	Actor         *journalMember `json:"actor,omitempty"`
+	SchemaVersion int                       `json:"schema_version"`
+	Event         string                    `json:"event"`
+	At            string                    `json:"at"`
+	Version       string                    `json:"version"`
+	Changes       int                       `json:"changes"`
+	Key           string                    `json:"key,omitempty"`
+	Actor         *activationrecords.Member `json:"actor,omitempty"`
 }
 
 func appendUpdateJournal(entry updateJournalEntry) error {
 	entry.SchemaVersion = 1
 	entry.At = time.Now().UTC().Format(time.RFC3339Nano)
 	path := store.Default().UpdatesJournalPath()
-	return activationrecords.AppendJournal(path, entry)
+	return kernel.AppendJournal(path, entry)
 }
 
 func lastCompletedUpdateVersion(path string) (string, error) {
 	last := ""
-	_, err := activationrecords.ReadJournal(path, func(line []byte) error {
+	_, err := kernel.ReadJournal(path, func(line []byte) error {
 		var entry updateJournalEntry
 		if err := json.Unmarshal(line, &entry); err != nil {
 			return err

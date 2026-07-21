@@ -18,7 +18,7 @@ import (
 
 func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
 	startedAt := time.Date(2026, time.July, 14, 10, 0, 0, 0, time.UTC)
-	entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", deployIdentity{}, startedAt, errors.New("corrupt upload tar"))
+	entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", activationrecords.Identity{}, startedAt, errors.New("corrupt upload tar"))
 	if entry.FailingStep != "apply" || entry.Outcome != "failed" || entry.StderrTail != "corrupt upload tar" {
 		t.Fatalf("unwrapped journal entry = %+v", entry)
 	}
@@ -32,7 +32,7 @@ func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
 		{step: "release", outcome: activationrecords.Failed},
 	} {
 		t.Run(tt.step, func(t *testing.T) {
-			entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", deployIdentity{}, startedAt, newJournalStepError(tt.step, errors.New(tt.step+" failed"), nil, nil))
+			entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", activationrecords.Identity{}, startedAt, newJournalStepError(tt.step, errors.New(tt.step+" failed"), nil, nil))
 			if entry.FailingStep != tt.step || entry.Outcome != tt.outcome {
 				t.Fatalf("wrapped journal entry = %+v", entry)
 			}
@@ -41,10 +41,10 @@ func TestDeployJournalFailureEntryUsesApplyForUnwrappedErrors(t *testing.T) {
 }
 
 func TestCommittedFailuresRecordResolveStepAndCommittedTuple(t *testing.T) {
-	oldAppend := appendSanitizedDeployJournal
-	t.Cleanup(func() { appendSanitizedDeployJournal = oldAppend })
-	var got deployJournalEntry
-	appendSanitizedDeployJournal = func(_ string, _ string, entry deployJournalEntry) error {
+	oldAppend := appendDeployJournal
+	t.Cleanup(func() { appendDeployJournal = oldAppend })
+	var got activationrecords.JournalEntry
+	appendDeployJournal = func(_ string, _ string, entry activationrecords.JournalEntry, _ []string) error {
 		got = entry
 		return nil
 	}
@@ -58,7 +58,7 @@ func TestCommittedFailuresRecordResolveStepAndCommittedTuple(t *testing.T) {
 
 	oldRollbackAppend := appendRollbackDeployJournal
 	t.Cleanup(func() { appendRollbackDeployJournal = oldRollbackAppend })
-	appendRollbackDeployJournal = func(_ string, _ string, entry deployJournalEntry, _ []string) error {
+	appendRollbackDeployJournal = func(_ string, _ string, entry activationrecords.JournalEntry, _ []string) error {
 		got = entry
 		return nil
 	}
@@ -72,7 +72,7 @@ func TestCommittedFailuresRecordResolveStepAndCommittedTuple(t *testing.T) {
 func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {
 	setupJournalHostTest(t)
 	secretValue := "super-secret-token"
-	entry := deployJournalEntry{
+	entry := activationrecords.JournalEntry{
 		Outcome:          "failed",
 		StartedAt:        "2026-07-07T10:00:00Z",
 		EndedAt:          "2026-07-07T10:00:01Z",
@@ -80,8 +80,8 @@ func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {
 		AttemptedRelease: "bbb222",
 		FailingStep:      "release",
 		StderrTail:       "first line\nleaked " + secretValue + "\nlast line",
-		Identity:         deployIdentity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
-		Probe:            &journalProbe{BodySnippet: "body " + secretValue},
+		Identity:         activationrecords.Identity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
+		Probe:            &activationrecords.Probe{BodySnippet: "body " + secretValue},
 	}
 	if err := appendDeployJournalEntry("api", "production", entry, []string{secretValue}); err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if latest.SchemaVersion != deployJournalSchemaVersion || latest.App != "api" || latest.Env != "production" {
+	if latest.SchemaVersion != activationrecords.DeployJournalSchemaVersion || latest.App != "api" || latest.Env != "production" {
 		t.Fatalf("unexpected journal identity: %+v", latest)
 	}
 	if !strings.Contains(latest.StderrTail, "[redacted]") || strings.Contains(latest.StderrTail, secretValue) {
@@ -109,43 +109,25 @@ func TestDeployJournalScrubsResolvedEnvValues(t *testing.T) {
 	}
 }
 
-func TestV2DeployDeletesMalformedOldJournalWithoutSniffing(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	oldPath := identity.LegacyDeployJournalFile("api", "production")
-	if err := os.MkdirAll(filepath.Dir(oldPath), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(oldPath, []byte("not json\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := resetLegacyDeployJournalForV2("api", "production"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
-		t.Fatalf("old journal survived reset: %v", err)
-	}
-}
-
 func TestLatestSuccessfulDeployJournalEntrySkipsFailures(t *testing.T) {
 	setupJournalHostTest(t)
-	failed := deployJournalEntry{
+	failed := activationrecords.JournalEntry{
 		Outcome:          "failed",
 		StartedAt:        "2026-07-07T10:00:00Z",
 		EndedAt:          "2026-07-07T10:00:01Z",
 		AttemptedRelease: "bad222",
 		FailingStep:      "probe",
-		Identity:         deployIdentity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
+		Identity:         activationrecords.Identity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
 	}
 	if err := appendDeployJournalEntry("api", "production", failed, nil); err != nil {
 		t.Fatal(err)
 	}
-	deployed := deployJournalEntry{
+	deployed := activationrecords.JournalEntry{
 		Outcome:          "deployed",
 		StartedAt:        "2026-07-07T10:01:00Z",
 		EndedAt:          "2026-07-07T10:01:01Z",
 		AttemptedRelease: "good333",
-		Identity:         deployIdentity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
+		Identity:         activationrecords.Identity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
 	}
 	if err := appendDeployJournalEntry("api", "production", deployed, nil); err != nil {
 		t.Fatal(err)
@@ -162,7 +144,7 @@ func TestLatestSuccessfulDeployJournalEntrySkipsFailures(t *testing.T) {
 
 func TestLatestDeployJournalEntrySkipsGC(t *testing.T) {
 	setupJournalHostTest(t)
-	deployed := deployJournalEntry{
+	deployed := activationrecords.JournalEntry{
 		Outcome:          "deployed",
 		StartedAt:        "2026-07-07T10:00:00Z",
 		EndedAt:          "2026-07-07T10:00:01Z",
@@ -171,7 +153,7 @@ func TestLatestDeployJournalEntrySkipsGC(t *testing.T) {
 	if err := appendDeployJournalEntry("api", "production", deployed, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := appendDeployJournalEntry("api", "production", deployJournalEntry{
+	if err := appendDeployJournalEntry("api", "production", activationrecords.JournalEntry{
 		Outcome: "gc", StartedAt: "2026-07-07T11:00:00Z", EndedAt: "2026-07-07T11:00:01Z", GC: "none",
 	}, nil); err != nil {
 		t.Fatal(err)
@@ -217,7 +199,7 @@ func TestExecReleaseSelectionUsesActivePointerDespiteTornDeployJournalTail(t *te
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	journalPath := identity.DeployJournalFile("api", "production")
-	entry := deployJournalEntry{Outcome: "deployed", AttemptedRelease: release}
+	entry := activationrecords.JournalEntry{Outcome: "deployed", AttemptedRelease: release}
 	if err := appendDeployJournalEntry("api", "production", entry, nil); err != nil {
 		t.Fatal(err)
 	}

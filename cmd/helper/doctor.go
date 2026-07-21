@@ -16,7 +16,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/caddy"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/host"
@@ -27,6 +26,7 @@ import (
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
 	"github.com/fprl/ship/internal/version"
+	"github.com/fprl/ship/kernel"
 )
 
 const (
@@ -343,7 +343,7 @@ func doctorChecksFor(opts doctorOptions) []store.DoctorCheck {
 
 func doctorBoxUpdateCheck(stateStore store.Store, boxTarget string) store.DoctorCheck {
 	pending := make(map[string]bool)
-	torn, err := activationrecords.ReadJournal(stateStore.UpdatesJournalPath(), func(line []byte) error {
+	torn, err := kernel.ReadJournal(stateStore.UpdatesJournalPath(), func(line []byte) error {
 		var entry updateJournalEntry
 		if err := json.Unmarshal(line, &entry); err != nil {
 			return fmt.Errorf("invalid update journal entry: %w", err)
@@ -923,12 +923,6 @@ func doctorDeployJournalsCheck(appEnvs func() ([]appEnvStatus, error), boxTarget
 		entries, torn, err := readDeployJournalEntriesWithStatus(app.App, app.Env)
 		name := app.App + "/" + app.Env
 		if err != nil {
-			if errcat.Is(err, errcat.CodeNoDeploys) {
-				if _, oldErr := os.Stat(identity.LegacyDeployJournalFile(app.App, app.Env)); oldErr == nil {
-					readable = append(readable, name+" (old v1 journal ignored)")
-					continue
-				}
-			}
 			path := identity.DeployJournalFile(app.App, app.Env)
 			if firstBadPath == "" {
 				firstBadPath = path

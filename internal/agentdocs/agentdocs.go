@@ -603,7 +603,7 @@ var verbs = []Verb{
 		),
 		ExitCodes: normalExit,
 		Errors:    []string{"manifest_invalid", "ssh_unreachable", "box_not_initialized", "host_key_changed", "operation_failed"},
-		Notes:     []string{"capability_url is optional and appears only for Preview environments. pinned and dirty are omitted when false. base_commit and created_at come from the resolved active artifact, never from container labels. state and next appear when active.json is committed but runtime has not converged; state is `committed, not converged` and next is `ship converge`. Legacy activations and unavailable artifacts use state `degraded`, detail `legacy_activation` or `artifact_unavailable`, and runnable next `ship`. A committed failure is reported as degraded rather than auto-restoring the previous release. envs is always an array; it is [] when nothing is live."},
+		Notes:     []string{"capability_url is optional and appears only for Preview environments. pinned and dirty are omitted when false. base_commit and created_at come from the resolved active artifact, never from container labels. state and next appear when active.json is committed but runtime has not converged; state is `committed, not converged` and next is `ship converge`. Unavailable artifacts use state `degraded`, detail `artifact_unavailable`, and runnable next `ship`. A committed failure is reported as degraded rather than auto-restoring the previous release. envs is always an array; it is [] when nothing is live."},
 	},
 	{
 		Verb:    "logs",

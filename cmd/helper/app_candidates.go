@@ -22,10 +22,15 @@ type candidateSet struct {
 	Torn      bool
 }
 
-type artifactCandidateVerifier struct{}
+type artifactCandidateVerifier struct {
+	resolved map[activationrecords.Tuple]resolvedArtifact
+}
 
-func (artifactCandidateVerifier) Verify(app, env string, tuple activationrecords.Tuple) error {
-	_, err := resolveArtifact(app, env, tuple)
+func (v artifactCandidateVerifier) Verify(app, env string, tuple activationrecords.Tuple) error {
+	resolved, err := resolveArtifact(app, env, tuple)
+	if err == nil {
+		v.resolved[tuple] = resolved
+	}
 	return err
 }
 
@@ -38,30 +43,27 @@ func (artifactCandidateVerifier) IsAbsent(err error) bool {
 	return errors.As(err, &absent)
 }
 
+func (v artifactCandidateVerifier) resolvedArtifact(tuple activationrecords.Tuple) (resolvedArtifact, bool) {
+	resolved, ok := v.resolved[tuple]
+	return resolved, ok
+}
+
 // sharedArtifactCandidates is the only retention/rollback candidate policy.
 // It verifies before applying the existing N limit, so broken newest history
 // cannot consume quota.
 func sharedArtifactCandidatesWithPointer(app, env string, pointer activationrecords.Pointer) (candidateSet, error) {
-	if pointer.IsLegacy() {
-		return candidateSet{}, nil
-	}
-	policy, err := activationrecords.VerifiedCandidates(app, env, pointer, artifactCandidateVerifier{}, releaseImageKeepLimit(env))
+	verifier := artifactCandidateVerifier{resolved: make(map[activationrecords.Tuple]resolvedArtifact)}
+	policy, err := activationrecords.VerifiedCandidates(app, env, pointer, verifier, releaseImageKeepLimit(env))
 	if err != nil {
 		return candidateSet{}, err
 	}
 	set := candidateSet{Active: policy.Active, Torn: policy.Torn, Protected: policy.Protected, Absent: policy.Absent}
 	for _, candidate := range policy.All {
-		resolved, resolveErr := resolveArtifact(app, env, candidate.Tuple)
-		if resolveErr != nil {
-			return candidateSet{}, fmt.Errorf("candidate verification changed during policy evaluation: %w", resolveErr)
-		}
+		resolved, _ := verifier.resolvedArtifact(candidate.Tuple)
 		set.All = append(set.All, artifactCandidate{Tuple: candidate.Tuple, Resolved: resolved})
 	}
 	for _, candidate := range policy.Verified {
-		resolved, resolveErr := resolveArtifact(app, env, candidate.Tuple)
-		if resolveErr != nil {
-			return candidateSet{}, fmt.Errorf("candidate verification changed during policy evaluation: %w", resolveErr)
-		}
+		resolved, _ := verifier.resolvedArtifact(candidate.Tuple)
 		set.Verified = append(set.Verified, artifactCandidate{Tuple: candidate.Tuple, Resolved: resolved})
 	}
 	return set, nil

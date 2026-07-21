@@ -168,10 +168,6 @@ func gcEnv(app, env string) (gcSummary, error) {
 		return gcSummary{App: app, Env: env}, fmt.Errorf("read active.json: %w", err)
 	}
 	summary := gcSummary{App: app, Env: env, ActiveRelease: pointer.Artifact.Release}
-	if pointer.IsLegacy() {
-		summary.Skipped = append(summary.Skipped, "legacy activation; redeploy to heal")
-		return summary, nil
-	}
 	set, err := sharedArtifactCandidatesWithPointer(app, env, pointer)
 	if err != nil {
 		return summary, err
@@ -207,7 +203,7 @@ func gcEnv(app, env string) (gcSummary, error) {
 	gcRemoveActivations(app, env, pointer, &summary)
 	gcRemoveTempDirs(app, env, &summary)
 	if len(summary.Removed) > 0 {
-		err := appendDeployJournalEntry(app, env, deployJournalEntry{Outcome: activationrecords.GC, StartedAt: gcNow().UTC().Format(time.RFC3339Nano), EndedAt: gcNow().UTC().Format(time.RFC3339Nano), AttemptedRelease: pointer.Artifact.Release, GC: strings.Join(summary.Removed, ", "), Identity: deployActor("", "")}, nil)
+		err := appendDeployJournalEntry(app, env, activationrecords.JournalEntry{Outcome: activationrecords.GC, StartedAt: gcNow().UTC().Format(time.RFC3339Nano), EndedAt: gcNow().UTC().Format(time.RFC3339Nano), AttemptedRelease: pointer.Artifact.Release, GC: strings.Join(summary.Removed, ", "), Identity: deployActor("", "")}, nil)
 		if err != nil {
 			return summary, err
 		}

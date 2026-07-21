@@ -27,6 +27,14 @@ func TestTupleDisplayIdentityUsesTheThreeArtifactShapes(t *testing.T) {
 	}
 }
 
+func TestValidateArtifactTrimsImageIDWhitespaceBeforeCheckingItsShape(t *testing.T) {
+	imageID := strings.Repeat("a", 64)
+	tuple := Tuple{Release: "abcdef1", ImageID: " sha256:" + imageID + " "}
+	if err := ValidateArtifact(tuple); err != nil {
+		t.Fatalf("ValidateArtifact() error = %v, want whitespace-padded image id accepted", err)
+	}
+}
+
 func TestStaticTreeHashIsOrderIndependentAndIncludesNestedShipReleaseFiles(t *testing.T) {
 	first := t.TempDir()
 	second := t.TempDir()

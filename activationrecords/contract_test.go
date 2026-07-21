@@ -6,6 +6,7 @@ import (
 
 	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/activationrecords/contracttest"
+	"github.com/fprl/ship/kernel"
 )
 
 type diskPointerStore struct{}
@@ -21,18 +22,12 @@ func (diskPointerStore) Publish(app, env string, pointer activationrecords.Point
 type diskJournalStore struct{}
 
 func (diskJournalStore) Append(path string, entry any) error {
-	return activationrecords.AppendJournal(path, entry)
+	return kernel.AppendJournal(path, entry)
 }
 
 func (diskJournalStore) Read(path string, decode func([]byte) error) (bool, error) {
-	return activationrecords.ReadJournal(path, decode)
+	return kernel.ReadJournal(path, decode)
 }
-
-type verifier struct{}
-
-func (verifier) Verify(string, string, activationrecords.Tuple) error      { return nil }
-func (verifier) StaticPath(string, string, activationrecords.Tuple) string { return "" }
-func (verifier) IsAbsent(error) bool                                       { return false }
 
 func TestDiskImplementationConforms(t *testing.T) {
 	root := t.TempDir()
@@ -40,6 +35,9 @@ func TestDiskImplementationConforms(t *testing.T) {
 	contracttest.AssertAtomicPointerPublish(t, diskPointerStore{})
 	contracttest.AssertAppendOnlyJournal(t, diskJournalStore{}, filepath.Join(root, "journal.jsonl"))
 	contracttest.AssertClosedOutcomeVocabulary(t)
+	if err := activationrecords.AppendDeployJournal("api", "production", activationrecords.JournalEntry{Outcome: activationrecords.Outcome("future_outcome")}, nil); err == nil {
+		t.Fatal("deploy journal accepted an unknown outcome")
+	}
 
 	pointer := activationrecords.Pointer{Version: 2, Activation: "active-a1b2", Artifact: activationrecords.Tuple{Release: "abcdef1", ImageID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
 	if err := activationrecords.Publish("api", "production", pointer); err != nil {
@@ -51,8 +49,7 @@ func TestDiskImplementationConforms(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	candidates := func() (activationrecords.CandidateSet, error) {
-		return activationrecords.VerifiedCandidates("api", "production", pointer, verifier{}, 10)
-	}
-	contracttest.AssertRollbackGCAgreement(t, candidates, candidates)
+	contracttest.AssertCandidatePolicy(t, func(pointer activationrecords.Pointer, verifier activationrecords.ArtifactVerifier, keep int) (activationrecords.CandidateSet, error) {
+		return activationrecords.VerifiedCandidates("api", "production", pointer, verifier, keep)
+	})
 }

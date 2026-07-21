@@ -14,19 +14,14 @@ import (
 	"github.com/fprl/ship/internal/utils"
 )
 
-const deployJournalSchemaVersion = activationrecords.DeployJournalSchemaVersion
-
 const tornDeployJournalWarning = "warning: deploy journal has an incomplete final entry (interrupted write); next: ship box doctor"
 
 func warnTornDeployJournal(path string) {
 	fmt.Fprintln(os.Stderr, tornDeployJournalWarning)
 }
 
-type deployIdentity = activationrecords.Identity
-type journalMember = activationrecords.Member
-
-func deployActor(sshKeyComment, gitAuthor string) deployIdentity {
-	actor := deployIdentity{SSHKeyComment: sshKeyComment, GitAuthor: gitAuthor}
+func deployActor(sshKeyComment, gitAuthor string) activationrecords.Identity {
+	actor := activationrecords.Identity{SSHKeyComment: sshKeyComment, GitAuthor: gitAuthor}
 	if actor.SSHKeyComment == "" {
 		actor.SSHKeyComment = "unknown"
 	}
@@ -36,14 +31,11 @@ func deployActor(sshKeyComment, gitAuthor string) deployIdentity {
 	return actor
 }
 
-type journalProbe = activationrecords.Probe
-type deployJournalEntry = activationrecords.JournalEntry
-
 type journalStepError struct {
 	Step        string
 	Err         error
 	StderrTail  string
-	Probe       *journalProbe
+	Probe       *activationrecords.Probe
 	ScrubValues []string
 }
 
@@ -55,7 +47,7 @@ func (e *journalStepError) Unwrap() error {
 	return e.Err
 }
 
-func newJournalStepError(step string, err error, scrubValues []string, probe *journalProbe) error {
+func newJournalStepError(step string, err error, scrubValues []string, probe *activationrecords.Probe) error {
 	if err == nil {
 		return nil
 	}
@@ -72,7 +64,7 @@ func newJournalStepError(step string, err error, scrubValues []string, probe *jo
 	}
 }
 
-func appendDeployJournalEntry(app, env string, entry deployJournalEntry, scrubValues []string) error {
+func appendDeployJournalEntry(app, env string, entry activationrecords.JournalEntry, scrubValues []string) error {
 	if err := validateAppEnv(app, env); err != nil {
 		return err
 	}
@@ -82,41 +74,17 @@ func appendDeployJournalEntry(app, env string, entry deployJournalEntry, scrubVa
 	return nil
 }
 
-var appendSanitizedDeployJournal = func(app, env string, entry deployJournalEntry) error {
-	return activationrecords.AppendDeployJournal(app, env, entry, nil)
-}
+var appendDeployJournal = appendDeployJournalEntry
 
-func sanitizeDeployJournalEntry(app, env string, entry deployJournalEntry, scrubValues []string) deployJournalEntry {
-	entry.SchemaVersion = deployJournalSchemaVersion
-	entry.App = app
-	entry.Env = env
-	entry.StderrTail = scrubText(tailLines(entry.StderrTail, 40), scrubValues)
-	if entry.Probe != nil {
-		entry.Probe.BodySnippet = scrubText(tailLines(entry.Probe.BodySnippet, 8), scrubValues)
-	}
-	return entry
-}
-
-func resetLegacyDeployJournalForV2(app, env string) error {
-	removed, err := activationrecords.ResetLegacyJournal(app, env)
-	if err != nil {
-		return err
-	}
-	if removed {
-		fmt.Printf("Deleted v1 deploy journal; starting fresh v2 history\n")
-	}
-	return nil
-}
-
-func readLatestDeployJournalEntry(app, env string) (deployJournalEntry, error) {
+func readLatestDeployJournalEntry(app, env string) (activationrecords.JournalEntry, error) {
 	entry, _, err := readLatestDeployJournalEntryWithStatus(app, env)
 	return entry, err
 }
 
-func readLatestDeployJournalEntryWithStatus(app, env string) (deployJournalEntry, bool, error) {
+func readLatestDeployJournalEntryWithStatus(app, env string) (activationrecords.JournalEntry, bool, error) {
 	entries, torn, err := readDeployJournalEntriesWithStatus(app, env)
 	if err != nil {
-		return deployJournalEntry{}, torn, err
+		return activationrecords.JournalEntry{}, torn, err
 	}
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Outcome == activationrecords.GC {
@@ -124,28 +92,28 @@ func readLatestDeployJournalEntryWithStatus(app, env string) (deployJournalEntry
 		}
 		return entries[i], torn, nil
 	}
-	return deployJournalEntry{}, torn, noDeployJournalError(app, env)
+	return activationrecords.JournalEntry{}, torn, noDeployJournalError(app, env)
 }
 
-func readLatestSuccessfulDeployJournalEntry(app, env string) (deployJournalEntry, error) {
+func readLatestSuccessfulDeployJournalEntry(app, env string) (activationrecords.JournalEntry, error) {
 	entry, _, err := readLatestSuccessfulDeployJournalEntryWithStatus(app, env)
 	return entry, err
 }
 
-func readLatestSuccessfulDeployJournalEntryWithStatus(app, env string) (deployJournalEntry, bool, error) {
+func readLatestSuccessfulDeployJournalEntryWithStatus(app, env string) (activationrecords.JournalEntry, bool, error) {
 	entries, torn, err := readDeployJournalEntriesWithStatus(app, env)
 	if err != nil {
-		return deployJournalEntry{}, torn, err
+		return activationrecords.JournalEntry{}, torn, err
 	}
 	for i := len(entries) - 1; i >= 0; i-- {
 		if entries[i].Outcome.CompletedLifecycle() {
 			return entries[i], torn, nil
 		}
 	}
-	return deployJournalEntry{}, torn, noDeployJournalError(app, env)
+	return activationrecords.JournalEntry{}, torn, noDeployJournalError(app, env)
 }
 
-func readDeployJournalEntries(app, env string) ([]deployJournalEntry, error) {
+func readDeployJournalEntries(app, env string) ([]activationrecords.JournalEntry, error) {
 	entries, _, err := readDeployJournalEntriesWithStatus(app, env)
 	if err == nil && len(entries) == 0 {
 		return nil, noDeployJournalError(app, env)
@@ -153,7 +121,7 @@ func readDeployJournalEntries(app, env string) ([]deployJournalEntry, error) {
 	return entries, err
 }
 
-func readDeployJournalEntriesWithStatus(app, env string) ([]deployJournalEntry, bool, error) {
+func readDeployJournalEntriesWithStatus(app, env string) ([]activationrecords.JournalEntry, bool, error) {
 	if err := validateAppEnv(app, env); err != nil {
 		return nil, false, err
 	}
@@ -181,10 +149,10 @@ func noDeployJournalError(app, env string) error {
 	})
 }
 
-func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease string, actor deployIdentity, startedAt time.Time, err error) (deployJournalEntry, []string) {
+func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease string, actor activationrecords.Identity, startedAt time.Time, err error) (activationrecords.JournalEntry, []string) {
 	step := "apply"
 	tail := commandErrorTail(err)
-	var probe *journalProbe
+	var probe *activationrecords.Probe
 	var scrubValues []string
 	var stepErr *journalStepError
 	if errors.As(err, &stepErr) {
@@ -200,7 +168,7 @@ func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease strin
 	if tail == "" {
 		tail = err.Error()
 	}
-	return deployJournalEntry{
+	return activationrecords.JournalEntry{
 		Outcome:          activationrecords.Failed,
 		StartedAt:        startedAt.Format(time.RFC3339Nano),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
@@ -214,7 +182,7 @@ func deployJournalFailureEntry(app, env, previousRelease, attemptedRelease strin
 	}, scrubValues
 }
 
-func committedOutcomeJournalEntry(app, env string, outcome activationrecords.Outcome, previousRelease, attemptedRelease string, actor deployIdentity, startedAt time.Time, failingStep string, artifact *activationrecords.Tuple, err error) (deployJournalEntry, []string) {
+func committedOutcomeJournalEntry(app, env string, outcome activationrecords.Outcome, previousRelease, attemptedRelease string, actor activationrecords.Identity, startedAt time.Time, failingStep string, artifact *activationrecords.Tuple, err error) (activationrecords.JournalEntry, []string) {
 	stepErr := newJournalStepError(failingStep, err, nil, nil)
 	entry, scrubValues := deployJournalFailureEntry(app, env, previousRelease, attemptedRelease, actor, startedAt, stepErr)
 	entry.Outcome = outcome
@@ -227,7 +195,7 @@ func commandErrorTail(err error) string {
 	if !errors.As(err, &cmdErr) {
 		return ""
 	}
-	return tailLines(cmdErr.CombinedOutput(), 40)
+	return cmdErr.CombinedOutput()
 }
 
 func collectEnvValues(vals map[string]string) []string {

@@ -77,9 +77,6 @@ func resolveExecTarget(app, env string) (execTarget, error) {
 	if err != nil {
 		return execTarget{}, err
 	}
-	if err := requireV2Pointer(pointer); err != nil {
-		return execTarget{}, err
-	}
 	resolved, err := resolveArtifact(app, env, pointer.Artifact)
 	if err != nil {
 		return execTarget{}, execOperationFailed(err)

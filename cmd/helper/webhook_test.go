@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/store"
@@ -19,16 +20,19 @@ func TestWebhookDeployAbortedPayloadCarriesScrubbedJournalAndRemediation(t *test
 	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName})
 	sink := newWebhookTestSink(t)
 	now := time.Date(2026, 7, 7, 10, 1, 2, 0, time.UTC)
-	entry := sanitizeDeployJournalEntry("api", productionEnvName, deployJournalEntry{
+	entry := activationrecords.JournalEntry{
+		SchemaVersion:    activationrecords.DeployJournalSchemaVersion,
+		App:              "api",
+		Env:              productionEnvName,
 		Outcome:          "failed",
 		StartedAt:        "2026-07-07T10:00:00Z",
 		EndedAt:          "2026-07-07T10:00:01Z",
 		PreviousRelease:  "aaa111bbb222",
 		AttemptedRelease: "ccc333ddd444",
 		FailingStep:      "release",
-		StderrTail:       "release failed with webhook-secret-token",
-		Identity:         deployIdentity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
-	}, []string{"webhook-secret-token"})
+		StderrTail:       "release failed with [redacted]",
+		Identity:         activationrecords.Identity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
+	}
 
 	webhookDeployAborted(sink.URL, &config.AppContext{ProductionBranch: "main"}, entry, now)
 
@@ -48,24 +52,30 @@ func TestWebhookDeployRecoveredPayloadCarriesPreviousFailure(t *testing.T) {
 	writeIdentityForTest(t, identity.EnvIdentity{Version: 1, App: "api", Env: productionEnvName})
 	sink := newWebhookTestSink(t)
 	now := time.Date(2026, 7, 7, 10, 2, 3, 0, time.UTC)
-	previous := sanitizeDeployJournalEntry("api", productionEnvName, deployJournalEntry{
+	previous := activationrecords.JournalEntry{
+		SchemaVersion:    activationrecords.DeployJournalSchemaVersion,
+		App:              "api",
+		Env:              productionEnvName,
 		Outcome:          "failed",
 		StartedAt:        "2026-07-07T10:00:00Z",
 		EndedAt:          "2026-07-07T10:00:01Z",
 		PreviousRelease:  "aaa111bbb222",
 		AttemptedRelease: "bad333bad333",
 		FailingStep:      "probe",
-		Probe:            &journalProbe{Status: 502, BodySnippet: "upstream refused"},
-		Identity:         deployIdentity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
-	}, nil)
-	current := sanitizeDeployJournalEntry("api", productionEnvName, deployJournalEntry{
+		Probe:            &activationrecords.Probe{Status: 502, BodySnippet: "upstream refused"},
+		Identity:         activationrecords.Identity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
+	}
+	current := activationrecords.JournalEntry{
+		SchemaVersion:    activationrecords.DeployJournalSchemaVersion,
+		App:              "api",
+		Env:              productionEnvName,
 		Outcome:          "deployed",
 		StartedAt:        "2026-07-07T10:02:00Z",
 		EndedAt:          "2026-07-07T10:02:02Z",
 		PreviousRelease:  "aaa111bbb222",
 		AttemptedRelease: "good444good4",
-		Identity:         deployIdentity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
-	}, nil)
+		Identity:         activationrecords.Identity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
+	}
 
 	webhookDeployRecovered(sink.URL, &config.AppContext{ProductionBranch: "main"}, previous, current, now)
 
@@ -137,12 +147,12 @@ func TestWebhookApprovalRequestedPayloadCarriesLiteralApproveCommand(t *testing.
 	if err := store.Default().WriteBoxConfig(store.BoxConfigFile{Version: store.CurrentVersion, Values: map[string]string{"webhook.url": sink.URL, "box.address": "203.0.113.7"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := appendDeployJournalEntry("api", productionEnvName, deployJournalEntry{
+	if err := appendDeployJournalEntry("api", productionEnvName, activationrecords.JournalEntry{
 		Outcome:          "deployed",
 		StartedAt:        "2026-07-08T09:00:00Z",
 		EndedAt:          "2026-07-08T09:00:01Z",
 		AttemptedRelease: "aaa111bbb222",
-		Identity:         deployIdentity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
+		Identity:         activationrecords.Identity{SSHKeyComment: "fake-vps-smoke", GitAuthor: "Smoke <smoke@example.com>"},
 	}, nil); err != nil {
 		t.Fatal(err)
 	}

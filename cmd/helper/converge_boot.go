@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/errcat"
@@ -44,10 +43,6 @@ func runBootConvergence() error {
 		_ = lock.Release()
 		if errcat.Is(convergeErr, errcat.CodeNoDeploys) {
 			bootLog("boot convergence skipped for %s (%s): nothing deployed", item.App, item.Env)
-			continue
-		}
-		if convergeErr != nil && strings.Contains(convergeErr.Error(), "legacy activation") {
-			bootLog("boot convergence skipped for %s (%s): legacy activation; redeploy to heal", item.App, item.Env)
 			continue
 		}
 		var stepErr *convergeError

@@ -52,7 +52,7 @@ func (c appStatusCmd) runLocked() {
 		processes = []processStatus{}
 	}
 	pointer, pointerErr := readActive(c.App, c.Env)
-	if pointerErr == nil && !pointer.IsLegacy() && pointer.Artifact.ImageID != "" {
+	if pointerErr == nil && pointer.Artifact.ImageID != "" {
 		if imageIDs, inspectErr := podmanContainerImageIDs(out); inspectErr == nil {
 			for i := range processes {
 				processes[i].Image = imageIDs[processes[i].Container]
@@ -64,9 +64,7 @@ func (c appStatusCmd) runLocked() {
 	var static *staticStatus
 	release := activeStatusRelease(runningProcesses(processes), static)
 	if pointerErr == nil {
-		if pointer.IsLegacy() {
-			release = &statusRelease{Release: pointer.Legacy.Release, State: "degraded", Detail: "legacy_activation", Next: "ship"}
-		} else if resolved, resolveErr := resolveArtifact(c.App, c.Env, pointer.Artifact); resolveErr != nil {
+		if resolved, resolveErr := resolveArtifact(c.App, c.Env, pointer.Artifact); resolveErr != nil {
 			release = &statusRelease{Release: pointer.Artifact.DisplayIdentity(), Artifact: pointer.Artifact, State: "degraded", Detail: "artifact_unavailable", Next: "ship"}
 		} else {
 			static = staticStatusFromResolved(c.App, c.Env, resolved)
@@ -255,40 +253,40 @@ type appListAppStatus struct {
 }
 
 type appListEnvStatus struct {
-	Class          string          `json:"class"`
-	Branch         string          `json:"branch"`
-	URL            string          `json:"url"`
-	CapabilityURL  string          `json:"capability_url,omitempty"`
-	Env            string          `json:"env"`
-	CurrentRelease string          `json:"current_release"`
-	Health         string          `json:"health"`
-	AgeSeconds     int64           `json:"age_seconds"`
-	ExpiresAt      string          `json:"expires_at"`
-	Pinned         bool            `json:"pinned"`
-	Dirty          bool            `json:"dirty"`
-	BaseCommit     string          `json:"base_commit,omitempty"`
-	CreatedAt      string          `json:"created_at,omitempty"`
-	ShippedBy      *deployIdentity `json:"shipped_by,omitempty"`
-	Processes      []processStatus `json:"processes"`
-	Static         *staticStatus   `json:"static,omitempty"`
-	State          string          `json:"state,omitempty"`
-	Detail         string          `json:"detail,omitempty"`
-	Next           string          `json:"next,omitempty"`
+	Class          string                      `json:"class"`
+	Branch         string                      `json:"branch"`
+	URL            string                      `json:"url"`
+	CapabilityURL  string                      `json:"capability_url,omitempty"`
+	Env            string                      `json:"env"`
+	CurrentRelease string                      `json:"current_release"`
+	Health         string                      `json:"health"`
+	AgeSeconds     int64                       `json:"age_seconds"`
+	ExpiresAt      string                      `json:"expires_at"`
+	Pinned         bool                        `json:"pinned"`
+	Dirty          bool                        `json:"dirty"`
+	BaseCommit     string                      `json:"base_commit,omitempty"`
+	CreatedAt      string                      `json:"created_at,omitempty"`
+	ShippedBy      *activationrecords.Identity `json:"shipped_by,omitempty"`
+	Processes      []processStatus             `json:"processes"`
+	Static         *staticStatus               `json:"static,omitempty"`
+	State          string                      `json:"state,omitempty"`
+	Detail         string                      `json:"detail,omitempty"`
+	Next           string                      `json:"next,omitempty"`
 }
 
 type appEnvStatus struct {
-	App        string                    `json:"app"`
-	Env        string                    `json:"env"`
-	Preview    *identity.PreviewIdentity `json:"preview,omitempty"`
-	ShippedBy  *deployIdentity           `json:"shipped_by,omitempty"`
-	Processes  []processStatus           `json:"processes"`
-	Static     *staticStatus             `json:"static,omitempty"`
-	State      string                    `json:"state,omitempty"`
-	Detail     string                    `json:"detail,omitempty"`
-	Next       string                    `json:"next,omitempty"`
-	pointer    activationrecords.Pointer `json:"-"`
-	pointerErr error                     `json:"-"`
-	resolved   *resolvedArtifact         `json:"-"`
+	App        string                      `json:"app"`
+	Env        string                      `json:"env"`
+	Preview    *identity.PreviewIdentity   `json:"preview,omitempty"`
+	ShippedBy  *activationrecords.Identity `json:"shipped_by,omitempty"`
+	Processes  []processStatus             `json:"processes"`
+	Static     *staticStatus               `json:"static,omitempty"`
+	State      string                      `json:"state,omitempty"`
+	Detail     string                      `json:"detail,omitempty"`
+	Next       string                      `json:"next,omitempty"`
+	pointer    activationrecords.Pointer   `json:"-"`
+	pointerErr error                       `json:"-"`
+	resolved   *resolvedArtifact           `json:"-"`
 }
 
 type processStatus struct {
@@ -305,26 +303,26 @@ type processStatus struct {
 }
 
 type staticStatus struct {
-	Release    string   `json:"release"`
-	Routes     []string `json:"routes"`
-	Dirty      bool     `json:"dirty,omitempty"`
-	BaseCommit string   `json:"base_commit,omitempty"`
-	CreatedAt  string   `json:"created_at,omitempty"`
-	RawRelease string   `json:"-"`
+	Release    string                  `json:"release"`
+	Routes     []string                `json:"routes"`
+	Dirty      bool                    `json:"dirty,omitempty"`
+	BaseCommit string                  `json:"base_commit,omitempty"`
+	CreatedAt  string                  `json:"created_at,omitempty"`
+	RawRelease string                  `json:"-"`
 	Artifact   activationrecords.Tuple `json:"-"`
 }
 
 type statusRelease struct {
-	Release        string `json:"release,omitempty"`
-	Dirty          bool   `json:"dirty,omitempty"`
-	BaseCommit     string `json:"base_commit,omitempty"`
-	CreatedAt      string `json:"created_at,omitempty"`
-	Mixed          bool   `json:"mixed,omitempty"`
-	ProcessRelease string `json:"process_release,omitempty"`
-	StaticRelease  string `json:"static_release,omitempty"`
-	State          string `json:"state,omitempty"`
-	Detail         string `json:"detail,omitempty"`
-	Next           string `json:"next,omitempty"`
+	Release        string                  `json:"release,omitempty"`
+	Dirty          bool                    `json:"dirty,omitempty"`
+	BaseCommit     string                  `json:"base_commit,omitempty"`
+	CreatedAt      string                  `json:"created_at,omitempty"`
+	Mixed          bool                    `json:"mixed,omitempty"`
+	ProcessRelease string                  `json:"process_release,omitempty"`
+	StaticRelease  string                  `json:"static_release,omitempty"`
+	State          string                  `json:"state,omitempty"`
+	Detail         string                  `json:"detail,omitempty"`
+	Next           string                  `json:"next,omitempty"`
 	Artifact       activationrecords.Tuple `json:"-"`
 }
 
@@ -414,7 +412,7 @@ func containersToAppEnvs(entries []containerEntry) []appEnvStatus {
 }
 
 func attachProcessReleaseMetadata(app, env string, processes []processStatus, pointer activationrecords.Pointer) {
-	if pointer.IsLegacy() || pointer.Artifact.ImageID == "" {
+	if pointer.Artifact.ImageID == "" {
 		return
 	}
 	resolved, err := resolveArtifact(app, env, pointer.Artifact)
@@ -605,7 +603,7 @@ func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 	}
 	url := ""
 	capabilityURL := ""
-	if item.pointerErr == nil && !item.pointer.IsLegacy() && item.resolved != nil {
+	if item.pointerErr == nil && item.resolved != nil {
 		ctx := item.resolved.Context
 		url = execDeploymentURL(ctx)
 		if class == "preview" && url != "" {
@@ -628,7 +626,7 @@ func appListEnvFromStatus(item appEnvStatus, now time.Time) appListEnvStatus {
 	dirty := false
 	createdAt := ""
 	baseCommit := ""
-	if item.resolved != nil && item.pointerErr == nil && !item.pointer.IsLegacy() {
+	if item.resolved != nil && item.pointerErr == nil {
 		resolvedRelease := statusReleaseFromResolved(*item.resolved)
 		currentRelease = resolvedRelease.Release
 		dirty = resolvedRelease.Dirty
@@ -727,17 +725,11 @@ func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 		pointer, pointerErr := readActive(apps[i].App, apps[i].Env)
 		apps[i].pointer = pointer
 		apps[i].pointerErr = pointerErr
-		if pointerErr == nil && pointer.IsLegacy() {
-			apps[i].State = "degraded"
-			apps[i].Detail = "legacy_activation"
-			apps[i].Next = "ship"
-			continue
-		}
 		if errcat.Is(pointerErr, errcat.CodeNoDeploys) {
 			continue
 		}
 		var resolved resolvedArtifact
-		if pointerErr == nil && !pointer.IsLegacy() {
+		if pointerErr == nil {
 			resolved, pointerErr = resolveArtifact(apps[i].App, apps[i].Env, pointer.Artifact)
 			if pointerErr == nil {
 				apps[i].resolved = &resolved
@@ -752,7 +744,7 @@ func attachAppListRuntimeMetadata(apps []appEnvStatus) error {
 		}
 		static := staticStatusFromResolved(apps[i].App, apps[i].Env, resolved)
 		apps[i].Static = static
-		if !pointer.IsLegacy() && !activePointerRuntimeConvergedResolved(apps[i].App, apps[i].Env, pointer, resolved, apps[i].Processes, static) {
+		if !activePointerRuntimeConvergedResolved(apps[i].App, apps[i].Env, pointer, resolved, apps[i].Processes, static) {
 			apps[i].State = committedNotConvergedState
 			apps[i].Next = convergenceNextStep
 		}

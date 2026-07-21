@@ -111,20 +111,19 @@ func applyExitError(err error) error {
 
 func (c *appApplyCmd) recordDeployFailure(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
 	entry, scrubValues := deployJournalFailureEntry(c.App, c.Env, previousRelease, c.SHA, c.actor(), startedAt, err)
-	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
-	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
+	if appendErr := appendDeployJournal(c.App, c.Env, entry, scrubValues); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
 	}
 	if app != nil && entry.Outcome.FailedBeforeCommit() {
-		webhookDeployAborted(app.Webhook, app, entry, time.Now().UTC())
+		webhookEntry := activationrecords.NormalizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
+		webhookDeployAborted(app.Webhook, app, webhookEntry, time.Now().UTC())
 	}
 	return err
 }
 
 func (c *appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
 	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, activationrecords.CommittedUnconverged, previousRelease, c.SHA, c.actor(), startedAt, committedFailureStep(err, "converge"), c.committedArtifact(), err)
-	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
-	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
+	if appendErr := appendDeployJournal(c.App, c.Env, entry, scrubValues); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
 	}
 	return newDeployCommittedUnconvergedError(err)
@@ -132,8 +131,7 @@ func (c *appApplyCmd) recordCommittedUnconverged(app *config.AppContext, previou
 
 func (c *appApplyCmd) recordCommittedDegraded(app *config.AppContext, previousRelease string, startedAt time.Time, err error) error {
 	entry, scrubValues := committedOutcomeJournalEntry(c.App, c.Env, activationrecords.CommittedDegraded, previousRelease, c.SHA, c.actor(), startedAt, "durability", c.committedArtifact(), err)
-	entry = sanitizeDeployJournalEntry(c.App, c.Env, entry, scrubValues)
-	if appendErr := appendSanitizedDeployJournal(c.App, c.Env, entry); appendErr != nil {
+	if appendErr := appendDeployJournal(c.App, c.Env, entry, scrubValues); appendErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to write deploy journal: %v; next: ship box doctor\n", appendErr)
 	}
 	return newDeployCommittedDegradedError(err)
@@ -191,9 +189,6 @@ func (c *appApplyCmd) runLockedE() (err error) {
 		return pointerErr
 	}
 	previousRelease := previousPointer.Artifact.Release
-	if previousPointer.IsLegacy() {
-		previousRelease = previousPointer.Legacy.Release
-	}
 	var app *config.AppContext
 	committed := false
 	defer func() {
@@ -350,14 +345,11 @@ func (c *appApplyCmd) prepareCaddy(app *config.AppContext, result applyReleaseRe
 }
 
 func (c *appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRelease string, startedAt time.Time, result applyReleaseResult) error {
-	if err := resetLegacyDeployJournalForV2(c.App, c.Env); err != nil {
-		return err
-	}
 	previousJournal, previousJournalTorn, previousJournalErr := readLatestDeployJournalEntryWithStatus(c.App, c.Env)
 	if previousJournalTorn {
 		warnTornDeployJournal(identity.DeployJournalFile(c.App, c.Env))
 	}
-	entry := sanitizeDeployJournalEntry(c.App, c.Env, deployJournalEntry{
+	entry := activationrecords.JournalEntry{
 		Outcome:          activationrecords.Deployed,
 		StartedAt:        startedAt.Format(time.RFC3339Nano),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
@@ -372,12 +364,13 @@ func (c *appApplyCmd) completeCommittedDeploy(app *config.AppContext, previousRe
 			}
 			return ""
 		}()},
-	}, nil)
-	if err := appendSanitizedDeployJournal(c.App, c.Env, entry); err != nil {
+	}
+	if err := appendDeployJournal(c.App, c.Env, entry, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: deployed but failed to write deploy journal %s: %v; cleanup/GC were skipped; next: ship box doctor\n", identity.DeployJournalFile(c.App, c.Env), err)
 		fmt.Printf("Deployed %s (%s) at %s\n", c.App, c.Env, activationrecords.Tuple{Release: c.SHA, ImageID: c.ImageID, StaticHash: c.StaticHash}.DisplayIdentity())
 		return nil
 	}
+	entry = activationrecords.NormalizeDeployJournalEntry(c.App, c.Env, entry, nil)
 	removeContainers(result.containersToRemove)
 	bestEffortGCAfterLifecycle(c.App, c.Env)
 	if previousJournalErr == nil && previousJournal.Outcome.FailedBeforeCommit() {
@@ -398,7 +391,7 @@ func applyRouteTLS(app *config.AppContext, tlsMode string) {
 	}
 }
 
-func (c *appApplyCmd) actor() deployIdentity {
+func (c *appApplyCmd) actor() activationrecords.Identity {
 	return deployActor(c.Actor.SSHKeyComment, c.Actor.GitAuthor)
 }
 
@@ -506,7 +499,7 @@ func (c *appApplyCmd) prepareContainerArtifact(ctxDir string, previousPointer ac
 		var history []activationrecords.Tuple
 		var historyErr error
 		if hasPreviousPointer {
-			history, _, historyErr = committedHistoryWithPointer(c.App, c.Env, previousPointer)
+			history, _, historyErr = activationrecords.CommittedHistory(c.App, c.Env, previousPointer)
 		}
 		if historyErr == nil {
 			for _, tuple := range history {
@@ -643,14 +636,14 @@ func (c *appApplyCmd) applyContainer(ctxDir string, app *config.AppContext, exis
 		var startErr processStartError
 		if errors.As(err, &startErr) {
 			step := "apply"
-			var probe *journalProbe
+			var probe *activationrecords.Probe
 			var probeErr *probeFailureError
 			if strings.Contains(startErr.Err.Error(), "health check failed") {
 				step = "probe"
 			}
 			if errors.As(startErr.Err, &probeErr) {
 				step = "probe"
-				probe = &journalProbe{Status: probeErr.Status, BodySnippet: probeErr.BodySnippet}
+				probe = &activationrecords.Probe{Status: probeErr.Status, BodySnippet: probeErr.BodySnippet}
 			}
 			return containerApplyResult{}, newJournalStepError(step, startErr.Err, started.ScrubValues, probe)
 		}

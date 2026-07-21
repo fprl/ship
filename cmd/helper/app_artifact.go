@@ -9,7 +9,6 @@ import (
 	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/envelope"
-	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/podmanruntime"
 )
@@ -49,13 +48,6 @@ type resolvedArtifact struct {
 	ImageID  string
 }
 
-func committedHistoryWithPointer(app, env string, pointer activationrecords.Pointer) ([]activationrecords.Tuple, bool, error) {
-	if pointer.IsLegacy() {
-		return nil, false, nil
-	}
-	return activationrecords.CommittedHistory(app, env, pointer)
-}
-
 // ResolveArtifact verifies exactly tuple. It never searches by release,
 // mutable tag, or an unqualified sidecar.
 func ResolveArtifact(app, env string, tuple activationrecords.Tuple) (*config.AppContext, error) {
@@ -69,9 +61,6 @@ func ResolveArtifact(app, env string, tuple activationrecords.Tuple) (*config.Ap
 func resolveActiveContext(app, env string) (*config.AppContext, activationrecords.Tuple, error) {
 	pointer, err := readActive(app, env)
 	if err != nil {
-		return nil, activationrecords.Tuple{}, err
-	}
-	if err := requireV2Pointer(pointer); err != nil {
 		return nil, activationrecords.Tuple{}, err
 	}
 	resolved, err := resolveArtifact(app, env, pointer.Artifact)
@@ -157,9 +146,6 @@ func resolveArtifact(app, env string, tuple activationrecords.Tuple) (resolvedAr
 }
 
 func validateArtifactTuple(tuple activationrecords.Tuple) error {
-	if err := validateRelease(tuple.Release); err != nil {
-		return &artifactValidationError{Err: fmt.Errorf("artifact release is invalid: %w", err)}
-	}
 	if err := activationrecords.ValidateArtifact(tuple); err != nil {
 		return &artifactValidationError{Err: err}
 	}
@@ -185,18 +171,4 @@ func staticReleasePath(app, env, release, staticHash string) string {
 
 func staticReleaseEnvelopePathByHash(app, env, release, envelopeHash string) string {
 	return filepath.Join(identity.StaticDir(app, env), "releases", ".ship-release-"+envelopeHash)
-}
-
-func activationLegacyError() error {
-	return errcat.New(errcat.CodeOperationFailed, errcat.Fields{
-		"detail":  "legacy activation; redeploy to heal",
-		"command": "ship",
-	})
-}
-
-func requireV2Pointer(pointer activationrecords.Pointer) error {
-	if pointer.IsLegacy() {
-		return activationLegacyError()
-	}
-	return nil
 }

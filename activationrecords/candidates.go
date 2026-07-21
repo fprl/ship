@@ -28,9 +28,6 @@ type CandidateSet struct {
 // complete committed history, verifies before applying the retention limit,
 // and keeps unverifiable committed references protected for conservative GC.
 func VerifiedCandidates(app, env string, pointer Pointer, verifier ArtifactVerifier, keep int) (CandidateSet, error) {
-	if pointer.IsLegacy() {
-		return CandidateSet{}, nil
-	}
 	history, torn, err := CommittedHistory(app, env, pointer)
 	if err != nil {
 		return CandidateSet{}, err
@@ -71,18 +68,11 @@ func VerifyArtifact(app, env string, tuple Tuple, verifier ArtifactVerifier) err
 		return err
 	}
 	if tuple.StaticHash != "" {
-		if err := VerifyStaticTree(verifier.StaticPath(app, env, tuple), tuple.StaticHash); err != nil {
+		if err := verifyStaticTree(verifier.StaticPath(app, env, tuple), tuple.StaticHash); err != nil {
 			return fmt.Errorf("static artifact %s: %w", tuple.DisplayIdentity(), err)
 		}
 	}
 	return nil
-}
-
-// ResolveArtifact is the trust seam used by callers that need to establish
-// that one exact immutable artifact is locally usable. The resolver supplies
-// runtime facts; this package supplies identity and static-content checks.
-func ResolveArtifact(app, env string, tuple Tuple, verifier ArtifactVerifier) error {
-	return VerifyArtifact(app, env, tuple, verifier)
 }
 
 func staticMissing(path string) bool {

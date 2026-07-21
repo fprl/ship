@@ -91,10 +91,8 @@ func (c appConvergeCmd) runLocked() (appConvergeSummary, error) {
 	pointer, err := readActive(c.App, c.Env)
 	if err == nil {
 		summary.Release = pointer.Artifact.Release
-		if !pointer.IsLegacy() {
-			tuple := pointer.Artifact
-			summary.pointerArtifact = &tuple
-		}
+		tuple := pointer.Artifact
+		summary.pointerArtifact = &tuple
 	} else {
 		if errcat.Is(err, errcat.CodeNoDeploys) {
 			err = fmt.Errorf("nothing deployed yet: %w", noDeployJournalError(c.App, c.Env))
@@ -105,12 +103,6 @@ func (c appConvergeCmd) runLocked() (appConvergeSummary, error) {
 		err = &activePointerReadError{Err: fmt.Errorf("cannot determine committed state: read active.json: %w", err)}
 		summary.Error = err.Error()
 		summary.Outcome = "active_pointer_unreadable"
-		return summary, err
-	}
-	if pointer.IsLegacy() {
-		err := activationLegacyError()
-		summary.Error = err.Error()
-		summary.Outcome = "legacy_activation"
 		return summary, err
 	}
 	result, err := convergeActiveWithPointer(c.App, c.Env, pointer)
@@ -133,7 +125,7 @@ func (c appConvergeCmd) runLocked() (appConvergeSummary, error) {
 }
 
 func (c appConvergeCmd) appendJournal(startedAt time.Time, summary appConvergeSummary, convergeErr error) error {
-	entry := deployJournalEntry{
+	entry := activationrecords.JournalEntry{
 		Outcome:          activationrecords.Outcome(summary.Outcome),
 		StartedAt:        startedAt.Format(time.RFC3339Nano),
 		EndedAt:          time.Now().UTC().Format(time.RFC3339Nano),
@@ -168,9 +160,6 @@ func convergeActive(app, env string) (convergeResult, error) {
 }
 
 func convergeActiveWithPointer(app, env string, pointer activationrecords.Pointer) (convergeResult, error) {
-	if err := requireV2Pointer(pointer); err != nil {
-		return convergeResult{}, err
-	}
 	resolved, err := resolveArtifact(app, env, pointer.Artifact)
 	if err != nil {
 		return convergeResult{}, &convergeError{Step: "resolve", Err: err}

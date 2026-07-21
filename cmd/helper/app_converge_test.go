@@ -362,7 +362,7 @@ func TestCrashOnlyJournalOutcomeTable(t *testing.T) {
 	}{{"before commit", "probe", activationrecords.Failed}, {"after commit", "converge", activationrecords.CommittedUnconverged}} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.outcome == activationrecords.Failed {
-				entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", deployIdentity{}, time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), newJournalStepError(tc.step, errors.New("boom"), nil, nil))
+				entry, _ := deployJournalFailureEntry("api", "production", "old111", "new222", activationrecords.Identity{}, time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), newJournalStepError(tc.step, errors.New("boom"), nil, nil))
 				if entry.Outcome != tc.outcome || entry.FailingStep != tc.step {
 					t.Fatalf("entry = %+v", entry)
 				}
@@ -377,7 +377,7 @@ func TestAppConvergeWithoutActiveReportsNoDeploys(t *testing.T) {
 	oldAppend := appendConvergeJournal
 	t.Cleanup(func() { appendConvergeJournal = oldAppend })
 	var journaled int
-	appendConvergeJournal = func(string, string, deployJournalEntry, []string) error {
+	appendConvergeJournal = func(string, string, activationrecords.JournalEntry, []string) error {
 		journaled++
 		return nil
 	}
@@ -403,7 +403,7 @@ func TestAppConvergeActivePointerReadFailureIsNotJournaled(t *testing.T) {
 	oldAppend := appendConvergeJournal
 	t.Cleanup(func() { appendConvergeJournal = oldAppend })
 	var journaled int
-	appendConvergeJournal = func(string, string, deployJournalEntry, []string) error {
+	appendConvergeJournal = func(string, string, activationrecords.JournalEntry, []string) error {
 		journaled++
 		return nil
 	}

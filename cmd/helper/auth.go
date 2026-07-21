@@ -16,6 +16,7 @@ import (
 	"github.com/fprl/ship/internal/memberkeys"
 	"github.com/fprl/ship/internal/store"
 	"github.com/fprl/ship/internal/utils"
+	"github.com/fprl/ship/kernel"
 )
 
 const (
@@ -661,7 +662,7 @@ func appendApprovalJournalEntry(event string, request store.ApprovalRequest, act
 		TS:     approvalNow().Format(time.RFC3339Nano),
 	}
 	path := store.Default().ApprovalsJournalPath()
-	return activationrecords.AppendJournal(path, entry)
+	return kernel.AppendJournal(path, entry)
 }
 
 func recordApprovalJournalEntry(event string, request store.ApprovalRequest, actor serverMember) {
@@ -670,11 +671,11 @@ func recordApprovalJournalEntry(event string, request store.ApprovalRequest, act
 	}
 }
 
-func currentServerMemberForJournal() *journalMember {
+func currentServerMemberForJournal() *activationrecords.Member {
 	if serverAuthorizedMember == nil {
 		return nil
 	}
-	return &journalMember{
+	return &activationrecords.Member{
 		Fingerprint: serverAuthorizedMember.Fingerprint,
 		Name:        serverAuthorizedMember.Name,
 		Role:        string(serverAuthorizedMember.Role),

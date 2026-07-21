@@ -3,7 +3,6 @@ package activationrecords
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	journalformat "github.com/fprl/ship/activationrecords/internal/journal"
@@ -81,29 +80,9 @@ type JournalEntry struct {
 	Probe            *Probe   `json:"probe"`
 }
 
-// AppendJournal is the sealed append-only writer for journals whose domain
-// record is owned by another caller (for example box updates and approvals).
-func AppendJournal(path string, entry any) error { return journalformat.Append(path, entry) }
-
-func ReadJournal(path string, decode func([]byte) error) (bool, error) {
-	return journalformat.Read(path, decode)
-}
-
-// ResetLegacyJournal removes the pre-v2 journal during the flag-day cutover.
-// It returns true only when a legacy file was removed.
-func ResetLegacyJournal(app, env string) (bool, error) {
-	err := os.Remove(journalformat.LegacyDeployPath(app, env))
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// AppendDeployJournal publishes one sanitized deploy record durably.
-func AppendDeployJournal(app, env string, entry JournalEntry, scrubValues []string) error {
+// NormalizeDeployJournalEntry applies the deploy journal's persisted-record
+// normalization without writing it.
+func NormalizeDeployJournalEntry(app, env string, entry JournalEntry, scrubValues []string) JournalEntry {
 	entry.SchemaVersion = DeployJournalSchemaVersion
 	entry.App = app
 	entry.Env = env
@@ -111,6 +90,15 @@ func AppendDeployJournal(app, env string, entry JournalEntry, scrubValues []stri
 	if entry.Probe != nil {
 		entry.Probe.BodySnippet = scrubText(tailLines(entry.Probe.BodySnippet, 8), scrubValues)
 	}
+	return entry
+}
+
+// AppendDeployJournal publishes one sanitized deploy record durably.
+func AppendDeployJournal(app, env string, entry JournalEntry, scrubValues []string) error {
+	if !ValidOutcome(entry.Outcome) {
+		return fmt.Errorf("unsupported deploy journal outcome %q", entry.Outcome)
+	}
+	entry = NormalizeDeployJournalEntry(app, env, entry, scrubValues)
 	return journalformat.Append(journalformat.DeployPath(app, env), entry)
 }
 
@@ -138,9 +126,6 @@ func ReadDeployJournal(app, env string) ([]JournalEntry, bool, error) {
 // order. It never applies retention; candidate policy does that after trust
 // verification.
 func CommittedHistory(app, env string, pointer Pointer) ([]Tuple, bool, error) {
-	if pointer.IsLegacy() {
-		return nil, false, nil
-	}
 	entries, torn, err := ReadDeployJournal(app, env)
 	if err != nil {
 		return nil, torn, err

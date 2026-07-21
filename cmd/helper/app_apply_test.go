@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/deployrequest"
 	"github.com/fprl/ship/internal/errcat"
@@ -178,9 +179,9 @@ func TestCommittedDeployErrorsCarryStableCodesAndConvergeNextStep(t *testing.T) 
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			oldAppend := appendSanitizedDeployJournal
-			appendSanitizedDeployJournal = func(string, string, deployJournalEntry) error { return nil }
-			t.Cleanup(func() { appendSanitizedDeployJournal = oldAppend })
+			oldAppend := appendDeployJournal
+			appendDeployJournal = func(string, string, activationrecords.JournalEntry, []string) error { return nil }
+			t.Cleanup(func() { appendDeployJournal = oldAppend })
 
 			err := tt.call(errors.New("caddy unavailable"))
 			if !errcat.Is(err, tt.code) {
@@ -195,7 +196,7 @@ func TestCommittedDeployErrorsCarryStableCodesAndConvergeNextStep(t *testing.T) 
 
 func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *testing.T) {
 	setupJournalHostTest(t)
-	previous := deployJournalEntry{
+	previous := activationrecords.JournalEntry{
 		Outcome:          "failed",
 		StartedAt:        "2026-07-14T09:59:00Z",
 		EndedAt:          "2026-07-14T09:59:01Z",
@@ -206,12 +207,12 @@ func TestCompleteCommittedDeployWarnsButDoesNotAbortWhenJournalAppendFails(t *te
 		t.Fatal(err)
 	}
 	sink := newWebhookTestSink(t)
-	oldAppend := appendSanitizedDeployJournal
-	appendSanitizedDeployJournal = func(string, string, deployJournalEntry) error {
+	oldAppend := appendDeployJournal
+	appendDeployJournal = func(string, string, activationrecords.JournalEntry, []string) error {
 		return errors.New("journal disk is read-only")
 	}
 	t.Cleanup(func() {
-		appendSanitizedDeployJournal = oldAppend
+		appendDeployJournal = oldAppend
 	})
 
 	cmd := appApplyCmd{Request: deployrequest.Request{App: "api", Env: "production", SHA: "new222"}}
@@ -254,9 +255,11 @@ func TestCommittedJournalFailureSkipsCleanup(t *testing.T) {
 	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
 	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nprintf '%s\\n' \"$*\" >> \"$PODMAN_LOG\"\nexit 0\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	oldAppend := appendSanitizedDeployJournal
-	appendSanitizedDeployJournal = func(string, string, deployJournalEntry) error { return errors.New("journal disk is read-only") }
-	t.Cleanup(func() { appendSanitizedDeployJournal = oldAppend })
+	oldAppend := appendDeployJournal
+	appendDeployJournal = func(string, string, activationrecords.JournalEntry, []string) error {
+		return errors.New("journal disk is read-only")
+	}
+	t.Cleanup(func() { appendDeployJournal = oldAppend })
 	cmd := appApplyCmd{Request: deployrequest.Request{App: "api", Env: "production", SHA: "new222"}}
 	if err := cmd.completeCommittedDeploy(&config.AppContext{}, "old111", time.Now().UTC(), applyReleaseResult{containersToRemove: []string{"old-container"}}); err != nil {
 		t.Fatal(err)

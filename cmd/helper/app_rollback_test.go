@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/errcat"
 )
 
@@ -18,7 +19,7 @@ func TestRenderRollbackText(t *testing.T) {
 
 func TestRollbackJournalFailureWarnsAfterRollbackSuccess(t *testing.T) {
 	oldAppend := appendRollbackDeployJournal
-	appendRollbackDeployJournal = func(string, string, deployJournalEntry, []string) error {
+	appendRollbackDeployJournal = func(string, string, activationrecords.JournalEntry, []string) error {
 		return errors.New("journal disk is read-only")
 	}
 	t.Cleanup(func() { appendRollbackDeployJournal = oldAppend })

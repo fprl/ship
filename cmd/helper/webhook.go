@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fprl/ship/activationrecords"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/identity"
 	"github.com/fprl/ship/internal/store"
@@ -44,14 +45,14 @@ type webhookPayload struct {
 }
 
 type deployRecoveryWhy struct {
-	PreviousFailure deployJournalEntry `json:"previous_failure"`
-	Current         deployJournalEntry `json:"current"`
+	PreviousFailure activationrecords.JournalEntry `json:"previous_failure"`
+	Current         activationrecords.JournalEntry `json:"current"`
 }
 
 type deployWebhookRemediation struct {
-	Command         string              `json:"command"`
-	Journal         deployJournalEntry  `json:"journal"`
-	PreviousFailure *deployJournalEntry `json:"previous_failure,omitempty"`
+	Command         string                          `json:"command"`
+	Journal         activationrecords.JournalEntry  `json:"journal"`
+	PreviousFailure *activationrecords.JournalEntry `json:"previous_failure,omitempty"`
 }
 
 type reapWebhookWhy struct {
@@ -84,7 +85,7 @@ type approvalWebhookRemediation struct {
 	Request store.ApprovalRequest `json:"request"`
 }
 
-func webhookDeployAborted(url string, ctx *config.AppContext, entry deployJournalEntry, now time.Time) {
+func webhookDeployAborted(url string, ctx *config.AppContext, entry activationrecords.JournalEntry, now time.Time) {
 	if strings.TrimSpace(url) == "" {
 		return
 	}
@@ -104,7 +105,7 @@ func webhookDeployAborted(url string, ctx *config.AppContext, entry deployJourna
 	postWebhook(url, payload)
 }
 
-func webhookDeployRecovered(url string, ctx *config.AppContext, previousFailure, current deployJournalEntry, now time.Time) {
+func webhookDeployRecovered(url string, ctx *config.AppContext, previousFailure, current activationrecords.JournalEntry, now time.Time) {
 	if strings.TrimSpace(url) == "" {
 		return
 	}

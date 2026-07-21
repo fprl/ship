@@ -136,12 +136,6 @@ func DeployJournalFile(app, env string) string {
 	return ReleaseDir(app, env) + "/journal.v2.jsonl"
 }
 
-// LegacyDeployJournalFile is the pre-v2 journal path. It is never read by v2;
-// a v2 deploy removes it as flag-day residue before writing the new journal.
-func LegacyDeployJournalFile(app, env string) string {
-	return ReleaseDir(app, env) + "/journal.jsonl"
-}
-
 // ActiveFile is the single durable intent pointer for one environment.
 func ActiveFile(app, env string) string {
 	return filepath.Join(EnvRoot(app, env), "active.json")

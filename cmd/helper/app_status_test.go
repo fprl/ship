@@ -174,7 +174,6 @@ func TestResolvedStatusReleaseCarriesEnvelopeMetadata(t *testing.T) {
 
 func TestDegradedStatusUsesStableDetailAndRunnableNext(t *testing.T) {
 	for _, release := range []*statusRelease{
-		{State: "degraded", Detail: "legacy_activation", Next: "ship"},
 		{State: "degraded", Detail: "artifact_unavailable", Next: "ship"},
 	} {
 		data, err := json.Marshal(release)
@@ -323,7 +322,7 @@ func TestAppListFromStatusesSummarizesProductionAndPreview(t *testing.T) {
 		{
 			App: "api",
 			Env: productionEnvName,
-			ShippedBy: &deployIdentity{
+			ShippedBy: &activationrecords.Identity{
 				SSHKeyComment: "fake-vps-smoke",
 				GitAuthor:     "Smoke <smoke@example.com>",
 			},

@@ -142,7 +142,7 @@ exit 0
 	if err := os.WriteFile(oldActivation, []byte("TOKEN=x\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := appendDeployJournalEntry("api", "production", deployJournalEntry{
+	if err := appendDeployJournalEntry("api", "production", activationrecords.JournalEntry{
 		Outcome: "deployed", StartedAt: "2026-07-16T10:00:00Z", EndedAt: "2026-07-16T10:00:01Z",
 		AttemptedRelease: "bad1111", Activation: "bad1111-a1b2", Artifact: &oldTuple,
 	}, nil); err != nil {
@@ -202,7 +202,7 @@ func TestGCSkipsEnvOnTornJournal(t *testing.T) {
 	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: "abcdef1-a1b2", Artifact: activationrecords.Tuple{Release: "abcdef1", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := appendDeployJournalEntry("api", "production", deployJournalEntry{
+	if err := appendDeployJournalEntry("api", "production", activationrecords.JournalEntry{
 		Outcome: "deployed", StartedAt: "2026-07-16T10:00:00Z", EndedAt: "2026-07-16T10:00:01Z", AttemptedRelease: "abcdef1",
 	}, nil); err != nil {
 		t.Fatal(err)
@@ -239,7 +239,6 @@ func TestGCNoopDoesNotAppendJournal(t *testing.T) {
 	writeFakeCommand(t, bin, "chown", "#!/usr/bin/env sh\nexit 0\n")
 	writeFakeCommand(t, bin, "podman", "#!/usr/bin/env sh\nprintf '%s\\n' '[]'\n")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	writeLegacyPointerForTest(t, "api", "production", "abcdef1", "abcdef1-a1b2", strings.Repeat("a", 64))
 	if summary, err := gcEnv("api", "production"); err != nil || len(summary.Removed) != 0 {
 		t.Fatalf("no-op GC summary=%+v err=%v", summary, err)
 	}

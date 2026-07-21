@@ -53,9 +53,6 @@ func (c appRollbackCmd) runLocked() {
 			utils.DieError(rollbackCommittedError(err), 1)
 		}
 		removePreparedCandidates(c.App, c.Env, c.ActivationID)
-		if strings.Contains(err.Error(), "legacy activation") {
-			utils.DieError(err, 1)
-		}
 		utils.DieError(fmt.Errorf("nothing changed: %w", err), 1)
 	}
 }
@@ -85,7 +82,7 @@ func (c appRollbackCmd) recordRollbackFailure(result rollbackPayload, startedAt 
 }
 
 func (c appRollbackCmd) recordRollbackSuccess(result rollbackPayload, startedAt time.Time) {
-	entry := deployJournalEntry{Outcome: activationrecords.RolledBack, StartedAt: startedAt.Format(time.RFC3339Nano), EndedAt: time.Now().UTC().Format(time.RFC3339Nano), PreviousRelease: result.Previous, AttemptedRelease: result.Release, Activation: c.ActivationID, Identity: c.actor(), Member: currentServerMemberForJournal(), Artifact: &result.Artifact}
+	entry := activationrecords.JournalEntry{Outcome: activationrecords.RolledBack, StartedAt: startedAt.Format(time.RFC3339Nano), EndedAt: time.Now().UTC().Format(time.RFC3339Nano), PreviousRelease: result.Previous, AttemptedRelease: result.Release, Activation: c.ActivationID, Identity: c.actor(), Member: currentServerMemberForJournal(), Artifact: &result.Artifact}
 	if err := appendRollbackDeployJournal(c.App, c.Env, entry, nil); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: rollback succeeded but failed to write deploy journal %s: %v; cleanup/GC were skipped; next: ship box doctor\n", identity.DeployJournalFile(c.App, c.Env), err)
 	} else {
@@ -95,15 +92,14 @@ func (c appRollbackCmd) recordRollbackSuccess(result rollbackPayload, startedAt 
 	fmt.Print(renderRollbackText(result))
 }
 
-func (c appRollbackCmd) actor() deployIdentity { return deployActor(c.SSHKeyComment, c.GitAuthor) }
+func (c appRollbackCmd) actor() activationrecords.Identity {
+	return deployActor(c.SSHKeyComment, c.GitAuthor)
+}
 
 func (c *appRollbackCmd) rollbackRelease(startedAt time.Time) (rollbackPayload, error) {
 	pointer, err := readActive(c.App, c.Env)
 	if err != nil {
 		return rollbackPayload{}, err
-	}
-	if pointer.IsLegacy() {
-		return rollbackPayload{}, activationLegacyError()
 	}
 	target, err := retainedArtifactForRollback(c.App, c.Env, c.Release, pointer)
 	if err != nil {

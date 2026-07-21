@@ -1,7 +1,6 @@
 package helper
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -13,25 +12,6 @@ import (
 	"github.com/fprl/ship/internal/identity"
 )
 
-func writeLegacyPointerForTest(t *testing.T, app, env, release, activationID, envelopeHash string) {
-	t.Helper()
-	path := identity.ActiveFile(app, env)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatal(err)
-	}
-	data, err := json.Marshal(struct {
-		Release      string `json:"release"`
-		Activation   string `json:"activation"`
-		EnvelopeHash string `json:"envelope_hash"`
-	}{release, activationID, envelopeHash})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, append(data, '\n'), 0644); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func testTuple(release, image, static string) activationrecords.Tuple {
 	return activationrecords.Tuple{Release: release, ImageID: image, StaticHash: static}
 }
@@ -42,21 +22,21 @@ func committedHistoryForTest(t *testing.T, app, env string) ([]activationrecords
 	if err != nil {
 		return nil, false, err
 	}
-	return committedHistoryWithPointer(app, env, pointer)
+	return activationrecords.CommittedHistory(app, env, pointer)
 }
 
 func TestCommittedHistoryDeduplicatesTuplesKeepsRepeatedReleasesAndReportsTorn(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	a := testTuple("release-a", strings.Repeat("a", 64), "")
-	b := testTuple("release-a", strings.Repeat("b", 64), "")
-	c := testTuple("release-c", strings.Repeat("c", 64), "")
+	a := testTuple("aaaaaaa", strings.Repeat("a", 64), "")
+	b := testTuple("aaaaaaa", strings.Repeat("b", 64), "")
+	c := testTuple("ccccccc", strings.Repeat("c", 64), "")
 	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: "a", Artifact: a}); err != nil {
 		t.Fatal(err)
 	}
 	for _, tuple := range []activationrecords.Tuple{b, a, c, b} {
 		copy := tuple
-		if err := appendDeployJournalEntry("api", "production", deployJournalEntry{Outcome: "deployed", Artifact: &copy}, nil); err != nil {
+		if err := appendDeployJournalEntry("api", "production", activationrecords.JournalEntry{Outcome: "deployed", Artifact: &copy}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -90,32 +70,12 @@ func TestCommittedHistoryDeduplicatesTuplesKeepsRepeatedReleasesAndReportsTorn(t
 	}
 }
 
-func TestCommittedHistoryIgnoresV1Journal(t *testing.T) {
-	root := t.TempDir()
-	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	tuple := activationrecords.Tuple{Release: "release-a", StaticHash: strings.Repeat("a", 64), EnvelopeHash: strings.Repeat("b", 64)}
-	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Artifact: tuple}); err != nil {
-		t.Fatal(err)
-	}
-	path := identity.LegacyDeployJournalFile("api", "production")
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(`{"schema_version":1,"outcome":"deployed","attempted_release":"old"}`+"\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	history, torn, err := committedHistoryForTest(t, "api", "production")
-	if err != nil || torn || len(history) != 1 || history[0] != tuple {
-		t.Fatalf("history=%v torn=%v err=%v", history, torn, err)
-	}
-}
-
 func TestCommittedHistoryIncludesPostCommitArtifacts(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("SHIP_APPS_DIR", filepath.Join(root, "apps"))
-	active := testTuple("active", strings.Repeat("a", 64), "")
-	unconverged := testTuple("unconverged", strings.Repeat("b", 64), "")
-	degraded := testTuple("degraded", strings.Repeat("c", 64), "")
+	active := testTuple("aaaaaaa", strings.Repeat("a", 64), "")
+	unconverged := testTuple("bbbbbbb", strings.Repeat("b", 64), "")
+	degraded := testTuple("ccccccc", strings.Repeat("c", 64), "")
 	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: "active-a1b2", Artifact: active}); err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +87,7 @@ func TestCommittedHistoryIncludesPostCommitArtifacts(t *testing.T) {
 		{activationrecords.CommittedDegraded, degraded},
 	} {
 		tuple := item.tuple
-		if err := appendDeployJournalEntry("api", "production", deployJournalEntry{Outcome: item.outcome, Artifact: &tuple}, nil); err != nil {
+		if err := appendDeployJournalEntry("api", "production", activationrecords.JournalEntry{Outcome: item.outcome, Artifact: &tuple}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -220,7 +180,7 @@ exit 0
 	if err := activationrecords.Publish("api", "production", activationrecords.Pointer{Version: 2, Activation: "active-a1b2", Artifact: active}); err != nil {
 		t.Fatal(err)
 	}
-	if err := appendDeployJournalEntry("api", "production", deployJournalEntry{Outcome: "deployed", Artifact: &missing}, nil); err != nil {
+	if err := appendDeployJournalEntry("api", "production", activationrecords.JournalEntry{Outcome: "deployed", Artifact: &missing}, nil); err != nil {
 		t.Fatal(err)
 	}
 	resolveErr := func() error { _, err := resolveArtifact("api", "production", missing); return err }()
