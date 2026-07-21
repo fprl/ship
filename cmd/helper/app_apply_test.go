@@ -15,6 +15,7 @@ import (
 	"github.com/fprl/ship/internal/deployrequest"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/podmanruntime"
 	"github.com/fprl/ship/internal/secrets"
 )
 
@@ -424,7 +425,7 @@ web = { port = 3000 }
 }
 
 func TestPodmanBuildArgsLabelsWithDerivedIdentity(t *testing.T) {
-	args := podmanBuildArgs("api", "production", identity.ImageTag("api", "production", "abc123"), "abc123", "/tmp/Dockerfile", "/tmp/ctx", false)
+	args := podmanruntime.BuildArgs(podmanruntime.BuildSpec{App: "api", Env: "production", ImageTag: identity.ImageTag("api", "production", "abc123"), Release: "abc123", Dockerfile: "/tmp/Dockerfile", ContextDir: "/tmp/ctx"})
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"build",
@@ -443,7 +444,7 @@ func TestPodmanBuildArgsLabelsWithDerivedIdentity(t *testing.T) {
 
 func TestPodmanBuildArgsCarriesReleaseEnvelopeLabel(t *testing.T) {
 	value := "YWJjLWVudmVsb3Bl"
-	args := podmanBuildArgsWithEnvelope("api", "production", "ship/api:abc123", "abc123", "/tmp/Dockerfile", "/tmp/ctx", false, value)
+	args := podmanruntime.BuildArgs(podmanruntime.BuildSpec{App: "api", Env: "production", ImageTag: "ship/api:abc123", Release: "abc123", Dockerfile: "/tmp/Dockerfile", ContextDir: "/tmp/ctx", EnvelopeLabel: value})
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "--label ship.release_envelope="+value) {
 		t.Fatalf("build args missing release envelope label: %s", joined)
@@ -508,7 +509,7 @@ func TestNextProcessContainerNameUsesDefaultWhenFree(t *testing.T) {
 }
 
 func TestPodmanBuildArgsRebuildBypassesCacheAndPullsBases(t *testing.T) {
-	args := podmanBuildArgs("api", "production", identity.ImageTag("api", "production", "abc123"), "abc123", "/tmp/Dockerfile", "/tmp/ctx", true)
+	args := podmanruntime.BuildArgs(podmanruntime.BuildSpec{App: "api", Env: "production", ImageTag: identity.ImageTag("api", "production", "abc123"), Release: "abc123", Dockerfile: "/tmp/Dockerfile", ContextDir: "/tmp/ctx", Rebuild: true})
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "--no-cache --pull=always") {
 		t.Fatalf("rebuild should pass --no-cache and --pull=always together: %s", joined)
@@ -524,7 +525,7 @@ func TestBuildPodmanRunArgsEmitsHardeningDataMountResourcesAndLabels(t *testing.
 	}
 	containerName := identity.ContainerName("api", "production", "web", "abc123")
 	envFile := identity.ActivationEnvFile("api", "production", "abc123-00112233")
-	args := buildPodmanRunArgsWithActivation("api", "production", "web", proc, identity.ImageTag("api", "production", "abc123"), "999", "988", "abc123", "", containerName, true, false, envFile)
+	args := podmanruntime.ProcessArgs(podmanruntime.ProcessSpec{App: "api", Env: "production", Process: "web", Definition: proc, Image: identity.ImageTag("api", "production", "abc123"), UserID: "999", GroupID: "988", Release: "abc123", Container: containerName, EnvFile: envFile})
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"--cap-drop ALL",
@@ -552,7 +553,7 @@ func TestBuildPodmanRunArgsEmitsHardeningDataMountResourcesAndLabels(t *testing.
 }
 
 func TestBuildPodmanRunArgsMatchesActivationShape(t *testing.T) {
-	args := buildPodmanRunArgsWithActivation("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", "abc123-a1b2", "web-new", false, false, "")
+	args := podmanruntime.ProcessArgs(podmanruntime.ProcessSpec{App: "api", Env: "production", Process: "web", Definition: config.Process{}, Image: "img:tag", UserID: "999", GroupID: "988", Release: "abc123", Activation: "abc123-a1b2", Container: "web-new"})
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "--label ship.release=abc123") || !strings.Contains(joined, "--label ship.activation=abc123-a1b2") {
 		t.Fatalf("runtime args do not carry exact release/activation identity: %s", joined)
@@ -560,7 +561,7 @@ func TestBuildPodmanRunArgsMatchesActivationShape(t *testing.T) {
 }
 
 func TestBuildPodmanRunArgsSkipsEnvFileWhenAbsent(t *testing.T) {
-	args := buildPodmanRunArgsWithActivation("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", "", identity.ContainerName("api", "production", "web", "abc123"), false, false, "")
+	args := podmanruntime.ProcessArgs(podmanruntime.ProcessSpec{App: "api", Env: "production", Process: "web", Definition: config.Process{}, Image: "img:tag", UserID: "999", GroupID: "988", Release: "abc123", Container: identity.ContainerName("api", "production", "web", "abc123")})
 	for _, a := range args {
 		if a == "--env-file" {
 			t.Fatalf("did not expect --env-file when env file is absent, args:\n%s", strings.Join(args, " "))
@@ -569,7 +570,7 @@ func TestBuildPodmanRunArgsSkipsEnvFileWhenAbsent(t *testing.T) {
 }
 
 func TestBuildPodmanRunArgsAppliesDefaultPreviewResourceCaps(t *testing.T) {
-	args := buildPodmanRunArgsWithActivation("api", "feat-x-ab12", "web", config.Process{}, "img:tag", "999", "988", "abc123", "", identity.ContainerName("api", "feat-x-ab12", "web", "abc123"), false, true, "")
+	args := podmanruntime.ProcessArgs(podmanruntime.ProcessSpec{App: "api", Env: "feat-x-ab12", Process: "web", Definition: config.Process{}, Image: "img:tag", UserID: "999", GroupID: "988", Release: "abc123", Container: identity.ContainerName("api", "feat-x-ab12", "web", "abc123"), Preview: true})
 	joined := strings.Join(args, " ")
 	for _, want := range []string{"--memory 512m", "--cpus 0.5"} {
 		if !strings.Contains(joined, want) {
@@ -579,7 +580,7 @@ func TestBuildPodmanRunArgsAppliesDefaultPreviewResourceCaps(t *testing.T) {
 }
 
 func TestBuildPodmanRunArgsLeavesProdUncappedByDefault(t *testing.T) {
-	args := buildPodmanRunArgsWithActivation("api", "production", "web", config.Process{}, "img:tag", "999", "988", "abc123", "", identity.ContainerName("api", "production", "web", "abc123"), false, false, "")
+	args := podmanruntime.ProcessArgs(podmanruntime.ProcessSpec{App: "api", Env: "production", Process: "web", Definition: config.Process{}, Image: "img:tag", UserID: "999", GroupID: "988", Release: "abc123", Container: identity.ContainerName("api", "production", "web", "abc123")})
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "--memory") || strings.Contains(joined, "--cpus") {
 		t.Fatalf("production args should not get default resource caps:\n%s", joined)

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fprl/ship/internal/addressing"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/utils"
@@ -458,7 +459,7 @@ func dataPreviewURL(data dataContext) (string, error) {
 		return url, nil
 	}
 	boxIP := resolveBoxIPv4(data.Runner, data.AppContext.Server)
-	plan, err := prepareDeployRoutes(data.AppContext, data.EnvName, deployRouteOptions{
+	plan, err := addressing.PlanRoutes(data.AppContext, data.EnvName, addressing.Options{
 		Preview: true,
 		TLS:     "",
 		BoxIP:   boxIP,

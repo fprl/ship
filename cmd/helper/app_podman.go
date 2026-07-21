@@ -14,19 +14,6 @@ import (
 	"github.com/fprl/ship/internal/utils"
 )
 
-type podmanBaseRunOptions struct {
-	App, Env, ProcessName, UserID, GroupID, Release, Activation string
-	Networks                                                    []string
-}
-
-func podmanBuildArgs(app, env, imageTag, release, dockerfile, ctxDir string, rebuild bool) []string {
-	return podmanBuildArgsWithEnvelope(app, env, imageTag, release, dockerfile, ctxDir, rebuild, "")
-}
-
-func podmanBuildArgsWithEnvelope(app, env, imageTag, release, dockerfile, ctxDir string, rebuild bool, envelopeLabel string) []string {
-	return podmanruntime.BuildArgs(podmanruntime.BuildSpec{App: app, Env: env, ImageTag: imageTag, Release: release, Dockerfile: dockerfile, ContextDir: ctxDir, Rebuild: rebuild, EnvelopeLabel: envelopeLabel})
-}
-
 // hostUserIDs looks up the uid:gid for the per-env Linux account. We
 // pass these numerically to podman so `--user` doesn't try to resolve
 // the name inside the container image.
@@ -42,39 +29,6 @@ func hostUserIDs(name string) (string, string, error) {
 	uid := strings.TrimSpace(string(uidOut))
 	gid := strings.TrimSpace(string(gidOut))
 	return uid, gid, nil
-}
-
-func podmanBaseRunArgs(opts podmanBaseRunOptions) []string {
-	return podmanruntime.BaseRunArgs(podmanruntime.ContainerSpec{App: opts.App, Env: opts.Env, Process: opts.ProcessName, UserID: opts.UserID, GroupID: opts.GroupID, Release: opts.Release, Activation: opts.Activation, Networks: opts.Networks})
-}
-
-func appendReadOnlyRuntimeArgs(args []string) []string {
-	return podmanruntime.WithReadOnlyRoot(args)
-}
-
-func appendResourceArgs(args []string, resources config.Resources) []string {
-	return podmanruntime.WithResources(args, resources)
-}
-
-// buildPodmanRunArgs is the pure-function core of startProcess:
-// produces the `podman run` argv for one process. Extracted so it can
-// be unit-tested without shelling out.
-//
-// The initial hardening subset from ADR-0005 §7 is always present:
-// per-env Linux user, --cap-drop=ALL, --security-opt no-new-privileges,
-// --pids-limit, --read-only with a default 64 MiB tmpfs at /tmp.
-// No --publish: Caddy reaches the process over the shared `ingress`
-// network by container DNS. Manifest-declared memory and CPU limits
-// render to the closed set of runtime flags.
-func buildPodmanRunArgsWithActivation(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, activation, containerName string, envFileExists bool, previewEnv bool, envFile string) []string {
-	if !envFileExists {
-		envFile = ""
-	}
-	return podmanruntime.ProcessArgs(podmanruntime.ProcessSpec{App: app, Env: env, Process: processName, Definition: proc, Image: imageTag, UserID: userID, GroupID: groupID, Release: release, Activation: activation, Container: containerName, EnvFile: envFile, Preview: previewEnv})
-}
-
-func effectiveProcessResources(proc config.Process, previewEnv bool) config.Resources {
-	return podmanruntime.EffectiveResources(proc.Resources, previewEnv)
 }
 
 func startProcessWithActivation(app, env, processName string, proc config.Process, imageTag, userID, groupID, release, activation, containerName string, probe string, previewEnv bool, scrubValues []string, envFile string, progress *deployProgressEmitter) error {
@@ -165,15 +119,15 @@ func runReleaseCommandWithActivation(app, env, command, imageTag, userID, groupI
 	// Release commands are one-shot migrations: --rm cleans them up,
 	// no --restart is set, and they only join the app network because
 	// Caddy never proxies to them.
-	args = append(args, podmanBaseRunArgs(podmanBaseRunOptions{
-		App:         app,
-		Env:         env,
-		ProcessName: "release",
-		UserID:      userID,
-		GroupID:     groupID,
-		Release:     release,
-		Activation:  activation,
-		Networks:    []string{identity.Network(app, env)},
+	args = append(args, podmanruntime.BaseRunArgs(podmanruntime.ContainerSpec{
+		App:        app,
+		Env:        env,
+		Process:    "release",
+		UserID:     userID,
+		GroupID:    groupID,
+		Release:    release,
+		Activation: activation,
+		Networks:   []string{identity.Network(app, env)},
 	})...)
 	if envFile != "" {
 		args = append(args, "--env-file", envFile)

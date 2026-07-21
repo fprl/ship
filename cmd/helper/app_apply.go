@@ -524,7 +524,11 @@ func (c *appApplyCmd) prepareContainerArtifact(ctxDir string, previousPointer ac
 		}
 	}
 	buildRef := identity.ImageTag(c.App, c.Env, "build-"+c.ActivationID)
-	args := podmanBuildArgsWithEnvelope(c.App, c.Env, buildRef, c.SHA, filepath.Join(ctxDir, "Dockerfile"), ctxDir, c.Rebuild, c.EnvelopeLabel)
+	args := podmanruntime.BuildArgs(podmanruntime.BuildSpec{
+		App: c.App, Env: c.Env, ImageTag: buildRef, Release: c.SHA,
+		Dockerfile: filepath.Join(ctxDir, "Dockerfile"), ContextDir: ctxDir,
+		Rebuild: c.Rebuild, EnvelopeLabel: c.EnvelopeLabel,
+	})
 	if _, err := runDeployCommand(c.ProgressOut, "build", nil, 0, "podman", args, ""); err != nil {
 		return newJournalStepError("build", fmt.Errorf("podman build: %w", err), nil, nil)
 	}

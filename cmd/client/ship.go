@@ -102,7 +102,7 @@ type shipRunState struct {
 	Runner        *CommandRunner
 	BoxIP         string
 	Plan          localDeployPlan
-	RoutePlan     deployRoutePlan
+	RoutePlan     addressing.Plan
 	TarDir        string
 	LocalTar      string
 	LocalManifest string
@@ -174,7 +174,7 @@ func shipPlanPhase(state *shipRunState) error {
 }
 
 func shipRoutesPhase(state *shipRunState, tlsMode string) error {
-	routePlan, err := prepareDeployRoutes(state.Plan.Context, state.Address.EnvName, deployRouteOptions{
+	routePlan, err := addressing.PlanRoutes(state.Plan.Context, state.Address.EnvName, addressing.Options{
 		Preview: state.Address.PreviewBranch != "",
 		TLS:     tlsMode,
 		BoxIP:   state.BoxIP,

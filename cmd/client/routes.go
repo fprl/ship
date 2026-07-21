@@ -7,17 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/fprl/ship/internal/addressing"
 	"github.com/fprl/ship/internal/config"
 	"github.com/pelletier/go-toml/v2"
 )
-
-type deployRouteOptions = addressing.Options
-type deployRoutePlan = addressing.Plan
-
-func prepareDeployRoutes(ctx *config.AppContext, envName string, opts deployRouteOptions) (deployRoutePlan, error) {
-	return addressing.PlanRoutes(ctx, envName, opts)
-}
 
 func writeDeployManifest(src, dst string, routes map[string]config.Route) error {
 	data, err := os.ReadFile(src)

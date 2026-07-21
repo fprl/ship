@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fprl/ship/internal/addressing"
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/deploybundle"
 	"github.com/fprl/ship/internal/deployevent"
@@ -671,7 +672,7 @@ func TestPrepareDeployRoutesSynthesizesSSLIPRouteForRoutelessApp(t *testing.T) {
 			"web": {Port: &port},
 		},
 	}
-	plan, err := prepareDeployRoutes(ctx, "production", deployRouteOptions{BoxIP: "203.0.113.7"})
+	plan, err := addressing.PlanRoutes(ctx, "production", addressing.Options{BoxIP: "203.0.113.7"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -693,7 +694,7 @@ func TestPrepareDeployRoutesRejectsMultipleProcessesWithoutWeb(t *testing.T) {
 			"worker": {},
 		},
 	}
-	_, err := prepareDeployRoutes(ctx, "production", deployRouteOptions{BoxIP: "203.0.113.7"})
+	_, err := addressing.PlanRoutes(ctx, "production", addressing.Options{BoxIP: "203.0.113.7"})
 	if !errcat.Is(err, errcat.CodeMultiProcessNoWebRoute) {
 		t.Fatalf("expected multi-process/no-web error, got %v", err)
 	}
@@ -708,7 +709,7 @@ func TestPrepareDeployRoutesRejectsMultipleProcessesWithoutWeb(t *testing.T) {
 
 func TestPrepareDeployRoutesEmptyProcessesNeedsManifestEdit(t *testing.T) {
 	ctx := &config.AppContext{AppName: "api", EnvName: "production"}
-	_, err := prepareDeployRoutes(ctx, "production", deployRouteOptions{BoxIP: "203.0.113.7"})
+	_, err := addressing.PlanRoutes(ctx, "production", addressing.Options{BoxIP: "203.0.113.7"})
 	if !errcat.Is(err, errcat.CodeManifestInvalid) {
 		t.Fatalf("expected manifest-invalid error, got %v", err)
 	}
@@ -730,7 +731,7 @@ func TestPrepareDeployRoutesPreviewWithoutDefaultHostNeedsManifestEdit(t *testin
 			"old.example.com": {Host: "old.example.com", Redirect: "https://api.example.com"},
 		},
 	}
-	_, err := prepareDeployRoutes(ctx, "feat-x-ab12", deployRouteOptions{Preview: true, BoxIP: "203.0.113.7"})
+	_, err := addressing.PlanRoutes(ctx, "feat-x-ab12", addressing.Options{Preview: true, BoxIP: "203.0.113.7"})
 	if !errcat.Is(err, errcat.CodeManifestInvalid) {
 		t.Fatalf("expected manifest-invalid error, got %v", err)
 	}
@@ -758,7 +759,7 @@ func TestPrepareDeployRoutesCollapsesPreviewToSSLIPHost(t *testing.T) {
 			"old.example.com":      {Host: "old.example.com", Redirect: "api.example.com"},
 		},
 	}
-	plan, err := prepareDeployRoutes(ctx, "feat-x-ab12", deployRouteOptions{Preview: true, TLS: "internal", BoxIP: "203.0.113.7"})
+	plan, err := addressing.PlanRoutes(ctx, "feat-x-ab12", addressing.Options{Preview: true, TLS: "internal", BoxIP: "203.0.113.7"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -788,7 +789,7 @@ func TestPrepareDeployRoutesUsesPreviewBaseAndDerivesAlias(t *testing.T) {
 			"web": {Port: &port},
 		},
 	}
-	plan, err := prepareDeployRoutes(ctx, "feat-new-pricing-x7q2", deployRouteOptions{Preview: true, BoxIP: "203.0.113.7"})
+	plan, err := addressing.PlanRoutes(ctx, "feat-new-pricing-x7q2", addressing.Options{Preview: true, BoxIP: "203.0.113.7"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -812,7 +813,7 @@ func TestPrepareDeployRoutesKeepsProductionOnSSLIPWhenPreviewBaseExists(t *testi
 			"web": {Port: &port},
 		},
 	}
-	plan, err := prepareDeployRoutes(ctx, "production", deployRouteOptions{BoxIP: "203.0.113.7"})
+	plan, err := addressing.PlanRoutes(ctx, "production", addressing.Options{BoxIP: "203.0.113.7"})
 	if err != nil {
 		t.Fatal(err)
 	}

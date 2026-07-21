@@ -12,6 +12,7 @@ import (
 	"github.com/fprl/ship/internal/config"
 	"github.com/fprl/ship/internal/errcat"
 	"github.com/fprl/ship/internal/identity"
+	"github.com/fprl/ship/internal/podmanruntime"
 	"github.com/fprl/ship/internal/utils"
 )
 
@@ -126,7 +127,7 @@ func execDeploymentURL(ctx *config.AppContext) string {
 }
 
 func buildPodmanExecRunArgsWithActivation(app, env, containerName, imageTag, userID, groupID, release, activation string, command []string, injected map[string]string, envFileExists, previewEnv, tty bool, envFile string) []string {
-	resources := effectiveProcessResources(config.Process{}, previewEnv)
+	resources := podmanruntime.EffectiveResources(config.Process{}.Resources, previewEnv)
 	args := []string{
 		"run", "--rm", "-i",
 		"--name", containerName,
@@ -135,21 +136,21 @@ func buildPodmanExecRunArgsWithActivation(app, env, containerName, imageTag, use
 	// no --restart is set, and they stay on the app network only. The
 	// optional -t is added after the common baseline so tests can see it
 	// only when a terminal is actually requested.
-	args = append(args, podmanBaseRunArgs(podmanBaseRunOptions{
-		App:         app,
-		Env:         env,
-		ProcessName: "exec",
-		UserID:      userID,
-		GroupID:     groupID,
-		Release:     release,
-		Activation:  activation,
-		Networks:    []string{identity.Network(app, env)},
+	args = append(args, podmanruntime.BaseRunArgs(podmanruntime.ContainerSpec{
+		App:        app,
+		Env:        env,
+		Process:    "exec",
+		UserID:     userID,
+		GroupID:    groupID,
+		Release:    release,
+		Activation: activation,
+		Networks:   []string{identity.Network(app, env)},
 	})...)
-	args = appendReadOnlyRuntimeArgs(args)
+	args = podmanruntime.WithReadOnlyRoot(args)
 	if tty {
 		args = append(args, "-t")
 	}
-	args = appendResourceArgs(args, resources)
+	args = podmanruntime.WithResources(args, resources)
 	if envFileExists && envFile != "" {
 		args = append(args, "--env-file", envFile)
 	}
